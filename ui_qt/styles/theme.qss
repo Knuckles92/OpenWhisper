@@ -5169,6 +5169,78 @@ QSizeGrip#scratchpadGrip {
 }
 /* personalize:S8 end */
 
+/* The corner card that says a walkthrough is ready (walkthrough_ready.py). */
+QFrame#walkthroughReadySurface {
+    background-color: @surface;
+    border: 1px solid @border-strong;
+    border-radius: 14px;
+}
+
+QLabel#walkthroughThumb,
+QLabel#walkthroughReadyTitle,
+QLabel#walkthroughReadySubtitle,
+QLabel#walkthroughFileIcon,
+QLabel#walkthroughFileName {
+    background-color: transparent;
+}
+
+QLabel#walkthroughReadyTitle {
+    color: @text;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#walkthroughReadySubtitle {
+    color: @text-secondary;
+    font-size: 12px;
+}
+
+QFrame#walkthroughFileChip {
+    background-color: rgba(@accent-rgb, 0.10);
+    border: 1px solid @accent-tint-border;
+    border-radius: 9px;
+}
+
+QFrame#walkthroughFileChip:hover {
+    background-color: rgba(@accent-rgb, 0.18);
+}
+
+QLabel#walkthroughFileName {
+    color: @accent-soft;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QToolButton[walkthroughAction="true"] {
+    color: @text-soft;
+    background-color: transparent;
+    border: none;
+    border-radius: 7px;
+    padding: 5px 9px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QToolButton[walkthroughAction="true"]:hover {
+    color: @text;
+    background-color: @surface-hover;
+}
+
+QToolButton[walkthroughAction="true"]:pressed {
+    background-color: @surface-active;
+}
+
+QToolButton#walkthroughReadyClose {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+QToolButton#walkthroughReadyClose:hover {
+    background-color: @surface-hover;
+}
+
 /* personalize:S9 begin (history, stats & playback) */
 /* Stats window: the Settings slate family, with a tinted glyph per number. */
 QDialog#statsDialog {

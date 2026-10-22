@@ -50,6 +50,12 @@ TRANSFORM_PREFIX = "Transform · "
 #: ``Action · <name>`` (docs/design/automation/design.md).
 ACTION_KIND = "action"
 ACTION_PREFIX = "Action · "
+#: Spoken notes with screenshots (docs/walkthrough.md).
+WALKTHROUGH_KIND = "walkthrough"
+#: Live work labelled the same whatever its ``source_name``.
+_FIXED_LABELS = {COMMAND_KIND: "Command", WALKTHROUGH_KIND: "Walkthrough"}
+#: Kinds whose label says what they are, not which profile or file.
+LABELLED_KINDS = frozenset({COMMAND_KIND, TRANSFORM_KIND, ACTION_KIND, WALKTHROUGH_KIND})
 
 MonthKey = Tuple[int, int]
 
@@ -80,7 +86,8 @@ def classify_source(source_name: Optional[str],
 
     Newer entries say what they are. Command Mode and transform rewrites are
     live work like dictations (Stats counts them together), so they show as
-    dictations labelled ``Command`` or ``Transform · <name>``.
+    dictations labelled ``Command`` or ``Transform · <name>``; so does a
+    walkthrough, labelled ``Walkthrough``.
 
     Older entries have only ``source_name``: dictations carry nothing or
     ``Quick Record`` with an optional profile name, which becomes the label.
@@ -89,8 +96,8 @@ def classify_source(source_name: Optional[str],
     name = (source_name or "").strip()
     # A host's listing may come from an older or newer version.
     kind = entry_kind.strip().lower() if isinstance(entry_kind, str) else ""
-    if kind == COMMAND_KIND:
-        return DICTATION, "Command"
+    if kind in _FIXED_LABELS:
+        return DICTATION, _FIXED_LABELS[kind]
     if kind == TRANSFORM_KIND:
         transform = name.removeprefix(TRANSFORM_PREFIX).strip()
         return DICTATION, f"{TRANSFORM_PREFIX}{transform}" if transform else "Transform"

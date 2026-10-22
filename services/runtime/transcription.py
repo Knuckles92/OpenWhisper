@@ -52,6 +52,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 EMPTY_ASR_MESSAGE = "No speech detected (empty after VAD)"
+#: How the overlay, the status line and History name a walkthrough.
+WALKTHROUGH_LABEL = "Walkthrough"
 
 
 class EngineNotReadyError(RuntimeError):
@@ -74,8 +76,10 @@ def _reads_selection(action) -> bool:
     return action.param("include_selection") is True
 
 
-def _recording_destination(action) -> str:
-    """What the overlay says a recording is for: an agent action's agent, or ""."""
+def _recording_destination(action, mode: str = JobMode.DICTATION) -> str:
+    """What the overlay says a recording is for: a walkthrough, an agent action's agent, or ""."""
+    if mode == JobMode.WALKTHROUGH:
+        return WALKTHROUGH_LABEL
     if action is None or action.kind != ActionKind.AGENT:
         return ""
     agent_name = AGENT_NAMES.get(action.param("agent"), "")
@@ -210,6 +214,9 @@ class TranscriptionRuntime:
         self._route_failed = False
         # Decodes a long dictation's completed windows while it is recorded.
         self._incremental = IncrementalDictation()
+        # The walkthrough job's WalkthroughSession, from its start until the
+        # job ends; read and changed under _job_lock.
+        self._walkthrough = None
         self._stop_started_at = 0.0
         self._cancel_started_at = 0.0
 
@@ -281,6 +288,29 @@ class TranscriptionRuntime:
             self._previewing = None
             self._recording_profile = None
             self._profile_settings = None
+        # A stop that failed leaves no transcript, but the screenshots stay.
+        self._end_walkthrough(keep=True)
+
+    @property
+    def recording_walkthrough(self):
+        """The WalkthroughSession taking screenshots now, or None.
+
+        None once its recording stopped: from then on it is transcribed.
+        """
+        with self._job_lock:
+            session = self._walkthrough
+        return session if session is not None and session.open else None
+
+    def _end_walkthrough(self, *, keep: bool) -> None:
+        """Let go of the walkthrough; its files stay unless the user canceled it."""
+        with self._job_lock:
+            session, self._walkthrough = self._walkthrough, None
+        if session is None:
+            return
+        if keep:
+            session.end()
+        else:
+            session.discard()
 
     def _end_preview(self) -> None:
         """Publish no more of the recording's preview; before it is said to end.
@@ -319,6 +349,9 @@ class TranscriptionRuntime:
             backend.reset_cancel_flag()
 
     def _finish_job(self) -> None:
+        job = self._active_job
+        if job is not None and job.mode == JobMode.WALKTHROUGH:
+            self._end_walkthrough(keep=True)
         self._stop_started_at = 0.0
         if self._cancel_started_at:
             from services.diagnostics import record_metrics
@@ -404,6 +437,19 @@ class TranscriptionRuntime:
                 action_id=action_id, source=source, route=route,
             )
 
+    def start_walkthrough(self, session, *, source: str = "hotkey") -> bool:
+        """Record a walkthrough whose screenshots ``session`` keeps; False when refused.
+
+        The session belongs to the job from here: a Cancel deletes its
+        screenshots, and any other end keeps them.
+        """
+        with self._capture_lock:
+            if not self._start_recording("", JobMode.WALKTHROUGH, source=source):
+                return False
+            with self._job_lock:
+                self._walkthrough = session
+            return True
+
     def _begin_job(self, mode: str, settings, selection, **context) -> dictation_pipeline.DictationJob:
         """The job for a recording that just started; never raises."""
         try:
@@ -477,12 +523,15 @@ class TranscriptionRuntime:
         )
         # Publish before streaming can show the overlay, using the action
         # resolved for this capture rather than re-reading mutable settings.
-        self.controller.recording_destination_changed.emit(_recording_destination(action))
+        self.controller.recording_destination_changed.emit(_recording_destination(action, mode))
         logger.info("Recording started")
         self.controller.ui_controller.clear_transcription_stats()
         self.controller.ui_controller.main_window.clear_partial_transcription()
         self.controller.streaming_runtime.start_streaming_session()
-        self._incremental.start(self.controller, recognition=self._job.recognition)
+        if mode != JobMode.WALKTHROUGH:
+            # A walkthrough is decoded section by section once it stops,
+            # never as one recording, so early windows would be wasted.
+            self._incremental.start(self.controller, recognition=self._job.recognition)
         self.controller.recording_state_changed.emit(True)
         publish_event(
             event_catalog.RECORDING_STARTED, event_catalog.recording_started(self._job)
@@ -552,6 +601,9 @@ class TranscriptionRuntime:
         elif action is not None:
             self.controller.overlay_state_update.emit(OverlayState.RECORDING)
             self.controller.status_update.emit(f"{action.name} · Listening...")
+        elif mode == JobMode.WALKTHROUGH:
+            self.controller.overlay_state_update.emit(OverlayState.RECORDING)
+            self.controller.status_update.emit(f"{WALKTHROUGH_LABEL} · Recording...")
         else:
             self.controller.overlay_state_update.emit(OverlayState.RECORDING)
             self.controller.status_update.emit(
@@ -581,6 +633,11 @@ class TranscriptionRuntime:
             # release) must not claim a job and transcribe what is left.
             logger.info("Stop ignored: this recording was canceled")
             return
+        with self._job_lock:
+            walkthrough = self._walkthrough
+        if walkthrough is not None:
+            # No screenshot may land after the audio it belongs in has ended.
+            walkthrough.close()
         if self.controller._streaming_enabled:
             # Dismiss preview overlay immediately so the classic waveform
             # processing/transcribing states are the only post-stop UI.
@@ -741,6 +798,8 @@ class TranscriptionRuntime:
             return "Command Mode"
         if job is not None and job.mode == JobMode.ACTION:
             return self._action_source_name(job)
+        if job is not None and job.mode == JobMode.WALKTHROUGH:
+            return WALKTHROUGH_LABEL
         if self._recording_profile:
             return f"Quick Record · {self._recording_profile.name}"
         return "Quick Record"
@@ -823,6 +882,7 @@ class TranscriptionRuntime:
         self.controller.recording_state_changed.emit(False)
         self.controller.recorder.cancel_recording()
         self.controller.ui_controller.discard_clipboard_prefetch()
+        self._end_walkthrough(keep=False)
         self._forget_recording()
         self.controller.overlay_state_update.emit(OverlayState.CANCELING)
         self.controller.status_update.emit("Recording canceled")
@@ -1352,45 +1412,113 @@ class TranscriptionRuntime:
                 self.controller._pending_file_size = os.path.getsize(audio_path)
             backend = self.controller.current_backend
             self._announce_transcription(backend, audio_path)
-            recognition = self._final_pass_recognition(job)
-            if job is not None and recognition is not None and recognition != (
-                job.recognition or recognition_context.RecognitionContext()
-            ):
-                # The language may have been switched since the recording
-                # started; history and stats record the one decoded with.
-                with self._job_lock:
-                    if self._active_job is job:
-                        job = self._active_job = dataclasses.replace(
-                            job, recognition=recognition
-                        )
-            self.controller._transcription_start_time = time.time()
-            # Windows decoded while recording aren't this pass's time, so
-            # only the requests from here on count toward the stats line.
-            mark = backend.timing_mark() if getattr(backend, "is_remote", False) else None
-            raw = recognition_context.transcribe(
-                self._incremental, backend, audio_path, recognition
-            )
-            self.controller._transcription_elapsed = (
-                time.time() - self.controller._transcription_start_time
-            )
-            self.controller._transcription_start_time = None
-            if mark is not None:
-                self.controller._remote_timing = backend.timing_since(mark)
-            self._complete_preview_fallback(audio_path, raw)
-            self._raise_if_canceled()
-            if job is not None and job.mode in (JobMode.COMMAND, JobMode.TRANSFORM):
-                fixed, raw_text, cleanup_info = self._complete_command(raw, job)
-            elif job is not None:
-                fixed, raw_text, cleanup_info = self._complete_live(raw, job)
+            job, recognition = self._with_final_recognition(job)
+            if job is not None and job.mode == JobMode.WALKTHROUGH:
+                result = self._complete_walkthrough(backend, audio_path, recognition)
             else:
-                fixed, raw_text, cleanup_info = self._maybe_cleanup_transcript(raw)
+                result = self._decode_and_complete(backend, audio_path, recognition, job)
             self._raise_if_canceled()
-            self.controller.transcription_completed.emit(fixed, raw_text, cleanup_info)
+            self.controller.transcription_completed.emit(*result)
         except CommandRefused as exc:
             self._refuse(str(exc))
         except Exception as exc:
             logger.error(f"Transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
+
+    def _with_final_recognition(self, job):
+        """``(job, recognition)`` for the final pass, the job updated to match."""
+        recognition = self._final_pass_recognition(job)
+        if job is not None and recognition is not None and recognition != (
+            job.recognition or recognition_context.RecognitionContext()
+        ):
+            # The language may have been switched since the recording
+            # started; history and stats record the one decoded with.
+            with self._job_lock:
+                if self._active_job is job:
+                    job = self._active_job = dataclasses.replace(
+                        job, recognition=recognition
+                    )
+        return job, recognition
+
+    def _timed_decode(self, backend, decode):
+        """``decode()``'s result, with its time kept for the stats line."""
+        self.controller._transcription_start_time = time.time()
+        # Windows decoded while recording aren't this pass's time, so
+        # only the requests from here on count toward the stats line.
+        mark = backend.timing_mark() if getattr(backend, "is_remote", False) else None
+        result = decode()
+        self.controller._transcription_elapsed = (
+            time.time() - self.controller._transcription_start_time
+        )
+        self.controller._transcription_start_time = None
+        if mark is not None:
+            self.controller._remote_timing = backend.timing_since(mark)
+        return result
+
+    def _decode_and_complete(self, backend, audio_path: str, recognition, job):
+        """Decode one recording or file and finish its text; ``(text, raw_text, info)``."""
+        raw = self._timed_decode(backend, lambda: recognition_context.transcribe(
+            self._incremental, backend, audio_path, recognition
+        ))
+        self._complete_preview_fallback(audio_path, raw)
+        self._raise_if_canceled()
+        if job is not None and job.mode in (JobMode.COMMAND, JobMode.TRANSFORM):
+            return self._complete_command(raw, job)
+        if job is not None:
+            return self._complete_live(raw, job)
+        return self._maybe_cleanup_transcript(raw)
+
+    def _complete_walkthrough(self, backend, audio_path: str, recognition):
+        """Decode, clean up and write a walkthrough section by section; worker.
+
+        Returns ``(text, raw_text, info)`` like ``_maybe_cleanup_transcript``:
+        the words with a marker where each screenshot sits, for the
+        transcript view and History. The document waits on the session for
+        ``_deliver``. Each section is cleaned up on its own, so no sentence
+        can move across a screenshot.
+        """
+        from services.walkthrough import finish
+
+        with self._job_lock:
+            session = self._walkthrough
+        if session is None:
+            raise RuntimeError("The walkthrough's screenshots are missing")
+        shots = session.saved_shots()
+        texts = self._timed_decode(backend, lambda: finish.transcribe_sections(
+            audio_path, shots,
+            lambda path: recognition_context.transcribe(self._incremental, backend, path, recognition),
+            before_each=self._report_section,
+        ))
+        self._raise_if_canceled()
+        cleaned, raws, info = self._clean_sections(texts)
+        self._raise_if_canceled()
+        self.controller.status_update.emit("Writing the walkthrough...")
+        session.result = finish.build_documents(
+            session, shots, cleaned, raws,
+            duration_s=self.controller._pending_audio_duration or 0.0,
+        )
+        return session.result.history_text, session.result.history_raw, info
+
+    def _report_section(self, index: int, total: int) -> None:
+        """Stop a canceled walkthrough between sections, or say which one is next."""
+        self._raise_if_canceled()
+        if total > 1:
+            self.controller.status_update.emit(f"Transcribing section {index} of {total}...")
+
+    def _clean_sections(self, texts):
+        """Each section's words after the dictionary, snippets and AI cleanup.
+
+        Returns ``(cleaned, raw, info)``: the finished words, the words
+        before AI cleanup, and the first cleanup's CleanupInfo or None.
+        """
+        cleaned, raws, first_info = [], [], None
+        for text in texts:
+            self._raise_if_canceled()
+            fixed, raw_text, info = self._maybe_cleanup_transcript(text)
+            cleaned.append(fixed or "")
+            raws.append(raw_text if raw_text is not None else (fixed or ""))
+            first_info = first_info or info
+        return cleaned, raws, first_info
 
     def _final_pass_recognition(self, job):
         """The language and vocabulary for ``job``'s final pass, read now.
@@ -1695,6 +1823,7 @@ class TranscriptionRuntime:
         )
         self._incremental.discard()
         self.controller.ui_controller.discard_clipboard_prefetch()
+        self._end_walkthrough(keep=False)
         self._clear_pending_audio_metadata()
         self._finish_job()
 
@@ -1894,6 +2023,9 @@ class TranscriptionRuntime:
                 notice=notice,
             )
             return
+        if job is not None and job.mode == JobMode.WALKTHROUGH:
+            self._deliver_walkthrough(ui)
+            return
         status_suffix = f" — {notice}" if notice else ""
         if self._insert_into_scratchpad(ui, transcript, status_suffix):
             return
@@ -1929,6 +2061,29 @@ class TranscriptionRuntime:
             self._notify(f"{reason} — pasted instead" if pasted else reason)
         if forced:
             self._notify_forced_outcome(job, pasted)
+
+    def _deliver_walkthrough(self, ui) -> None:
+        """Copy a finished walkthrough and show where it is; Qt thread.
+
+        The clipboard holds the PDF as a file, which chat apps attach, and
+        the Markdown with absolute image paths as text, which is what a
+        terminal (and an agent in it) receives. Never pasted: the user
+        chooses where it goes.
+        """
+        with self._job_lock:
+            session = self._walkthrough
+        result = session.result if session is not None else None
+        if result is None:
+            ui.set_status("Walkthrough finished, but its document is missing")
+            return
+        copied = ui.copy_files_to_clipboard([result.pdf], text=result.clipboard_text)
+        count = f"{result.shots} screenshot{'' if result.shots == 1 else 's'}"
+        if copied:
+            status = f"Walkthrough copied ({count}) — paste it into your agent"
+        else:
+            status = f"Walkthrough saved ({count}); copying it failed — drag it from the card"
+        ui.set_status(status)
+        ui.show_walkthrough_ready(result, copied=copied)
 
     def _insert_into_scratchpad(self, ui, transcript: str, status_suffix: str) -> bool:
         """Add the transcript to the focused Scratchpad, if one takes it."""
@@ -2330,7 +2485,7 @@ class TranscriptionRuntime:
             event_catalog.transcription_failed(job, category, message=error_message),
         )
         pending_audio = self.controller._pending_audio_path
-        status = error_message if refused else f"Error: {error_message}"
+        status = self._error_status(error_message, job, refused=refused)
         self.controller.ui_controller.set_status(status)
         self.controller.ui_controller.show_transcription_error(status)
         self.controller.overlay_state_update.emit(OverlayState.NONE)
@@ -2349,6 +2504,17 @@ class TranscriptionRuntime:
                 logger.exception('Could not queue failed recording preservation')
         self._clear_pending_audio_metadata()
         self._finish_job()
+
+    def _error_status(self, error_message: str, job, *, refused: bool) -> str:
+        """The status a failed job shows; a walkthrough's says where its screenshots are."""
+        status = error_message if refused else f"Error: {error_message}"
+        if job is None or job.mode != JobMode.WALKTHROUGH:
+            return status
+        from services.walkthrough.finish import kept_note
+
+        with self._job_lock:
+            session = self._walkthrough
+        return status + kept_note(session)
 
     def _preserve_failed_audio(self, path: str, status: str) -> None:
         try:

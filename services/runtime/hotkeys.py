@@ -255,6 +255,8 @@ class HotkeyRuntime:
             on_cycle_language=controller.cycle_language_requested.emit,
             on_paste_last_original=self._paste_last_original_after_keys_up,
             on_route_record=controller.toggle_route_recording,
+            on_walkthrough=controller.walkthrough_requested.emit,
+            on_screenshot=controller.screenshot_requested.emit,
             on_status_update=controller.update_status_with_auto_hide,
             on_status_update_auto_hide=controller.update_status_with_auto_hide,
         )

@@ -727,14 +727,16 @@ class AppConfig:
     def __post_init__(self):
         if self.DEFAULT_HOTKEYS is None:
             # Command Mode, the Scratchpad, language cycling, pasting the
-            # last original and routing by voice have no default shortcut on
-            # any platform.
+            # last original, routing by voice, walkthroughs and screenshots
+            # have no default shortcut on any platform.
             unbound = {
                 'command_mode': '',
                 'scratchpad_toggle': '',
                 'cycle_language': '',
                 'paste_last_original': '',
                 'route_record': '',
+                'walkthrough': '',
+                'screenshot': '',
             }
             if sys.platform == "darwin":
                 # Control+Option combos avoid macOS system shortcuts (Spotlight,

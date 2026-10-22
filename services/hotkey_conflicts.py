@@ -30,6 +30,8 @@ STANDARD_LABELS: dict[str, str] = {
     "cycle_language": "Switch language",
     "paste_last_original": "Paste original",
     "route_record": "Route by voice",
+    "walkthrough": "Walkthrough",
+    "screenshot": "Screenshot",
 }
 
 

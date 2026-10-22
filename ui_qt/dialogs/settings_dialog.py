@@ -3020,6 +3020,26 @@ class SettingsDialog(QDialog):
             )
         )
 
+        layout.addWidget(self._hotkey_group_title("Walkthroughs"))
+        layout.addWidget(
+            self._hotkey_shortcut_row(
+                "walkthrough",
+                "Walkthrough",
+                "Talk while you take screenshots. Press again for one file with "
+                "your words and pictures, copied to paste into an agent.",
+                optional=True,
+            )
+        )
+        layout.addWidget(
+            self._hotkey_shortcut_row(
+                "screenshot",
+                "Screenshot",
+                "Freeze the screen and mark it up. During a walkthrough it joins "
+                "the walkthrough; otherwise it's copied.",
+                optional=True,
+            )
+        )
+
         layout.addWidget(self._hotkey_group_title("OpenWhisper"))
         layout.addWidget(
             self._hotkey_shortcut_row(

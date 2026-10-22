@@ -21,6 +21,7 @@ from PyQt6.QtGui import QFont, QDesktopServices
 
 from config import config
 from services.format_utils import format_file_size
+from services.history_calendar import LABELLED_KINDS, classify_source
 from services.history_manager import (
     AI_VERSION,
     ORIGINAL_VERSION,
@@ -139,23 +140,15 @@ def _entry_was_cleaned(entry: HistoryEntry) -> bool:
 
 
 def _kind_label(entry: HistoryEntry) -> str:
-    """"Command", "Transform · Polish", or "" for a dictation or a file.
+    """"Command", "Transform · Polish", "Walkthrough"..., or "" for a dictation or a file.
 
     The runtime saves a transform's source name already prefixed
     ("Transform · Polish"); older or synced rows may hold the bare name.
     """
     kind = getattr(entry, "entry_kind", None)
-    if kind == "command":
-        return "Command"
-    if kind == "transform":
-        name = (getattr(entry, "source_name", None) or "").strip()
-        name = name.removeprefix("Transform · ").strip()
-        return f"Transform · {name}" if name else "Transform"
-    if kind == "action":
-        name = (getattr(entry, "source_name", None) or "").strip()
-        name = name.removeprefix("Action · ").strip()
-        return f"Action · {name}" if name else "Action"
-    return ""
+    if kind not in LABELLED_KINDS:
+        return ""
+    return classify_source(getattr(entry, "source_name", None), kind)[1]
 
 
 def _record_sync():

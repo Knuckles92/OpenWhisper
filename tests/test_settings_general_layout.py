@@ -281,7 +281,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 for card in hotkeys.findChildren(QFrame)
                 if card.objectName() == "hotkeyShortcutCard"
             ]
-            self.assertEqual(len(shortcut_cards), 10)
+            self.assertEqual(len(shortcut_cards), 12)
             self.assertEqual(
                 set(dialog.hotkey_inputs),
                 {
@@ -293,6 +293,8 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     "scratchpad_toggle",
                     "cycle_language",
                     "paste_last_original",
+                    "walkthrough",
+                    "screenshot",
                     "enable_disable",
                     "minimize_tray",
                 },
@@ -306,6 +308,8 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     "scratchpad_toggle",
                     "cycle_language",
                     "paste_last_original",
+                    "walkthrough",
+                    "screenshot",
                 },
             )
         finally:

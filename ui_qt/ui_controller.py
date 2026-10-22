@@ -314,6 +314,10 @@ class UIController(QObject):
         self.on_remote_runtime_selected: Optional[Callable] = None
         # Reconnect to the paired computer now (the link was clicked).
         self.on_remote_retry: Optional[Callable[[], None]] = None
+        # (source): WalkthroughRuntime.toggle and .snap, set by the controller.
+        self.on_walkthrough: Optional[Callable[[str], None]] = None
+        self.on_screenshot: Optional[Callable[[str], None]] = None
+        self._walkthrough_ready = None
         self.get_missing_local_runtime: Optional[Callable[[], Optional[str]]] = None
 
         self.on_component_install: Optional[Callable] = None
@@ -460,6 +464,8 @@ class UIController(QObject):
             self._on_meeting_open_dashboard
         )
         self.tray_manager.copy_last_original_requested.connect(self.copy_last_original)
+        self.tray_manager.walkthrough_requested.connect(self._on_tray_walkthrough)
+        self.tray_manager.screenshot_requested.connect(self._on_tray_screenshot)
         self.tray_manager.scratchpad_requested.connect(self.toggle_scratchpad)
         self.tray_manager.stats_requested.connect(self.show_stats)
         self.tray_manager.update_requested.connect(self._on_tray_update)
@@ -1006,6 +1012,60 @@ class UIController(QObject):
 
     def _on_clipboard_restore_failed(self, _message: str) -> None:
         self.set_status("Ready (Pasted; clipboard restore failed)")
+
+    def copy_files_to_clipboard(self, paths, text: str = "", *, image=None) -> bool:
+        """Put files on the clipboard, with ``text`` (and ``image``) for apps
+        that take no files; True if the write succeeded."""
+        return self._temporary_clipboard.write_files(paths, text, image=image)
+
+    # ---- walkthroughs and screenshots (services/runtime/walkthrough.py) ----
+
+    def _on_tray_walkthrough(self) -> None:
+        if self.on_walkthrough is not None:
+            self.on_walkthrough("tray")
+
+    def _on_tray_screenshot(self) -> None:
+        if self.on_screenshot is not None:
+            self.on_screenshot("tray")
+
+    def snap_support(self) -> tuple[bool, str]:
+        """``(supported, why not)`` for screenshots on this desktop."""
+        from ui_qt.snap import snap_support
+
+        return snap_support()
+
+    def start_snap(self, *, hint: str = ""):
+        """Freeze the screen under the pointer for a screenshot; a SnapSession.
+
+        The recording overlay never appears in it.
+        """
+        from ui_qt.snap import start_snap
+
+        return start_snap(keep_out=(self.overlay,), hint=hint, parent=self)
+
+    def keep_overlay_out_of_screenshots(self, enabled: bool) -> bool:
+        """Leave the recording overlay out of every screen capture, or stop.
+
+        Only while a walkthrough records: otherwise people's own screen
+        recordings and shares would lose it too. True where the desktop
+        supports it; elsewhere a screenshot hides the overlay for a moment.
+        """
+        from ui_qt.snap import keep_out_of_screenshots
+
+        return keep_out_of_screenshots(self.overlay, enabled)
+
+    def set_walkthrough_active(self, active: bool) -> None:
+        """Whether a walkthrough records: the tray then offers to finish it."""
+        self.tray_manager.set_walkthrough_active(active)
+
+    def show_overlay_caption(self, text: str) -> None:
+        self.overlay.show_caption(text)
+
+    def show_walkthrough_ready(self, result, *, copied: bool) -> None:
+        """Say a walkthrough is ready, with ways to open, find or drag it."""
+        from ui_qt.widgets.walkthrough_ready import show_ready
+
+        self._walkthrough_ready = show_ready(self._walkthrough_ready, result, copied=copied)
 
     def toggle_scratchpad(self) -> None:
         from ui_qt.widgets import scratchpad

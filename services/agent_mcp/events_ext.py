@@ -141,7 +141,7 @@ class EventsError(Exception):
 
 # -- the catalog as the draft describes it ------------------------------------
 
-_MODES = ("dictation", "command", "transform", "action", catalog.FILE_MODE)
+_MODES = ("dictation", "command", "transform", "action", "walkthrough", catalog.FILE_MODE)
 _STRING = {"type": "string"}
 _NULLABLE_STRING = {"type": ["string", "null"]}
 _NULLABLE_NUMBER = {"type": ["number", "null"]}

@@ -36,6 +36,8 @@ def _controller():
         paste_last_original_requested=_Signal(),
         scratchpad_toggle_requested=_Signal(),
         cycle_language_requested=_Signal(),
+        walkthrough_requested=_Signal(),
+        screenshot_requested=_Signal(),
         recording_state_changed=_Signal(),
         toggle_recording=lambda: None,
         toggle_route_recording=lambda: None,

@@ -171,6 +171,8 @@ class HotkeyManager:
         self.on_cycle_language: Optional[Callable] = None
         self.on_paste_last_original: Optional[Callable] = None
         self.on_route_record: Optional[Callable] = None
+        self.on_walkthrough: Optional[Callable] = None
+        self.on_screenshot: Optional[Callable] = None
         self.on_status_update: Optional[Callable] = None
         self.on_status_update_auto_hide: Optional[Callable] = None
         self.is_transcribing_fn: Optional[Callable[[], bool]] = None
@@ -577,7 +579,9 @@ class HotkeyManager:
                      on_scratchpad_toggle: Callable = None,
                      on_cycle_language: Callable = None,
                      on_paste_last_original: Callable = None,
-                     on_route_record: Callable = None):
+                     on_route_record: Callable = None,
+                     on_walkthrough: Callable = None,
+                     on_screenshot: Callable = None):
         """Set callbacks invoked by hotkey events.
 
         ``on_record_press``/``on_record_release`` and the command pair get the
@@ -597,6 +601,8 @@ class HotkeyManager:
         self.on_cycle_language = on_cycle_language
         self.on_paste_last_original = on_paste_last_original
         self.on_route_record = on_route_record
+        self.on_walkthrough = on_walkthrough
+        self.on_screenshot = on_screenshot
         self.on_status_update = on_status_update
         self.on_status_update_auto_hide = on_status_update_auto_hide
         self.is_transcribing_fn = is_transcribing_fn

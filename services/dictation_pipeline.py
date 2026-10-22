@@ -51,6 +51,9 @@ class JobMode:
     #: The words go to a saved action instead of the cursor
     #: (docs/design/automation/design.md).
     ACTION: Final[str] = "action"
+    #: A spoken walkthrough with screenshots, built into a document that
+    #: goes to the clipboard instead of the cursor (docs/walkthrough.md).
+    WALKTHROUGH: Final[str] = "walkthrough"
 
 
 #: entry_kind for transcripts that were not dictated live: uploads, batches
@@ -191,8 +194,31 @@ def begin_job(mode: str, settings: Mapping, *, selection=None, action_id: str = 
     program started reads neither, only which app has focus, so no program
     gets the user's on-screen text back through cleanup, an event or an
     action.
+
+    A walkthrough reads nothing: its words become a document rather than a
+    paste, so no app's style or on-screen text may shape them.
     """
     settings = settings or {}
+    focus = target = None
+    if mode != JobMode.WALKTHROUGH:
+        focus, target = _focus_requests(
+            mode, settings, source=source, route=route, include_selection=include_selection,
+        )
+    return DictationJob(
+        mode=mode,
+        focus=focus,
+        recognition=recognition_for(None, settings),
+        selection=_as_future(selection),
+        target=target,
+        action_id=action_id,
+        source=source,
+        route=route,
+    )
+
+
+def _focus_requests(mode: str, settings: Mapping, *, source: str, route: str,
+                    include_selection: bool) -> tuple[Optional[Future], Optional[Future]]:
+    """``(focus, target)`` captures for a job starting now (see begin_job); never raises."""
     focus = target = None
     try:
         if resolve_app_context_enabled(settings):
@@ -215,16 +241,7 @@ def begin_job(mode: str, settings: Mapping, *, selection=None, action_id: str = 
             target = focus_context.get_service().request(include_text=False)
     except Exception:
         logger.debug("Focus capture could not start", exc_info=True)
-    return DictationJob(
-        mode=mode,
-        focus=focus,
-        recognition=recognition_for(None, settings),
-        selection=_as_future(selection),
-        target=target,
-        action_id=action_id,
-        source=source,
-        route=route,
-    )
+    return focus, target
 
 
 def recognition_for(job: Optional[DictationJob], settings: Mapping) -> RecognitionContext:
@@ -257,7 +274,7 @@ def prepare_text(raw: str, job: Optional[DictationJob], settings: Mapping) -> Pr
     plan = SnippetPlan(text)
     if (
         job is not None
-        and job.mode in (JobMode.DICTATION, JobMode.ACTION)
+        and job.mode in (JobMode.DICTATION, JobMode.ACTION, JobMode.WALKTHROUGH)
         and resolve_snippets_enabled(settings)
     ):
         try:

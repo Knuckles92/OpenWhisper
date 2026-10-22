@@ -67,7 +67,7 @@ FAILURE_FAILED = "failed"
 FAILURES = frozenset({FAILURE_CANCELED, FAILURE_NO_SPEECH, FAILURE_REFUSED, FAILURE_FAILED})
 #: Modes whose ``raw_text`` is the words before AI cleanup. A command's or
 #: transform's original is the user's selected text, which events never carry.
-_RAW_TEXT_MODES = frozenset({"dictation", "action", FILE_MODE})
+_RAW_TEXT_MODES = frozenset({"dictation", "action", "walkthrough", FILE_MODE})
 
 
 def user_started(source: Any) -> bool:

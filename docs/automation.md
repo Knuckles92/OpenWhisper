@@ -311,11 +311,11 @@ file paths or audio.
 
 | Type | `data` |
 | --- | --- |
-| `recording.started` | `job_id`, `mode` (`dictation`, `command`, `transform`, `action`), `action_id`, `source` (`hotkey`, `ui` for the window or tray, `api`, `mcp`, `dbus` for the Omarchy bar), `route` |
+| `recording.started` | `job_id`, `mode` (`dictation`, `command`, `transform`, `action`, `walkthrough`), `action_id`, `source` (`hotkey`, `ui` for the window or tray, `api`, `mcp`, `dbus` for the Omarchy bar), `route` |
 | `recording.stopped` | `job_id`, `duration_s` |
 | `recording.canceled` | `job_id` (once, when a Cancel reaches the job) |
 | `transcription.preview` | `job_id`, `text`, `final` (live preview, at most four a second; not replayed; never sent after its recording's `recording.stopped` or `recording.canceled`) |
-| `transcription.completed` | `job_id`, `mode` (also `file`, one per file of a multi-file upload), `action_id`, `source`, `routed`, `text`, `raw_text` (before AI cleanup, or null; always null for Command Mode and transforms, so the text you had selected never leaves), `language`, `app` (`id`, `name`, `category`) or null, `cleanup` (`provider`, `model`, `level`) or null, `audio_s` |
+| `transcription.completed` | `job_id`, `mode` (also `file`, one per file of a multi-file upload), `action_id`, `source`, `routed`, `text` (a walkthrough's words, with `[Screenshot N]` where each screenshot sits), `raw_text` (before AI cleanup, or null; always null for Command Mode and transforms, so the text you had selected never leaves), `language`, `app` (`id`, `name`, `category`) or null, `cleanup` (`provider`, `model`, `level`) or null, `audio_s` |
 | `transcription.failed` | `job_id`, `error` (`canceled`, `no_speech`, `refused` or `failed`), `message` (what OpenWhisper told you, for a refusal; otherwise null); a job canceled after its recording stopped (and a canceled upload or text run) ends with `canceled`, after `recording.canceled` |
 | `history.saved` | `job_id`, `record_id` (fetch it from the [History API](agent-api.md)), `kind` |
 | `action.ran` | `job_id`, `source`, `action_id`, `name`, `kind`, `ok`, `message`, `output` (where an answer went), and `text` for Send to my scripts; a run canceled too late to stop (or already finished) reports what really happened, with `output` `none` |

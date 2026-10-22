@@ -47,6 +47,7 @@ from services.runtime import (
     TranscriptionRuntime,
 )
 from services.runtime.command import CommandRuntime
+from services.runtime.walkthrough import WalkthroughRuntime
 from services.actions.runtime import ActionRuntime
 from services.dictation_pipeline import JobMode
 from services.settings import (
@@ -270,6 +271,8 @@ class ApplicationController(QObject):
     scratchpad_toggle_requested = pyqtSignal()
     cycle_language_requested = pyqtSignal()
     paste_last_original_requested = pyqtSignal()
+    walkthrough_requested = pyqtSignal()
+    screenshot_requested = pyqtSignal()
     # A push-and-hold recording latched into, or left, hands-free.
     hands_free_changed = pyqtSignal(bool)
     # (old, new) microphone names after a recording moved to the next one.
@@ -397,6 +400,7 @@ class ApplicationController(QObject):
         self.transcription_runtime = TranscriptionRuntime(self)
         self.command_runtime = CommandRuntime(self)
         self.action_runtime = ActionRuntime(self)
+        self.walkthrough_runtime = WalkthroughRuntime(self)
         self._preview_events = PreviewEvents(self.transcription_runtime.publish_preview)
         self.meeting_runtime = MeetingRuntime(self)
 
@@ -2671,6 +2675,11 @@ class ApplicationController(QObject):
         self.paste_last_original_requested.connect(
             lambda: self.ui_controller.paste_last_original()
         )
+        self.walkthrough_requested.connect(lambda: self.walkthrough_runtime.toggle())
+        self.screenshot_requested.connect(lambda: self.walkthrough_runtime.snap())
+        self.recording_state_changed.connect(self.walkthrough_runtime.on_recording_state_changed)
+        self.ui_controller.on_walkthrough = self.walkthrough_runtime.toggle
+        self.ui_controller.on_screenshot = self.walkthrough_runtime.snap
         self.hands_free_changed.connect(
             lambda on: self.ui_controller.set_hands_free(on)
         )

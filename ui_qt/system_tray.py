@@ -26,6 +26,8 @@ class SystemTrayManager(QSystemTrayIcon):
     meeting_toggle_requested = pyqtSignal()
     meeting_dashboard_requested = pyqtSignal()
     copy_last_original_requested = pyqtSignal()
+    walkthrough_requested = pyqtSignal()
+    screenshot_requested = pyqtSignal()
     scratchpad_requested = pyqtSignal()
     stats_requested = pyqtSignal()
     update_requested = pyqtSignal()
@@ -74,6 +76,10 @@ class SystemTrayManager(QSystemTrayIcon):
         self.copy_original_action.triggered.connect(
             self.copy_last_original_requested
         )
+        self.walkthrough_action = self.menu.addAction("Start Walkthrough")
+        self.walkthrough_action.triggered.connect(self.walkthrough_requested)
+        self.screenshot_action = self.menu.addAction("Take Screenshot")
+        self.screenshot_action.triggered.connect(self.screenshot_requested)
         self.language_menu = self.menu.addMenu("Language")
         self.language_menu.aboutToShow.connect(self._on_language_menu_about_to_show)
 
@@ -170,6 +176,9 @@ class SystemTrayManager(QSystemTrayIcon):
             self.toggle_action.setText("Stop Recording")
         else:
             self.toggle_action.setText("Start Recording")
+
+    def set_walkthrough_active(self, active: bool) -> None:
+        self.walkthrough_action.setText("Finish Walkthrough" if active else "Start Walkthrough")
 
     def set_update_available(self, version: str) -> None:
         """Offer the newer release ``version`` in the menu; "" withdraws it."""
