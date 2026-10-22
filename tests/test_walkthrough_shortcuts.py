@@ -216,15 +216,18 @@ def test_finishing_while_drawing_keeps_the_screenshot_then_stops(h):
     session.end()
 
 
-def test_finishing_still_stops_when_the_screenshot_is_dropped(h):
+def test_finishing_waits_for_the_overlay_and_stops_even_if_it_drops(h):
     _begin(h)
     h.runtime.snap()
+    snap = h.ui.snaps[0]
+    snap.keep = Mock()  # this overlay answers later
+
     h.runtime.toggle()
+
+    snap.keep.assert_called_once()
     h.controller.stop_recording.assert_not_called()
-
-    h.ui.snaps[0].drop()
-
-    # It was kept already (the finish keeps it); a later drop changes nothing.
+    snap.active = False
+    snap.dropped.emit()
     h.controller.stop_recording.assert_called_once()
 
 
