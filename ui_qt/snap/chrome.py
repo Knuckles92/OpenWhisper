@@ -63,9 +63,11 @@ def paint_panel(
     """A floating surface in the app's overlay colours, over a soft shadow.
 
     Opaque, unlike the recording overlay's glass: under it is a screenshot,
-    and text showing through a toolbar reads as clutter.
+    and text showing through a toolbar reads as clutter. ``shadow`` 0 leaves
+    the shadow to whoever paints beneath the panel.
     """
-    paint_shadow(painter, rect, radius, strength=shadow)
+    if shadow:
+        paint_shadow(painter, rect, radius, strength=shadow)
     fill = palette.color("overlay-bg")
     fill.setAlpha(255)
     painter.setPen(QPen(palette.color("overlay-border"), 1))

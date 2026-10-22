@@ -28,6 +28,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import QLineEdit, QWidget
 
 from ui_qt.snap import affinity, chrome, export, support
+from ui_qt.snap import toolbar as toolbar_module
 from ui_qt.snap.annotations import (
     LABEL_PAD_X,
     LABEL_PAD_Y,
@@ -41,7 +42,7 @@ from ui_qt.snap.annotations import (
     new_draft,
 )
 from ui_qt.snap.geometry import badge_rect, device_rect, place_toolbar, span
-from ui_qt.snap.toolbar import SHADOW, SnapToolbar
+from ui_qt.snap.toolbar import SnapToolbar
 from ui_qt.utils.desktop import is_wayland
 from ui_qt.utils.palette import current_palette
 
@@ -458,10 +459,8 @@ class SnapOverlay(QWidget):
 
     def _enter_annotate(self) -> None:
         self._phase = Phase.ANNOTATE
-        corner = place_toolbar(
-            self._toolbar.panel_size(), self._selection, self._canvas
-        )
-        self._toolbar.move(corner - QPoint(SHADOW, SHADOW))
+        corner = place_toolbar(self._toolbar.size(), self._selection, self._canvas)
+        self._toolbar.move(corner)
         self._sync_toolbar()
         self._toolbar.show()
         self._toolbar.raise_()
@@ -586,6 +585,12 @@ class SnapOverlay(QWidget):
         painter.drawImage(QPointF(0, 0), self._dimmed)
         if self._selection is not None:
             self._paint_selection(painter)
+        if self._toolbar_shown():
+            # The toolbar is exactly its panel; its shadow belongs to the
+            # screen beneath, so clicks beside the panel still reach us.
+            chrome.paint_shadow(
+                painter, QRectF(self._toolbar.geometry()), toolbar_module.RADIUS
+            )
         hint = self._hint_rect()
         if not hint.isNull():
             self._hint.paint(painter, hint)
@@ -640,8 +645,11 @@ class SnapOverlay(QWidget):
                 return rect
         return QRect()
 
+    def _toolbar_shown(self) -> bool:
+        return self._phase is Phase.ANNOTATE and not self._toolbar.isHidden()
+
     def _blocks_hint(self, rect: QRect) -> bool:
         blockers = [self._selection] if self._selection is not None else []
-        if self._phase is Phase.ANNOTATE and not self._toolbar.isHidden():
-            blockers.append(self._toolbar.geometry())
+        if self._toolbar_shown():
+            blockers.append(self._toolbar.geometry().adjusted(-8, -8, 8, 8))
         return any(rect.intersects(other) for other in blockers)

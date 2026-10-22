@@ -3,7 +3,7 @@
 import time
 
 import pytest
-from PyQt6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt
 from PyQt6.QtGui import QColor, QImage, QMouseEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
@@ -12,7 +12,6 @@ from ui_qt.snap import overlay as overlay_module
 from ui_qt.snap import support
 from ui_qt.snap.annotations import SWATCHES, Arrow, Box, Label, Step, Tool
 from ui_qt.snap.overlay import Phase, SnapOverlay, window_flags
-from ui_qt.snap.toolbar import SHADOW
 
 SIZE = (640, 400)
 
@@ -225,7 +224,7 @@ class TestSelecting:
 
 class TestToolbar:
     def _panel(self, overlay):
-        return overlay.toolbar.geometry().adjusted(SHADOW, SHADOW, -SHADOW, -SHADOW)
+        return overlay.toolbar.geometry()
 
     def test_sits_under_the_selection(self, make_overlay):
         overlay = make_overlay()
@@ -244,6 +243,24 @@ class TestToolbar:
 
         assert panel.bottom() < overlay.selection.top()
         assert QRect(0, 0, *SIZE).contains(panel)
+
+    def test_clicks_right_beside_the_panel_reach_the_screenshot(self, make_overlay):
+        overlay = make_overlay()
+        _drag(overlay, (0, 0), SIZE)
+        overlay.set_tool(Tool.STEP)
+        panel = self._panel(overlay)
+        assert overlay.selection.contains(panel)
+
+        # Through the window, so the click lands on whichever widget is there.
+        QTest.mouseClick(
+            overlay.windowHandle(),
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            QPoint(panel.center().x(), panel.top() - 4),
+        )
+        QApplication.processEvents()
+
+        assert len(overlay.annotations) == 1
 
     def test_its_buttons_drive_the_overlay(self, make_overlay):
         overlay = make_overlay()

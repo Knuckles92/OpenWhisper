@@ -4,13 +4,15 @@ One painted widget rather than a row of QToolButtons: the app stylesheet
 restyles every QToolButton, and here each control needs its own look (tool
 icons tinted with the chosen colour, round swatches, a filled Keep). It
 never takes keyboard focus, so typing and shortcuts stay with the overlay.
+The widget is exactly the panel; the overlay paints its shadow, so no
+margin around it swallows clicks meant for the screenshot.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import QToolTip, QWidget
 
@@ -25,8 +27,6 @@ ICON = 20
 PAD = 6
 SEPARATOR = 13
 RADIUS = 12.0
-#: Room around the panel for its drop shadow.
-SHADOW = 10
 
 _TOOLS = (
     (Tool.ARROW, "Arrow (A)"),
@@ -50,8 +50,8 @@ def _layout() -> tuple[list[_Button], list[int]]:
     """Buttons left to right, and the x of each group separator, inside the panel."""
     buttons: list[_Button] = []
     separators: list[int] = []
-    x = SHADOW + PAD
-    top = SHADOW + PAD
+    x = PAD
+    top = PAD
 
     def add(kind: str, value: str, tip: str, width: int = BUTTON) -> None:
         nonlocal x
@@ -92,8 +92,7 @@ class SnapToolbar(QWidget):
         self.setObjectName("snapToolbar")
         self._palette = palette
         self._buttons, self._separators = _layout()
-        width = self._buttons[-1].rect.right() + 1 + PAD + SHADOW
-        self.setFixedSize(width, BUTTON + 2 * PAD + 2 * SHADOW)
+        self.setFixedSize(self._buttons[-1].rect.right() + 1 + PAD, BUTTON + 2 * PAD)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.ArrowCursor)
@@ -111,13 +110,6 @@ class SnapToolbar(QWidget):
         }
 
     # ---- state ----
-
-    def panel_rect(self) -> QRect:
-        """The visible panel, inside the shadow margin."""
-        return self.rect().adjusted(SHADOW, SHADOW, -SHADOW, -SHADOW)
-
-    def panel_size(self) -> QSize:
-        return self.panel_rect().size()
 
     def set_state(self, tool: Tool, color: int, can_undo: bool, can_redo: bool) -> None:
         state = (Tool(tool), color, can_undo, can_redo)
@@ -201,7 +193,7 @@ class SnapToolbar(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        paint_panel(painter, QRectF(self.panel_rect()), RADIUS, self._palette)
+        paint_panel(painter, QRectF(self.rect()), RADIUS, self._palette, shadow=0)
         self._paint_separators(painter)
         for button in self._buttons:
             self._paint_button(painter, button)
@@ -209,7 +201,7 @@ class SnapToolbar(QWidget):
 
     def _paint_separators(self, painter: QPainter) -> None:
         painter.setPen(QPen(self._palette.color("overlay-border"), 1))
-        top = SHADOW + PAD + 8
+        top = PAD + 8
         for x in self._separators:
             painter.drawLine(QPointF(x + 0.5, top), QPointF(x + 0.5, top + BUTTON - 16))
 
