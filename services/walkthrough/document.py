@@ -19,11 +19,12 @@ import logging
 import math
 import os
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QLocale, QMarginsF, QRectF, QSizeF, Qt, QUrl
+from PyQt6.QtCore import QLocale, QMarginsF, QPointF, QRectF, QSizeF, Qt, QUrl
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -41,6 +42,7 @@ from PyQt6.QtGui import (
     QTextFormat,
     QTextImageFormat,
     QTextLayout,
+    QTextLine,
 )
 
 logger = logging.getLogger(__name__)
@@ -391,18 +393,39 @@ def _paint_pages(
 def _paint_page(
     painter: QPainter, doc: QTextDocument, index: int, frames: list[QRectF], pen: QPen
 ) -> None:
-    page = doc.pageSize()
-    # Half a unit short of the next page: a screenshot that starts there
-    # lies right on this page's edge and would show as a line.
-    area = QRectF(0, index * page.height(), page.width(), page.height() - _SLACK)
+    """Paint the lines, screenshots included, and frames on page ``index``.
+
+    Line by line rather than with drawContents: QTextLayout also paints the
+    line before a clip rectangle, which the clip hides but the PDF keeps as
+    text, so text either side of a page break was found twice.
+    """
+    height = doc.pageSize().height()
     painter.save()
-    painter.translate(0, -area.top())
-    doc.drawContents(painter, area)
+    painter.translate(0, -index * height)
+    for line, origin in _lines(doc):
+        if _page_index(origin.y() + line.y(), height) == index:
+            line.draw(painter, origin)
     painter.setPen(pen)
     for frame in frames:
-        if area.contains(frame.topLeft()):
+        if _page_index(frame.top(), height) == index:
             painter.drawRect(frame)
     painter.restore()
+
+
+def _lines(doc: QTextDocument) -> Iterator[tuple[QTextLine, QPointF]]:
+    """Every line of ``doc``, with where its block is."""
+    block = doc.begin()
+    while block.isValid():
+        layout = block.layout()
+        for number in range(layout.lineCount()):
+            yield layout.lineAt(number), layout.position()
+        block = block.next()
+
+
+def _page_index(top: float, height: float) -> int:
+    """The page something starting at ``top`` is on; pagination puts every
+    line, and so every screenshot, wholly on one."""
+    return int((top + _SLACK) // height)
 
 
 def _document_font() -> QFont:
