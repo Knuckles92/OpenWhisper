@@ -13,9 +13,13 @@ Code: `services/runtime/walkthrough.py` (what each shortcut press does),
 
 ## Using it
 
-Both shortcuts start unassigned: set them under **Settings → Hotkeys →
-Walkthroughs**. The tray menu has **Start Walkthrough** (it reads **Finish
-Walkthrough** while one records) and **Take Screenshot**.
+Quick Record has a **Start Walkthrough** button (it reads **Finish
+Walkthrough** while one records), and while a walkthrough records the
+recording overlay offers **Snap** and **Done**, so it works without any
+shortcut. Those two take clicks on Windows and X11, where clicking the
+overlay leaves the app you are explaining in front. Both shortcuts start
+unassigned: set them under **Settings → Hotkeys → Walkthroughs**. The tray
+menu has **Start Walkthrough** and **Take Screenshot** too.
 
 - **Walkthrough** starts recording. Talk as you would to a colleague looking
   over your shoulder. The recording overlay says **Walkthrough**, then how
