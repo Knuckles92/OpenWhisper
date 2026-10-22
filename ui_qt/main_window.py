@@ -282,6 +282,7 @@ class MainWindow(QMainWindow):
 
     record_toggled = pyqtSignal(bool)
     record_canceled = pyqtSignal()
+    walkthrough_requested = pyqtSignal()
     model_changed = pyqtSignal(str)
     whisper_engine_changed = pyqtSignal()  # Local engine (model/device/quant) changed
     # The Remote backend's Model field chose one of the paired computer's
@@ -500,6 +501,7 @@ class MainWindow(QMainWindow):
 
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
         self.quick_record_tab.record_canceled.connect(self._on_quick_record_canceled)
+        self.quick_record_tab.walkthrough_requested.connect(self.walkthrough_requested)
         self.quick_record_tab.copy_requested.connect(self.quick_record_copy_requested)
 
         main_area_layout.addWidget(self.tabbed_content)
@@ -1827,6 +1829,7 @@ class MainWindow(QMainWindow):
         cancel_key: str,
         enable_disable_key: str = "",
         minimize_key: str = "",
+        walkthrough_key: str = "",
     ):
         """
         Update the hotkey display on buttons.
@@ -1836,8 +1839,11 @@ class MainWindow(QMainWindow):
             cancel_key: The key for canceling
             enable_disable_key: The key for enabling/disabling STT
             minimize_key: The key for minimizing to the system tray
+            walkthrough_key: The key that starts and finishes a walkthrough
         """
-        self.quick_record_tab.update_hotkeys(record_key, cancel_key, enable_disable_key)
+        self.quick_record_tab.update_hotkeys(
+            record_key, cancel_key, enable_disable_key, walkthrough_key
+        )
         self.compact_controller.update_hotkeys(record_key, cancel_key)
         self.tray_button.set_hotkey(minimize_key)
 

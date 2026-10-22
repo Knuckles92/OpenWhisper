@@ -34,6 +34,10 @@ _NOTICE_MS_PER_CHAR = 25
 _LANGUAGE_FLASH_S = 0.6
 _BADGE_HEIGHT = 18
 _BADGE_MARGIN = 9
+#: A walkthrough's controls on the overlay, left to right, and their words.
+_CONTROL_LABELS = {"snap": "Snap", "finish": "Done"}
+_CONTROL_GAP = 5
+_CONTROL_ICON = 12
 #: How fast a finish runs in each stage; the step to Transcribing eases up.
 _WORK_RATES = {"processing": 1.0, "transcribing": 1.7}
 _WORK_EASE_S = 0.3
@@ -57,6 +61,10 @@ class WaveformOverlay(QWidget):
     #: The language chip was clicked; only standalone Windows and X11 overlays
     #: take clicks, so the app being dictated into keeps focus.
     language_cycle_requested = pyqtSignal()
+    #: Snap or Done was clicked while a walkthrough records; shown where the
+    #: language chip takes clicks.
+    walkthrough_snap_requested = pyqtSignal()
+    walkthrough_finish_requested = pyqtSignal()
 
     STATE_IDLE = "idle"
     STATE_RECORDING = "recording"
@@ -186,7 +194,12 @@ class WaveformOverlay(QWidget):
         self._language_choices: tuple = ()
         self._language_changed_at: Optional[float] = None
         self._chip_rect = QRectF()
-        self._chip_hover = False
+        self._badge_rect = QRectF()
+        # What the pointer is over: "language", "snap", "finish" or "".
+        self._hover = ""
+        # Snap and Done, while a walkthrough records (set_walkthrough_controls).
+        self._walkthrough_controls = False
+        self._control_rects: dict[str, QRectF] = {}
         self._caption = ""
         self._caption_started = 0.0
         self._notice = ""
@@ -619,15 +632,20 @@ class WaveformOverlay(QWidget):
         return 2.0 if self._embedded else _BADGE_HEIGHT / 2
 
     def _draw_listening_extras(self, painter: QPainter) -> None:
+        self._badge_rect = QRectF()
         if self._recording_destination:
             self._draw_mode_badge(painter)
         if self.current_state not in self.LISTENING_STATES:
             self._chip_rect = QRectF()
+            self._control_rects = {}
             return
         latched = self._hands_free or self.current_state == self.STATE_COMMAND_LISTENING
         if not self._recording_destination and latched:
             self._draw_mode_badge(painter)
         self._chip_rect = self._draw_language_chip(painter) if self._chip_visible() else QRectF()
+        self._control_rects = (
+            self._draw_walkthrough_controls(painter) if self._controls_clickable() else {}
+        )
         if self._caption:
             self._draw_caption(painter)
 
@@ -638,6 +656,7 @@ class WaveformOverlay(QWidget):
         lock_width = 8 if self._hands_free else 0
         width = QFontMetrics(font).horizontalAdvance(text) + 18 + (lock_width + 5 if lock_width else 0)
         rect = QRectF(_BADGE_MARGIN, _BADGE_MARGIN, width, _BADGE_HEIGHT)
+        self._badge_rect = rect
         radius = self._badge_radius()
         ink = token_color("accent-soft")
         painter.setPen(Qt.PenStyle.NoPen)
@@ -774,26 +793,148 @@ class WaveformOverlay(QWidget):
     def _chip_hit(self, position: QPointF) -> bool:
         return self._chip_clickable() and self._chip_rect.adjusted(-4, -4, 4, 4).contains(position)
 
+    @property
+    def _chip_hover(self) -> bool:
+        return self._hover == "language"
+
+    # ---- Snap and Done while a walkthrough records ----
+
+    def set_walkthrough_controls(self, on: bool) -> None:
+        """Offer Snap and Done on the overlay while a walkthrough records."""
+        self._walkthrough_controls = bool(on)
+        if not on:
+            self._control_rects = {}
+            if self._hover in _CONTROL_LABELS:
+                self._set_hover("")
+        self.update()
+
+    def _controls_clickable(self) -> bool:
+        return (
+            self._walkthrough_controls
+            and not self._embedded
+            and _platform_takes_overlay_clicks()
+            and self.current_state in self.LISTENING_STATES
+        )
+
+    def _draw_walkthrough_controls(self, painter: QPainter) -> dict[str, QRectF]:
+        """Snap and Done, right to left before the language chip.
+
+        They drop their words for icons when the destination badge needs
+        the room.
+        """
+        font = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+        right = (
+            self.width() - _BADGE_MARGIN if self._chip_rect.isEmpty()
+            else self._chip_rect.left() - _CONTROL_GAP
+        )
+        left = _BADGE_MARGIN if self._badge_rect.isEmpty() else self._badge_rect.right() + _CONTROL_GAP
+        labelled = self._controls_width(font, labelled=True) <= right - left
+        rects = {}
+        for key in reversed(tuple(_CONTROL_LABELS)):
+            label = _CONTROL_LABELS[key] if labelled else ""
+            width = self._control_width(font, label)
+            rect = QRectF(right - width, _BADGE_MARGIN, width, _BADGE_HEIGHT)
+            self._draw_control(painter, key, rect, label, font)
+            rects[key] = rect
+            right = rect.left() - _CONTROL_GAP
+        return rects
+
+    @staticmethod
+    def _control_width(font: QFont, label: str) -> float:
+        if not label:
+            return float(_BADGE_HEIGHT + 8)
+        return _CONTROL_ICON + 16 + 4 + QFontMetrics(font).horizontalAdvance(label)
+
+    def _controls_width(self, font: QFont, *, labelled: bool) -> float:
+        widths = [self._control_width(font, label if labelled else "") for label in _CONTROL_LABELS.values()]
+        return sum(widths) + _CONTROL_GAP * (len(widths) - 1)
+
+    def _draw_control(self, painter: QPainter, key: str, rect: QRectF, label: str, font: QFont) -> None:
+        radius = self._badge_radius()
+        primary = key == "snap"
+        hover = self._hover == key
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(token_color("overlay-bg"))
+        painter.drawRoundedRect(rect, radius, radius)
+        if primary:
+            painter.setBrush(token_color("accent", 255 if hover else 215))
+            painter.drawRoundedRect(rect, radius, radius)
+        else:
+            painter.setBrush(token_color("overlay-rgb", 38 if hover else 22))
+            painter.drawRoundedRect(rect, radius, radius)
+            edge = token_color("accent", 220) if hover else token_color("overlay-border")
+            painter.setPen(QPen(edge, 1))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+        ink = token_color("on-accent") if primary else token_color("overlay-text")
+        icon = QPointF(rect.left() + 8 + _CONTROL_ICON / 2, rect.center().y()) if label else rect.center()
+        (self._draw_camera if primary else self._draw_check)(painter, icon, ink)
+        if label:
+            painter.setPen(QPen(ink))
+            painter.setFont(font)
+            text_left = icon.x() + _CONTROL_ICON / 2 + 4
+            painter.drawText(QRectF(text_left, rect.top(), rect.right() - text_left, rect.height()),
+                             int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), label)
+
+    @staticmethod
+    def _draw_camera(painter: QPainter, center: QPointF, color: QColor) -> None:
+        body = QRectF(center.x() - 6, center.y() - 3.2, 12, 8)
+        bump = QPainterPath(QPointF(center.x() - 2.6, body.top()))
+        bump.lineTo(center.x() - 1.6, body.top() - 1.8)
+        bump.lineTo(center.x() + 1.6, body.top() - 1.8)
+        bump.lineTo(center.x() + 2.6, body.top())
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(round_pen(color, 1.3))
+        painter.drawRoundedRect(body, 2.0, 2.0)
+        painter.drawPath(bump)
+        painter.drawEllipse(QPointF(center.x(), body.center().y()), 2.2, 2.2)
+
+    @staticmethod
+    def _draw_check(painter: QPainter, center: QPointF, color: QColor) -> None:
+        tick = QPainterPath(QPointF(center.x() - 4.0, center.y() + 0.2))
+        tick.lineTo(center.x() - 1.2, center.y() + 3.0)
+        tick.lineTo(center.x() + 4.2, center.y() - 2.8)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(round_pen(color, 1.6))
+        painter.drawPath(tick)
+
+    def _hit(self, position: QPointF) -> str:
+        """What a click at ``position`` presses: "language", "snap", "finish" or ""."""
+        if self._chip_hit(position):
+            return "language"
+        if not self._controls_clickable():
+            return ""
+        for key, rect in self._control_rects.items():
+            if rect.adjusted(-2, -4, 2, 4).contains(position):
+                return key
+        return ""
+
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self._chip_hit(event.position()):
+        target = self._hit(event.position()) if event.button() == Qt.MouseButton.LeftButton else ""
+        signal = {
+            "language": self.language_cycle_requested,
+            "snap": self.walkthrough_snap_requested,
+            "finish": self.walkthrough_finish_requested,
+        }.get(target)
+        if signal is not None:
             event.accept()
-            self.language_cycle_requested.emit()
+            signal.emit()
             return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        self._set_chip_hover(self._chip_hit(event.position()))
+        self._set_hover(self._hit(event.position()))
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, event):
-        self._set_chip_hover(False)
+        self._set_hover("")
         super().leaveEvent(event)
 
-    def _set_chip_hover(self, hover: bool) -> None:
-        if hover == self._chip_hover:
+    def _set_hover(self, target: str) -> None:
+        if target == self._hover:
             return
-        self._chip_hover = hover
-        if hover:
+        self._hover = target
+        if target:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
             self.unsetCursor()
@@ -1158,7 +1299,8 @@ class WaveformOverlay(QWidget):
         self._hands_free = False
         self._language_changed_at = None
         self._chip_rect = QRectF()
-        self._set_chip_hover(False)
+        self._control_rects = {}
+        self._set_hover("")
         self._clear_caption()
 
     def hide(self):

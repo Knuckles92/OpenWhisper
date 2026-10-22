@@ -186,6 +186,23 @@ QPushButton#warningButton[inactive="true"]:pressed {
     border: 1px solid @border;
 }
 
+/* Start Walkthrough sits with the record controls (quick_record_tab.py):
+   their size and weight with the accent fill, and their outline while a
+   dictation records and it can't start. */
+QPushButton#primaryButton[buttonId="walkthrough"] {
+    font-size: 14px;
+    font-weight: 600;
+    padding: 10px 20px;
+}
+
+QPushButton#primaryButton[buttonId="walkthrough"][inactive="true"],
+QPushButton#primaryButton[buttonId="walkthrough"][inactive="true"]:hover,
+QPushButton#primaryButton[buttonId="walkthrough"][inactive="true"]:pressed {
+    background-color: @surface;
+    color: @text-muted;
+    border: 1px solid @border;
+}
+
 /* ComboBox (Model selector) */
 QComboBox {
     background-color: @surface;

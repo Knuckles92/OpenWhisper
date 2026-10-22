@@ -6,7 +6,7 @@ from PyQt6.QtCore import QEvent, Qt, QSize, QTimer, pyqtSignal
 from ui_qt.dialogs.settings_destinations import COMMANDS
 from ui_qt.utils.icons import tabler_icon
 from ui_qt.widgets.cards import ControlPanel
-from ui_qt.widgets.buttons import SuccessButton, DangerButton, WarningButton
+from ui_qt.widgets.buttons import PrimaryButton, SuccessButton, DangerButton, WarningButton
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.engine_field import engine_combo
@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 class QuickRecordTab(TranscriptionTabBase):
     record_toggled = pyqtSignal(bool)
     record_canceled = pyqtSignal()
+    #: Start a walkthrough, or finish the one recording (docs/walkthrough.md).
+    walkthrough_requested = pyqtSignal()
     copy_requested = pyqtSignal(str)
     profiles_requested = pyqtSignal()
     settings_requested = pyqtSignal(str)
@@ -38,6 +40,8 @@ class QuickRecordTab(TranscriptionTabBase):
         # State (safe to set after the base constructor: _setup_ui never
         # reads it, and no signals can fire during init)
         self.is_recording = False
+        # The recording in progress is a walkthrough.
+        self.walkthrough_active = False
 
         self._partial_buffer = []
 
@@ -246,6 +250,12 @@ class QuickRecordTab(TranscriptionTabBase):
         self.cancel_button.set_active(False)
         self.stop_button = DangerButton("Stop")
         self.stop_button.set_active(False)
+        self.walkthrough_button = PrimaryButton("Start Walkthrough")
+        self.walkthrough_button.setProperty("buttonId", "walkthrough")
+        self.walkthrough_button.setToolTip(
+            "Talk while you take screenshots, then get one document with your "
+            "words and pictures, copied to paste into an agent"
+        )
 
         buttons_widget = QWidget()
         buttons_layout = QVBoxLayout(buttons_widget)
@@ -263,6 +273,7 @@ class QuickRecordTab(TranscriptionTabBase):
 
         buttons_layout.addLayout(top_row)
         buttons_layout.addLayout(bottom_row)
+        buttons_layout.addWidget(self.walkthrough_button)
         buttons_widget.setMaximumWidth(420)
 
         control_panel.layout.addStretch()
@@ -277,6 +288,7 @@ class QuickRecordTab(TranscriptionTabBase):
         self.record_button.clicked.connect(self._on_record_clicked)
         self.stop_button.clicked.connect(self._on_stop_clicked)
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
+        self.walkthrough_button.clicked.connect(self.walkthrough_requested)
 
     def _on_record_clicked(self):
         """Request a start; Recording chrome waits for a successful stream."""
@@ -315,6 +327,19 @@ class QuickRecordTab(TranscriptionTabBase):
             self.local_engine.set_busy(False)
             self.set_live_preview_locked(False)
             self.set_status("Ready to record")
+        self._refresh_walkthrough_button()
+
+    def set_walkthrough_active(self, active: bool) -> None:
+        """Whether the recording in progress is a walkthrough, which the button finishes."""
+        self.walkthrough_active = bool(active)
+        self._refresh_walkthrough_button()
+
+    def _refresh_walkthrough_button(self) -> None:
+        """Start a walkthrough, finish the one recording, or wait out a dictation."""
+        self.walkthrough_button.setText(
+            "Finish Walkthrough" if self.walkthrough_active else "Start Walkthrough"
+        )
+        self.walkthrough_button.set_active(self.walkthrough_active or not self.is_recording)
 
     def append_transcription(self, text: str):
         self.set_transcript(self.shown_transcript() + text)
@@ -343,7 +368,9 @@ class QuickRecordTab(TranscriptionTabBase):
     def clear_partial_transcription(self):
         self._partial_buffer.clear()
 
-    def update_hotkeys(self, record_key: str, cancel_key: str, enable_disable_key: str = ""):
+    def update_hotkeys(self, record_key: str, cancel_key: str, enable_disable_key: str = "",
+                       walkthrough_key: str = ""):
         self._standard_record_key = record_key
         self._refresh_profile_hint()
         self.cancel_button.set_hotkey(cancel_key)
+        self.walkthrough_button.set_hotkey(walkthrough_key)

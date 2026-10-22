@@ -475,6 +475,9 @@ class UIController(QObject):
 
         self.overlay.state_changed.connect(self._on_overlay_state_changed)
         self.overlay.language_cycle_requested.connect(self.cycle_dictation_language)
+        self.overlay.walkthrough_snap_requested.connect(self._on_overlay_snap)
+        self.overlay.walkthrough_finish_requested.connect(self._on_overlay_finish)
+        self.main_window.walkthrough_requested.connect(self._on_window_walkthrough)
 
         self.record_started.connect(self._show_recording_overlay)
         self.record_stopped.connect(self._show_processing_overlay)
@@ -1055,8 +1058,25 @@ class UIController(QObject):
         return keep_out_of_screenshots(self.overlay, enabled)
 
     def set_walkthrough_active(self, active: bool) -> None:
-        """Whether a walkthrough records: the tray then offers to finish it."""
+        """Whether a walkthrough records: the window's button and the tray then
+        finish it, and the recording overlay offers Snap and Done."""
         self.tray_manager.set_walkthrough_active(active)
+        self.main_window.quick_record_tab.set_walkthrough_active(active)
+        self.overlay.set_walkthrough_controls(active)
+
+    def _on_window_walkthrough(self) -> None:
+        if self.on_walkthrough is not None:
+            self.on_walkthrough("ui")
+
+    def _on_overlay_snap(self) -> None:
+        # "ui" is the window and tray's source (catalog.SOURCES); the overlay
+        # is the same user at the same desk.
+        if self.on_screenshot is not None:
+            self.on_screenshot("ui")
+
+    def _on_overlay_finish(self) -> None:
+        if self.on_walkthrough is not None:
+            self.on_walkthrough("ui")
 
     def show_overlay_caption(self, text: str) -> None:
         self.overlay.show_caption(text)
@@ -2134,8 +2154,9 @@ class UIController(QObject):
         minimize_key = format_hotkey_display(
             hotkeys.get('minimize_tray', config.DEFAULT_HOTKEYS['minimize_tray'])
         )
+        walkthrough_key = format_hotkey_display(hotkeys.get('walkthrough') or "")
         self.main_window.update_hotkeys(
-            record_key, cancel_key, enable_disable_key, minimize_key
+            record_key, cancel_key, enable_disable_key, minimize_key, walkthrough_key
         )
 
     def _on_check_for_updates_requested(self) -> None:
