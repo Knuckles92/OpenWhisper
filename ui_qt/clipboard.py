@@ -8,8 +8,10 @@ import os
 import secrets
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Callable, Optional
 
 from PyQt6.QtCore import (
@@ -491,6 +493,35 @@ class TemporaryClipboard(QObject):
         if written:
             self._discard_pending()
         return written
+
+    def write_files(
+        self, paths: Sequence[Path], text: str = "", *, image: QImage | None = None
+    ) -> bool:
+        """Put ``paths`` on the clipboard as files, with ``text`` and ``image``.
+
+        Each app pastes what it takes: a chat app or the file manager the
+        files (Windows reads file URLs as CF_HDROP), a terminal the text, an
+        app that takes pictures the image. Like ``write_text``, on the Qt
+        thread: it ends a selection capture in flight, and once written
+        drops any pending auto-paste restore.
+        """
+        self._abort_selection_capture()
+        if self._clipboard is None:
+            logger.error("No Qt clipboard available")
+            return False
+        mime_data = QMimeData()
+        mime_data.setUrls([QUrl.fromLocalFile(os.path.abspath(p)) for p in paths])
+        if text:
+            mime_data.setText(text)
+        if image is not None:
+            mime_data.setImageData(image)
+        try:
+            self._clipboard.setMimeData(mime_data)
+        except Exception as exc:
+            logger.error("Failed to copy files to the clipboard: %s", exc)
+            return False
+        self._discard_pending()
+        return True
 
     def stage_text(
         self, text: str, html: str | None = None, *, restore: bool = True
