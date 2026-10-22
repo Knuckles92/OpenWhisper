@@ -31,10 +31,14 @@ ON_DEMAND_MODULES = (
     "services.synthetic_keys",
     "services.text_rewrite",
     "services.vocabulary",
+    "services.walkthrough.document",
+    "services.walkthrough.finish",
+    "services.walkthrough.storage",
     "ui_qt.dialogs.cleanup_levels",
     "ui_qt.dialogs.settings_microphones",
     "ui_qt.dialogs.stats_dialog",
     "ui_qt.history_actions",
+    "ui_qt.snap",
     "ui_qt.widgets.action_agent_card",
     "ui_qt.widgets.action_editor",
     "ui_qt.widgets.action_fields",
@@ -50,6 +54,7 @@ ON_DEMAND_MODULES = (
     "ui_qt.widgets.language_menu",
     "ui_qt.widgets.scratchpad",
     "ui_qt.widgets.snippets_panel",
+    "ui_qt.widgets.walkthrough_ready",
 )
 _PLATFORM_MODULES = {
     "win32": (

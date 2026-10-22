@@ -2484,6 +2484,10 @@ class TranscriptionRuntime:
             event_catalog.TRANSCRIPTION_FAILED,
             event_catalog.transcription_failed(job, category, message=error_message),
         )
+        if category == event_catalog.FAILURE_CANCELED:
+            # A Cancel throws a walkthrough's screenshots away whenever it
+            # comes, as it does while recording.
+            self._end_walkthrough(keep=False)
         pending_audio = self.controller._pending_audio_path
         status = self._error_status(error_message, job, refused=refused)
         self.controller.ui_controller.set_status(status)

@@ -371,12 +371,16 @@ def test_a_cancel_between_sections_stops_the_walkthrough(h):
         return next(words)
 
     h.backend.transcribe = transcribe
+    folder = h.session.folder()
 
     h.runtime.transcribe_audio_file(str(h.audio))
 
     assert h.backend.paths == ["section-1.wav"]
     assert h.built == []
     assert h.ui.copied_files == []
+    # Canceled after the recording stopped: thrown away all the same.
+    assert not (folder / "shot-1.png").exists()
+    assert not any("screenshots kept" in status for status in h.ui.statuses)
 
 
 def test_an_unreadable_recording_is_transcribed_whole_above_the_screenshots(h):
