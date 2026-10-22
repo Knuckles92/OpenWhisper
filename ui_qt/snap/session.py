@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from functools import partial
 
 from PyQt6.QtCore import (
     QCoreApplication,
@@ -69,6 +70,9 @@ class SnapSession(QObject):
         self._notice.setSingleShot(True)
         self._notice.setInterval(0)
         self._notice.timeout.connect(self._emit_failure)
+        # Should an owner delete the session mid-snap, nothing is left
+        # hidden. Bound to the list, not the session, which is gone by then.
+        self.destroyed.connect(partial(capture.restore_windows, self._hidden))
 
     @property
     def active(self) -> bool:
@@ -92,8 +96,7 @@ class SnapSession(QObject):
             self._overlay.drop()
             return
         self._settle.stop()
-        capture.restore_windows(self._hidden)
-        self._hidden = []
+        self._restore_windows()
         self._finish(self.dropped.emit)
 
     # ---- capture ----
@@ -108,7 +111,7 @@ class SnapSession(QObject):
             self._fail_soon(NO_SCREEN)
             return
         self._screen, self._hint = screen, hint
-        self._hidden = capture.hide_windows(keep_out)
+        self._hidden.extend(capture.hide_windows(keep_out))
         if not self._hidden:
             self._capture()
             return
@@ -126,8 +129,7 @@ class SnapSession(QObject):
         try:
             image = capture.grab(self._screen)
         finally:
-            capture.restore_windows(self._hidden)
-            self._hidden = []
+            self._restore_windows()
         if image is None:
             self._fail_soon(CAPTURE_FAILED)
         elif self._keep_when_captured:
@@ -136,10 +138,16 @@ class SnapSession(QObject):
         else:
             self._open(image)
 
+    def _restore_windows(self) -> None:
+        capture.restore_windows(self._hidden)
+        self._hidden.clear()
+
     def _open(self, image: QImage) -> None:
         overlay = SnapOverlay(image, self._screen, hint=self._hint)
         overlay.kept.connect(self._on_kept)
         overlay.dropped.connect(self._on_dropped)
+        # An overlay outliving its session would cover the screen for good.
+        self.destroyed.connect(overlay.deleteLater)
         self._overlay = overlay
         overlay.present()
 

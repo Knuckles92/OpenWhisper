@@ -9,7 +9,6 @@ once; whoever opened it closes and deletes it.
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
 from enum import Enum
 from functools import partial
@@ -28,7 +27,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QLineEdit, QWidget
 
-from ui_qt.snap import affinity, chrome, export
+from ui_qt.snap import affinity, chrome, export, support
 from ui_qt.snap.annotations import (
     LABEL_PAD_X,
     LABEL_PAD_Y,
@@ -71,6 +70,7 @@ _TOOL_KEYS = {
 }
 _COLOR_KEYS = {Qt.Key.Key_1: 0, Qt.Key.Key_2: 1, Qt.Key.Key_3: 2, Qt.Key.Key_4: 3}
 _KEEP_KEYS = (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+_TAB_KEYS = (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)
 
 
 class Phase(Enum):
@@ -90,7 +90,8 @@ def window_flags() -> Qt.WindowType:
     frameless = Qt.WindowType.FramelessWindowHint
     if is_wayland():
         return Qt.WindowType.Window | frameless
-    kind = Qt.WindowType.Tool if sys.platform == "win32" else Qt.WindowType.Window
+    windows = support._platform() == "win32"
+    kind = Qt.WindowType.Tool if windows else Qt.WindowType.Window
     return kind | frameless | Qt.WindowType.WindowStaysOnTopHint
 
 
@@ -147,14 +148,22 @@ class LabelEditor(QLineEdit):
         self._fit()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        if event.key() in _KEEP_KEYS:
-            event.accept()
+        key = event.key()
+        if key in _KEEP_KEYS:
             self.committed.emit()
-        elif event.key() == Qt.Key.Key_Escape:
-            event.accept()
+        elif key == Qt.Key.Key_Escape:
             self.cancelled.emit()
-        else:
+        elif key not in _TAB_KEYS:
             super().keyPressEvent(event)
+            return
+        # Swallowed, Tab included: an ignored key goes on to the overlay,
+        # where Esc drops the snap and Tab moves the keyboard off the label.
+        event.accept()
+
+    def focusNextPrevChild(self, forward: bool) -> bool:
+        # Tab stays here (see keyPressEvent): the overlay treats every letter
+        # as a tool shortcut.
+        return False
 
     def _fit(self) -> None:
         self.ensurePolished()
@@ -286,7 +295,7 @@ class SnapOverlay(QWidget):
         self._done = True
         self.dropped.emit()
 
-    def select_all(self) -> None:
+    def _select_all(self) -> None:
         """Select the whole screen and start annotating it."""
         self._origin = None
         self._set_selection(QRect(self._canvas))
@@ -402,7 +411,7 @@ class SnapOverlay(QWidget):
             and event.button() == Qt.MouseButton.LeftButton
             and not self._done
         ):
-            self.select_all()
+            self._select_all()
             return
         # Two quick clicks while annotating are two clicks (two step badges).
         self.mousePressEvent(event)

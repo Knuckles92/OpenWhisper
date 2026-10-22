@@ -1,13 +1,17 @@
 """The snap overlay: selecting, keys, labels, the toolbar, keep and drop."""
 
+import time
+
 import pytest
 from PyQt6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt
 from PyQt6.QtGui import QColor, QImage, QMouseEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
+from ui_qt.snap import overlay as overlay_module
+from ui_qt.snap import support
 from ui_qt.snap.annotations import SWATCHES, Arrow, Box, Label, Step, Tool
-from ui_qt.snap.overlay import Phase, SnapOverlay
+from ui_qt.snap.overlay import Phase, SnapOverlay, window_flags
 from ui_qt.snap.toolbar import SHADOW
 
 SIZE = (640, 400)
@@ -75,6 +79,14 @@ def _drag(widget, start, end):
     _mouse(
         widget, QEvent.Type.MouseButtonRelease, *end, buttons=Qt.MouseButton.NoButton
     )
+
+
+def _pump_until(predicate, timeout=1.0):
+    deadline = time.monotonic() + timeout
+    while not predicate() and time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.005)
+    return predicate()
 
 
 def _center(rect):
@@ -412,6 +424,18 @@ class TestLabels:
         assert overlay.label_editor is None
         assert [item.text for item in overlay.annotations.items] == ["Note"]
 
+    def test_tab_keeps_the_keyboard_in_the_label(self, make_overlay):
+        overlay = make_overlay()
+        overlay.activateWindow()
+        editor = self._start_label(overlay)
+        editor.setFocus()
+        assert _pump_until(editor.hasFocus)
+
+        QTest.keyClick(editor, Qt.Key.Key_Tab)
+
+        assert editor.hasFocus()
+        assert overlay.label_editor is editor
+
     def test_undo_while_typing_discards_the_label(self, make_overlay):
         overlay = make_overlay()
         editor = self._start_label(overlay)
@@ -421,3 +445,23 @@ class TestLabels:
 
         assert overlay.label_editor is None
         assert len(overlay.annotations) == 0
+
+
+@pytest.mark.parametrize(
+    ("platform", "wayland", "kind", "on_top"),
+    [
+        ("win32", False, Qt.WindowType.Tool, True),
+        ("linux", False, Qt.WindowType.Window, True),
+        ("linux", True, Qt.WindowType.Window, False),
+    ],
+    ids=["windows", "x11", "wayland"],
+)
+def test_window_flags_suit_each_desktop(monkeypatch, platform, wayland, kind, on_top):
+    monkeypatch.setattr(support, "_platform", lambda: platform)
+    monkeypatch.setattr(overlay_module, "is_wayland", lambda: wayland)
+
+    flags = window_flags()
+
+    assert flags & Qt.WindowType.WindowType_Mask == kind
+    assert bool(flags & Qt.WindowType.FramelessWindowHint)
+    assert bool(flags & Qt.WindowType.WindowStaysOnTopHint) is on_top

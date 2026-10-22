@@ -12,7 +12,16 @@ from types import SimpleNamespace
 
 import pytest
 from PyQt6 import sip
-from PyQt6.QtCore import QBuffer, QCoreApplication, QEvent, QIODevice, QRect, QSize, Qt
+from PyQt6.QtCore import (
+    QBuffer,
+    QCoreApplication,
+    QEvent,
+    QIODevice,
+    QObject,
+    QRect,
+    QSize,
+    Qt,
+)
 from PyQt6.QtGui import QColor, QGuiApplication, QImage
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QWidget
@@ -49,7 +58,8 @@ def grabs(monkeypatch):
     monkeypatch.setattr(session, "snap_support", lambda: (True, ""))
     yield calls
     for live in list(session._live):
-        live.drop()
+        if not sip.isdeleted(live):
+            live.drop()
     # A failure still waiting to be reported belongs to its own test.
     session._live.clear()
 
@@ -185,6 +195,16 @@ class TestOutcomes:
         assert len(kept) == 1
         assert live not in session._live
 
+    def test_an_owner_deleted_mid_snap_takes_the_overlay_with_it(self):
+        owner = QObject()
+        snap = start_snap(parent=owner)
+        overlay = snap._overlay
+
+        sip.delete(owner)
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+        assert sip.isdeleted(overlay)
+
     def test_start_snap_refuses_other_threads(self):
         errors = []
 
@@ -273,6 +293,19 @@ class TestKeepOut:
         assert image.size() == QGuiApplication.primaryScreen().geometry().size()
         assert window.isVisible()
 
+    def test_an_owner_deleted_while_waiting_shows_the_windows_again(
+        self, window, grabs
+    ):
+        owner = QObject()
+        start_snap(keep_out=[window], parent=owner)
+        assert not window.isVisible()
+
+        sip.delete(owner)
+
+        assert window.isVisible()
+        _pump(0.25)
+        assert grabs == []
+
     def test_one_window_listed_twice_is_hidden_once(self, window):
         hidden = capture.hide_windows([window, window])
 
@@ -286,7 +319,7 @@ class FakeUser32:
         self.result = result
         self.calls = []
 
-    def SetWindowDisplayAffinity(self, hwnd, affinity_value):  # noqa: N802 (Win32 name)
+    def SetWindowDisplayAffinity(self, hwnd, affinity_value):
         self.calls.append((hwnd, affinity_value))
         return self.result
 
