@@ -396,8 +396,9 @@ def _paint_page(
     """Paint the lines, screenshots included, and frames on page ``index``.
 
     Line by line rather than with drawContents: QTextLayout also paints the
-    line before a clip rectangle, which the clip hides but the PDF keeps as
-    text, so text either side of a page break was found twice.
+    line before a clip rectangle, which the clip hides but the PDF would
+    keep as text, so text copied or searched across a page break would come
+    up twice.
     """
     height = doc.pageSize().height()
     painter.save()
@@ -570,7 +571,8 @@ class _Pages:
         self.height = doc.pageSize().height()
         # QTextDocumentLayout lays out lazily, and a format changed while it
         # is unfinished leaves the blocks after it without lines (see
-        # _layout). Laid out in full first, every change relays the rest.
+        # _layout). Laid out in full first, it lays out again all that
+        # follows each change.
         doc.documentLayout().documentSize()
 
     def paginate(self, groups: list[_Group]) -> None:
@@ -635,10 +637,11 @@ class _Pages:
         """Shrink the screenshot to fit below the words on their last page.
 
         Never below half its size: a screenshot too small to read is worse
-        than one on the next page.
+        than one on the next page. One that starts its section has no words
+        to stay with, and fits on any page as it is.
         """
         image_format = self._image_format(group)
-        if image_format is None:
+        if image_format is None or group.image == group.first:
             return
         above = self._end(group.image - 1) + self._margin(group.image)
         page_end = (self._page_of(above - _SLACK) + 1) * self.height

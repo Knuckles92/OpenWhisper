@@ -15,7 +15,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QLocale
+from PyQt6.QtCore import QLocale, QSize, QSizeF
 from PyQt6.QtGui import QColor, QImage, QPageSize
 from PyQt6.QtPdf import QPdfDocument
 
@@ -319,6 +319,51 @@ def test_a_section_that_would_split_starts_the_next_page(tmp_path):
     assert "Second words." not in pages[0] and "Screenshot 2" not in pages[0]
     assert "Second words." in pages[1] and "Screenshot 2 · 0:50" in pages[1]
     assert "Last words." in pages[1]
+
+
+def test_a_screenshot_without_words_moves_whole(tmp_path):
+    # Too tall for the room left under the first section, the second
+    # screenshot starts the next page as wide as the text, not shrunk.
+    walkthrough = Walkthrough(STARTED, 90, (
+        Section("First words.", _png(tmp_path / "shot-1.png", 1344, 900), 10.0),
+        Section("", _png(tmp_path / "shot-2.png", 1600, 900, "#30a060"), 20.0),
+    ))
+
+    path = write_pdf(walkthrough, tmp_path, page_size=LETTER)
+
+    pages = _pages(path)
+    assert len(pages) == 2 and "Screenshot 2 · 0:20" in pages[1]
+    # Letter less 0.75 inch margins leaves 7 inches of text width.
+    assert _widest(path, 1, "#30a060") == pytest.approx(7 * 72, abs=3)
+
+
+def test_a_screenshot_without_words_is_never_shrunk(tmp_path):
+    # Wherever the first section ends, the screenshot after it starts its
+    # own section: it moves on whole, or stays whole, but never shrinks.
+    lone = _png(tmp_path / "lone.png", 1600, 900)
+    for height in range(300, 460, 6):
+        first = _png(tmp_path / f"first-{height}.png", 1344, 2 * height)
+        sections = (Section("First words.", first, 1.0), Section("", lone, 2.0))
+        composer = document._Composer(QSizeF(672, 921), 96)
+
+        _doc, frames = composer.compose(Walkthrough(STARTED, 9, sections))
+
+        assert frames[1].size() == QSizeF(672, 378), height
+
+
+def _widest(path: Path, page: int, color: str) -> int:
+    """The widest row of ``color`` on ``page``, in points."""
+    pdf = _pdf(path)
+    try:
+        size = pdf.pagePointSize(page)
+        image = pdf.render(page, QSize(round(size.width()), round(size.height())))
+    finally:
+        pdf.close()
+    target = QColor(color)
+    return max(
+        sum(1 for x in range(image.width()) if image.pixelColor(x, y) == target)
+        for y in range(0, image.height(), 4)
+    )
 
 
 def test_the_first_section_stays_on_the_first_page_with_the_title(tmp_path):
