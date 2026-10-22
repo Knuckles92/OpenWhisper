@@ -130,7 +130,7 @@ def _paragraphs(words: str) -> list[str]:
     return [paragraph for paragraph in paragraphs if paragraph]
 
 
-def _clock(seconds: float) -> str:
+def clock(seconds: float) -> str:
     """``1:12``, or ``1:02:03`` from an hour on, in whole seconds."""
     whole = max(0, int(seconds))
     hours, rest = divmod(whole, 3600)
@@ -149,7 +149,7 @@ def _when(started_at: datetime) -> str:
 def _meta(walkthrough: Walkthrough, shots: int) -> str:
     """``Tue, Oct 20, 2026, 2:32 PM · 2:16 of speech · 3 screenshots``."""
     count = {0: "no screenshots", 1: "1 screenshot"}.get(shots, f"{shots} screenshots")
-    speech = _clock(walkthrough.duration_s)
+    speech = clock(walkthrough.duration_s)
     return f"{_when(walkthrough.started_at)} · {speech} of speech · {count}"
 
 
@@ -163,7 +163,7 @@ def _label(part: _Part, before_time: str, after_time: str = "") -> str:
     label = f"Screenshot {part.number}"
     if part.kept_at_s is None:
         return label
-    return f"{label}{before_time}{_clock(part.kept_at_s)}{after_time}"
+    return f"{label}{before_time}{clock(part.kept_at_s)}{after_time}"
 
 
 def _relative(path: Path, folder: Path) -> str | None:

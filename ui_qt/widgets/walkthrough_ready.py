@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from services.walkthrough.document import clock
 from ui_qt.utils.desktop import compositor_managed
 from ui_qt.utils.file_reveal import reveal_in_file_manager
 from ui_qt.utils.icons import design_icon
@@ -55,13 +56,6 @@ def show_ready(card: Optional["WalkthroughReadyCard"], result, *, copied: bool):
         card = WalkthroughReadyCard()
     card.present(result, copied=copied)
     return card
-
-
-def _duration(seconds: float) -> str:
-    seconds = int(round(seconds or 0))
-    hours, rest = divmod(seconds, 3600)
-    minutes, secs = divmod(rest, 60)
-    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
 
 
 def _thumbnail(path: Optional[Path]) -> Optional[QPixmap]:
@@ -218,7 +212,7 @@ class WalkthroughReadyCard(QWidget):
         count = f"{result.shots} screenshot{'' if result.shots == 1 else 's'}"
         if copied:
             self.title.setText("Walkthrough copied")
-            self.subtitle.setText(f"{count} · {_duration(result.duration_s)} — paste it into your agent")
+            self.subtitle.setText(f"{count} · {clock(result.duration_s)} — paste it into your agent")
         else:
             self.title.setText("Walkthrough saved")
             self.subtitle.setText(f"{count} · copying failed — drag it from here")
