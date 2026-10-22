@@ -92,7 +92,9 @@ def hide_windows(windows: Iterable[QWidget]) -> list[QWidget]:
     """Hide the windows that would show up in a capture; returns the ones hidden.
 
     Windows already kept out by affinity stay put (no flicker), as do hidden
-    and minimised ones, which are not on screen anyway.
+    and minimised ones, which are not on screen anyway. Qt's own hide, not a
+    subclass's: a capture only needs the window off screen for a moment, and
+    the recording overlay's hide() ends the recording session it shows.
     """
     hidden = []
     for window in _top_levels(windows):
@@ -101,7 +103,7 @@ def hide_windows(windows: Iterable[QWidget]) -> list[QWidget]:
             and not window.isMinimized()
             and not affinity.is_kept_out(window)
         ):
-            window.hide()
+            QWidget.hide(window)
             hidden.append(window)
     return hidden
 
@@ -113,5 +115,5 @@ def restore_windows(windows: Iterable[QWidget]) -> None:
             continue
         quiet = window.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         window.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        window.show()
+        QWidget.show(window)
         window.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, quiet)

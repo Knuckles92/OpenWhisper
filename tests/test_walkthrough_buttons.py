@@ -174,7 +174,38 @@ def test_no_controls_on_an_embedded_overlay(monkeypatch):
         host.close()
 
 
+def test_a_capture_leaves_the_recording_overlay_as_it_was(overlay):
+    from ui_qt.snap import capture
+
+    _recording_walkthrough(overlay)
+
+    hidden = capture.hide_windows([overlay])
+    assert hidden == [overlay] and not overlay.isVisible()
+    capture.restore_windows(hidden)
+
+    assert overlay.isVisible()
+    assert overlay.current_state == overlay.STATE_RECORDING
+    assert overlay.recording_destination == "Walkthrough · 1 shot"
+    _paint(overlay)
+    assert set(overlay._control_rects) == {"snap", "finish"}
+
+
 # --- the UI controller passes it all on -------------------------------------
+
+
+@pytest.mark.parametrize("window, keep_out", [(True, 1), (False, 0)])
+def test_snaps_keep_the_overlay_out_only_when_it_is_its_own_window(monkeypatch, window, keep_out):
+    import ui_qt.snap as snap
+
+    seen = {}
+    monkeypatch.setattr(snap, "start_snap", lambda **kwargs: seen.update(kwargs) or "session")
+    ui = SimpleNamespace(overlay=Mock())
+    ui.overlay.isWindow.return_value = window
+
+    assert UIController.start_snap(ui, hint="talk") == "session"
+
+    assert len(seen["keep_out"]) == keep_out
+    assert seen["hint"] == "talk"
 
 
 def test_the_controller_shows_the_walkthrough_everywhere():
