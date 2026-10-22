@@ -431,6 +431,19 @@ def test_a_walkthrough_without_screenshots_is_text_only(tmp_path):
     assert "Each screenshot comes right after" not in page
 
 
+def test_a_walkthrough_with_nothing_said_still_writes_its_header(tmp_path):
+    walkthrough = Walkthrough(STARTED, 3, (Section(" "),))
+    meta = "Tue, Oct 20, 2026, 2:32 PM · 0:03 of speech · no screenshots"
+
+    text = write_markdown(walkthrough, tmp_path).read_text(encoding="utf-8")
+    manifest = json.loads(write_manifest(walkthrough, tmp_path).read_text("utf-8"))
+    (page,) = _pages(write_pdf(walkthrough, tmp_path, page_size=LETTER))
+
+    assert text == f"# Walkthrough\n\n_{meta}. {ABOUT_SHOTLESS}_\n"
+    assert manifest["sections"] == []
+    assert page == f"Walkthrough {meta} {ABOUT_SHOTLESS}"
+
+
 def test_an_unreadable_screenshot_keeps_its_words_and_caption(tmp_path, caplog):
     broken = tmp_path / "shot-1.png"
     broken.write_bytes(b"not a png")
