@@ -299,6 +299,14 @@ def main() -> int:
 
         ui_controller.show_main_window()
         profiler.mark("main_window_shown")
+        from services.credentials import (
+            UNRESPONSIVE_KEYRING_STATUS,
+            keyring_did_not_respond,
+        )
+
+        if keyring_did_not_respond():
+            logging.warning(UNRESPONSIVE_KEYRING_STATUS)
+            ui_controller.set_ambient_status(UNRESPONSIVE_KEYRING_STATUS)
         from services.diagnostics import record_metrics
 
         record_metrics(startup_to_window_s=profiler.events[-1][1])

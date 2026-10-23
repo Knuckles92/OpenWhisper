@@ -13,6 +13,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Changed
 - **Walkthroughs have their own Settings page** — **Settings → Dictation → Walkthroughs** now holds the Walkthrough and Screenshot shortcuts, how the document looks, and the AI write-up, which were spread across General and Hotkeys. Hotkeys links to it.
 
+### Fixed
+- **Linux no longer stays on the splash when the system keyring does not answer** — a Secret Service that accepts D-Bus calls but never replies (a locked GNOME Keyring or KWallet waiting for an unlock prompt that never appears) used to block "Creating interface…" forever, even with API transcription and MCP off. Lookups now give up after a few seconds, the window opens without saved keys, the status line and Settings → API keys explain that the keyring did not respond, and keys from the environment or `.env` still work.
+
 ## [2.7.7] - 2026-10-22
 
 ### Added
