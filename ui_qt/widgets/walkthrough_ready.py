@@ -46,6 +46,8 @@ SHOW_MS = 14_000
 LINGER_MS = 4_000
 THUMB_SIZE = QSize(76, 48)
 SCREEN_MARGIN = 18
+#: Wraps a write-up failure's reason instead of widening the card.
+REASON_WIDTH = 300
 
 
 def show_ready(card: Optional["WalkthroughReadyCard"], result, *, copied: bool):
@@ -184,6 +186,13 @@ class WalkthroughReadyCard(QWidget):
         self.subtitle = QLabel("")
         self.subtitle.setObjectName("walkthroughReadySubtitle")
         column.addWidget(self.subtitle)
+        # Why the write-up failed, in full: the status line cuts it off.
+        self.reason = QLabel("")
+        self.reason.setObjectName("walkthroughReadyReason")
+        self.reason.setWordWrap(True)
+        self.reason.setMaximumWidth(REASON_WIDTH)
+        self.reason.setVisible(False)
+        column.addWidget(self.reason)
         row = QHBoxLayout()
         row.setContentsMargins(0, 6, 0, 0)
         row.setSpacing(4)
@@ -217,6 +226,9 @@ class WalkthroughReadyCard(QWidget):
         else:
             self.title.setText(f"{result.name} saved")
             self.subtitle.setText(f"{count} · copying failed — drag it from here")
+        error = getattr(result, "write_up_error", "")
+        self.reason.setText(f"Write-up failed: {error}" if error else "")
+        self.reason.setVisible(bool(error))
         thumb = _thumbnail(result.first_shot)
         self.thumb.setVisible(thumb is not None)
         if thumb is not None:

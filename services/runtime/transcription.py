@@ -2145,12 +2145,15 @@ class TranscriptionRuntime:
             return
         copied = ui.copy_files_to_clipboard([result.pdf], text=result.clipboard_text)
         count = f"{result.shots} screenshot{'' if result.shots == 1 else 's'}"
-        if copied:
+        if result.write_up_error:
+            # Ahead of the rest, so a status line cut short still says it;
+            # the Ready card shows the whole reason.
+            done = "copied as spoken" if copied else "saved as spoken; copying it failed"
+            status = f"Write-up failed — {result.name} {done} ({count}): {result.write_up_error}"
+        elif copied:
             status = f"{result.name} copied ({count}) — paste it into your agent"
         else:
             status = f"{result.name} saved ({count}); copying it failed — drag it from the card"
-        if result.write_up_error:
-            status += f". Write-up failed, so it's as spoken: {result.write_up_error}"
         if result.lost_shots:
             lost = result.lost_shots
             shots = f"{lost} screenshot" if lost == 1 else f"{lost} screenshots"

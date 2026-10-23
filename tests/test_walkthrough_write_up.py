@@ -8,6 +8,7 @@ import os
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import pytest
 
@@ -17,6 +18,7 @@ from PyQt6.QtGui import QColor, QImage
 from PyQt6.QtPdf import QPdfDocument
 
 from meeting.agent.installed.drivers import AgentUnavailable, PassOutcome
+from services.settings import MeetingAgentCore
 from services.walkthrough import write_up
 from services.walkthrough.document import write_markdown_pdf
 from services.walkthrough.session import WalkthroughResult
@@ -164,6 +166,22 @@ def test_a_write_up_that_fails_says_why_and_writes_nothing(walkthrough, outcome,
 
     assert not (walkthrough.folder / "write-up.md").exists()
     assert not (walkthrough.folder / "write-up.pdf").exists()
+
+
+def test_a_missing_agent_points_to_the_walkthroughs_page(walkthrough):
+    from meeting.agent.installed.core import installed_agent
+
+    with mock.patch("meeting.agent.installed.core.resolve_agent", return_value=None):
+        try:
+            installed_agent(MeetingAgentCore.CLAUDE_CODE)
+        except AgentUnavailable as exc:
+            missing = exc
+    with pytest.raises(write_up.WriteUpFailed) as failed:
+        write_up.write_up(walkthrough.result, walkthrough.shots,
+                          run=Agent(None, raises=missing))
+    assert "Meeting Mode" not in str(failed.value)
+    assert str(failed.value).endswith(
+        "Choose another agent in Settings → Dictation → Walkthroughs.")
 
 
 def test_the_reply_is_unfenced():

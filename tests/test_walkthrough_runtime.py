@@ -474,9 +474,9 @@ def test_a_failed_write_up_copies_the_walkthrough_as_spoken(h, monkeypatch):
 
     folder = h.session.folder()
     assert h.ui.copied_files == [([folder / "walkthrough.pdf"], "# Walkthrough (markdown)")]
-    assert any(status.startswith("Walkthrough copied (1 screenshot)")
-               and status.endswith("as spoken: Claude Code is not signed in.")
-               for status in h.ui.statuses)
+    # The failure leads, so a status line cut short still says it.
+    assert ("Write-up failed — Walkthrough copied as spoken (1 screenshot): "
+            "Claude Code is not signed in.") in h.ui.statuses
     (result, _copied), = h.ui.ready
     assert result.write_up_error == "Claude Code is not signed in."
 

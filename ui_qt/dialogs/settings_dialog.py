@@ -1629,6 +1629,8 @@ class SettingsDialog(QDialog):
         for agent in AGENTS:
             self.walkthrough_write_up_agent_combo.addItem(agent_name(agent), agent)
         self.walkthrough_write_up_agent_combo.setMinimumHeight(40)
+        self._write_up_scan_token = 0
+        self._label_write_up_agents()
         self.walkthrough_write_up_agent_tile = FieldTile(
             "Agent",
             "Claude Code reads the walkthrough's PDF and can open only that "
@@ -1676,6 +1678,28 @@ class SettingsDialog(QDialog):
             SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS,
             resolve_walkthrough_write_up_instructions,
         )
+
+    def _label_write_up_agents(self) -> None:
+        """Mark the write-up agents the last scan didn't find; scan once if none has run."""
+        from services.walkthrough.write_up import agent_name
+        from ui_qt.widgets import action_relay, agent_picker
+
+        found = agent_picker.cached_agents()
+        if found is None:
+            if not self._write_up_scan_token:
+                action_relay.relay().scan_done.connect(self._on_write_up_scan_done)
+                self._write_up_scan_token = token = action_relay.next_token()
+                action_relay.start_agent_scan(token)
+            return
+        combo = self.walkthrough_write_up_agent_combo
+        for index in range(combo.count()):
+            agent = combo.itemData(index)
+            name = agent_name(agent)
+            combo.setItemText(index, name if found.get(agent) else f"{name} (not installed)")
+
+    def _on_write_up_scan_done(self, token: int) -> None:
+        if token == self._write_up_scan_token:
+            self._label_write_up_agents()
 
     def _refresh_accessibility_status(self):
         from services.hotkey_manager import is_accessibility_trusted

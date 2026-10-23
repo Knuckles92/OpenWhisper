@@ -75,6 +75,10 @@ _PI_EVENTS = {
 }
 
 
+#: Where meeting intelligence picks its agent, as "not installed" names it.
+MEETING_AGENT_SETTING = "Settings → Meeting Mode → Intelligence"
+
+
 def installed_agent(agent_id: str) -> InstalledAgent:
     """The runnable install of ``agent_id``, or :class:`AgentUnavailable`."""
     spec = AGENT_SPECS.get(agent_id)
@@ -84,7 +88,7 @@ def installed_agent(agent_id: str) -> InstalledAgent:
     if agent is None:
         raise AgentUnavailable(
             f"{spec.name} is not installed on this computer. Choose another agent "
-            "in Settings → Meeting Mode → Intelligence."
+            f"in {MEETING_AGENT_SETTING}."
         )
     if agent.problem:
         raise AgentUnavailable(agent.problem)

@@ -5196,6 +5196,7 @@ QFrame#walkthroughReadySurface {
 QLabel#walkthroughThumb,
 QLabel#walkthroughReadyTitle,
 QLabel#walkthroughReadySubtitle,
+QLabel#walkthroughReadyReason,
 QLabel#walkthroughFileIcon,
 QLabel#walkthroughFileName {
     background-color: transparent;
@@ -5210,6 +5211,12 @@ QLabel#walkthroughReadyTitle {
 QLabel#walkthroughReadySubtitle {
     color: @text-secondary;
     font-size: 12px;
+}
+
+QLabel#walkthroughReadyReason {
+    color: @text-secondary;
+    font-size: 12px;
+    padding-top: 2px;
 }
 
 QFrame#walkthroughFileChip {
