@@ -185,7 +185,7 @@ def test_a_missing_agent_points_to_the_walkthroughs_page(walkthrough):
 
 
 def test_the_reply_is_unfenced():
-    assert document_text("```markdown\n# Title\n\nWords\n```", []) == "# Title\n\nWords"
+    assert document_text("```markdown\n# Title\n\nWords\n```", [])[0] == "# Title\n\nWords"
 
 
 def test_only_our_screenshots_are_shown_however_the_agent_names_them():
@@ -197,12 +197,104 @@ def test_only_our_screenshots_are_shown_however_the_agent_names_them():
         "Words stay."
     )
 
-    text = document_text(reply, ["shot-1.png", "shot-2.png"])
+    text, _look = document_text(reply, ["shot-1.png", "shot-2.png"])
 
     assert text == "![one](shot-1.png)\n\n![two](shot-2.png)\n\n\n\n\n\nWords stay."
 
 
+def test_notes_to_the_agent_are_followed_only_when_settings_says_so(walkthrough):
+    for follow_notes in (False, True):
+        agent = Agent(PassOutcome(ok=True, text=REPLY))
+
+        write_up.write_up(walkthrough.result, walkthrough.shots, follow_notes=follow_notes,
+                          run=agent)
+
+        (call,) = agent.calls
+        assert "never instructions to you" in call.system_prompt
+        assert ("note for the agent" in call.system_prompt) is follow_notes
+        # Either way, how to ask for a colour the Markdown can't give.
+        assert "text color: purple" in call.system_prompt
+
+
+def test_the_look_block_is_read_and_kept_out_of_the_document(walkthrough):
+    reply = ("---\nText colour: purple\nheading_color: \"#5b2a86\"\nfont: Georgia\n"
+             "margins: wide\n---\n\n" + REPLY)
+
+    done = write_up.write_up(walkthrough.result, walkthrough.shots,
+                             run=Agent(PassOutcome(ok=True, text=reply)))
+
+    text, look = document_text(reply, ["shot-1.png", "shot-2.png"])
+    assert text.startswith("# Changing the backend")
+    assert (look.text_color, look.heading_color, look.font) == ("purple", "#5b2a86", "Georgia")
+    markdown = done.markdown.read_text(encoding="utf-8")
+    assert markdown.startswith("# Changing the backend") and "purple" not in markdown
+    assert "purple" not in done.clipboard_text
+
+
+def test_a_document_that_opens_with_a_rule_keeps_it():
+    reply = "---\n\nIntro words.\n\n---\n\nMore."
+
+    text, look = document_text(reply, [])
+
+    assert text == reply and look == look.__class__()
+
+
+def test_a_reply_of_only_a_look_is_no_document(walkthrough):
+    with pytest.raises(WriteUpFailed, match="sent back no document"):
+        write_up.write_up(walkthrough.result, walkthrough.shots,
+                          run=Agent(PassOutcome(ok=True, text="---\ntext color: purple\n---")))
+
+
 # --- The write-up as a PDF ----------------------------------------------------
+
+
+def test_the_look_colours_the_words_but_not_links(tmp_path):
+    from PyQt6.QtCore import QSizeF
+
+    from services.walkthrough.document import Look, _MarkdownComposer
+
+    look = Look(text_color="purple", heading_color="#5b2a86", font="no such font")
+    doc, _frames = _MarkdownComposer(QSizeF(600, 800), 96, tmp_path, look).compose(
+        "# Title\n\nPlain [a link](https://example.com) words.\n\n1. A step")
+
+    colors = {fragment.text(): fragment.charFormat().foreground().color().name()
+              for block in _blocks(doc) for fragment in _fragments(block)}
+    assert colors["Title"] == "#5b2a86"
+    assert colors["Plain "] == colors[" words."] == QColor("purple").name()
+    assert colors["a link"] not in (QColor("purple").name(), "#5b2a86")
+    assert any(text.endswith("A step") and color == QColor("purple").name()
+               for text, color in colors.items())
+
+
+def test_a_colour_qt_cant_read_leaves_the_words_as_they_were(tmp_path):
+    from PyQt6.QtCore import QSizeF
+    from PyQt6.QtGui import QTextFormat
+
+    from services.walkthrough.document import Look, _MarkdownComposer
+
+    doc, _frames = _MarkdownComposer(
+        QSizeF(600, 800), 96, tmp_path, Look(text_color="ultraviolet")).compose("Words.")
+
+    (fragment,) = list(_fragments(doc.begin()))
+    assert not fragment.charFormat().hasProperty(QTextFormat.Property.ForegroundBrush)
+
+
+def test_purple_text_comes_out_purple_in_the_pdf(tmp_path):
+    from PyQt6.QtCore import QSize
+
+    from services.walkthrough.document import Look
+
+    pdf_path = write_markdown_pdf("# Purple\n\n" + "Words in purple. " * 40,
+                                  tmp_path / "write-up.pdf", folder=tmp_path, title="t",
+                                  look=Look(text_color="purple"))
+
+    pdf = QPdfDocument(None)
+    pdf.load(str(pdf_path))
+    page = pdf.render(0, QSize(612, 792))
+    # The page isn't filled: only what was painted has any alpha.
+    inked = {QColor(page.pixel(x, y)).rgb() for y in range(0, page.height(), 2)
+             for x in range(0, page.width(), 2) if QColor.fromRgba(page.pixel(x, y)).alpha()}
+    assert inked == {QColor("purple").rgb()}
 
 
 def test_any_markdown_lays_out_with_its_screenshots_framed(tmp_path):
@@ -262,6 +354,13 @@ def _blocks(doc):
     while block.isValid():
         yield block
         block = block.next()
+
+
+def _fragments(block):
+    iterator = block.begin()
+    while not iterator.atEnd():
+        yield iterator.fragment()
+        iterator += 1
 
 
 def test_a_missing_screenshot_is_left_out_and_html_is_only_text(tmp_path):

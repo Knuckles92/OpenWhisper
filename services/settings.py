@@ -334,6 +334,9 @@ class SettingsKey:
     WALKTHROUGH_WRITE_UP: Final[str] = "walkthrough_write_up"
     WALKTHROUGH_WRITE_UP_AGENT: Final[str] = "walkthrough_write_up_agent"
     WALKTHROUGH_WRITE_UP_INSTRUCTIONS: Final[str] = "walkthrough_write_up_instructions"
+    # Whether the write-up follows notes the user speaks to the agent
+    # ("note for the agent: make the text purple") instead of writing them up.
+    WALKTHROUGH_WRITE_UP_NOTES: Final[str] = "walkthrough_write_up_notes"
 
 
 #: Keys the single live-preview toggle replaced. Dropped whenever that toggle
@@ -786,6 +789,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.WALKTHROUGH_WRITE_UP: False,
     SettingsKey.WALKTHROUGH_WRITE_UP_AGENT: MeetingAgentCore.CLAUDE_CODE,
     SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS: "",
+    SettingsKey.WALKTHROUGH_WRITE_UP_NOTES: False,
 })
 
 
@@ -1312,6 +1316,7 @@ resolve_walkthrough_intro_seen = _bool_resolver(SettingsKey.WALKTHROUGH_INTRO_SE
 resolve_walkthrough_write_up = _bool_resolver(SettingsKey.WALKTHROUGH_WRITE_UP)
 resolve_walkthrough_write_up_agent = _choice_resolver(
     SettingsKey.WALKTHROUGH_WRITE_UP_AGENT, MeetingAgentCore.INSTALLED)
+resolve_walkthrough_write_up_notes = _bool_resolver(SettingsKey.WALKTHROUGH_WRITE_UP_NOTES)
 
 
 def resolve_walkthrough_title(settings: Optional[Mapping[str, Any]] = None) -> str:

@@ -102,6 +102,21 @@ class DocumentFormat:
     captions: bool = True
 
 
+@dataclass(frozen=True)
+class Look:
+    """A write-up's colours and font, which its Markdown can't say.
+
+    "" keeps the walkthrough's own. A colour is anything QColor reads, such
+    as "purple" or "#5b2a86"; one it can't is ignored, and a font this
+    computer doesn't have falls back to the walkthrough's.
+    """
+
+    text_color: str = ""
+    #: Headings; "" gives them the text's colour.
+    heading_color: str = ""
+    font: str = ""
+
+
 # --- What every format shares -----------------------------------------------
 
 
@@ -410,12 +425,14 @@ def write_markdown_pdf(
     folder: Path,
     title: str,
     page_size: QPageSize | None = None,
+    look: Look = Look(),
 ) -> Path:
     """Write ``text``, any Markdown, as a PDF in the walkthrough's look.
 
     For a document someone else laid out, such as an agent's write-up. Its
     images are file names in ``folder``; one that is missing is left out.
-    Raw HTML is shown as text, never run. Safe to call from a worker thread.
+    Raw HTML is shown as text, never run. ``look`` sets the colours and font
+    Markdown can't. Safe to call from a worker thread.
 
     Raises:
         OSError: The file could not be written.
@@ -426,7 +443,7 @@ def write_markdown_pdf(
     writer.setTitle(title)
     writer.setCreator("OpenWhisper")
     dpi = _layout_dpi()
-    doc, frames = _MarkdownComposer(_text_area(writer, dpi), dpi, folder).compose(text)
+    doc, frames = _MarkdownComposer(_text_area(writer, dpi), dpi, folder, look).compose(text)
     _paint_pages(doc, frames, writer, dpi, path)
     return path
 
@@ -622,10 +639,10 @@ def _shown_size(image: QImage, page: QSizeF, unit: float) -> QSizeF:
     return natural * scale
 
 
-def _document_font() -> QFont:
-    """Segoe UI on Windows, Noto Sans or DejaVu Sans on Linux, else the
-    system's sans-serif."""
-    font = QFont(_FONT_FAMILIES)
+def _document_font(family: str = "") -> QFont:
+    """``family`` if this computer has it, else Segoe UI on Windows, Noto
+    Sans or DejaVu Sans on Linux, else the system's sans-serif."""
+    font = QFont([family, *_FONT_FAMILIES] if family else _FONT_FAMILIES)
     font.setStyleHint(QFont.StyleHint.SansSerif)
     font.setPointSizeF(_WORDS_STYLE.size)
     return font
@@ -946,21 +963,53 @@ def _words(block: QTextBlock) -> str:
     return block.text().replace("\N{OBJECT REPLACEMENT CHARACTER}", "").strip()
 
 
+def _color(name: str) -> QColor | None:
+    """The colour ``name`` reads as, or None for "" and what QColor can't read."""
+    color = QColor(name.strip())
+    if name.strip() and not color.isValid():
+        logger.info("Ignored a write-up colour Qt can't read: %r", name)
+    return color if color.isValid() else None
+
+
+def _color_words(block: QTextBlock, color: QColor) -> None:
+    """Colour the block's words; links, which have their own colour, keep it."""
+    spans = []
+    iterator = block.begin()
+    while not iterator.atEnd():
+        fragment = iterator.fragment()
+        iterator += 1
+        char_format = fragment.charFormat()
+        if not (char_format.isImageFormat()
+                or char_format.hasProperty(QTextFormat.Property.ForegroundBrush)):
+            spans.append((fragment.position(), fragment.position() + fragment.length()))
+    # Merging reshapes the fragments, so only once they have all been read.
+    colored = QTextCharFormat()
+    colored.setForeground(color)
+    cursor = QTextCursor(block.document())
+    for start, end in spans:
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.mergeCharFormat(colored)
+
+
 class _MarkdownComposer:
     """Lays free-form Markdown out as a paginated QTextDocument.
 
     Qt's own Markdown reader does the structure; this gives it the
-    walkthrough's font, line spacing and screenshot sizing and framing.
+    walkthrough's font, line spacing and screenshot sizing and framing, or
+    the colours and font the write-up's ``look`` asks for.
     """
 
-    def __init__(self, page: QSizeF, dpi: int, folder: Path) -> None:
+    def __init__(self, page: QSizeF, dpi: int, folder: Path, look: Look = Look()) -> None:
         self.page = page
         self.unit = dpi / 72  # layout units per point
         self.folder = folder
+        self.text_color = _color(look.text_color)
+        self.heading_color = _color(look.heading_color) or self.text_color
         self.doc = QTextDocument()
         self.doc.setDocumentMargin(0)
         self.doc.setUseDesignMetrics(True)
-        self.doc.setDefaultFont(_document_font())
+        self.doc.setDefaultFont(_document_font(look.font.strip()))
         self.doc.setPageSize(page)
 
     def compose(self, text: str) -> tuple[QTextDocument, list[QRectF]]:
@@ -1035,6 +1084,9 @@ class _MarkdownComposer:
                 _BODY_LINE_HEIGHT, QTextBlockFormat.LineHeightTypes.ProportionalHeight.value
             )
         QTextCursor(block).setBlockFormat(block_format)
+        color = self.heading_color if level else self.text_color
+        if color is not None:
+            _color_words(block, color)
         return alone
 
     def _lead_in(self, image: int) -> int:

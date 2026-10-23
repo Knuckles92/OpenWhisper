@@ -226,6 +226,7 @@ from services.settings import (
     resolve_walkthrough_write_up,
     resolve_walkthrough_write_up_agent,
     resolve_walkthrough_write_up_instructions,
+    resolve_walkthrough_write_up_notes,
 )
 from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
 from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
@@ -1657,11 +1658,26 @@ class SettingsDialog(QDialog):
             self.walkthrough_write_up_edit,
             design_icon("typography-blue.svg"),
         )
+        self.walkthrough_write_up_notes_tile = SettingTile(
+            "Follow notes left for the agent",
+            "While you talk, speak to the agent, such as \"note for the agent: "
+            "make the text purple\" or \"for whoever writes this up, skip the "
+            "setup part\". It follows the note instead of writing it into the "
+            "document. Notes can change only what the write-up says and how it "
+            "looks.",
+            design_icon("notes-blue.svg"),
+        )
+        self.walkthrough_write_up_notes_check = self.walkthrough_write_up_notes_tile.checkbox
+        # Notes are for the agent, so they mean nothing without a write-up.
+        self.walkthrough_write_up_notes_tile.setEnabled(False)
+        self.walkthrough_write_up_check.toggled.connect(
+            self.walkthrough_write_up_notes_tile.setEnabled)
         self._tile_group(
             layout,
             "AI write-up",
             [self.walkthrough_write_up_tile, self.walkthrough_write_up_agent_tile,
-             self.walkthrough_write_up_instructions_tile],
+             self.walkthrough_write_up_instructions_tile,
+             self.walkthrough_write_up_notes_tile],
             columns=1,
             intro="Optional. Your words and screenshots stay as spoken unless you turn this on.",
         )
@@ -1679,6 +1695,11 @@ class SettingsDialog(QDialog):
             self.walkthrough_write_up_edit,
             SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS,
             resolve_walkthrough_write_up_instructions,
+        )
+        self._bindings.checkbox(
+            self.walkthrough_write_up_notes_check,
+            SettingsKey.WALKTHROUGH_WRITE_UP_NOTES,
+            resolve_walkthrough_write_up_notes,
         )
 
     def _label_write_up_agents(self) -> None:

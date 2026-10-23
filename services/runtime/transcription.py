@@ -1529,6 +1529,7 @@ class TranscriptionRuntime:
             resolve_walkthrough_write_up,
             resolve_walkthrough_write_up_agent,
             resolve_walkthrough_write_up_instructions,
+            resolve_walkthrough_write_up_notes,
         )
         from services.walkthrough import write_up
 
@@ -1542,6 +1543,7 @@ class TranscriptionRuntime:
             return write_up.write_up(
                 result, [shot.path for shot in shots], agent=agent,
                 instructions=resolve_walkthrough_write_up_instructions(settings),
+                follow_notes=resolve_walkthrough_write_up_notes(settings),
                 cancel_event=self._cancel_requested,
             )
         except write_up.WriteUpFailed as exc:

@@ -8,6 +8,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ## [Unreleased]
 
 ### Added
+- **Leave notes for the agent while you record a walkthrough** — with the AI write-up on, turn on **Follow notes left for the agent** in **Settings → Dictation → Walkthroughs** and say things like "note for the agent: make the text purple" or "for whoever writes this up, skip the setup part" while you talk. The agent follows the note instead of writing it into the document. Notes can change only what the write-up says and how it looks, including its text and heading colours and font, which now carry into the write-up's PDF. It is off by default, and the as-spoken files still keep every word.
 - **The overlay's Snap and Done show their shortcuts** — while a walkthrough records, hovering Snap on the recording overlay shows your Screenshot shortcut, and Done shows your Walkthrough shortcut, in the same pill the main window uses. Nothing shows for a shortcut you haven't set.
 
 ## [2.7.8] - 2026-10-23

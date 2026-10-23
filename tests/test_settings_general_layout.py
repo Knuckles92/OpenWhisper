@@ -142,6 +142,10 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                  dialog.walkthrough_write_up_agent_tile,
                  dialog.walkthrough_write_up_instructions_tile},
             )
+            # Notes are for the write-up's agent: greyed out while it's off.
+            notes = dialog.walkthrough_write_up_notes_tile
+            self.assertTrue(walkthroughs.isAncestorOf(notes))
+            self.assertEqual(notes.isEnabled(), dialog.walkthrough_write_up_check.isChecked())
             for key in ("walkthrough", "screenshot"):
                 self.assertTrue(walkthroughs.isAncestorOf(dialog.hotkey_inputs[key]))
                 self.assertFalse(dialog._pages[HOTKEYS].isAncestorOf(dialog.hotkey_inputs[key]))

@@ -144,7 +144,19 @@ and the status say **Write-up copied**.
   model must take images; OpenCode's default model is the one in your own
   OpenCode settings.
 - **Your words are passed as a transcript**, never as instructions to the
-  agent.
+  agent, unless you turn on **Follow notes left for the agent** (off by
+  default; it is greyed out while the write-up is off). Then you can talk to
+  the agent mid-walkthrough, such as "note for the agent: make the text
+  purple" or "for whoever writes this up, skip the setup part". It follows
+  the note and leaves the note itself out of the write-up. A note can only
+  change what the write-up says and how it looks. The as-spoken files keep
+  every word, notes included.
+- **Colours and a font.** Markdown has neither, so when a note or your
+  instructions ask for them, the agent starts its reply with a small block
+  (`text color`, `heading color`, `font`). OpenWhisper applies it to
+  `write-up.pdf` and keeps it out of `write-up.md`. Colours are CSS names or
+  `#rrggbb`. A colour Qt can't read is ignored, and a font you don't have
+  falls back to the usual one. Links keep their own colour.
 - **It uses your own plan** and usually takes 10 to 60 seconds. Dictation
   waits for it, as for any job.
 - **The as-spoken files always stay.** If the write-up fails (the agent
