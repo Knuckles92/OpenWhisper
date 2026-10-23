@@ -293,6 +293,22 @@ def test_captured_escape_from_the_listener_is_not_saved(make_dialog):
     dialog.close()
 
 
+def test_escape_with_modifiers_is_still_a_shortcut(make_dialog):
+    # macOS's default Cancel is ctrl+alt+escape; only Esc alone backs out.
+    dialog, store = make_dialog()
+    dialog.select_destination(WALKTHROUGHS)
+    field = dialog.hotkey_inputs["screenshot"]
+    QTest.mouseClick(field, Qt.MouseButton.LeftButton)
+    QTest.keyClick(field, Qt.Key.Key_Escape,
+                   Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
+    assert dialog.capturing == "screenshot"
+
+    dialog._on_hotkey_captured(dialog.capture_thread, "ctrl+shift+escape")
+
+    assert store.load_hotkey_settings()["screenshot"] == "ctrl+shift+escape"
+    dialog.close()
+
+
 def test_wayland_rows_capture_in_qt_and_explain_side_buttons(make_dialog):
     dialog, store = make_dialog(wayland=True)
     field = dialog.hotkey_inputs["scratchpad_toggle"]

@@ -5101,7 +5101,8 @@ class SettingsDialog(QDialog):
     ) -> None:
         if thread is not self.capture_thread or self.capturing is None:
             return
-        if is_escape_key(parse_hotkey(hotkey or "")[1]):
+        modifiers, main_key = parse_hotkey(hotkey or "")
+        if is_escape_key(main_key) and not modifiers:
             self._cancel_hotkey_capture()
             return
         key = self.capturing

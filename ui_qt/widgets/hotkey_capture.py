@@ -53,7 +53,8 @@ _SIDE_BUTTONS = {
 
 
 def is_escape_key(name: Optional[str]) -> bool:
-    """Whether ``name`` is Escape, which cancels capture instead of binding."""
+    """Whether ``name`` is Escape. Esc alone cancels capture; with modifiers
+    it is a shortcut like any other (macOS's Cancel is ctrl+alt+escape)."""
     return bool(name) and name.strip().lower() in _ESCAPE_KEY_NAMES
 
 
@@ -136,7 +137,10 @@ class HotkeyCaptureInput(QLineEdit):
     def keyPressEvent(self, event) -> None:
         if getattr(self, "_capture_active", False) and event.key() == Qt.Key.Key_Escape:
             event.accept()
-            self.capture_cancelled.emit()
+            # Ctrl+Alt+Esc and the like are left to the capture to bind.
+            modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+            if modifiers == Qt.KeyboardModifier.NoModifier:
+                self.capture_cancelled.emit()
             return
         super().keyPressEvent(event)
 
@@ -192,7 +196,7 @@ if USE_PYNPUT_BACKEND:
                     return True
                 # Escape backs out; the global listener would otherwise bind
                 # it as a system-wide shortcut (Walkthrough, Screenshot, …).
-                if is_escape_key(name):
+                if is_escape_key(name) and not pressed_modifiers:
                     result["cancelled"] = True
                     self._canceled = True
                     return False
@@ -267,7 +271,7 @@ else:
                         return
                     events.append(event)
                     if event.event_type == keyboard.KEY_UP:
-                        if is_escape_key(event.name):
+                        if all(is_escape_key(e.name) for e in events):
                             self.cancelled.emit()
                             return
                         names = [
