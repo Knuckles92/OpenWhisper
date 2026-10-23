@@ -13,6 +13,14 @@ pywin32>=311 ; sys_platform == "win32"
 openai>=1.66.0
 certifi>=2024.2.2
 faster-whisper>=1.0.0
+# Local Whisper: faster-whisper 1.2.1 still passes metadata_errors= to
+# av.open(), which PyAV 19 removed. faster-whisper only declares av>=11,
+# so an unconstrained pip install pulls 19.x and every transcription
+# fails with "open() got an unexpected keyword argument 'metadata_errors'".
+# Keep source installs on PyAV 18, matching the packaged release
+# (av==18.1.0). Drop this once a faster-whisper release includes
+# SYSTRAN/faster-whisper#1495.
+av>=11,<19
 # GPU users (NVIDIA): after installing these, also run
 #   pip install -r requirements-gpu.txt
 # to get the CUDA runtime libraries (cuBLAS) without the CUDA Toolkit.
