@@ -1,9 +1,10 @@
-"""The card that says a walkthrough is ready: open it, find it, or drag it anywhere.
+"""The card that says a walkthrough is ready: open it, review it, or drag it anywhere.
 
 It sits in the corner of the screen under the pointer without taking focus,
 so the user can paste straight into the app they were in. Dragging the file
 chip works in every app that takes files, including ones a pasted file
-doesn't reach. Compositor-managed desktops (Wayland) place their own
+doesn't reach; clicking it opens the document. Copying again and showing the
+folder wait behind ``⋯``. Compositor-managed desktops (Wayland) place their own
 windows, so there the status line and the overlay's notice say it instead.
 """
 
@@ -13,8 +14,19 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import QMimeData, QPoint, QRect, QRectF, QSize, Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import (
+    QMimeData,
+    QPoint,
+    QRect,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    QUrl,
+    pyqtSignal,
+)
 from PyQt6.QtGui import (
+    QAction,
     QCursor,
     QDesktopServices,
     QDrag,
@@ -37,6 +49,7 @@ from services.walkthrough.document import clock
 from ui_qt.utils.desktop import compositor_managed
 from ui_qt.utils.file_reveal import reveal_in_file_manager
 from ui_qt.utils.icons import design_icon
+from ui_qt.widgets.context_menu import context_menu
 
 logger = logging.getLogger(__name__)
 
@@ -83,13 +96,15 @@ def _thumbnail(path: Optional[Path]) -> Optional[QPixmap]:
 
 
 class _FileChip(QFrame):
-    """The document as something to drag into any app that takes files."""
+    """The document to drag into any app that takes files, or to click and open."""
+
+    clicked = pyqtSignal()
 
     def __init__(self, parent: QWidget):
         super().__init__(parent)
         self.setObjectName("walkthroughFileChip")
         self.setCursor(Qt.CursorShape.OpenHandCursor)
-        self.setToolTip("Drag into any app to attach it")
+        self.setToolTip("Click to open · drag into any app to attach it")
         row = QHBoxLayout(self)
         row.setContentsMargins(9, 5, 11, 5)
         row.setSpacing(6)
@@ -123,7 +138,9 @@ class _FileChip(QFrame):
         drag.exec(Qt.DropAction.CopyAction)
 
     def mouseReleaseEvent(self, event) -> None:
-        self._press = None
+        pressed, self._press = self._press, None
+        if pressed is not None and event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
         super().mouseReleaseEvent(event)
 
     def mime_data(self) -> QMimeData:
@@ -197,33 +214,51 @@ class WalkthroughReadyCard(QWidget):
         self.reason.setVisible(False)
         column.addWidget(self.reason)
         row = QHBoxLayout()
-        row.setContentsMargins(0, 6, 0, 0)
+        row.setContentsMargins(0, 8, 0, 0)
         row.setSpacing(4)
         self.chip = _FileChip(self)
+        self.chip.clicked.connect(self._open)
         row.addWidget(self.chip)
         row.addStretch(1)
-        self.open_button = self._action("Open", self._open)
-        row.addWidget(self.open_button)
-        self.folder_button = self._action("Show in folder", self._reveal)
-        row.addWidget(self.folder_button)
+        self.review_button = QToolButton()
+        self.review_button.setProperty("walkthroughAction", True)
+        self.review_button.setText("Review")
+        self.review_button.setToolTip("Edit the words, leave screenshots out, or redo the write-up")
+        self.review_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.review_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.review_button.clicked.connect(self._review)
+        row.addWidget(self.review_button)
+        row.addWidget(self._more_button())
         column.addLayout(row)
-        tools = QHBoxLayout()
-        self.review_button = self._action("Review / Retry write-up", self._review)
-        self.copy_button = self._action("Copy for agent", lambda: self._copy(False))
-        self.copy_pdf_button = self._action("Copy PDF", lambda: self._copy(True))
-        for button in (self.review_button, self.copy_button, self.copy_pdf_button):
-            tools.addWidget(button)
-        column.addLayout(tools)
         return column
 
-    def _action(self, text: str, slot) -> QToolButton:
+    def _more_button(self) -> QToolButton:
+        """``⋯``: what a moment after finishing rarely needs."""
+        self.menu = context_menu(self)
+        self.open_action = self._menu_action("Open PDF", self._open)
+        self.folder_action = self._menu_action("Show in folder", self._reveal)
+        self.menu.addSeparator()
+        self.copy_action = self._menu_action("Copy again for agent", lambda: self._copy(False))
+        self.copy_pdf_action = self._menu_action("Copy PDF only", lambda: self._copy(True))
+        # The pointer leaves the card for the menu; don't let the card fade under it.
+        self.menu.aboutToShow.connect(self._timer.stop)
+        self.menu.aboutToHide.connect(self._linger)
         button = QToolButton()
-        button.setProperty("walkthroughAction", True)
-        button.setText(text)
+        button.setObjectName("walkthroughReadyMore")
+        button.setIcon(design_icon("dots-gray.svg"))
+        button.setIconSize(QSize(16, 16))
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        button.clicked.connect(slot)
+        button.setAccessibleName("More")
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        button.setMenu(self.menu)
+        self.more_button = button
         return button
+
+    def _menu_action(self, text: str, slot) -> QAction:
+        action = self.menu.addAction(text)
+        action.triggered.connect(slot)
+        return action
 
     def present(self, result, *, copied: bool) -> None:
         """Fill the card for ``result`` and show it in the corner of the pointer's screen."""
@@ -264,9 +299,13 @@ class WalkthroughReadyCard(QWidget):
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
-        if self.isVisible():
-            self._timer.start(LINGER_MS)
+        if not self.menu.isVisible():
+            self._linger()
         super().leaveEvent(event)
+
+    def _linger(self) -> None:
+        if self.isVisible() and not self.underMouse():
+            self._timer.start(LINGER_MS)
 
     def _review(self) -> None:
         if self._result is not None:

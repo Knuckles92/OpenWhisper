@@ -42,7 +42,7 @@ def test_copy_buttons_send_explicit_clipboard_formats(dialog, capture):
     args, kwargs = dialog._copy_files.call_args
     assert args == ([],)
     assert "first" in kwargs["text"]
-    dialog.pdf_button.click()
+    dialog.pdf_button.trigger()
     args, kwargs = dialog._copy_files.call_args
     assert args == ([capture.result.pdf],)
     assert kwargs == {"text": ""}
@@ -53,7 +53,7 @@ def test_unsaved_edits_cannot_be_shared_or_written_up(dialog):
     dialog.copy_button.click()
     dialog._copy_files.assert_not_called()
     assert "Save" in dialog.notice.text()
-    dialog.retry_button.click()
+    dialog.retry_button.trigger()
     assert not dialog._busy
 
 
@@ -94,7 +94,7 @@ def test_cancel_before_a_queued_retry_starts_preserves_the_source(dialog, monkey
     dialog._submit = queued.append
     retry = Mock()
     monkeypatch.setattr(library, "retry_write_up", retry)
-    dialog.retry_button.click()
+    dialog.retry_button.trigger()
     assert dialog._busy
     dialog.reject()
     assert dialog._cancel.is_set()
@@ -122,8 +122,8 @@ def test_ready_card_exposes_review_and_both_copy_formats(capture):
     review = QSignalSpy(card.review_requested)
     copied = QSignalSpy(card.copy_requested)
     card.present(capture.result, copied=True)
-    card.copy_button.click()
-    card.copy_pdf_button.click()
+    card.copy_action.trigger()
+    card.copy_pdf_action.trigger()
     assert copied[0] == [capture.result, False]
     assert copied[1] == [capture.result, True]
     card.review_button.click()
@@ -137,7 +137,7 @@ def test_review_write_up_retry_is_off_thread_and_cancelable(dialog, monkeypatch,
         seen.append((folder, cancel_event))
         return capture.result
     monkeypatch.setattr(library, "retry_write_up", retry)
-    dialog.retry_button.click()
+    dialog.retry_button.trigger()
     _wait(dialog)
     assert seen[0][0] == capture.folder
     assert seen[0][1] is dialog._cancel

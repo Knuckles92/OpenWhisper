@@ -5245,32 +5245,44 @@ QLabel#walkthroughFileName {
 }
 
 QToolButton[walkthroughAction="true"] {
-    color: @text-soft;
+    color: @accent-soft;
     background-color: transparent;
     border: none;
     border-radius: 7px;
-    padding: 5px 9px;
+    padding: 5px 10px;
     font-size: 12px;
     font-weight: 600;
 }
 
 QToolButton[walkthroughAction="true"]:hover {
-    color: @text;
-    background-color: @surface-hover;
+    background-color: rgba(@accent-rgb, 0.12);
 }
 
 QToolButton[walkthroughAction="true"]:pressed {
-    background-color: @surface-active;
+    background-color: rgba(@accent-rgb, 0.2);
 }
 
-QToolButton#walkthroughReadyClose {
+QToolButton#walkthroughReadyClose,
+QToolButton#walkthroughReadyMore {
     background-color: transparent;
     border: none;
     border-radius: 6px;
     padding: 4px;
 }
 
-QToolButton#walkthroughReadyClose:hover {
+QToolButton#walkthroughReadyMore {
+    border-radius: 7px;
+    padding: 5px 7px;
+}
+
+QToolButton#walkthroughReadyMore::menu-indicator {
+    image: none;
+    width: 0px;
+}
+
+QToolButton#walkthroughReadyClose:hover,
+QToolButton#walkthroughReadyMore:hover,
+QToolButton#walkthroughReadyMore:pressed {
     background-color: @surface-hover;
 }
 
