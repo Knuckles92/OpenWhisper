@@ -10,9 +10,6 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Added
 - **Have your coding agent write your walkthroughs up** — turn on **AI write-up** in **Settings → Dictation → Walkthroughs**, choose Claude Code, Codex or OpenCode, and when a walkthrough finishes it lays out a cleaner document with a title, tidy wording, and each screenshot where it helps most. That write-up is what gets copied, in the same PDF style. The instructions are a loose default you can replace with your own. Claude Code reads the walkthrough's PDF and can read only that folder; Codex and OpenCode read no files at all and are sent the words and screenshots instead, so their model must take images. Each runs on your own plan. The as-spoken PDF is always kept, and if the write-up fails the walkthrough is copied as spoken with the reason in the status.
 
-### Fixed
-- **Local Whisper works after a README source install** — `pip install -r requirements.txt` was pulling PyAV 19, and every transcription then failed with `open() got an unexpected keyword argument 'metadata_errors'`. Source installs now stay on PyAV 18, the same as the packaged release.
-
 ### Changed
 - **Walkthroughs have their own Settings page** — **Settings → Dictation → Walkthroughs** now holds the Walkthrough and Screenshot shortcuts, how the document looks, and the AI write-up, which were spread across General and Hotkeys. Hotkeys links to it.
 
@@ -26,6 +23,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **Launching OpenWhisper again on Linux brings the existing window forward** — opening the app from the menu or running `openwhisper` while it is already running, including minimized to the tray, now shows that window instead of starting a second copy. Two copies were both recording the same shortcut into the same file, which created two History entries with garbled transcripts. Windows and macOS are unchanged.
 - **A failed AI write-up now says why** — when the walkthrough's write-up agent wasn't installed or failed, the reason was cut off in the status line and only readable in a tooltip, and it pointed to Settings → Meeting Mode, which doesn't choose that agent. The Ready card now shows the whole reason, the status line starts with "Write-up failed", the hint points to Settings → Dictation → Walkthroughs, and that page's agent list marks agents that aren't installed.
 - **A dictation or Walkthrough shortcut pressed while a transcription is still running now says so next to the pointer** — it used to update only the status line in the main window, so a hotkey during an upload or while the previous walkthrough still said Transcribing… was silently ignored. The next press then started a recording when the user meant to stop one. The overlay already on screen keeps going and shows the reason; if nothing is up, a notice appears by the pointer.
+- **Local Whisper works after a README source install** — `pip install -r requirements.txt` was pulling PyAV 19, and every transcription then failed with `open() got an unexpected keyword argument 'metadata_errors'`. Source installs now stay on PyAV 18, the same as the packaged release.
 
 ## [2.7.7] - 2026-10-22
 
