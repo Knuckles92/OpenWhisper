@@ -13,6 +13,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Changed
 - **Walkthroughs have their own Settings page** — **Settings → Dictation → Walkthroughs** now holds the Walkthrough and Screenshot shortcuts, how the document looks, and the AI write-up, which were spread across General and Hotkeys. Hotkeys links to it.
 
+### Fixed
+- **Long dictations on a Host Mode Whisper computer no longer lose sentences** — a ~4-minute remote dictation could paste and save with 3–6 sentences missing from the middle, and sometimes one sentence repeated, while the same clip transcribed locally was complete. The client had been sending independent 30-second windows and joining their text with a space. Local Whisper decodes the whole file in one call, so faster-whisper can overlap its own windows. Remote Whisper now sends the recording as one clip (or overlapping clips if it is longer than one WebSocket frame) and does not condition each window on the previous window's text.
+
 ## [2.7.7] - 2026-10-22
 
 ### Added

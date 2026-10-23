@@ -159,6 +159,22 @@ def test_request_frames_reject_garbage():
         protocol.unpack_request("text frame")
 
 
+def test_a_four_minute_dictation_fits_in_one_request():
+    audio = np.zeros(238 * protocol.SAMPLE_RATE, np.float32)
+    frame = protocol.pack_request({"id": 1, "op": "transcribe"}, audio)
+    header, decoded = protocol.unpack_request(frame)
+    assert header["op"] == "transcribe"
+    assert len(decoded) == len(audio)
+    assert len(frame) <= protocol.MAX_REPLY_BYTES
+    assert protocol.MAX_AUDIO_SECONDS >= 238
+
+
+def test_audio_longer_than_the_frame_limit_is_rejected():
+    audio = np.zeros((protocol.MAX_AUDIO_SECONDS + 1) * protocol.SAMPLE_RATE, np.float32)
+    with pytest.raises(protocol.ProtocolError, match="too long"):
+        protocol.unpack_request(protocol.pack_request({"op": "transcribe"}, audio))
+
+
 @pytest.mark.parametrize("text, expected", [
     ("devbox", ("devbox", protocol.DEFAULT_PORT)),
     ("192.168.1.20:5000", ("192.168.1.20", 5000)),
@@ -395,8 +411,89 @@ def test_whisper_engine_decodes_windows_into_segments():
     assert result["text"] == "Hello world."
     assert result["segments"][1] == {"text": "world.", "start": 0.5, "end": 1.0}
     assert calls[0]["language"] == "en"
+    assert calls[0]["condition_on_previous_text"] is False
     assert engine.describe()["family"] == "local_whisper"
     assert whisper_language("auto") is None and whisper_language(None) is None
+
+
+def _remote_whisper_backend():
+    from transcriber.remote_backend import RemoteSpeechBackend
+
+    backend = RemoteSpeechBackend()
+    backend.backend_id = "local_whisper"
+    backend.should_cancel = False
+    return backend
+
+
+def test_remote_whisper_sends_a_long_clip_in_one_request():
+    backend = _remote_whisper_backend()
+    seen = []
+
+    def recognize(audio, language=None, phrases=()):
+        seen.append(len(audio))
+        seconds = len(audio) / 16000
+        return {"text": "all of it", "segments": [
+            {"text": "all of it", "start": 0.0, "end": seconds},
+        ]}
+
+    backend._recognize = recognize
+    audio = np.full(90 * 16000, 0.1, np.float32)
+    assert backend._transcribe_audio(audio)["text"] == "all of it"
+    assert seen == [90 * 16000]
+
+
+def test_remote_whisper_file_decode_joins_30s_windows_before_sending(monkeypatch):
+    from services.local_asr import audio as audio_mod
+
+    pieces = [
+        (0.0, np.full(30 * 16000, 0.1, np.float32)),
+        (30.0, np.full(30 * 16000, 0.1, np.float32)),
+        (60.0, np.full(30 * 16000, 0.1, np.float32)),
+    ]
+    monkeypatch.setattr(audio_mod, "windows", lambda path: iter(pieces))
+    backend = _remote_whisper_backend()
+    backend.is_available = lambda: True
+    seen = []
+
+    def recognize(audio, language=None, phrases=()):
+        seen.append(len(audio))
+        return {"text": "all of it", "segments": [
+            {"text": "all of it", "start": 0.0, "end": len(audio) / 16000},
+        ]}
+
+    backend._recognize = recognize
+    assert backend.transcribe("ignored.wav") == "all of it"
+    assert seen == [90 * 16000]
+
+
+def test_remote_whisper_overlap_lets_the_later_request_own_the_seam(monkeypatch):
+    monkeypatch.setattr(protocol, "MAX_AUDIO_SECONDS", 10)
+    monkeypatch.setattr(protocol, "REMOTE_WHISPER_OVERLAP_S", 2.0)
+    monkeypatch.setattr(
+        "services.local_asr.audio.split_point",
+        lambda audio, max_samples=30 * 16000: min(len(audio), max_samples),
+    )
+    backend = _remote_whisper_backend()
+    seen = []
+
+    def recognize(audio, language=None, phrases=()):
+        seen.append(len(audio) / 16000)
+        if len(seen) == 1:
+            return {"text": "first middle", "segments": [
+                {"text": "first", "start": 0.0, "end": 5.0},
+                {"text": "middle", "start": 5.0, "end": 10.0},
+            ]}
+        return {"text": "middle last", "segments": [
+            {"text": "middle", "start": 0.0, "end": 2.0},
+            {"text": "last", "start": 2.0, "end": 10.0},
+        ]}
+
+    backend._recognize = recognize
+    audio = np.full(18 * 16000, 0.1, np.float32)
+    result = backend._transcribe_audio(audio)
+    assert [round(duration, 1) for duration in seen] == [10.0, 10.0]
+    assert result["text"] == "first middle last"
+    assert [seg["text"] for seg in result["segments"]] == ["first", "middle", "last"]
 
 
 # ---- the client backend ----

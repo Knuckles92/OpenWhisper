@@ -362,13 +362,23 @@ class LocalSpeechBackend(TranscriptionBackend):
             raise RuntimeError("Transcription canceled")
         return speech
 
+    def _remote_whisper(self) -> bool:
+        """Whether this backend should send Whisper a long clip, not 30 s windows."""
+        return self.is_remote and self.backend_id == "local_whisper"
+
     def transcribe(self, audio_path: str, recognition=None) -> str:
-        from services.local_asr.audio import windows
+        from services.local_asr.audio import joined_windows, windows
+        source = windows(audio_path)
+        if self._remote_whisper():
+            # One clip so the host's faster-whisper can VAD and overlap its
+            # own 30 s windows, matching a local file decode. Independent
+            # 30 s requests dropped and repeated whole sentences.
+            source = joined_windows(source)
         if not recognition:
-            return self.join_texts(self.transcribe_windows(windows(audio_path)))
+            return self.join_texts(self.transcribe_windows(source))
         language, phrases = self.recognition_inputs(recognition)
         return self.join_texts(self.transcribe_windows(
-            windows(audio_path), language, **_phrase_options(phrases)
+            source, language, **_phrase_options(phrases)
         ))
 
     def transcribe_windows(self, windows, language=None, *, phrases=()) -> list[str]:
@@ -465,6 +475,8 @@ class LocalSpeechBackend(TranscriptionBackend):
         return bool(audio.size) and np.max(np.abs(audio)) > .00025
 
     def _transcribe_audio(self, audio, language=None, phrases=()):
+        if self._remote_whisper():
+            return self._transcribe_remote_whisper(audio, language, phrases)
         texts, segments = [], []
         start = 0
         # Bound attention memory and output lengths. Prefer a quiet boundary
@@ -483,6 +495,60 @@ class LocalSpeechBackend(TranscriptionBackend):
                                          end=segment["end"]+start/16000))
             start = end
         return dict(text=self.join_texts(texts), segments=segments)
+
+    def _transcribe_remote_whisper(self, audio, language=None, phrases=()):
+        """Send Whisper as much audio as one request holds, overlapping the rest.
+
+        A local file decode is one faster-whisper call over the whole
+        recording. Remote dictation used to cut that into independent 30 s
+        windows and join the texts with a space, which dropped and repeated
+        sentences in the middle of a ~4-minute clip. One long request matches
+        the local path. Clips longer than the frame limit keep a short overlap
+        so a sentence on the seam is in both requests; the later one owns it.
+        """
+        from services.local_asr.audio import SAMPLE_RATE, split_point
+        from services.remote_asr.protocol import MAX_AUDIO_SECONDS, REMOTE_WHISPER_OVERLAP_S
+
+        audio = np.asarray(audio, dtype=np.float32).reshape(-1)
+        limit = MAX_AUDIO_SECONDS * SAMPLE_RATE
+        overlap = int(REMOTE_WHISPER_OVERLAP_S * SAMPLE_RATE)
+        options = _phrase_options(phrases)
+        collected = []
+        start = 0
+        keep_from = 0.0
+        while start < len(audio):
+            if self.should_cancel:
+                raise RuntimeError("Transcription canceled")
+            end = start + split_point(audio[start:], max_samples=limit)
+            window = audio[start:end]
+            origin = start / SAMPLE_RATE
+            if self._audible(window):
+                result = self._recognize(window, language, **options)
+                kept = []
+                for segment in result.get("segments", []):
+                    abs_start = float(segment.get("start") or 0.0) + origin
+                    abs_end = float(segment.get("end") or 0.0) + origin
+                    text = str(segment.get("text") or "").strip()
+                    if text and abs_end > keep_from:
+                        kept.append(dict(segment, text=text, start=abs_start, end=abs_end))
+                if not kept:
+                    text = str(result.get("text") or "").strip()
+                    duration = len(window) / SAMPLE_RATE
+                    if text and origin + duration > keep_from:
+                        kept.append({"text": text, "start": origin, "end": origin + duration})
+                if kept:
+                    collected = [
+                        seg for seg in collected if float(seg["start"]) < origin - 1e-6
+                    ]
+                    collected.extend(kept)
+            if end >= len(audio):
+                break
+            nxt = end - overlap
+            if nxt <= start:
+                nxt = end
+            keep_from = end / SAMPLE_RATE
+            start = nxt
+        return dict(text=self.join_texts(seg["text"] for seg in collected), segments=collected)
 
 
 class SpeechDecoder:

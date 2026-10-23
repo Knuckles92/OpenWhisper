@@ -26,6 +26,7 @@ from services.local_asr.audio import (
     MAX_SAMPLES,
     SAMPLE_RATE,
     WindowSplitter,
+    joined_windows,
     resampler,
     split_point,
     windows,
@@ -187,6 +188,23 @@ def long_session(controller, recorder, backend, *, seconds=66, change=None, at=3
 
 
 # --- the shared splitter and resampler ---------------------------------------
+
+
+def test_joined_windows_concatenates_consecutive_clips():
+    first = np.arange(4, dtype=np.float32)
+    second = np.arange(4, 7, dtype=np.float32)
+    assert joined_windows([]) == []
+    assert joined_windows([(1.5, first)]) == [(1.5, first)]
+    offset, audio = joined_windows([(0.0, first), (4.0 / SAMPLE_RATE, second)])[0]
+    assert offset == 0.0
+    assert np.array_equal(audio, np.arange(7, dtype=np.float32))
+
+
+def test_split_point_with_a_longer_cap_still_cuts_in_the_last_six_seconds():
+    audio = np.linspace(0.2, 0.01, 20 * SAMPLE_RATE, dtype=np.float32)
+    assert split_point(audio, max_samples=10 * SAMPLE_RATE) == 10 * SAMPLE_RATE
+    short = np.full(3 * SAMPLE_RATE, 0.1, np.float32)
+    assert split_point(short, max_samples=10 * SAMPLE_RATE) == len(short)
 
 
 def test_windows_refactor_is_bit_identical_to_the_original(recorder):

@@ -654,6 +654,9 @@ class RemoteSpeechBackend(LocalSpeechBackend):
             raise RuntimeError("Transcription canceled")
         language = language or self.request_language()
         samples = np.asarray(audio, dtype=np.float32)
+        # A 4-minute Whisper clip is one request now; 300 s was enough for a
+        # 30 s window and is still the floor. Slow CPU hosts need more.
+        timeout = max(300, int(samples.size / 16000 * 4) + 60) if samples.size else 300
         with self._state_lock:
             self._inflight += 1
         self._notify_link()
@@ -666,7 +669,7 @@ class RemoteSpeechBackend(LocalSpeechBackend):
                     raise RuntimeError(self.last_error or "Remote engine is not connected")
                 try:
                     result, host_s = process.request_timed(
-                        op, audio=samples, language=language, timeout=300, **options
+                        op, audio=samples, language=language, timeout=timeout, **options
                     )
                     break
                 except RemoteConnectionLost as exc:

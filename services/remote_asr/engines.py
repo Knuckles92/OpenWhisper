@@ -157,11 +157,17 @@ class WhisperEngine(HostEngine):
         if words:
             options["hotwords"] = words
         with self._lock:
+            # Independent windows (and a long clip's internal 30 s chunks)
+            # must not condition on earlier text: that skip/loop is how a
+            # 4-minute remote dictation lost whole sentences in the middle
+            # while the same file decoded locally was complete. Meeting ASR
+            # already passes False for the same reason.
             segments, _info = model.transcribe(
                 np.asarray(audio, dtype=np.float32),
                 language=whisper_language(language),
                 beam_size=config.FASTER_WHISPER_BEAM_SIZE,
                 vad_filter=config.FASTER_WHISPER_VAD_ENABLED,
+                condition_on_previous_text=False,
                 **options,
             )
             # faster-whisper decodes while the generator is consumed.

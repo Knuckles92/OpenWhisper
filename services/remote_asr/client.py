@@ -138,7 +138,7 @@ def _open(host: str, port: int, timeout: float):
             ssl=client_context(),
             open_timeout=timeout,
             close_timeout=2,
-            max_size=protocol.MAX_REPLY_BYTES,
+            max_size=max(protocol.MAX_REQUEST_BYTES, protocol.MAX_REPLY_BYTES),
             compression=None,
             # RemoteConnection keeps a paired connection alive itself (see
             # _heartbeat); probes and pairing close within seconds.

@@ -8,12 +8,34 @@ MAX_SAMPLES = 30 * SAMPLE_RATE
 MIN_SAMPLES = 24 * SAMPLE_RATE
 
 
-def split_point(audio: np.ndarray) -> int:
-    if len(audio) < MAX_SAMPLES:
+def split_point(audio: np.ndarray, max_samples: int = MAX_SAMPLES) -> int:
+    """Index of a quiet cut at most ``max_samples`` into ``audio``.
+
+    Looks at the last six seconds of that span so ordinary speech isn't cut
+    in the middle of a word. The 30 s default matches ``MAX_SAMPLES``.
+    """
+    if len(audio) < max_samples:
         return len(audio)
-    region = audio[MIN_SAMPLES:MAX_SAMPLES]
-    energy = np.mean(region.reshape(-1, 1600) ** 2, axis=1)
-    return MIN_SAMPLES + (int(np.argmin(energy)) + 1) * 1600
+    min_samples = max(0, max_samples - (MAX_SAMPLES - MIN_SAMPLES))
+    region = audio[min_samples:max_samples]
+    hops = len(region) // 1600
+    if hops <= 0:
+        return max_samples
+    energy = np.mean(region[: hops * 1600].reshape(hops, 1600) ** 2, axis=1)
+    return min_samples + (int(np.argmin(energy)) + 1) * 1600
+
+
+def joined_windows(windows):
+    """One ``(offset, audio)`` covering consecutive windows, in order.
+
+    Remote Whisper sends the recording as one clip so the host can decode it
+    the way a local file decode does. Empty input stays empty.
+    """
+    pieces = list(windows)
+    if len(pieces) <= 1:
+        return pieces
+    offset = pieces[0][0]
+    return [(offset, np.concatenate([audio for _offset, audio in pieces]))]
 
 
 def resampler():

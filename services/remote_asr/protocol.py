@@ -97,7 +97,10 @@ A request frame is a 4-byte big-endian header length, the JSON header, then
 a payload. For decoding operations the payload is the audio as 16 kHz mono
 signed 16-bit little-endian PCM. Dictation audio is recorded as 16-bit and
 resampled to 16-bit before it is decoded, so the conversion loses nothing
-and halves what float32 would send. For ``records_put`` it is file bytes.
+and halves what float32 would send. Optional engines still send 30 s
+windows. Whisper on a host takes a long dictation as one clip (the way a
+local file decode does), up to ``MAX_AUDIO_SECONDS``. For ``records_put``
+it is file bytes.
 
 Direct history uses a separate paired connection: ``hello`` includes
 ``purpose: "history"`` and the client's ``history_enabled`` opt-in. A supporting
@@ -135,12 +138,18 @@ DEFAULT_PORT = 47821
 PATH = "/openwhisper/v1/engine"
 SAMPLE_RATE = 16000
 
-#: Longest audio accepted in one request. Clients send windows of at most
-#: 30 s (services/local_asr/audio.py), so this only bounds a misbehaving peer.
-MAX_AUDIO_SECONDS = 120
+#: Longest audio accepted in one request. Whisper sends a long dictation as
+#: one clip so faster-whisper can VAD and overlap its own 30 s windows, the
+#: way a local file decode does. Parakeet and the other optional engines
+#: still send 30 s windows (services/local_asr/audio.py). Bounded so one PCM
+#: frame fits in ``MAX_REPLY_BYTES``.
 MAX_HEADER_BYTES = 64 * 1024
-MAX_REQUEST_BYTES = 4 + MAX_HEADER_BYTES + MAX_AUDIO_SECONDS * SAMPLE_RATE * 2
 MAX_REPLY_BYTES = 8 * 1024 * 1024
+MAX_AUDIO_SECONDS = (MAX_REPLY_BYTES - 4 - MAX_HEADER_BYTES) // (SAMPLE_RATE * 2)
+MAX_REQUEST_BYTES = 4 + MAX_HEADER_BYTES + MAX_AUDIO_SECONDS * SAMPLE_RATE * 2
+#: When a dictation is longer than one frame, remote Whisper reuses this many
+#: seconds at each seam. The later request owns the overlap.
+REMOTE_WHISPER_OVERLAP_S = 5.0
 #: File bytes per ``records_put`` frame and per ``records_fetch`` reply.
 #: Well inside both frame limits, base64 included.
 RECORD_CHUNK_BYTES = 1024 * 1024
