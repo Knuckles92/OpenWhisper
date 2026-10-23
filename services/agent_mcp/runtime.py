@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import secrets
 import socket
+import sys
 import threading
 from dataclasses import dataclass
 
@@ -45,6 +46,36 @@ def _tailscale_address():
 
 def _is_valid_port(port):
     return not isinstance(port, bool) and isinstance(port, int) and 1 <= port <= 65535
+
+
+def _token_store_error(credentials=None):
+    """User-facing copy when the MCP token cannot be read or saved.
+
+    A missing store is not the same as a locked one: telling someone to
+    unlock a keyring that is not installed or not running is useless.
+    """
+    from services.credentials import store
+
+    status = (credentials if credentials is not None else store()).status()
+    reason = (status.reason or "").lower()
+    if status.available or "lock" in reason:
+        return (
+            "Could not save the MCP token. Unlock your system credential store, then retry."
+        )
+    if "did not respond" in reason:
+        return (
+            "Could not save the MCP token. The system credential store did not respond. "
+            "Unlock it if it is waiting, then retry."
+        )
+    if sys.platform not in ("win32", "darwin"):
+        return (
+            "Could not save the MCP token. No system credential store was found. "
+            "Install or start GNOME Keyring or KWallet, then retry."
+        )
+    return (
+        f"Could not save the MCP token. {status.backend_name} is not available. "
+        "Start it, then retry."
+    )
 
 
 def _listen_addresses(port, tailscale):
@@ -222,7 +253,7 @@ class McpRuntime:
             if not self._stop.is_set():
                 error = "MCP stopped unexpectedly. Turn it off and on to retry."
         except CredentialStoreError:
-            error = "Could not save the MCP token. Unlock your system credential store, then retry."
+            error = _token_store_error(self._credentials)
         except TailscaleUnavailable:
             error = "Tailscale is not connected. Connect Tailscale, or turn off Tailscale access, then retry."
         except OSError:
@@ -247,6 +278,10 @@ class McpRuntime:
         credentials = (
             self._credentials if self._credentials is not None else store()
         )
+        # A failed probe is cached so Settings redraws do not re-prompt. Retry
+        # and toggling the switch are the user asking us to look again.
+        if not credentials.status().available:
+            credentials.refresh()
         token = credentials.get(CREDENTIAL_NAME)
         if not token:
             token = secrets.token_urlsafe(32)

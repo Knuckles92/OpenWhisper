@@ -71,6 +71,23 @@ class TestCredentialStore:
         with pytest.raises(CredentialStoreError):
             store.delete(NAME)
 
+    def test_refresh_sees_a_store_that_appears_later(self):
+        available = {"now": False}
+
+        def factory():
+            if not available["now"]:
+                raise RuntimeError("no D-Bus session")
+            return memory_backend()
+
+        store = CredentialStore(backend_factory=factory)
+        assert not store.status().available
+        assert store.get(NAME) is None
+        available["now"] = True
+        assert not store.status().available
+        assert store.refresh().available
+        store.set(NAME, SECRET)
+        assert store.get(NAME) == SECRET
+
     @pytest.mark.parametrize(
         "raw",
         ["", "   ", "sk-with space", "sk-tab\tinside", "sk-“smart”", "x" * 513],

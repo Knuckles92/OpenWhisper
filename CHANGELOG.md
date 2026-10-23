@@ -13,6 +13,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Changed
 - **Walkthroughs have their own Settings page** — **Settings → Dictation → Walkthroughs** now holds the Walkthrough and Screenshot shortcuts, how the document looks, and the AI write-up, which were spread across General and Hotkeys. Hotkeys links to it.
 
+### Fixed
+- **API & MCP Retry works after the credential store appears** — turning on API & MCP with no Secret Service said "Unlock your system credential store" and Retry kept failing even after GNOME Keyring or KWallet was running; only a restart worked. The page now says no store was found and what to install or start, and Retry (or toggling the switch) looks again.
+
 ## [2.7.7] - 2026-10-22
 
 ### Added
