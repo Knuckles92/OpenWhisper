@@ -395,7 +395,11 @@ def test_a_section_longer_than_a_page_flows_on(tmp_path):
     text = " ".join(pages)
     assert len(pages) >= 2
     assert text.count("An explanation that keeps going.") == 150
-    assert text.index("Screenshot 2 · 5:00") < text.index("Done.")
+    # PDFium reads a page with only a line or two on it as vertical text,
+    # one letter per line; where the fonts leave the caption on such a page
+    # (macOS), only the letters' order is left to compare.
+    letters = "".join(text.split())
+    assert letters.index("Screenshot2·5:00") < letters.index("Done.")
 
 
 def test_write_pdf_works_on_a_worker_thread(tmp_path):

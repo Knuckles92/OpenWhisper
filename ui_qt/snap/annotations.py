@@ -411,7 +411,7 @@ class Step:
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, str(self.number))
 
 
-type Annotation = Arrow | Box | Stroke | Label | Step
+Annotation = Arrow | Box | Stroke | Label | Step
 
 
 _DRAFTS: dict[Tool, Callable[[QPointF, QColor], Annotation]] = {
