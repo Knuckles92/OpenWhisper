@@ -48,12 +48,11 @@ from PyQt6.QtGui import (
     QTextTable,
 )
 
+from services.walkthrough.storage import MANIFEST_NAME, MARKDOWN_NAME, PDF_NAME
+
 logger = logging.getLogger(__name__)
 
 TITLE = "Walkthrough"
-MARKDOWN_NAME = "walkthrough.md"
-PDF_NAME = "walkthrough.pdf"
-MANIFEST_NAME = "walkthrough.json"
 MANIFEST_VERSION = 1
 
 _ABOUT = "Spoken notes with screenshots, transcribed by OpenWhisper."

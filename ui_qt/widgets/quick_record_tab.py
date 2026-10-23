@@ -6,7 +6,7 @@ from PyQt6.QtCore import QEvent, Qt, QSize, QTimer, pyqtSignal
 from ui_qt.dialogs.settings_destinations import COMMANDS
 from ui_qt.utils.icons import tabler_icon
 from ui_qt.widgets.cards import ControlPanel
-from ui_qt.widgets.buttons import PrimaryButton, SuccessButton, DangerButton, WarningButton
+from ui_qt.widgets.buttons import Button, PrimaryButton, SuccessButton, DangerButton, WarningButton
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.engine_field import engine_combo
@@ -269,6 +269,8 @@ class QuickRecordTab(TranscriptionTabBase):
         self.walkthrough_badge.set_new(
             not resolve_walkthrough_intro_seen(settings_manager.load_all_settings())
         )
+        # It shares its row: keep the badge clear of the label.
+        self.walkthrough_button.reserve_beside_label(FeatureBadge.room_beside_label())
 
         buttons_widget = QWidget()
         buttons_layout = QVBoxLayout(buttons_widget)
@@ -284,12 +286,18 @@ class QuickRecordTab(TranscriptionTabBase):
         bottom_row.addWidget(self.stop_button, stretch=1)
         bottom_row.addWidget(self.cancel_button, stretch=1)
 
+        self.saved_walkthroughs_button = Button("Saved Walkthroughs…")
+        self.saved_walkthroughs_button.set_base_minimum_size(140, 48)
+        self.saved_walkthroughs_button.clicked.connect(self.saved_walkthroughs_requested)
+        # One row, so the tab still fits the minimum window height unscrolled.
+        walkthrough_row = QHBoxLayout()
+        walkthrough_row.setSpacing(12)
+        walkthrough_row.addWidget(self.walkthrough_button, stretch=1)
+        walkthrough_row.addWidget(self.saved_walkthroughs_button, stretch=1)
+
         buttons_layout.addLayout(top_row)
         buttons_layout.addLayout(bottom_row)
-        buttons_layout.addWidget(self.walkthrough_button)
-        self.saved_walkthroughs_button = QPushButton("Saved Walkthroughs…")
-        self.saved_walkthroughs_button.clicked.connect(self.saved_walkthroughs_requested)
-        buttons_layout.addWidget(self.saved_walkthroughs_button)
+        buttons_layout.addLayout(walkthrough_row)
         buttons_widget.setMaximumWidth(420)
 
         control_panel.layout.addStretch()

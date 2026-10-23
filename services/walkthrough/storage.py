@@ -18,6 +18,10 @@ from config import data_root
 
 CAPTURES_FOLDER = "captures"
 SCREENSHOTS_FOLDER = "screenshots"
+#: The finished document in a capture folder (written by ``document``).
+MARKDOWN_NAME = "walkthrough.md"
+PDF_NAME = "walkthrough.pdf"
+MANIFEST_NAME = "walkthrough.json"
 
 
 def captures_root() -> Path:

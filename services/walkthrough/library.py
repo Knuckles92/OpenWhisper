@@ -15,9 +15,13 @@ import time
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from services.walkthrough import document
 from services.walkthrough.session import Shot, WalkthroughResult, WalkthroughSession
+from services.walkthrough.storage import MANIFEST_NAME, MARKDOWN_NAME, PDF_NAME
+
+if TYPE_CHECKING:
+    from services.walkthrough.document import Walkthrough
 
 DRAFT_NAME = "draft.json"
 AUDIO_NAME = "audio.wav"
@@ -97,8 +101,12 @@ def _seconds(value) -> float:
     return value
 
 
-def load_document(folder: Path) -> document.Walkthrough:
-    value = read_json(folder / document.MANIFEST_NAME)
+def load_document(folder: Path) -> Walkthrough:
+    # The Qt renderer loads only here and below: recovery and retention run
+    # on the startup worker, which must not import it.
+    from services.walkthrough import document
+
+    value = read_json(folder / MANIFEST_NAME)
     if value.get("version") != document.MANIFEST_VERSION:
         raise ValueError("Unsupported walkthrough version")
     sections = []
@@ -115,13 +123,14 @@ def load_document(folder: Path) -> document.Walkthrough:
 
 
 def load_result(folder: Path, *, spoken: bool = False) -> WalkthroughResult:
+    from services.walkthrough import document
     from services.walkthrough.write_up import _IMAGE
 
     walkthrough = load_document(folder)
     shots = [section.shot for section in walkthrough.sections if section.shot]
     written = not spoken and (folder / "write-up.pdf").is_file() and (folder / "write-up.md").is_file()
-    pdf = local_file(folder, "write-up.pdf" if written else document.PDF_NAME)
-    md = local_file(folder, "write-up.md" if written else document.MARKDOWN_NAME)
+    pdf = local_file(folder, "write-up.pdf" if written else PDF_NAME)
+    md = local_file(folder, "write-up.md" if written else MARKDOWN_NAME)
     # Normalize image paths from disk; never reuse another computer's paths.
     names = {shot.name for shot in shots}
     text = md.read_text(encoding="utf-8")
@@ -149,12 +158,13 @@ def entries(root: Path) -> list[Path]:
         return []
     return sorted((p for p in root.iterdir() if p.is_dir() and not p.is_symlink()
                    and _FOLDER.fullmatch(p.name)
-                   and ((p / document.MANIFEST_NAME).is_file() or (p / DRAFT_NAME).is_file())),
+                   and ((p / MANIFEST_NAME).is_file() or (p / DRAFT_NAME).is_file())),
                   reverse=True)
 
 
 def save_review(folder: Path, texts: list[str], keep: list[bool]) -> WalkthroughResult:
     """Regenerate all three documents; keep omitted images and the original manifest."""
+    from services.walkthrough import document
     from services.walkthrough.finish import document_settings
 
     original = load_document(folder)
@@ -177,11 +187,11 @@ def save_review(folder: Path, texts: list[str], keep: list[bool]) -> Walkthrough
         document.write_pdf(staged, stage, document_format=fmt, page_size=page_size)
         document.write_manifest(staged, stage)
         if not (folder / "walkthrough.original.json").exists():
-            atomic_json(folder / "walkthrough.original.json", read_json(folder / document.MANIFEST_NAME))
+            atomic_json(folder / "walkthrough.original.json", read_json(folder / MANIFEST_NAME))
         # A previous write-up describes the old revision. Invalidate it in
         # the same publication, before a new source document can be copied.
         publish_files(stage, folder,
-                      (document.MARKDOWN_NAME, document.PDF_NAME, document.MANIFEST_NAME),
+                      (MARKDOWN_NAME, PDF_NAME, MANIFEST_NAME),
                       remove=("write-up.md", "write-up.pdf"))
     return load_result(folder, spoken=True)
 
@@ -208,7 +218,7 @@ def attach_recovered_audio(root: Path, recordings: Path) -> int:
     """Join a draft to its journal's idempotently recovered WAV, even on a later restart."""
     count = 0
     for folder in entries(root):
-        if (folder / document.MANIFEST_NAME).exists() or (folder / AUDIO_NAME).exists():
+        if (folder / MANIFEST_NAME).exists() or (folder / AUDIO_NAME).exists():
             continue
         try:
             draft = read_json(folder / DRAFT_NAME)
@@ -283,8 +293,8 @@ def expired_entries(root: Path, *, now: float | None = None) -> list[Path]:
     cutoff = (time.time() if now is None else now) - days * 86400
     return [folder for folder in entries(root)
             if not (folder / DRAFT_NAME).exists()
-            and (folder / document.MANIFEST_NAME).is_file()
-            and (folder / document.MANIFEST_NAME).stat().st_mtime < cutoff]
+            and (folder / MANIFEST_NAME).is_file()
+            and (folder / MANIFEST_NAME).stat().st_mtime < cutoff]
 
 
 def delete_entry(folder: Path) -> None:

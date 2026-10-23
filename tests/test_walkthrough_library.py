@@ -324,3 +324,16 @@ def test_metadata_requires_an_object(tmp_path):
     path.write_text("[]")
     with pytest.raises(ValueError, match="object"):
         library.read_json(path)
+
+
+def test_startup_recovery_does_not_load_the_qt_document_renderer():
+    # Recovery and retention run on the startup worker; the PDF renderer
+    # imports QtGui and loads only for review and write-ups.
+    code = ("import sys\n"
+            "from services.walkthrough import library\n"
+            "assert 'services.walkthrough.document' not in sys.modules, 'document loaded'\n"
+            "assert 'PyQt6.QtGui' not in sys.modules, 'QtGui loaded'\n")
+    child = subprocess.run([sys.executable, "-c", code],
+                           cwd=Path(__file__).resolve().parents[1], capture_output=True,
+                           timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    assert child.returncode == 0, child.stderr.decode(errors="replace")
