@@ -269,22 +269,29 @@ def _split_look(text: str) -> tuple["Look", str]:
 
 
 def _write(result: WalkthroughResult, text: str, look: "Look") -> WalkthroughResult:
+    import tempfile
+
     from services.walkthrough.document import TITLE, _image_target, write_markdown_pdf
     from services.walkthrough.finish import document_settings
+    from services.walkthrough.library import publish_files
 
     folder = result.folder
     markdown_path = folder / MARKDOWN_NAME
-    markdown_path.write_text(text + "\n", encoding="utf-8", newline="\n")
+    pdf = folder / PDF_NAME
     heading = _HEADING.search(text)
     title = heading[1] if heading else TITLE
     _format, page_size = document_settings()
     try:
-        pdf = write_markdown_pdf(text, folder / PDF_NAME, folder=folder, title=title,
-                                 page_size=page_size, look=look)
+        with tempfile.TemporaryDirectory(prefix=".write-up-", dir=folder) as staging:
+            stage = Path(staging)
+            (stage / MARKDOWN_NAME).write_text(text + "\n", encoding="utf-8", newline="\n")
+            write_markdown_pdf(text, stage / PDF_NAME, folder=folder, title=title,
+                               page_size=page_size, look=look)
+            publish_files(stage, folder, (PDF_NAME, MARKDOWN_NAME))
     except OSError as exc:
         raise WriteUpFailed(f"could not write {PDF_NAME}: {exc}") from exc
     clipboard_text = _IMAGE.sub(
         lambda match: f"![{match[1]}]({_image_target(folder / match[2], folder, True)})", text,
     )
     return replace(result, pdf=pdf, markdown=markdown_path, clipboard_text=clipboard_text,
-                   written_up=True)
+                   written_up=True, write_up_error="")

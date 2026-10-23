@@ -4,9 +4,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
-from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtTest import QSignalSpy, QTest
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from ui_qt.overlays import waveform_overlay
 from ui_qt.overlays.waveform_overlay import WaveformOverlay
@@ -57,6 +58,12 @@ def test_the_button_asks_for_a_walkthrough(tab):
 
     assert len(spy) == 1
     assert tab.walkthrough_button.text() == "Start Walkthrough"
+
+
+def test_saved_walkthroughs_remain_accessible_after_the_ready_card_is_gone(tab):
+    spy = QSignalSpy(tab.saved_walkthroughs_requested)
+    tab.saved_walkthroughs_button.click()
+    assert len(spy) == 1
 
 
 def test_during_a_walkthrough_the_button_finishes_it(tab):
@@ -194,21 +201,32 @@ def test_hovering_a_control_shows_a_pointing_hand(overlay):
     assert overlay._control_rects == {}
 
 
-def test_hovering_a_control_shows_its_shortcut(overlay):
+def test_hovering_a_control_shows_its_shortcut(overlay, monkeypatch):
+    # This checks the positioned pill; compositor-managed desktops use a
+    # native Qt tooltip instead, even under an isolated X11 test server.
+    monkeypatch.setattr("ui_qt.widgets.buttons.compositor_managed", lambda: False)
     overlay.set_control_hotkeys("Ctrl+Alt+S", "")
     _recording_walkthrough(overlay)
 
-    QTest.mouseMove(overlay, _center(overlay, "snap"))
+    def hover(key):
+        # Test the hover handler without depending on a global pointer warp,
+        # which offscreen Qt and bare X servers need not deliver.
+        event = QMouseEvent(QEvent.Type.MouseMove, QPointF(_center(overlay, key)),
+                            Qt.MouseButton.NoButton, Qt.MouseButton.NoButton,
+                            Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(overlay, event)
+
+    hover("snap")
     hint = overlay._hotkey_hint
     assert hint is not None and hint.isVisible()
     assert hint._text_label.text() == "Ctrl+Alt+S"
     assert hint.geometry().bottom() < overlay.mapToGlobal(QPoint(0, 0)).y() + overlay._control_rects["snap"].top()
 
     # Done's Walkthrough shortcut is unset: no pill.
-    QTest.mouseMove(overlay, _center(overlay, "finish"))
+    hover("finish")
     assert not hint.isVisible()
 
-    QTest.mouseMove(overlay, _center(overlay, "snap"))
+    hover("snap")
     overlay.hide()
     assert not hint.isVisible()
 

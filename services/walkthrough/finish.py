@@ -91,6 +91,7 @@ def build_documents(
     markdown_path = write_markdown(walkthrough, folder, document_format=document_format)
     pdf = write_pdf(walkthrough, folder, page_size=page_size, document_format=document_format)
     write_manifest(walkthrough, folder)
+    (folder / "draft.json").unlink(missing_ok=True)
     text = marked_text(texts, len(shots))
     raw = marked_text(raw_texts, len(shots))
     return WalkthroughResult(

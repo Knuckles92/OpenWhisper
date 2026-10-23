@@ -29,6 +29,7 @@ class QuickRecordTab(TranscriptionTabBase):
     record_canceled = pyqtSignal()
     #: Start a walkthrough, or finish the one recording (docs/walkthrough.md).
     walkthrough_requested = pyqtSignal()
+    saved_walkthroughs_requested = pyqtSignal()
     copy_requested = pyqtSignal(str)
     profiles_requested = pyqtSignal()
     settings_requested = pyqtSignal(str)
@@ -286,6 +287,9 @@ class QuickRecordTab(TranscriptionTabBase):
         buttons_layout.addLayout(top_row)
         buttons_layout.addLayout(bottom_row)
         buttons_layout.addWidget(self.walkthrough_button)
+        self.saved_walkthroughs_button = QPushButton("Saved Walkthroughs…")
+        self.saved_walkthroughs_button.clicked.connect(self.saved_walkthroughs_requested)
+        buttons_layout.addWidget(self.saved_walkthroughs_button)
         buttons_widget.setMaximumWidth(420)
 
         control_panel.layout.addStretch()

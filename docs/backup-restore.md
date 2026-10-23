@@ -4,9 +4,10 @@ Open **Settings → Backup & restore**, under **Models & storage**. Backups are 
 
 ## Create a backup
 
-Choose **Create backup…** and save the `.owbackup` file to a local folder or removable drive. **Include saved recordings** is enabled by default. The page shows the last backup's date, location, and size, and reports failures without publishing an incomplete archive.
+Choose **Create backup…** and save the `.owbackup` file to a local folder or removable drive. **Include saved recordings and captures** is enabled by default. The page shows the last backup's date, location, and size, and reports failures without publishing an incomplete archive.
 
-Backups include the SQLite database, application settings, and, when selected, locally retained dictation and meeting recordings. Text-only backups preserve database content but remove audio references; restoring one replaces existing local recordings too. Bring records kept only on a paired host back to this computer before backing up if you need them included.
+Backups include the SQLite database, application settings, and, when selected, locally retained dictation and meeting recordings and the `captures` folder
+(walkthrough documents, screenshots, and recovery drafts). Text-only backups omit captures and preserve database content but remove audio references; restoring one replaces existing local recordings too. Bring records kept only on a paired host back to this computer before backing up if you need them included.
 
 Speech models, downloaded runtimes, temporary remote caches, API keys, device pairing credentials, and private host keys are excluded. Restored settings disable sharing and MCP services, select local record storage, and require devices to be paired again. Credentials already stored in the destination computer's operating-system keyring remain there.
 
@@ -20,7 +21,7 @@ The app waits for recording, transcription, and meeting processing to finish bef
 2. Choose **Restore and restart** and confirm replacement of local data.
 3. OpenWhisper validates and stages the contents, closes its data writers, then restarts. It applies the restore before opening settings or SQLite.
 
-Restore replaces local settings, history, meeting data, and recordings with the archive's contents. This is a replacement, not a merge. Current owned data is retained under `.openwhisper-restore/previous-<date>-<id>` in the application data directory; its location appears on the backup page after restart. The recovery copy is kept separately from automatic backup retention.
+Restore replaces local settings, history, meeting data, recordings, and captures with the archive's contents. This is a replacement, not a merge. Current owned data is retained under `.openwhisper-restore/previous-<date>-<id>` in the application data directory; its location appears on the backup page after restart. The recovery copy is kept separately from automatic backup retention.
 
 After restoring a host, pair each client again, then open **Settings → Remote engine → Paired computers → Recover stored records…** on the host. Choose the old computer's record group and its new pairing, then choose **Recover records**. This grants that pairing access to the old records alongside anything it has already saved under its new pairing. Computer names alone never grant access. Repeat for each old record group that belongs to that client. The client can then refresh History or Past Meetings, or bring the records back. Removing the pairing and keeping its records makes those groups available for recovery again.
 

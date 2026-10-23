@@ -480,6 +480,12 @@ class ApplicationController(QObject):
             self.update_recording_trigger_mode
         )
         self.ui_controller.on_retranscribe = self.retranscribe_audio
+        self.ui_controller.on_recover_walkthrough = self.transcription_runtime.recover_walkthrough
+        # Library writes use the same exclusive gate as backups: neither can
+        # race a capture, restore, meeting, or another document operation.
+        self.ui_controller.acquire_walkthrough_library = self._acquire_backup
+        self.ui_controller.release_walkthrough_library = self._release_backup
+        self.ui_controller.submit_walkthrough_library = self.executor.submit
         self.ui_controller.on_upload_audio = self.upload_audio_file
         self.ui_controller.on_upload_audio_files = self.upload_audio_files
         self.ui_controller.on_upload_cancel = self.cancel
@@ -2827,6 +2833,9 @@ class ApplicationController(QObject):
             self._shutdown_cancel.set()
         self._batch_stop_requested = True
         self.transcription_runtime.begin_shutdown()
+        cancel_library = getattr(self.ui_controller, "cancel_walkthrough_library", None)
+        if callable(cancel_library):
+            cancel_library()
 
         _attempt(lambda: self.command_runtime.cleanup(), "Error during command runtime cleanup")
         _attempt(self._stop_automation, "Error stopping automation")

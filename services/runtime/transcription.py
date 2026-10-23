@@ -386,7 +386,17 @@ class TranscriptionRuntime:
         from services.recording_journal import recover_recordings
         cleanup_orphaned_preview_audio()
         recovered = recover_recordings(config.RECORDED_AUDIO_FILE, config.RECORDINGS_FOLDER)
-        if recovered:
+        from pathlib import Path
+        from services.walkthrough.library import attach_recovered_audio, prune
+        from services.walkthrough.storage import captures_root
+
+        root = captures_root()
+        walkthroughs = attach_recovered_audio(root, Path(config.RECORDINGS_FOLDER))
+        prune(root)
+        if walkthroughs:
+            self.controller.status_update.emit(
+                f"Recovered {walkthroughs} walkthrough(s) — open Saved Walkthroughs to finish them")
+        elif recovered:
             self.controller.status_update.emit(
                 f'Recovered {len(recovered)} interrupted recording(s) in Recordings'
             )
@@ -448,6 +458,12 @@ class TranscriptionRuntime:
                 return False
             with self._job_lock:
                 self._walkthrough = session
+            journal = getattr(self.controller.recorder, "_audio_spool", None)
+            if journal is not None:
+                try:
+                    session.checkpoint_recording(journal.directory.name)
+                except OSError:
+                    logger.exception("Could not create walkthrough recovery folder")
             return True
 
     def _begin_job(self, mode: str, settings, selection, **context) -> dictation_pipeline.DictationJob:
@@ -935,6 +951,44 @@ class TranscriptionRuntime:
             self._submit_transcription_job(audio_path)
         except Exception as exc:
             logger.error(f"Failed to start re-transcription: {exc}")
+            self.on_transcription_error(_start_failure_message(exc))
+
+    def recover_walkthrough(self, folder) -> None:
+        """Finish an interrupted walkthrough through the usual job and cancellation path."""
+        import wave
+        from pathlib import Path
+        from services.walkthrough.library import AUDIO_NAME, recovery_session
+
+        if self.controller.is_meeting_active() or self.controller.recorder.is_recording:
+            self._report_busy("recovering a walkthrough")
+            return
+        try:
+            folder = Path(folder)
+            session = recovery_session(folder)
+            audio = folder / AUDIO_NAME
+            with wave.open(str(audio), "rb") as wav:
+                duration = wav.getnframes() / wav.getframerate()
+        except (OSError, ValueError, KeyError, TypeError, wave.Error) as exc:
+            self.controller.status_update.emit(f"Couldn't recover the walkthrough: {exc}")
+            return
+        job = self._begin_job(JobMode.WALKTHROUGH, None, "")
+        if not self._claim_job(job):
+            self._report_busy("recovering a walkthrough")
+            return
+        self._forget_recording()
+        with self._job_lock:
+            self._walkthrough = session
+        self._deliver_to_clipboard = True
+        self.controller._pending_audio_path = None
+        self.controller._pending_audio_duration = duration
+        self.controller._pending_file_size = audio.stat().st_size
+        self.controller._pending_streaming_text = ""
+        self.controller._pending_source_name = WALKTHROUGH_LABEL
+        self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
+        self.controller.status_update.emit("Recovering walkthrough...")
+        try:
+            self._submit_transcription_job(str(audio))
+        except Exception as exc:
             self.on_transcription_error(_start_failure_message(exc))
 
     def upload_audio_file(
@@ -1486,6 +1540,10 @@ class TranscriptionRuntime:
             session = self._walkthrough
         if session is None:
             raise RuntimeError("The walkthrough's screenshots are missing")
+        try:
+            session.preserve_audio(audio_path)
+        except OSError:
+            logger.exception("Could not keep the walkthrough's recovery audio")
         shots = session.saved_shots()
         texts = self._timed_decode(backend, lambda: finish.transcribe_sections(
             audio_path, shots,

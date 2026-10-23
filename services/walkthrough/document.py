@@ -14,7 +14,6 @@ widget, and needs only that the QGuiApplication exists, for its fonts.
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import os
@@ -323,8 +322,8 @@ def write_manifest(walkthrough: Walkthrough, folder: Path) -> Path:
         ],
     }
     path = folder / MANIFEST_NAME
-    text = json.dumps(manifest, ensure_ascii=False, indent=2) + "\n"
-    path.write_text(text, encoding="utf-8", newline="\n")
+    from services.walkthrough.library import atomic_json
+    atomic_json(path, manifest)
     return path
 
 

@@ -54,6 +54,7 @@ OWNED_NAMES = (
     ".recorded_audio-recovery",
     "recordings",
     "meetings",
+    "captures",
     "remote_records",
     "scratchpad.txt",
 )
@@ -62,7 +63,7 @@ SQLITE_SIDECARS = ("openwhisper.db-wal", "openwhisper.db-shm",
 RESTORE_NAMES = OWNED_NAMES + SQLITE_SIDECARS
 RECORDING_NAMES = frozenset({
     "recorded_audio.wav", ".recorded_audio-recovery", "recordings", "meetings",
-    "remote_records",
+    "remote_records", "captures",
 })
 LEGACY_HISTORY_NAMES = frozenset({"transcription_history.json",
                                   "transcription_history.json.bak"})

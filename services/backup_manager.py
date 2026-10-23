@@ -161,7 +161,7 @@ class BackupCoordinator(QObject):
             folder = Path(destination).expanduser().resolve()
             if not destination or not folder.is_dir():
                 raise ValueError("Choose an existing folder for automatic backups.")
-            for name in ("recordings", "meetings", "remote_records", ".openwhisper-restore"):
+            for name in ("recordings", "meetings", "captures", "remote_records", ".openwhisper-restore"):
                 if folder.is_relative_to(self.data_dir / name):
                     raise ValueError("Choose a backup folder outside OpenWhisper's recording folders.")
             destination = str(folder)

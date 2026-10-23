@@ -89,6 +89,7 @@ class WalkthroughSession:
         self._saves: list[Future] = []
         self._writer: Optional[ThreadPoolExecutor] = None
         self._open = True
+        self._journal_id = ""
         #: The built document; set by the job worker before it delivers.
         self.result: Optional[WalkthroughResult] = None
         #: Why the document could not be written, when the words were kept
@@ -148,8 +149,50 @@ class WalkthroughSession:
             self._saves.append(self._writer.submit(self._write_shot, image.copy(), shot))
         return shot
 
+    def checkpoint_recording(self, journal_id: str) -> None:
+        """Link this draft to the recorder's crash-safe journal, off the Qt thread."""
+        with self._lock:
+            self._journal_id = journal_id
+            self._folder_locked()
+            if self._writer is None:
+                self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="walkthrough-shots")
+            self._writer.submit(self._checkpoint)
+
+    def _checkpoint(self) -> None:
+        from services.walkthrough.library import DRAFT_NAME, atomic_json
+
+        with self._lock:
+            folder = self._folder
+            value = dict(version=1, started_at=self.started_at.isoformat(),
+                         journal_id=self._journal_id,
+                         shots=[dict(shot=s.path.name, kept_at_s=s.kept_at_s) for s in self._shots])
+        if folder is not None:
+            try:
+                atomic_json(folder / DRAFT_NAME, value)
+            except OSError:
+                logger.exception("Could not checkpoint walkthrough recovery metadata")
+
+    def preserve_audio(self, source: str) -> None:
+        """Keep this recording independent of the next Quick Record's WAV."""
+        import os
+        import shutil
+
+        from services.walkthrough.library import AUDIO_NAME
+
+        folder = self.folder()
+        destination = folder / AUDIO_NAME
+        if Path(source).resolve() != destination.resolve():
+            temporary = folder / ".audio.tmp"
+            try:
+                shutil.copyfile(source, temporary)
+                os.replace(temporary, destination)
+            finally:
+                temporary.unlink(missing_ok=True)
+        self._checkpoint()
+
     def _write_shot(self, image: "QImage", shot: Shot) -> bool:
         written = _write_png(image, shot.path)
+        self._checkpoint()
         if not written and self.on_save_failed is not None:
             try:
                 self.on_save_failed(shot.number)
@@ -199,7 +242,8 @@ class WalkthroughSession:
         if folder is None:
             return
         names = (document.MARKDOWN_NAME, document.PDF_NAME, document.MANIFEST_NAME,
-                 write_up.MARKDOWN_NAME, write_up.PDF_NAME)
+                 write_up.MARKDOWN_NAME, write_up.PDF_NAME, "draft.json", "audio.wav",
+                 "walkthrough.original.json")
         for path in [shot.path for shot in shots] + [folder / name for name in names]:
             path.unlink(missing_ok=True)
         try:

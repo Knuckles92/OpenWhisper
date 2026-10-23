@@ -237,6 +237,46 @@ def _record(h, shots_at=(), *, length_s=6.0):
     h.controller._pending_source_name = h.runtime._recording_source_name(h.runtime._active_job)
 
 
+def test_recovered_walkthrough_claims_a_walkthrough_job_and_keeps_sections(h, monkeypatch):
+    from services.walkthrough import library
+
+    h.session.checkpoint_recording("a" * 32)
+    h.session.add_shot(_image(), 1.0)
+    h.session.saved_shots()
+    _write_recording(h.audio, [_tone(3.0)])
+    h.session.preserve_audio(str(h.audio))
+    folder = h.session.folder()
+    h.session.end()
+    submitted = []
+    monkeypatch.setattr(h.runtime, "_submit_transcription_job", submitted.append)
+    h.runtime.recover_walkthrough(folder)
+    assert h.runtime._active_job.mode == JobMode.WALKTHROUGH
+    assert h.controller._pending_audio_duration == 3.0
+    assert h.controller._pending_source_name == "Walkthrough"
+    assert submitted == [str(folder / library.AUDIO_NAME)]
+    assert h.runtime._walkthrough.saved_shots()[0].kept_at_s == 1.0
+    h.runtime.transcribe_audio_file(submitted[0])
+    assert h.built[0].texts == ["first part", "second part"]
+    assert len(h.history.entries) == 1
+    assert h.ui.ready
+
+
+def test_recovery_does_not_replace_a_busy_job(h, monkeypatch):
+    from services.walkthrough import library
+
+    h.session.checkpoint_recording("a" * 32)
+    _write_recording(h.audio, [_tone(3.0)])
+    h.session.preserve_audio(str(h.audio))
+    h.session.end()
+    assert h.runtime._claim_job()
+    submit = Mock()
+    monkeypatch.setattr(h.runtime, "_submit_transcription_job", submit)
+    h.runtime.recover_walkthrough(h.session.folder())
+    submit.assert_not_called()
+    assert h.runtime._walkthrough is None
+    assert (h.session.folder() / library.AUDIO_NAME).exists()
+
+
 def test_a_walkthrough_records_like_a_dictation_without_early_decoding(h):
     assert h.runtime.start_walkthrough(h.session)
 

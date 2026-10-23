@@ -131,6 +131,28 @@ def test_text_only_archive_clears_audio_references(tmp_path: Path) -> None:
         assert conn.execute("SELECT chunk_id FROM meeting_segments").fetchone()[0] is None
 
 
+def test_captures_round_trip_with_backup_and_are_optional_assets(tmp_path: Path) -> None:
+    source, target = tmp_path / "source", tmp_path / "target"
+    _make_data(source)
+    capture = source / "captures" / "2026-10-21_14-32-05"
+    capture.mkdir(parents=True)
+    for name in ("walkthrough.pdf", "walkthrough.md", "walkthrough.json", "shot-1.png",
+                 "draft.json", "audio.wav"):
+        (capture / name).write_bytes(name.encode())
+    archive = tmp_path / "with-captures.owbackup"
+    backup.create_backup(archive, data_dir=source)
+    with zipfile.ZipFile(archive) as zf:
+        assert "data/captures/2026-10-21_14-32-05/shot-1.png" in zf.namelist()
+    backup.prepare_restore(archive, data_dir=target)
+    assert backup.apply_pending_restore(data_dir=target)
+    for path in capture.iterdir():
+        assert (target / "captures" / capture.name / path.name).read_bytes() == path.read_bytes()
+    text = tmp_path / "text-only.owbackup"
+    backup.create_backup(text, data_dir=source, include_recordings=False)
+    with zipfile.ZipFile(text) as zf:
+        assert not any(n.startswith("data/captures/") for n in zf.namelist())
+
+
 def test_live_meeting_is_refused_and_existing_output_is_unchanged(tmp_path: Path) -> None:
     source = tmp_path / "source"
     _make_data(source, live=True)

@@ -105,7 +105,48 @@ The clipboard gets two things at once:
 
 A card in the corner of the screen says it's ready, with **Open**, **Show in
 folder**, and the PDF as a chip you can drag into any app. Dragging works
-even where pasting a file doesn't.
+even where pasting a file doesn't. **Review / Retry write-up** opens the saved
+document; **Copy for agent** copies only the Markdown with local image paths,
+and **Copy PDF** copies only the file. These actions are also available later
+under **Quick Record → Saved Walkthroughs…**, after the card disappears or
+the clipboard has been overwritten.
+
+## Review, recovery, and storage
+
+**Saved Walkthroughs…** lists completed documents and interrupted drafts.
+Edit each section's transcript, uncheck an accidental screenshot, then choose
+**Save review** to regenerate the PDF, Markdown, and manifest. Nothing is
+shared by opening or saving the review; use a copy button when ready. The
+original PNGs remain, and the first revision's manifest is kept as
+`walkthrough.original.json`. A review clears an earlier AI write-up because
+it describes the old revision. History remains the transcript recorded at
+completion; review changes the saved documents, not that historical entry.
+
+**Retry AI write-up** uses the saved as-spoken document and your current
+agent and instructions, without recording or transcribing again. A failed
+retry leaves existing documents available. It runs in the background;
+**Cancel operation** requests cancellation and waits for safe completion.
+
+While recording, `draft.json` checkpoints screenshot order, timing, and the
+identity of the recorder's crash-safe audio journal. Once stopped, `audio.wav`
+keeps an independent recording beside the screenshots. After an interruption,
+restart OpenWhisper so startup recovery can join the recovered audio to its
+draft, then choose **Recover draft**. It transcribes the saved sections using
+your current voice model. Screenshots whose writes never completed are left
+out; a draft without recoverable audio keeps its screenshots and explains
+why it cannot yet be finished. **Refresh** updates an already-open list.
+
+Retention defaults to **Forever**. In Saved Walkthroughs, set a number of days
+and confirm **Apply retention…** to delete expired completed walkthroughs now
+and at future startups. Interrupted drafts, standalone screenshots, linked
+folders, and folders containing unexpected user files are never automatically
+deleted. **Delete…** removes a selected walkthrough only after confirmation.
+Deleting a walkthrough does not remove its separate History entry or audio.
+
+Backups include `captures` when **Include saved recordings and captures** is
+selected (the default), including documents, screenshots, and recovery drafts.
+Text-only backups omit captures. Clipboard image paths are rebuilt for the
+current data folder when reopening a restored document.
 
 History lists the walkthrough as **Walkthrough**, with `[Screenshot N]`
 where each screenshot sits, and keeps its audio like a dictation's. If a
@@ -169,18 +210,20 @@ and the status say **Write-up copied**.
 - **Windows:** yes. While a walkthrough records, the recording overlay is
   left out of every screen capture, including other apps' screen recordings
   and shares, so it is never in a screenshot.
-- **Linux X11:** should work through Qt's screen grab (the overlay hides for
-  a moment instead). Not yet tested on hardware.
-- **Hyprland:** uses `grim`, which must be installed. Not yet tested on
-  hardware.
+- **Linux X11:** uses Qt's screen grab (the overlay hides for a moment).
+  Capture, annotation, review, and PDF generation were smoke-tested on Jed's
+  isolated Xvfb X11 server. Native Xorg desktop/hotkey behavior still needs
+  interactive release testing.
+- **Hyprland:** uses `grim`, which must be installed. Capture, annotation,
+  review, and PDF generation were smoke-tested on Jed's live Hyprland
+  desktop. Recording and global-shortcut behavior still need interactive
+  release testing.
 - **macOS and other Wayland desktops:** not yet; the shortcuts say so.
 
 ## Not in this version
 
 - A write-up with a model of your choosing; each agent uses its own default
   model.
-- Backups don't include `captures` yet, and walkthrough folders aren't
-  pruned; delete them from the folder when you no longer need them.
 - A paired host stores a walkthrough's History entry and audio like a
   dictation's, but not its screenshots.
 - Whether a particular chat app attaches a file pasted from the clipboard

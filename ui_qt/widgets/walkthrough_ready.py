@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import QMimeData, QPoint, QRect, QRectF, QSize, Qt, QTimer, QUrl
+from PyQt6.QtCore import QMimeData, QPoint, QRect, QRectF, QSize, Qt, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QCursor,
     QDesktopServices,
@@ -137,6 +137,9 @@ class _FileChip(QFrame):
 class WalkthroughReadyCard(QWidget):
     """A corner card for the newest walkthrough; reused for the next one."""
 
+    review_requested = pyqtSignal(object)
+    copy_requested = pyqtSignal(object, bool)
+
     def __init__(self):
         super().__init__(None)
         self.setObjectName("walkthroughReady")
@@ -204,6 +207,13 @@ class WalkthroughReadyCard(QWidget):
         self.folder_button = self._action("Show in folder", self._reveal)
         row.addWidget(self.folder_button)
         column.addLayout(row)
+        tools = QHBoxLayout()
+        self.review_button = self._action("Review / Retry write-up", self._review)
+        self.copy_button = self._action("Copy for agent", lambda: self._copy(False))
+        self.copy_pdf_button = self._action("Copy PDF", lambda: self._copy(True))
+        for button in (self.review_button, self.copy_button, self.copy_pdf_button):
+            tools.addWidget(button)
+        column.addLayout(tools)
         return column
 
     def _action(self, text: str, slot) -> QToolButton:
@@ -257,6 +267,16 @@ class WalkthroughReadyCard(QWidget):
         if self.isVisible():
             self._timer.start(LINGER_MS)
         super().leaveEvent(event)
+
+    def _review(self) -> None:
+        if self._result is not None:
+            self.review_requested.emit(self._result.folder)
+            self.hide()
+
+    def _copy(self, pdf_only: bool) -> None:
+        if self._result is not None:
+            self.copy_requested.emit(self._result, pdf_only)
+            self._timer.start(SHOW_MS)
 
     def _open(self) -> None:
         if self._result is not None:

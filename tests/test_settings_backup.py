@@ -139,7 +139,7 @@ def test_restore_requires_inspection_and_explicit_confirmation(monkeypatch):
     coordinator.inspection_finished.emit(info, "")
     assert page.restore_button.isEnabled()
     assert "4 files" in page.inspection_label.text()
-    assert "recordings: included" in page.inspection_label.text().lower()
+    assert "recordings and captures: included" in page.inspection_label.text().lower()
     assert "One saved recording was missing" in page.inspection_label.text()
 
     monkeypatch.setattr(QMessageBox, "question", lambda *_args: QMessageBox.StandardButton.No)

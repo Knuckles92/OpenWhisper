@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 
 from config import config
 from services.format_utils import format_file_size
+from services.walkthrough.storage import captures_root
 from ui_qt.dialogs.settings_fields import settings_caption
 from ui_qt.utils.icons import design_icon
 from ui_qt.widgets import Button, ElidingComboBox, InfoTile, PrimaryButton
@@ -120,7 +121,7 @@ class BackupSettingsPage(QWidget):
 
         self.create_tile = InfoTile(
             "Back up local data",
-            "Keep a local copy of your settings, transcripts, and meetings.",
+            "Keep a local copy of your settings, transcripts, meetings, and walkthroughs.",
             design_icon("box-blue.svg"),
         )
         self.create_tile.setProperty("backupCard", "create")
@@ -133,7 +134,7 @@ class BackupSettingsPage(QWidget):
         # Nothing to say until a backup exists; start collapsed like refresh() does.
         self.last_location_label.hide()
         self.last_size_label.hide()
-        self.include_recordings_check = QCheckBox("Include saved recordings")
+        self.include_recordings_check = QCheckBox("Include saved recordings and captures")
         self.include_recordings_check.setObjectName("backupIncludeRecordings")
         self.include_recordings_check.setChecked(True)
         self.create_button = compact_primary_button(PrimaryButton("Create backup…"))
@@ -513,13 +514,14 @@ class BackupSettingsPage(QWidget):
                     self.status_label.setText("The automatic backup destination must be an existing folder.")
                     return
                 owned_folders = (Path(config.RECORDINGS_FOLDER).resolve(),
-                                 Path(config.MEETINGS_FOLDER).resolve())
+                                 Path(config.MEETINGS_FOLDER).resolve(),
+                                 captures_root().resolve())
             except OSError as exc:
                 self.status_label.setText(f"Could not check backup destination: {exc}")
                 return
             if any(folder.is_relative_to(owned) for owned in owned_folders):
                 self.status_label.setText(
-                    "Choose a folder outside OpenWhisper's recordings and meetings folders."
+                    "Choose a folder outside OpenWhisper's recordings, meetings, and captures folders."
                 )
                 return
         try:
@@ -606,7 +608,7 @@ class BackupSettingsPage(QWidget):
             f"{_field(info, 'file_count', 0)} files · "
             f"{format_file_size(_field(info, 'archive_bytes', 0))} archive\n"
             "Contents: app settings, transcription history, and saved meetings (if any).\n"
-            f"Saved recordings: {recordings} · "
+            f"Saved recordings and captures: {recordings} · "
             f"{format_file_size(_field(info, 'total_bytes', 0))} before compression"
             + ("\nWarnings: " + "; ".join(str(item) for item in warnings) if warnings else "")
         )

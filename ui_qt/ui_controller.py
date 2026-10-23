@@ -317,6 +317,11 @@ class UIController(QObject):
         # (source): WalkthroughRuntime.toggle and .snap, set by the controller.
         self.on_walkthrough: Optional[Callable[[str], None]] = None
         self.on_screenshot: Optional[Callable[[str], None]] = None
+        self.on_recover_walkthrough = None
+        self.acquire_walkthrough_library = None
+        self.release_walkthrough_library = None
+        self.submit_walkthrough_library = None
+        self._walkthrough_library = None
         self._walkthrough_ready = None
         # The column that writes a walkthrough as it records; made on first use.
         self._walkthrough_panel = None
@@ -480,6 +485,8 @@ class UIController(QObject):
         self.overlay.walkthrough_snap_requested.connect(self._on_overlay_snap)
         self.overlay.walkthrough_finish_requested.connect(self._on_overlay_finish)
         self.main_window.walkthrough_requested.connect(self._on_window_walkthrough)
+        self.main_window.quick_record_tab.saved_walkthroughs_requested.connect(
+            self.show_walkthrough_library)
 
         self.record_started.connect(self._show_recording_overlay)
         self.record_stopped.connect(self._show_processing_overlay)
@@ -1127,9 +1134,50 @@ class UIController(QObject):
         """Say a walkthrough is ready, with ways to open, find or drag it."""
         from ui_qt.widgets.walkthrough_ready import show_ready
 
-        self._walkthrough_ready = show_ready(self._walkthrough_ready, result, copied=copied)
+        previous = self._walkthrough_ready
+        self._walkthrough_ready = show_ready(previous, result, copied=copied)
+        if previous is None and self._walkthrough_ready is not None:
+            self._walkthrough_ready.review_requested.connect(self.show_walkthrough_library)
+            self._walkthrough_ready.copy_requested.connect(self._copy_walkthrough_again)
         if self._walkthrough_panel is not None:
             self._walkthrough_panel.complete(result)
+        dialog = getattr(self, "_walkthrough_library", None)
+        if dialog is not None and dialog.isVisible() and not dialog._busy and not dialog._dirty:
+            dialog.refresh(result.folder)
+
+    def _copy_walkthrough_again(self, result, pdf_only: bool) -> None:
+        from services.walkthrough.library import load_result
+
+        try:
+            result = load_result(result.folder)
+            copied = self.copy_files_to_clipboard(
+                [result.pdf] if pdf_only else [],
+                text="" if pdf_only else result.clipboard_text)
+            self.set_status("Walkthrough copied" if copied else "Couldn't copy the walkthrough")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.set_status(f"Couldn't open the walkthrough: {exc}")
+
+    def cancel_walkthrough_library(self) -> None:
+        dialog = self._walkthrough_library
+        if dialog is not None:
+            dialog._cancel.set()
+
+    def show_walkthrough_library(self, folder=None) -> None:
+        from ui_qt.dialogs.walkthrough_library import WalkthroughLibraryDialog
+
+        if self._walkthrough_library is None:
+            self._walkthrough_library = WalkthroughLibraryDialog(
+                self.main_window, copy_files=self.copy_files_to_clipboard,
+                recover=self.on_recover_walkthrough,
+                acquire=self.acquire_walkthrough_library,
+                release=self.release_walkthrough_library,
+                submit=self.submit_walkthrough_library)
+        dialog = self._walkthrough_library
+        if not dialog._busy and not dialog._dirty:
+            dialog.refresh(folder)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def toggle_scratchpad(self) -> None:
         from ui_qt.widgets import scratchpad
