@@ -70,5 +70,11 @@
     "component": "application",
     "category": "Error",
     "line": 853
+  },
+  {
+    "utc": "2026-10-23T08:13:55.849920+00:00",
+    "component": "runtime.transcription",
+    "category": "LoggedError",
+    "line": 1425
   }
 ]
