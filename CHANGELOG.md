@@ -10,6 +10,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Added
 - **Have your coding agent write your walkthroughs up** — turn on **AI write-up** in **Settings → Dictation → Walkthroughs**, choose Claude Code, Codex or OpenCode, and when a walkthrough finishes it lays out a cleaner document with a title, tidy wording, and each screenshot where it helps most. That write-up is what gets copied, in the same PDF style. The instructions are a loose default you can replace with your own. Claude Code reads the walkthrough's PDF and can read only that folder; Codex and OpenCode read no files at all and are sent the words and screenshots instead, so their model must take images. Each runs on your own plan. The as-spoken PDF is always kept, and if the write-up fails the walkthrough is copied as spoken with the reason in the status.
 
+### Fixed
+- **Local Whisper works after a README source install** — `pip install -r requirements.txt` was pulling PyAV 19, and every transcription then failed with `open() got an unexpected keyword argument 'metadata_errors'`. Source installs now stay on PyAV 18, the same as the packaged release.
+
 ### Changed
 - **Walkthroughs have their own Settings page** — **Settings → Dictation → Walkthroughs** now holds the Walkthrough and Screenshot shortcuts, how the document looks, and the AI write-up, which were spread across General and Hotkeys. Hotkeys links to it.
 
