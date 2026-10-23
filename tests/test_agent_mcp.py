@@ -3,6 +3,7 @@
 import asyncio
 import json
 import socket
+import sys
 import time
 
 import httpx2
@@ -12,7 +13,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
 from services.agent_mcp.app import create_app
-from services.agent_mcp.runtime import CREDENTIAL_NAME, McpRuntime
+from services.agent_mcp.runtime import CREDENTIAL_NAME, McpRuntime, _token_store_error
 from services.credentials import CredentialStore, memory_backend, store
 from services.database import DatabaseManager
 from services.models import MeetingSegment, MeetingSession, TranscriptionHistory
@@ -525,14 +526,90 @@ def test_occupied_port_and_missing_database_are_recoverable(mcp_database):
     assert "database" in wait_for(missing, "error").message
 
 
-def test_failed_credentials_do_not_start_listener(mcp_database):
+@pytest.fixture
+def linux_store(monkeypatch):
+    """Copy about a missing store names GNOME Keyring or KWallet only on Linux."""
+    monkeypatch.setattr(sys, "platform", "linux")
+
+
+def test_token_store_error_names_a_missing_store_not_an_unlock(linux_store):
+    missing = CredentialStore(
+        lambda: (_ for _ in ()).throw(RuntimeError("Secret Service not available"))
+    )
+    assert "No system credential store was found" in _token_store_error(missing)
+    assert "Unlock" not in _token_store_error(missing)
+
+    hung = CredentialStore(
+        lambda: (_ for _ in ()).throw(RuntimeError("the system keyring did not respond"))
+    )
+    assert "did not respond" in _token_store_error(hung)
+
+    locked = CredentialStore(
+        lambda: (_ for _ in ()).throw(RuntimeError("The collection is locked"))
+    )
+    assert "Unlock your system credential store" in _token_store_error(locked)
+    assert "Unlock" in _token_store_error(CredentialStore(memory_backend))
+
+
+def test_failed_credentials_do_not_start_listener(mcp_database, linux_store):
     def unavailable():
-        raise RuntimeError("locked")
+        raise RuntimeError("Secret Service not available")
 
     server = McpRuntime(mcp_database, credentials=CredentialStore(unavailable))
     server.start(free_port())
-    assert "credential store" in wait_for(server, "error").message
+    message = wait_for(server, "error").message
+    assert "No system credential store was found" in message
+    assert "Unlock" not in message
     assert not server.token()
+
+
+def test_locked_credential_store_asks_to_unlock(mcp_database):
+    def locked():
+        raise RuntimeError("The collection is locked")
+
+    server = McpRuntime(mcp_database, credentials=CredentialStore(locked))
+    server.start(free_port())
+    assert "Unlock your system credential store" in wait_for(server, "error").message
+    assert not server.token()
+
+
+def test_retry_starts_after_the_credential_store_appears(mcp_database, linux_store):
+    """A store that was missing at first probe must be seen again on Retry."""
+    from services.credentials import SERVICE_NAME
+
+    available = {"now": False}
+    values = {}
+
+    class _AppearingBackend:
+        def get_password(self, service, username):
+            return values.get((service, username))
+
+        def set_password(self, service, username, password):
+            values[(service, username)] = password
+
+        def delete_password(self, service, username):
+            values.pop((service, username), None)
+
+    def factory():
+        if not available["now"]:
+            raise RuntimeError("Secret Service not available")
+        return _AppearingBackend(), "Secret Service"
+
+    credentials = CredentialStore(factory)
+    values[(SERVICE_NAME, CREDENTIAL_NAME)] = TOKEN
+    server = McpRuntime(mcp_database, credentials=credentials)
+    port = free_port()
+    server.start(port)
+    assert "No system credential store was found" in wait_for(server, "error").message
+    assert not server.token()
+
+    available["now"] = True
+    server.start(port)
+    try:
+        wait_for(server, "running")
+        assert server.token() == TOKEN
+    finally:
+        server.stop(wait=True)
 
 
 def test_tailscale_host_checks_auth_origin_and_peer(mcp_database):

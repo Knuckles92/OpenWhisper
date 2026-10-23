@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 SAVE_WAIT_S = 30.0
 
 
+class ScreenshotNotSaved(OSError):
+    """The walkthrough's folder could not be created, so no screenshot can be kept."""
+
+
 @dataclass(frozen=True)
 class Shot:
     #: 1 for the first screenshot kept, and so on.
@@ -57,6 +61,8 @@ class WalkthroughResult:
     written_up: bool = False
     #: Why a write-up that was asked for isn't there, or "".
     write_up_error: str = ""
+    #: Screenshots kept during the recording whose file could not be written.
+    lost_shots: int = 0
 
     @property
     def name(self) -> str:
@@ -85,6 +91,12 @@ class WalkthroughSession:
         self._open = True
         #: The built document; set by the job worker before it delivers.
         self.result: Optional[WalkthroughResult] = None
+        #: Why the document could not be written, when the words were kept
+        #: without it; set by the job worker.
+        self.document_error = ""
+        #: Called on the writer thread with a screenshot's number when its
+        #: file could not be written.
+        self.on_save_failed: Optional[Callable[[int], None]] = None
 
     @property
     def open(self) -> bool:
@@ -116,17 +128,44 @@ class WalkthroughSession:
         """Keep ``image`` as the next screenshot; None once the recording stopped.
 
         The PNG is written in the background; ``saved_shots`` waits for it.
+        Raises ``ScreenshotNotSaved`` when the walkthrough's folder can't be
+        created (the captures folder is read-only, or the disk is full); the
+        recording itself is unaffected.
         """
         with self._lock:
             if not self._open:
                 return None
-            shot = Shot(len(self._shots) + 1, self._folder_locked() / f"shot-{len(self._shots) + 1}.png",
+            try:
+                folder = self._folder_locked()
+            except OSError as exc:
+                logger.error("Could not create the walkthrough folder: %s", exc)
+                raise ScreenshotNotSaved(exc.errno, exc.strerror or str(exc)) from exc
+            shot = Shot(len(self._shots) + 1, folder / f"shot-{len(self._shots) + 1}.png",
                         max(0.0, float(kept_at_s)))
             self._shots.append(shot)
             if self._writer is None:
                 self._writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="walkthrough-shots")
-            self._saves.append(self._writer.submit(_write_png, image.copy(), shot.path))
+            self._saves.append(self._writer.submit(self._write_shot, image.copy(), shot))
         return shot
+
+    def _write_shot(self, image: "QImage", shot: Shot) -> bool:
+        written = _write_png(image, shot.path)
+        if not written and self.on_save_failed is not None:
+            try:
+                self.on_save_failed(shot.number)
+            except Exception:
+                logger.exception("Could not report an unsaved walkthrough screenshot")
+        return written
+
+    @property
+    def lost_shots(self) -> int:
+        """Screenshots kept so far whose file could not be written."""
+        with self._lock:
+            saves = list(self._saves)
+        return sum(
+            1 for future in saves
+            if future.done() and (future.exception() is not None or not future.result())
+        )
 
     def saved_shots(self, timeout: float = SAVE_WAIT_S) -> list[Shot]:
         """The screenshots whose PNG was written, renumbered in order; worker thread."""
@@ -181,4 +220,9 @@ def _write_png(image: "QImage", path: Path) -> bool:
     written = image.save(str(path), "PNG")
     if not written:
         logger.error("Could not write walkthrough screenshot %s", path.name)
+        # A full disk leaves a truncated file behind; it is not a screenshot.
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            logger.debug("Could not remove the partial screenshot %s", path.name, exc_info=True)
     return written

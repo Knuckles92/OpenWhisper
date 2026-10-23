@@ -82,6 +82,10 @@ _FENCE = re.compile(r"\A```[a-zA-Z]*\n(.*)\n```\Z", re.DOTALL)
 _HEADING = re.compile(r"^#\s+(.+?)\s*#*\s*$", re.MULTILINE)
 
 
+#: Where the write-up's agent is chosen.
+WRITE_UP_AGENT_SETTING = "Settings → Dictation → Walkthroughs"
+
+
 class WriteUpFailed(Exception):
     """The write-up could not be made; the message says why, for the status line."""
 
@@ -110,6 +114,7 @@ def write_up(
         WriteUpFailed: The agent is missing, failed, was canceled, or sent
             back nothing usable.
     """
+    from meeting.agent.installed.core import MEETING_AGENT_SETTING
     from meeting.agent.installed.drivers import AgentUnavailable
 
     name = agent_name(agent)
@@ -134,7 +139,9 @@ def write_up(
                 images=[os.path.realpath(shot) for shot in shots], **common,
             )
     except AgentUnavailable as exc:
-        raise WriteUpFailed(str(exc)) from exc
+        # The meeting agent's own page doesn't choose this one.
+        raise WriteUpFailed(
+            str(exc).replace(MEETING_AGENT_SETTING, WRITE_UP_AGENT_SETTING)) from exc
     if outcome.canceled:
         raise WriteUpFailed("canceled")
     if not outcome.ok:

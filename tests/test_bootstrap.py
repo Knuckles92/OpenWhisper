@@ -1,9 +1,10 @@
 """Unit tests for the extracted Qt bootstrap flow."""
 
-import pytest
 import logging
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 from ui_qt import bootstrap
 
@@ -36,12 +37,13 @@ class _FakeLoadingScreen:
 
 class _FakeUIController:
     def __init__(self):
-        self.main_window = object()
+        self.main_window = SimpleNamespace(restore_from_tray=lambda: None)
         self.show_main_window_called = False
         self.device_info = None
         self.cleaned_up = False
         self.apply_error_checked = False
         self.guided_setup_offered = False
+        self.ambient_status = None
         self.agent_data_changed = SimpleNamespace(emit=lambda *_args: None)
 
     def show_main_window(self):
@@ -49,6 +51,9 @@ class _FakeUIController:
 
     def offer_guided_setup(self):
         self.guided_setup_offered = True
+
+    def set_ambient_status(self, status):
+        self.ambient_status = status
 
     def set_device_info(self, device_info, ready=None):
         self.device_info = device_info
@@ -154,6 +159,7 @@ class TestBootstrap:
         assert loading_screen.destroyed
         assert ui_controller.guided_setup_offered
         assert ui_controller.show_main_window_called
+        assert ui_controller.ambient_status is None
         # Device info is filled in after the background Whisper load, not
         # before the window appears.
         assert ui_controller.device_info is None
@@ -198,6 +204,41 @@ class TestBootstrap:
         assert len(_FakeApplicationController.instances) == 1
         assert _FakeApplicationController.instances[0].cleaned_up
 
+    @patch("services.settings.is_hf_hub_offline_env_set", return_value=False)
+    @patch.object(bootstrap, "create_deferred_local_whisper_backend", return_value=None)
+    @patch.object(bootstrap, "run_with_ui_pulse", side_effect=lambda fn: fn())
+    @patch.object(bootstrap, "process_qt_events")
+    @patch.object(bootstrap, "setup_logging")
+    def test_main_tells_the_user_when_the_keyring_does_not_answer(
+        self,
+        _mock_setup_logging,
+        _mock_process_events,
+        _mock_pulse,
+        _mock_load_backend,
+        _mock_hf_env,
+    ):
+        from services.credentials import UNRESPONSIVE_KEYRING_STATUS
+
+        qt_app = _FakeQtApplication()
+        ui_controller = _FakeUIController()
+        loading_screen = _FakeLoadingScreen()
+
+        with patch(
+            "services.credentials.keyring_did_not_respond", return_value=True
+        ), patch.object(
+            bootstrap,
+            "get_early_runtime_components",
+            return_value=(lambda: qt_app, lambda: loading_screen),
+        ), patch.object(
+            bootstrap,
+            "get_late_runtime_components",
+            return_value=(lambda: ui_controller, _FakeApplicationController),
+        ):
+            assert bootstrap.main() == 123
+
+        assert ui_controller.show_main_window_called
+        assert ui_controller.ambient_status == UNRESPONSIVE_KEYRING_STATUS
+
 
 class TestCudaPreloadSummary:
     """Startup preloads before logging exists; the summary reports it later."""
@@ -236,7 +277,9 @@ class TestCudaPreloadSummary:
 @pytest.mark.parametrize("readiness_error,acknowledged", [("database unavailable", True), ("", False), ("", True)])
 def test_update_health_requires_database_and_matching_transaction(monkeypatch, readiness_error, acknowledged):
     from unittest.mock import MagicMock
+
     from PyQt6.QtCore import QTimer
+
     from services import app_update_apply
 
     timers = []
@@ -280,3 +323,38 @@ def test_update_health_requires_database_and_matching_transaction(monkeypatch, r
     else:
         qt_app.app.exit.assert_not_called()
         assert ui.main_window.setEnabled.call_args.args == (True,)
+
+
+@patch("services.settings.is_hf_hub_offline_env_set", return_value=False)
+@patch.object(bootstrap, "setup_logging")
+def test_main_hands_off_to_the_running_ui(_mock_setup_logging, _mock_hf_env):
+    with patch(
+        "services.ui_instance.acquire_ui_instance", return_value=None
+    ), patch.object(bootstrap, "get_early_runtime_components") as early:
+        assert bootstrap.main() == 0
+    early.assert_not_called()
+
+
+def test_show_request_from_another_thread_runs_on_the_qt_thread():
+    import threading
+    import time
+
+    from PyQt6.QtCore import QCoreApplication, QThread
+
+    from ui_qt.bootstrap import qt_thread_callback
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    ran_on = []
+    callback = qt_thread_callback(
+        lambda: ran_on.append(QThread.currentThread() is app.thread())
+    )
+
+    # The ui-instance accept thread has no Qt event loop of its own.
+    caller = threading.Thread(target=callback)
+    caller.start()
+    caller.join(2)
+    deadline = time.monotonic() + 2
+    while not ran_on and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert ran_on == [True]

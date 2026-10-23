@@ -143,6 +143,14 @@ def _x11_keypad_listener(listener_class):
     return X11HotkeyListener
 
 
+def _is_xorg_listener(listener_class) -> bool:
+    """Whether ``listener_class`` is pynput's X11 backend (or built on it)."""
+    return any(
+        getattr(base, "__module__", "") == "pynput.keyboard._xorg"
+        for base in getattr(listener_class, "__mro__", ())
+    )
+
+
 def get_listener_class():
     """Return the pynput listener class for hotkey matching and capture.
 
@@ -605,6 +613,8 @@ class HotkeyManager:
         # Accessibility permission); Linux keeps the pynput global listener.
         self._carbon_registrar = None
         self._use_carbon = sys.platform == "darwin"
+        # X11: passive grabs that keep shortcuts out of the focused app.
+        self._x11_grabber = None
         self.backend_available = False
         self.backend_name = "unavailable"
         self.backend_error = ""
@@ -674,6 +684,11 @@ class HotkeyManager:
         self.backend_name = "pynput"
         self.backend_error = ""
         logger.info("Keyboard hook started")
+        if _is_xorg_listener(listener_class):
+            from services._x11_key_grab import create_grabber
+
+            self._x11_grabber = create_grabber()
+            self._register_carbon_hotkeys()
         self._sync_mouse_listener()
 
     def _setup_carbon_hotkeys(self) -> bool:
@@ -944,8 +959,13 @@ class HotkeyManager:
         }
 
     def _register_carbon_hotkeys(self) -> None:
-        if self._carbon_registrar is not None and not self.capture_suspended:
+        """Register the shortcuts with the OS: Carbon on macOS, X11 grabs on Linux."""
+        if self.capture_suspended:
+            return
+        if self._carbon_registrar is not None:
             self._carbon_registrar.register_hotkeys(self._all_hotkeys())
+        if self._x11_grabber is not None:
+            self._x11_grabber.register_hotkeys(self._all_hotkeys())
 
     def set_dynamic_hotkeys(
         self, namespace: str, hotkeys: Dict[str, str], callback: Callable[[str], None]
@@ -975,6 +995,12 @@ class HotkeyManager:
                 self._carbon_registrar.unregister_all()
             else:
                 self._carbon_registrar.register_hotkeys(self._all_hotkeys())
+        if self._x11_grabber is not None:
+            # A shortcut field must receive the keys the user presses.
+            if suspended:
+                self._x11_grabber.unregister_all()
+            else:
+                self._x11_grabber.register_hotkeys(self._all_hotkeys())
         self._sync_mouse_listener()
 
     def _on_release(self, key) -> None:
@@ -1071,6 +1097,13 @@ class HotkeyManager:
                 self._carbon_registrar.unregister_all()
             except Exception as e:
                 logger.error(f"Error unregistering Carbon hotkeys: {e}")
+
+        grabber, self._x11_grabber = self._x11_grabber, None
+        if grabber is not None:
+            try:
+                grabber.close()
+            except Exception as e:
+                logger.error(f"Error releasing X11 shortcut grabs: {e}")
 
         self._stop_mouse_listener()
         listener = self._listener

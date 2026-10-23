@@ -3850,6 +3850,10 @@ QFrame#uploadQueueRow[state="failed"] {
     background-color: rgba(@danger-rgb, 0.06);
 }
 
+QFrame#uploadQueueRow[state="stopped"] {
+    border-color: rgba(@warning-rgb, 0.45);
+}
+
 QLabel#uploadQueueRowIcon {
     background-color: rgba(@accent-rgb, 0.14);
     border-radius: 8px;
@@ -3884,6 +3888,11 @@ QLabel#uploadRowState[state="done"] {
 QLabel#uploadRowState[state="failed"] {
     background-color: rgba(@danger-rgb, 0.14);
     color: @danger-text;
+}
+
+QLabel#uploadRowState[state="stopped"] {
+    background-color: rgba(@warning-rgb, 0.14);
+    color: @warning-text;
 }
 
 QPushButton#uploadRowMoveButton,
@@ -5196,6 +5205,7 @@ QFrame#walkthroughReadySurface {
 QLabel#walkthroughThumb,
 QLabel#walkthroughReadyTitle,
 QLabel#walkthroughReadySubtitle,
+QLabel#walkthroughReadyReason,
 QLabel#walkthroughFileIcon,
 QLabel#walkthroughFileName {
     background-color: transparent;
@@ -5210,6 +5220,12 @@ QLabel#walkthroughReadyTitle {
 QLabel#walkthroughReadySubtitle {
     color: @text-secondary;
     font-size: 12px;
+}
+
+QLabel#walkthroughReadyReason {
+    color: @text-secondary;
+    font-size: 12px;
+    padding-top: 2px;
 }
 
 QFrame#walkthroughFileChip {

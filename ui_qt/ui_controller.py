@@ -1118,6 +1118,11 @@ class UIController(QObject):
     def show_overlay_caption(self, text: str) -> None:
         self.overlay.show_caption(text)
 
+    def dismiss_walkthrough_panel(self) -> None:
+        """Close the walkthrough's column: nothing more is coming to it."""
+        if self._walkthrough_panel is not None:
+            self._walkthrough_panel.dismiss()
+
     def show_walkthrough_ready(self, result, *, copied: bool) -> None:
         """Say a walkthrough is ready, with ways to open, find or drag it."""
         from ui_qt.widgets.walkthrough_ready import show_ready

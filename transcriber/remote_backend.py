@@ -37,6 +37,12 @@ logger = logging.getLogger(__name__)
 
 #: Backend key and ``backend_id`` before the host has told us its engine.
 REMOTE_BACKEND = "remote"
+#: How long a request the host refused as busy keeps being retried. The host
+#: refuses before it starts any work, so sending it again is safe; a
+#: dictation that waits is better than one that is lost.
+BUSY_RETRY_S = 90.0
+#: The longest pause between busy retries, whatever the host suggests.
+BUSY_RETRY_MAX_DELAY_S = 5.0
 #: Waiting for the host to load a model this computer chose. Longer than the
 #: host's own limit (services/remote_asr/service.py), so its reason arrives.
 SWITCH_REQUEST_TIMEOUT_S = 300
@@ -648,7 +654,7 @@ class RemoteSpeechBackend(LocalSpeechBackend):
     # ---- requests ----
 
     def _request_audio(self, op, audio, language=None, **options) -> dict:
-        from services.remote_asr.client import RemoteConnectionLost
+        from services.remote_asr.client import RemoteRequestError
 
         if self.should_cancel:
             raise RuntimeError("Transcription canceled")
@@ -657,26 +663,32 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         with self._state_lock:
             self._inflight += 1
         self._notify_link()
-        started = time.perf_counter()
+        busy_until = None
+        delay = 1.0
         try:
-            for attempt in (0, 1):
-                with self._state_lock:
-                    process = self._process
-                if process is None:
-                    raise RuntimeError(self.last_error or "Remote engine is not connected")
+            while True:
+                # Timed per attempt: a wait for room is not network time.
+                started = time.perf_counter()
                 try:
-                    result, host_s = process.request_timed(
-                        op, audio=samples, language=language, timeout=300, **options
-                    )
+                    result, host_s = self._send_audio(op, samples, language, options)
                     break
-                except RemoteConnectionLost as exc:
-                    # A connection that died while idle (the host restarted, the
-                    # laptop slept) failed before the host saw anything, so one
-                    # reconnect and resend is safe. A request the host may have
-                    # started is not repeated.
-                    if exc.sent or attempt or not self._reconnect(process):
-                        self._drop(process, str(exc))
-                        raise RuntimeError(str(exc)) from exc
+                except RemoteRequestError as exc:
+                    if not exc.retryable:
+                        raise
+                    # Busy with other computers' work: the host refused before
+                    # starting this request, so wait for room and send it again.
+                    now = time.monotonic()
+                    if busy_until is None:
+                        busy_until = now + BUSY_RETRY_S
+                        logger.info("Remote host is busy; retrying for up to %.0f s", BUSY_RETRY_S)
+                    if now >= busy_until:
+                        raise RuntimeError(
+                            f"{exc} It stayed busy for {BUSY_RETRY_S:.0f} seconds."
+                        ) from exc
+                    wait = exc.retry_after_s if exc.retry_after_s is not None else delay
+                    self._wait_for_room(min(max(wait, delay), BUSY_RETRY_MAX_DELAY_S,
+                                            max(0.0, busy_until - now)))
+                    delay = min(delay * 1.5, BUSY_RETRY_MAX_DELAY_S)
             round_trip = time.perf_counter() - started
             with self._state_lock:
                 requests, total, host_total, timed = self._timing
@@ -692,6 +704,40 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         if self.should_cancel:
             raise RuntimeError("Transcription canceled")
         return result
+
+    def _send_audio(self, op, samples, language, options):
+        """One request's ``(result, host_s)``, reconnecting once if the link was idle-dead."""
+        from services.remote_asr.client import RemoteConnectionLost
+
+        for attempt in (0, 1):
+            with self._state_lock:
+                process = self._process
+            if process is None:
+                raise RuntimeError(self.last_error or "Remote engine is not connected")
+            try:
+                return process.request_timed(
+                    op, audio=samples, language=language, timeout=300, **options
+                )
+            except RemoteConnectionLost as exc:
+                # A connection that died while idle (the host restarted, the
+                # laptop slept) failed before the host saw anything, so one
+                # reconnect and resend is safe. A request the host may have
+                # started is not repeated.
+                if exc.sent or attempt or not self._reconnect(process):
+                    self._drop(process, str(exc))
+                    raise RuntimeError(str(exc)) from exc
+        raise AssertionError("unreachable")
+
+    def _wait_for_room(self, seconds: float) -> None:
+        """Sleep before a busy retry; a Cancel ends the wait at once."""
+        deadline = time.monotonic() + seconds
+        while True:
+            if self.should_cancel:
+                raise RuntimeError("Transcription canceled")
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return
+            time.sleep(min(0.1, left))
 
     def _reconnect(self, stale) -> bool:
         from services.remote_asr.client import RemoteEngineError

@@ -10,11 +10,15 @@ import pytest
 
 from services import credentials
 from services.credentials import (
+    KEYRING_NO_RESPONSE,
+    UNRESPONSIVE_KEYRING_STATUS,
     CredentialSource,
     CredentialStore,
     CredentialStoreError,
+    CredentialStoreTimeout,
     credential_source,
     environment_shadowed,
+    keyring_did_not_respond,
     mask_key,
     memory_backend,
     resolve_credential,
@@ -48,6 +52,23 @@ def _failing_backend():
     raise RuntimeError("no D-Bus session")
 
 
+class TestSecretServiceTimeout:
+    def test_run_with_timeout_returns_and_raises(self):
+        import time
+
+        assert credentials._run_with_timeout(lambda: 7, 1.0) == 7
+
+        def boom():
+            raise ValueError("nope")
+
+        with pytest.raises(ValueError, match="nope"):
+            credentials._run_with_timeout(boom, 1.0)
+        started = time.monotonic()
+        with pytest.raises(CredentialStoreTimeout, match=KEYRING_NO_RESPONSE):
+            credentials._run_with_timeout(lambda: time.sleep(30), 0.2)
+        assert time.monotonic() - started < 2.0
+
+
 class TestCredentialStore:
     def test_round_trip_and_delete(self):
         store = CredentialStore(backend_factory=memory_backend)
@@ -70,6 +91,23 @@ class TestCredentialStore:
             store.set(NAME, SECRET)
         with pytest.raises(CredentialStoreError):
             store.delete(NAME)
+
+    def test_refresh_sees_a_store_that_appears_later(self):
+        available = {"now": False}
+
+        def factory():
+            if not available["now"]:
+                raise RuntimeError("no D-Bus session")
+            return memory_backend()
+
+        store = CredentialStore(backend_factory=factory)
+        assert not store.status().available
+        assert store.get(NAME) is None
+        available["now"] = True
+        assert not store.status().available
+        assert store.refresh().available
+        store.set(NAME, SECRET)
+        assert store.get(NAME) == SECRET
 
     @pytest.mark.parametrize(
         "raw",
@@ -112,6 +150,26 @@ class TestCredentialStore:
         assert backend.reads == 1
         store.set(NAME, SECRET)
         assert store.get(NAME) == SECRET
+
+    def test_hung_read_gives_up_and_marks_the_store_unusable(self, monkeypatch):
+        class _SilentBackend(credentials.MemoryCredentialBackend):
+            def get_password(self, service, username):
+                raise credentials.CredentialStoreTimeout(KEYRING_NO_RESPONSE)
+
+        store = CredentialStore(
+            backend_factory=lambda: (_SilentBackend(), "Secret Service")
+        )
+        assert store.get(NAME) is None
+        status = store.status()
+        assert not status.available
+        assert status.reason == KEYRING_NO_RESPONSE
+        assert keyring_did_not_respond(status)
+        monkeypatch.setenv(NAME, "env-value")
+        previous = credentials.set_store(store)
+        try:
+            assert resolve_credential(NAME) == "env-value"
+        finally:
+            credentials.set_store(previous)
 
 
 class _FakeItem:
@@ -197,6 +255,53 @@ class TestSecretServiceLookups:
         backend.delete_password("OpenWhisper", NAME)
         assert item.deleted
 
+    def test_search_that_never_replies_times_out(self, monkeypatch):
+        import time
+
+        class _SilentSecretStorage(_FakeSecretStorage):
+            def search_items(self, connection, attributes):
+                time.sleep(30)
+                return iter([])
+
+        monkeypatch.setattr(credentials, "SECRET_SERVICE_TIMEOUT_S", 0.2)
+        fake = _SilentSecretStorage([])
+        monkeypatch.setitem(sys.modules, "secretstorage", fake)
+        credentials._secret_service_backend_class.cache_clear()
+        backend = credentials._secret_service_backend_class()()
+        started = time.monotonic()
+        with pytest.raises(CredentialStoreTimeout, match=KEYRING_NO_RESPONSE):
+            backend.get_password("OpenWhisper", NAME)
+        assert time.monotonic() - started < 2.0
+
+
+    def test_unlock_prompt_gets_time_to_answer(self, monkeypatch):
+        import time
+
+        class _SlowUnlockItem(_FakeItem):
+            def unlock(self):
+                time.sleep(0.5)  # the user typing the keyring password
+                return super().unlock()
+
+        monkeypatch.setattr(credentials, "SECRET_SERVICE_TIMEOUT_S", 0.2)
+        monkeypatch.setattr(credentials, "SECRET_SERVICE_PROMPT_TIMEOUT_S", 5.0)
+        monkeypatch.setitem(sys.modules, "secretstorage",
+                            _FakeSecretStorage([_SlowUnlockItem(SECRET, locked=True)]))
+        credentials._secret_service_backend_class.cache_clear()
+        backend = credentials._secret_service_backend_class()()
+        assert backend.get_password("OpenWhisper", NAME) == SECRET
+
+    def test_prompt_wait_still_ends(self):
+        import time
+
+        def stuck_prompt():
+            credentials._note_prompt()
+            time.sleep(30)
+
+        started = time.monotonic()
+        with pytest.raises(CredentialStoreTimeout, match=KEYRING_NO_RESPONSE):
+            credentials._run_with_timeout(stuck_prompt, 0.1, prompt_timeout_s=0.4)
+        assert 0.3 < time.monotonic() - started < 2.0
+
 
 class TestResolutionOrder:
     def test_saved_key_wins_over_environment(self, monkeypatch):
@@ -243,6 +348,8 @@ class TestResolutionOrder:
         assert resolve_credential(NAME) is None
         assert credential_source(NAME) == CredentialSource.NONE
         assert resolve_credential("") is None
+        assert not keyring_did_not_respond()
+        assert UNRESPONSIVE_KEYRING_STATUS
 
     def test_credential_status_copy_points_at_settings(self):
         profile = builtin_profile("openrouter")

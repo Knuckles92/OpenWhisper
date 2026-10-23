@@ -453,6 +453,7 @@ class DummyUIController:
         self.overlay = DummyOverlay()
         self.is_recording = False
         self.statuses = []
+        self.notices = []
         self.ambient_statuses = []
         self.device_infos = []
         self.device_ready_states = []
@@ -631,6 +632,9 @@ class DummyUIController:
 
     def set_status(self, status):
         self.statuses.append(status)
+
+    def show_notice(self, text, done=False):
+        self.notices.append((text, done))
 
     def set_ambient_status(self, status):
         self.ambient_statuses.append(status)
@@ -1728,6 +1732,9 @@ class TestApplicationController:
 
         assert not controller.recorder.is_recording
         assert "already in progress" in controller.ui_controller.statuses[-1]
+        assert controller.ui_controller.notices[-1][0].startswith(
+            "A transcription is already in progress"
+        )
 
     def test_stop_recording_does_not_block_the_qt_thread(self):
         """Post-roll keeps capturing for POST_ROLL_MS after the stop request.

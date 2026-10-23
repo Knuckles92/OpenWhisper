@@ -9,7 +9,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from config import config
+from config import config, data_root
 from ui_qt.startup_profiler import StartupProfiler
 
 _CRASH_LOG_FILE = None
@@ -164,6 +164,29 @@ def process_qt_events() -> None:
     QCoreApplication.processEvents()
 
 
+def qt_thread_callback(target):
+    """A callable any thread may call that runs ``target`` on the Qt thread.
+
+    Call it from the Qt thread. A later launch's show request arrives on the
+    ui-instance accept thread, which has no Qt event loop: a
+    ``QTimer.singleShot`` started there never fires, so the window never
+    came forward. A signal emitted there is queued to the Qt thread instead.
+    """
+    from PyQt6.QtCore import QObject, pyqtSignal
+
+    class _Bridge(QObject):
+        requested = pyqtSignal()
+
+    bridge = _Bridge()
+    bridge.requested.connect(lambda: target())
+
+    def call() -> None:
+        bridge.requested.emit()
+
+    call.bridge = bridge  # keeps the QObject alive as long as the callback
+    return call
+
+
 def create_deferred_local_whisper_backend():
     """Construct the local Whisper backend without loading the model.
 
@@ -232,24 +255,31 @@ def main() -> int:
 
     setup_logging()
     profiler.mark("logging_ready")
-    logging.info("=" * 60)
-    logging.info("Starting OpenWhisper")
-    logging.info("=" * 60)
 
-    _log_hf_hub_offline()
-    log_cuda_preload_summary()
+    from services.ui_instance import acquire_ui_instance, release_ui_instance
 
-    profiler.mark("early_imports_started")
-    QtApplication, LoadingScreen = get_early_runtime_components()
-    profiler.mark("early_imports_finished")
+    instance = acquire_ui_instance(data_root())
+    if instance is None:
+        return 0
 
-    qt_app = QtApplication()
-    profiler.mark("qt_app_created")
     loading_screen = None
     ui_controller = None
     app_controller = None
-
     try:
+        logging.info("=" * 60)
+        logging.info("Starting OpenWhisper")
+        logging.info("=" * 60)
+
+        _log_hf_hub_offline()
+        log_cuda_preload_summary()
+
+        profiler.mark("early_imports_started")
+        QtApplication, LoadingScreen = get_early_runtime_components()
+        profiler.mark("early_imports_finished")
+
+        qt_app = QtApplication()
+        profiler.mark("qt_app_created")
+
         loading_screen = LoadingScreen()
         profiler.mark("loading_screen_constructed")
         loading_screen.show()
@@ -298,7 +328,18 @@ def main() -> int:
         loading_screen = None
 
         ui_controller.show_main_window()
+        instance.attach_activate(
+            qt_thread_callback(ui_controller.main_window.restore_from_tray)
+        )
         profiler.mark("main_window_shown")
+        from services.credentials import (
+            UNRESPONSIVE_KEYRING_STATUS,
+            keyring_did_not_respond,
+        )
+
+        if keyring_did_not_respond():
+            logging.warning(UNRESPONSIVE_KEYRING_STATUS)
+            ui_controller.set_ambient_status(UNRESPONSIVE_KEYRING_STATUS)
         from services.diagnostics import record_metrics
 
         record_metrics(startup_to_window_s=profiler.events[-1][1])
@@ -350,6 +391,7 @@ def main() -> int:
         logging.exception("Application startup failed")
         raise
     finally:
+        release_ui_instance()
         _shut_down(loading_screen, ui_controller, app_controller)
 
 

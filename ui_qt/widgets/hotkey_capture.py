@@ -5,7 +5,7 @@ import queue
 import sys
 from typing import Optional
 
-from PyQt6.QtCore import QThread, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QLineEdit
 
@@ -41,10 +41,21 @@ MOUSE_UNSUPPORTED_MESSAGE = (
     "Mouse buttons aren't supported as shortcuts on this desktop yet"
 )
 
+#: Shown while a shortcut field is waiting for a key. Escape backs out.
+CAPTURE_HINT = "Press keys… (Esc cancels)"
+
+_ESCAPE_KEY_NAMES = frozenset({"esc", "escape"})
+
 _SIDE_BUTTONS = {
     Qt.MouseButton.BackButton: "mouse4",
     Qt.MouseButton.ForwardButton: "mouse5",
 }
+
+
+def is_escape_key(name: Optional[str]) -> bool:
+    """Whether ``name`` is Escape. Esc alone cancels capture; with modifiers
+    it is a shortcut like any other (macOS's Cancel is ctrl+alt+escape)."""
+    return bool(name) and name.strip().lower() in _ESCAPE_KEY_NAMES
 
 
 def qt_modifier_names(flags) -> set:
@@ -103,6 +114,7 @@ class HotkeyCaptureInput(QLineEdit):
     """
 
     capture_requested = pyqtSignal()
+    capture_cancelled = pyqtSignal()
     mouse_captured = pyqtSignal(str)
     notice = pyqtSignal(str)
 
@@ -113,6 +125,24 @@ class HotkeyCaptureInput(QLineEdit):
         self.setMinimumHeight(38)
         self.setPlaceholderText("Click to set hotkey")
         self._capture_active = False
+
+    def event(self, event):
+        # Swallow Esc (and other shortcuts) while capturing so QDialog does
+        # not treat Escape as reject and bind it as a global hotkey.
+        if getattr(self, "_capture_active", False) and event.type() == QEvent.Type.ShortcutOverride:
+            event.accept()
+            return True
+        return super().event(event)
+
+    def keyPressEvent(self, event) -> None:
+        if getattr(self, "_capture_active", False) and event.key() == Qt.Key.Key_Escape:
+            event.accept()
+            # Ctrl+Alt+Esc and the like are left to the capture to bind.
+            modifiers = event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+            if modifiers == Qt.KeyboardModifier.NoModifier:
+                self.capture_cancelled.emit()
+            return
+        super().keyPressEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         hotkey = side_button_hotkey(event)
@@ -142,6 +172,7 @@ if USE_PYNPUT_BACKEND:
         """Capture one shortcut with the pynput backend."""
 
         captured = pyqtSignal(str)
+        cancelled = pyqtSignal()
         failed = pyqtSignal(str)
 
         def __init__(self, parent=None):
@@ -152,7 +183,7 @@ if USE_PYNPUT_BACKEND:
         def run(self) -> None:
             self._canceled = False
             pressed_modifiers = set()
-            result = {"hotkey": None}
+            result = {"hotkey": None, "cancelled": False}
 
             def on_press(key):
                 modifier = modifier_of(key)
@@ -163,6 +194,12 @@ if USE_PYNPUT_BACKEND:
                 name = key_to_name(key)
                 if name is None:
                     return True
+                # Escape backs out; the global listener would otherwise bind
+                # it as a system-wide shortcut (Walkthrough, Screenshot, …).
+                if is_escape_key(name) and not pressed_modifiers:
+                    result["cancelled"] = True
+                    self._canceled = True
+                    return False
 
                 result["hotkey"] = format_hotkey(
                     frozenset(pressed_modifiers), name
@@ -186,6 +223,8 @@ if USE_PYNPUT_BACKEND:
                 self._listener.join()
                 if result["hotkey"]:
                     self.captured.emit(result["hotkey"])
+                elif result["cancelled"]:
+                    self.cancelled.emit()
                 elif not self._canceled:
                     logger.error(
                         "Hotkey capture listener stopped without capturing a key"
@@ -211,6 +250,7 @@ else:
         """Capture one shortcut with the Windows keyboard backend."""
 
         captured = pyqtSignal(str)
+        cancelled = pyqtSignal()
         failed = pyqtSignal(str)
 
         def __init__(self, parent=None):
@@ -231,6 +271,9 @@ else:
                         return
                     events.append(event)
                     if event.event_type == keyboard.KEY_UP:
+                        if all(is_escape_key(e.name) for e in events):
+                            self.cancelled.emit()
+                            return
                         names = [
                             event.name
                             if not event.is_keypad

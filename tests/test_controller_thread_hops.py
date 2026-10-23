@@ -117,3 +117,32 @@ def test_recording_storage_failure_is_delivered_on_qt_thread(has_audio, saved):
     assert len(delivered) == 1
     assert delivered[0][1] is threading.main_thread()
     assert not runtime.has_active_job
+
+
+def test_a_busy_hotkey_notice_is_shown_on_the_qt_thread():
+    from services.runtime.transcription import TranscriptionRuntime
+
+    controller = ApplicationController.__new__(ApplicationController)
+    QObject.__init__(controller)
+    shown = []
+
+    def show_notice(text, done=False):
+        shown.append((text, threading.current_thread()))
+
+    controller.ui_controller = SimpleNamespace(show_notice=show_notice)
+    controller.recorder = SimpleNamespace(is_recording=False)
+    controller.is_meeting_active = lambda: False
+    controller.transcription_readiness_message = lambda: None
+    controller._backup_in_progress = False
+    controller.notice_requested.connect(
+        lambda text, done: controller.ui_controller.show_notice(text, done=done)
+    )
+    runtime = TranscriptionRuntime(controller)
+    assert runtime._claim_job()
+
+    assert _off_qt_thread(runtime.start_recording) is False
+    assert shown == []
+    QCoreApplication.sendPostedEvents()
+    assert len(shown) == 1
+    assert shown[0][1] is threading.main_thread()
+    assert "already in progress" in shown[0][0]

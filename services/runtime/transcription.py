@@ -567,7 +567,10 @@ class TranscriptionRuntime:
             self.controller.status_update.emit(message)
             return False
         if self.has_active_job:
-            self._report_busy("starting another recording")
+            # The status line is out of sight when the window is in the tray
+            # or a walkthrough overlay is already up, so the pointer notice
+            # is what the user sees.
+            self._notify(self._report_busy("starting another recording"))
             return False
         if self.controller.recorder.is_recording:
             return False
@@ -1492,11 +1495,27 @@ class TranscriptionRuntime:
         self._raise_if_canceled()
         cleaned, raws, info = self._clean_sections(texts)
         self._raise_if_canceled()
+        if not shots and not any((text or "").strip() for text in cleaned):
+            # Nothing was said and nothing was kept: no document to write.
+            # It ends like an empty dictation.
+            return "", None, info
         self.controller.status_update.emit("Writing the walkthrough...")
-        result = finish.build_documents(
-            session, shots, cleaned, raws,
-            duration_s=self.controller._pending_audio_duration or 0.0,
-        )
+        try:
+            result = finish.build_documents(
+                session, shots, cleaned, raws,
+                duration_s=self.controller._pending_audio_duration or 0.0,
+            )
+        except OSError as exc:
+            # A full disk or a read-only folder loses the document, never the
+            # words: they still reach History and the clipboard.
+            logger.exception("Could not write the walkthrough document")
+            session.document_error = exc.strerror or str(exc)
+            text = finish.marked_text(cleaned, len(shots))
+            raw = finish.marked_text(raws, len(shots))
+            return text, raw if raw != text else None, info
+        lost = session.lost_shots
+        if lost:
+            result = dataclasses.replace(result, lost_shots=lost)
         session.result = self._maybe_write_up(result, shots)
         return session.result.history_text, session.result.history_raw, info
 
@@ -1966,6 +1985,11 @@ class TranscriptionRuntime:
             self.controller.ui_controller.set_status(
                 EMPTY_PREVIEW_FALLBACK_MESSAGE if preview else EMPTY_ASR_MESSAGE
             )
+            if job is not None and job.mode == JobMode.WALKTHROUGH:
+                # The column said "Writing it up…"; nothing is coming.
+                dismiss = getattr(self.controller.ui_controller, "dismiss_walkthrough_panel", None)
+                if callable(dismiss):
+                    dismiss()
             self.controller.ui_controller.discard_clipboard_prefetch()
             self._clear_pending_audio_metadata()
             self._finish_job()
@@ -2055,7 +2079,7 @@ class TranscriptionRuntime:
             )
             return
         if job is not None and job.mode == JobMode.WALKTHROUGH:
-            self._deliver_walkthrough(ui)
+            self._deliver_walkthrough(ui, transcript)
             return
         status_suffix = f" — {notice}" if notice else ""
         if self._insert_into_scratchpad(ui, transcript, status_suffix):
@@ -2093,28 +2117,50 @@ class TranscriptionRuntime:
         if forced:
             self._notify_forced_outcome(job, pasted)
 
-    def _deliver_walkthrough(self, ui) -> None:
+    def _deliver_walkthrough(self, ui, transcript: str = "") -> None:
         """Copy a finished walkthrough and show where it is; Qt thread.
 
         The clipboard holds the PDF as a file, which chat apps attach, and
         the Markdown with absolute image paths as text, which is what a
         terminal (and an agent in it) receives. Never pasted: the user
-        chooses where it goes.
+        chooses where it goes. When the document couldn't be written, the
+        words are copied as text and History keeps them.
         """
         with self._job_lock:
             session = self._walkthrough
         result = session.result if session is not None else None
         if result is None:
-            ui.set_status("Walkthrough finished, but its document is missing")
+            error = session.document_error if session is not None else ""
+            copied = bool(transcript) and ui.copy_files_to_clipboard([], text=transcript)
+            if error:
+                status = f"Couldn't save the walkthrough document ({error})"
+            else:
+                status = "Walkthrough finished, but its document is missing"
+            if copied:
+                status += " — its words are copied and kept in History"
+            elif transcript:
+                status += " — its words are kept in History"
+            ui.set_status(status)
+            self._notify(status)
+            dismiss = getattr(ui, "dismiss_walkthrough_panel", None)
+            if callable(dismiss):
+                dismiss()
             return
         copied = ui.copy_files_to_clipboard([result.pdf], text=result.clipboard_text)
         count = f"{result.shots} screenshot{'' if result.shots == 1 else 's'}"
-        if copied:
+        if result.write_up_error:
+            # Ahead of the rest, so a status line cut short still says it;
+            # the Ready card shows the whole reason.
+            done = "copied as spoken" if copied else "saved as spoken; copying it failed"
+            status = f"Write-up failed — {result.name} {done} ({count}): {result.write_up_error}"
+        elif copied:
             status = f"{result.name} copied ({count}) — paste it into your agent"
         else:
             status = f"{result.name} saved ({count}); copying it failed — drag it from the card"
-        if result.write_up_error:
-            status += f". Write-up failed, so it's as spoken: {result.write_up_error}"
+        if result.lost_shots:
+            lost = result.lost_shots
+            shots = f"{lost} screenshot" if lost == 1 else f"{lost} screenshots"
+            status += f". {shots} couldn't be saved and {'is' if lost == 1 else 'are'} left out"
         ui.set_status(status)
         ui.show_walkthrough_ready(result, copied=copied)
 
@@ -2156,12 +2202,19 @@ class TranscriptionRuntime:
             self._notify("Inserted", done=True)
 
     def _notify(self, text: str, *, done: bool = False) -> None:
-        """Show a command or transform's outcome near the pointer; Qt thread.
+        """Show a shortcut's outcome near the pointer; any thread.
 
         They are run from other apps, where the status line is out of sight.
+        A Qt signal hops here from the hotkey thread.
         """
+        if not text:
+            return
+        hop = getattr(self.controller, "notice_requested", None)
+        if hop is not None:
+            hop.emit(text, done)
+            return
         show = getattr(self.controller.ui_controller, "show_notice", None)
-        if callable(show) and text:
+        if callable(show):
             show(text, done=done)
 
     def _history_context(self, job, cleanup_info, *, live: bool) -> dict:
