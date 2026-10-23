@@ -38,6 +38,20 @@ def screen_under_cursor() -> QScreen | None:
     return QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
 
 
+def screens_to_cover() -> list[QScreen]:
+    """Every screen a snap freezes, the pointer's first: the user may select on any.
+
+    Hyprland fullscreens each window on the focused monitor whatever screen
+    it asks for, so there a snap covers that one alone.
+    """
+    pointed = screen_under_cursor()
+    if pointed is None:
+        return []
+    if support.uses_grim():
+        return [pointed]
+    return [pointed] + [s for s in QGuiApplication.screens() if s is not pointed]
+
+
 def _grab_screen(screen: QScreen) -> QImage | None:
     """``screen``'s pixels at device resolution, or None. Tests replace this seam."""
     if support.uses_grim():

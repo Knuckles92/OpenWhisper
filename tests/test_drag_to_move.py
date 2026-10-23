@@ -123,6 +123,92 @@ def test_the_settings_preview_and_embedded_overlay_do_not_drag():
         host.close()
 
 
+# --- in the corner through a walkthrough -------------------------------------
+
+
+def _corner(overlay) -> QPoint:
+    area = overlay.screen().availableGeometry()
+    return area.topLeft() + QPoint(waveform_overlay._PARK_MARGIN, waveform_overlay._PARK_MARGIN)
+
+
+def test_a_walkthrough_sends_the_overlay_to_the_corner_until_hidden(overlay):
+    overlay.show_at_cursor(overlay.STATE_STREAMING)
+    overlay.set_walkthrough_controls(True)
+    assert overlay.pos() == _corner(overlay)
+
+    overlay.update_streaming_text("a few words of preview text")
+    overlay.show_at_cursor(overlay.STATE_STREAMING)
+    # Done: the controls go, the finish plays where the walkthrough was.
+    overlay.set_walkthrough_controls(False)
+    overlay.set_state(overlay.STATE_PROCESSING)
+    assert overlay.pos() == _corner(overlay)
+
+    overlay._finish_hide()
+    overlay.show_at_cursor(overlay.STATE_RECORDING)
+    assert not overlay._cornered
+
+
+def test_a_walkthrough_overlay_dragged_aside_stays_there(overlay):
+    overlay.show_at_cursor(overlay.STATE_STREAMING)
+    overlay.set_walkthrough_controls(True)
+    _drag(overlay, QPoint(20, overlay.height() - 6), QPoint(60, 50))
+    placed = overlay.pos()
+    assert placed != _corner(overlay)
+
+    overlay.update_streaming_text("a few words of preview text")
+    overlay.show_at_cursor(overlay.STATE_STREAMING)
+    overlay.park(overlay.screen().geometry())
+    overlay.unpark()
+
+    assert overlay.pos() == placed
+
+
+# --- parked in the corner while a snap is open -------------------------------
+
+
+def test_a_snap_parks_the_overlay_in_its_corner_and_puts_it_back(overlay):
+    overlay.show_at_cursor(overlay.STATE_STREAMING)
+    _drag(overlay, QPoint(20, overlay.height() - 6), _room(overlay))
+    placed = overlay.pos()
+    area = overlay.screen().geometry()
+
+    overlay.park(area)
+    corner = area.topLeft() + QPoint(waveform_overlay._PARK_MARGIN, waveform_overlay._PARK_MARGIN)
+    assert overlay.pos() == corner
+    # The preview growing, or a re-show, leaves it in the corner.
+    overlay.update_streaming_text("a few words of preview text")
+    overlay.show_at_cursor(overlay.STATE_STREAMING)
+    assert overlay.pos() == corner
+
+    overlay.unpark()
+    assert overlay.pos() == placed
+
+
+def test_an_overlay_that_was_not_dragged_returns_by_the_pointer(overlay):
+    overlay.show_at_cursor(overlay.STATE_RECORDING)
+    opened = overlay.pos()
+
+    overlay.park(overlay.screen().geometry())
+    overlay.unpark()
+
+    assert overlay.pos() == opened
+    assert not overlay._placed()
+
+
+def test_a_hidden_overlay_is_not_parked_and_hiding_forgets_the_park(overlay):
+    area = overlay.screen().geometry()
+    overlay.park(area)
+    assert not overlay.isVisible()
+    assert not overlay._placed()
+
+    overlay.show_at_cursor(overlay.STATE_RECORDING)
+    overlay.park(area)
+    overlay._finish_hide()
+    overlay.unpark()
+
+    assert not overlay._placed()
+
+
 # --- the walkthrough column -------------------------------------------------
 
 

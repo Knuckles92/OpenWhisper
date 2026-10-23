@@ -187,6 +187,9 @@ class SnapOverlay(QWidget):
 
     kept = pyqtSignal(QImage)
     dropped = pyqtSignal()
+    #: A selection started here; one snap covering several screens keeps
+    #: only the newest one (see ``clear_selection``).
+    selecting = pyqtSignal()
 
     def __init__(
         self, frozen: QImage, screen: QScreen | None = None, *, hint: str = ""
@@ -309,6 +312,19 @@ class SnapOverlay(QWidget):
         self._origin = None
         self._set_selection(QRect(self._canvas))
         self._enter_annotate()
+        self.selecting.emit()
+
+    def clear_selection(self) -> None:
+        """Back to the bare frozen screen: the selection moved to another screen."""
+        if self._editor is not None:
+            self._close_label()
+        self._draft = None
+        self._origin = None
+        self._stack = AnnotationStack()
+        self._phase = Phase.SELECT
+        self._toolbar.hide()
+        self._selection = None
+        self.update()
 
     def closeEvent(self, event) -> None:
         # Closed from outside (a compositor keybind, Alt+F4): that is a cancel.
@@ -454,6 +470,7 @@ class SnapOverlay(QWidget):
         if reselecting:
             # The hint pill may have moved out of the toolbar's way: repaint it all.
             self.update()
+        self.selecting.emit()
 
     def _drag_selection(self, point: QPoint) -> None:
         rect = span(self._origin, self._clamp(point))

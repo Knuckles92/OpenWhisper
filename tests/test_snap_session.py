@@ -18,11 +18,13 @@ from PyQt6.QtCore import (
     QEvent,
     QIODevice,
     QObject,
+    QPoint,
+    QPointF,
     QRect,
     QSize,
     Qt,
 )
-from PyQt6.QtGui import QColor, QGuiApplication, QImage
+from PyQt6.QtGui import QColor, QGuiApplication, QImage, QMouseEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QWidget
 
@@ -312,6 +314,124 @@ class TestKeepOut:
         assert hidden == [window]
         capture.restore_windows(hidden)
         assert window.isVisible()
+
+
+class Parked:
+    """A float_above window: logs park and unpark with what was on screen."""
+
+    def __init__(self, log):
+        self.log = log
+
+    def park(self, area):
+        self.log.append(("park", area))
+
+    def unpark(self):
+        self.log.append(("unpark",))
+
+
+class TestFloatAbove:
+    def test_windows_park_over_the_open_overlay_and_return_before_the_outcome(self):
+        log = []
+        snap = start_snap(float_above=[Parked(log)])
+        snap.kept.connect(lambda image: log.append(("kept",)))
+
+        assert log == [("park", snap._overlay._screen.geometry())]
+        snap.keep()
+
+        assert log[1:] == [("unpark",), ("kept",)]
+
+    def test_a_snap_that_never_opens_parks_nothing(self, monkeypatch):
+        monkeypatch.setattr(capture, "_grab_screen", lambda screen: None)
+        log = []
+
+        snap = start_snap(float_above=[Parked(log)])
+
+        assert _pump_until(lambda: not session._live)
+        assert not snap.active
+        assert log == []
+
+    def test_an_owner_deleted_mid_snap_puts_the_windows_back(self):
+        log = []
+        owner = QObject()
+        start_snap(float_above=[Parked(log)], parent=owner)
+
+        sip.delete(owner)
+
+        assert [entry[0] for entry in log] == ["park", "unpark"]
+
+
+def _drag_on(widget, start: QPoint, end: QPoint) -> None:
+    for kind, point, held in (
+        (QEvent.Type.MouseButtonPress, start, Qt.MouseButton.LeftButton),
+        (QEvent.Type.MouseMove, end, Qt.MouseButton.LeftButton),
+        (QEvent.Type.MouseButtonRelease, end, Qt.MouseButton.NoButton),
+    ):
+        button = Qt.MouseButton.NoButton if kind == QEvent.Type.MouseMove else Qt.MouseButton.LeftButton
+        QApplication.sendEvent(widget, QMouseEvent(
+            kind, QPointF(point), QPointF(widget.mapToGlobal(point)), button, held,
+            Qt.KeyboardModifier.NoModifier,
+        ))
+
+
+class TestEveryScreen:
+    @pytest.fixture
+    def two_screens(self, monkeypatch):
+        """The test desktop has one screen: cover it twice, as two monitors would be."""
+        screen = QGuiApplication.primaryScreen()
+        monkeypatch.setattr(capture, "screens_to_cover", lambda: [screen, screen])
+        return screen
+
+    def test_each_screen_is_captured_and_covered(self, two_screens, grabs):
+        snap = start_snap()
+
+        assert [call["screen"] for call in grabs] == [two_screens, two_screens]
+        assert len(snap._overlays) == 2
+        assert all(overlay.isVisible() for overlay in snap._overlays)
+
+    def test_selecting_on_another_screen_moves_the_selection_there(self, two_screens):
+        snap = start_snap()
+        kept = Spy(snap.kept)
+        first, second = snap._overlays
+        first._select_all()
+
+        _drag_on(second, QPoint(10, 10), QPoint(110, 60))
+
+        assert first.selection is None
+        assert second.selection == QRect(10, 10, 100, 50)
+        assert snap._overlay is second
+        snap.keep()
+        (image,) = kept.calls[0]
+        assert image.size() == QSize(100, 50)
+        assert not any(overlay.isVisible() for overlay in (first, second))
+
+    def test_esc_on_any_screen_drops_the_whole_snap(self, two_screens):
+        snap = start_snap()
+        dropped = Spy(snap.dropped)
+        overlays = list(snap._overlays)
+
+        QTest.keyClick(overlays[1], Qt.Key.Key_Escape)
+
+        assert len(dropped) == 1
+        assert not any(overlay.isVisible() for overlay in overlays)
+
+    def test_a_screen_that_fails_to_capture_is_left_uncovered(self, monkeypatch, two_screens):
+        results = iter([_screen_image(two_screens), None])
+        monkeypatch.setattr(capture, "_grab_screen", lambda screen: next(results))
+
+        snap = start_snap()
+
+        assert len(snap._overlays) == 1
+        snap.drop()
+
+    def test_the_pointers_screen_comes_first_and_hyprland_covers_only_it(self, monkeypatch):
+        a, b, c = object(), object(), object()
+        monkeypatch.setattr(capture, "screen_under_cursor", lambda: b)
+        monkeypatch.setattr(capture, "QGuiApplication", SimpleNamespace(screens=lambda: [a, b, c]))
+        monkeypatch.setattr(support, "uses_grim", lambda: False)
+        assert capture.screens_to_cover() == [b, a, c]
+
+        monkeypatch.setattr(support, "uses_grim", lambda: True)
+        assert capture.screens_to_cover() == [b]
 
 
 class FakeUser32:
