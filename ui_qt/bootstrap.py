@@ -9,7 +9,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from config import config
+from config import config, data_root
 from ui_qt.startup_profiler import StartupProfiler
 
 _CRASH_LOG_FILE = None
@@ -232,24 +232,31 @@ def main() -> int:
 
     setup_logging()
     profiler.mark("logging_ready")
-    logging.info("=" * 60)
-    logging.info("Starting OpenWhisper")
-    logging.info("=" * 60)
 
-    _log_hf_hub_offline()
-    log_cuda_preload_summary()
+    from services.ui_instance import acquire_ui_instance, release_ui_instance
 
-    profiler.mark("early_imports_started")
-    QtApplication, LoadingScreen = get_early_runtime_components()
-    profiler.mark("early_imports_finished")
+    instance = acquire_ui_instance(data_root())
+    if instance is None:
+        return 0
 
-    qt_app = QtApplication()
-    profiler.mark("qt_app_created")
     loading_screen = None
     ui_controller = None
     app_controller = None
-
     try:
+        logging.info("=" * 60)
+        logging.info("Starting OpenWhisper")
+        logging.info("=" * 60)
+
+        _log_hf_hub_offline()
+        log_cuda_preload_summary()
+
+        profiler.mark("early_imports_started")
+        QtApplication, LoadingScreen = get_early_runtime_components()
+        profiler.mark("early_imports_finished")
+
+        qt_app = QtApplication()
+        profiler.mark("qt_app_created")
+
         loading_screen = LoadingScreen()
         profiler.mark("loading_screen_constructed")
         loading_screen.show()
@@ -298,6 +305,13 @@ def main() -> int:
         loading_screen = None
 
         ui_controller.show_main_window()
+        from PyQt6.QtCore import QTimer
+
+        instance.attach_activate(
+            lambda: QTimer.singleShot(
+                0, ui_controller.main_window.restore_from_tray
+            )
+        )
         profiler.mark("main_window_shown")
         from services.diagnostics import record_metrics
 
@@ -350,6 +364,7 @@ def main() -> int:
         logging.exception("Application startup failed")
         raise
     finally:
+        release_ui_instance()
         _shut_down(loading_screen, ui_controller, app_controller)
 
 

@@ -13,6 +13,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Changed
 - **Walkthroughs have their own Settings page** — **Settings → Dictation → Walkthroughs** now holds the Walkthrough and Screenshot shortcuts, how the document looks, and the AI write-up, which were spread across General and Hotkeys. Hotkeys links to it.
 
+### Fixed
+- **Launching OpenWhisper again on Linux brings the existing window forward** — opening the app from the menu or running `openwhisper` while it is already running, including minimized to the tray, now shows that window instead of starting a second copy. Two copies were both recording the same shortcut into the same file, which created two History entries with garbled transcripts. Windows and macOS are unchanged.
+
 ## [2.7.7] - 2026-10-22
 
 ### Added
