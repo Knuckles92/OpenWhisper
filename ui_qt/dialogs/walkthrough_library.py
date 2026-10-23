@@ -2,7 +2,7 @@
 
 The left column lists every walkthrough, newest first; the right shows the
 selected one as the document reads: each section's words, then the
-screenshot it led to. Copy for agent and Open PDF stay in reach; the rest
+screenshot it led to. Copy for agent, Copy PDF and Open PDF stay in reach; the rest
 waits behind ``⋯``. Edits only offer Save once there is something to save.
 """
 from __future__ import annotations
@@ -512,6 +512,8 @@ class WalkthroughLibraryDialog(QDialog):
         titles.setSpacing(2)
         self.title = QLabel("")
         self.title.setObjectName("wlTitle")
+        # Wraps instead of holding the dialog wide enough for three buttons beside it.
+        self.title.setWordWrap(True)
         titles.addWidget(self.title)
         meta = QHBoxLayout()
         meta.setSpacing(8)
@@ -525,19 +527,21 @@ class WalkthroughLibraryDialog(QDialog):
         head.addLayout(titles, 1)
         self.copy_button = self._button("Copy for agent", "wlPrimary", lambda: self._copy(False))
         self.copy_button.setToolTip("The document's Markdown, with each screenshot's path")
+        self.pdf_button = self._button("Copy PDF", "wlSecondary", lambda: self._copy(True))
+        self.pdf_button.setIcon(design_icon("copy-gray.svg"))
+        self.pdf_button.setToolTip("The PDF file, to paste or attach anywhere")
         self.open_button = self._button("Open PDF", "wlSecondary", self._open)
         self.open_button.setIcon(design_icon("external-link-gray.svg"))
         self.more_button = self._icon_button("dots-gray.svg", "More")
         self.more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu = context_menu(self)
-        self.pdf_button = self._menu_action("Copy PDF only", lambda: self._copy(True))
         self.folder_button = self._menu_action("Show in folder", self._reveal)
         self.menu.addSeparator()
         self.retry_button = self._menu_action("Redo AI write-up", self._retry)
         self.menu.addSeparator()
         self.delete_button = self._menu_action("Delete…", self._delete)
         self.more_button.setMenu(self.menu)
-        for widget in (self.copy_button, self.open_button, self.more_button):
+        for widget in (self.copy_button, self.pdf_button, self.open_button, self.more_button):
             head.addWidget(widget, 0, Qt.AlignmentFlag.AlignTop)
         column.addLayout(head)
         status = QHBoxLayout()
@@ -713,7 +717,7 @@ class WalkthroughLibraryDialog(QDialog):
         self.title.setVisible(has)
         self.more_button.setVisible(has)
         # A draft has no document yet: nothing to copy, open or edit.
-        for widget in (self.copy_button, self.open_button, self.notice):
+        for widget in (self.copy_button, self.pdf_button, self.open_button, self.notice):
             widget.setVisible(walkthrough is not None)
         if not self._busy:
             self.notice.setText(HINT)

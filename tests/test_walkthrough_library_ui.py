@@ -42,7 +42,7 @@ def test_copy_buttons_send_explicit_clipboard_formats(dialog, capture):
     args, kwargs = dialog._copy_files.call_args
     assert args == ([],)
     assert "first" in kwargs["text"]
-    dialog.pdf_button.trigger()
+    dialog.pdf_button.click()
     args, kwargs = dialog._copy_files.call_args
     assert args == ([capture.result.pdf],)
     assert kwargs == {"text": ""}
