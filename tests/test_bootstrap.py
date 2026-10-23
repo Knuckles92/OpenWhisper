@@ -36,7 +36,7 @@ class _FakeLoadingScreen:
 
 class _FakeUIController:
     def __init__(self):
-        self.main_window = object()
+        self.main_window = SimpleNamespace(restore_from_tray=lambda: None)
         self.show_main_window_called = False
         self.device_info = None
         self.cleaned_up = False
@@ -320,3 +320,13 @@ def test_update_health_requires_database_and_matching_transaction(monkeypatch, r
     else:
         qt_app.app.exit.assert_not_called()
         assert ui.main_window.setEnabled.call_args.args == (True,)
+
+
+@patch("services.settings.is_hf_hub_offline_env_set", return_value=False)
+@patch.object(bootstrap, "setup_logging")
+def test_main_hands_off_to_the_running_ui(_mock_setup_logging, _mock_hf_env):
+    with patch(
+        "services.ui_instance.acquire_ui_instance", return_value=None
+    ), patch.object(bootstrap, "get_early_runtime_components") as early:
+        assert bootstrap.main() == 0
+    early.assert_not_called()

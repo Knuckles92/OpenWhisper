@@ -54,7 +54,7 @@ sudo apt install "./OpenWhisper-<version>-linux-amd64.deb"
 sudo pacman -U "./OpenWhisper-<version>-linux-x86_64.pkg.tar.zst"
 ```
 
-Launch from your app menu; Linux packages also provide `ow` and `openwhisper` commands.
+Launch from your app menu; Linux packages also provide `ow` and `openwhisper` commands. Opening the app again on Linux brings the existing window forward.
 
 Downloads include `SHA256SUMS.txt` for verification. Compare your file's hash using `Get-FileHash` in PowerShell, `shasum -a 256` on macOS, or `sha256sum` on Linux. The Windows installer is unsigned; if SmartScreen blocks it, verify the download before choosing **More info → Run anyway**.
 
