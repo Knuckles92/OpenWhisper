@@ -32,6 +32,9 @@ _MIN_MASK_SUFFIX_LEN = 12
 #: Seconds a Secret Service D-Bus call may block. A locked keyring whose
 #: unlock prompt never appears would otherwise hold the splash forever.
 SECRET_SERVICE_TIMEOUT_S = 4.0
+#: Seconds to wait once the keyring is asking the user something (unlock
+#: it, or choose a password for a new one): they may be typing.
+SECRET_SERVICE_PROMPT_TIMEOUT_S = 120.0
 KEYRING_NO_RESPONSE = "the system keyring did not respond"
 
 
@@ -124,16 +127,27 @@ def platform_backend() -> tuple[CredentialBackend, str]:
     return Backend(), name
 
 
-def _run_with_timeout(fn: Callable[[], object], timeout_s: float):
+_prompting = threading.local()
+
+
+def _run_with_timeout(
+    fn: Callable[[], object], timeout_s: float, *, prompt_timeout_s: float = 0.0
+):
     """Run ``fn``; raise ``CredentialStoreTimeout`` if it does not finish.
 
-    The worker is a daemon, so a Secret Service call that never returns does
-    not keep the process alive. The next lookup does not wait for it.
+    Once ``fn`` calls ``_note_prompt`` (the keyring is showing the user a
+    prompt), the wait grows to ``prompt_timeout_s``: a short timeout there
+    would fail a save or unlock while the user is still typing the keyring
+    password. The worker is a daemon, so a Secret Service call that never
+    returns does not keep the process alive. The next lookup does not wait
+    for it.
     """
     box: dict[str, object] = {}
     done = threading.Event()
+    prompted = threading.Event()
 
     def worker() -> None:
+        _prompting.event = prompted
         try:
             box["result"] = fn()
         except Exception as exc:
@@ -144,11 +158,19 @@ def _run_with_timeout(fn: Callable[[], object], timeout_s: float):
     thread = threading.Thread(target=worker, name="secret-service", daemon=True)
     thread.start()
     if not done.wait(timeout_s):
-        raise CredentialStoreTimeout(KEYRING_NO_RESPONSE)
+        if not (prompted.is_set() and done.wait(max(0.0, prompt_timeout_s - timeout_s))):
+            raise CredentialStoreTimeout(KEYRING_NO_RESPONSE)
     error = box.get("error")
     if error is not None:
         raise error
     return box.get("result")
+
+
+def _note_prompt() -> None:
+    """The Secret Service call on this thread is about to prompt the user."""
+    event = getattr(_prompting, "event", None)
+    if event is not None:
+        event.set()
 
 
 @functools.cache
@@ -163,7 +185,8 @@ def _secret_service_backend_class() -> type:
     because then a key really was saved. Saving still goes through keyring,
     where creating the keyring is what the user asked for. Every D-Bus call
     has a timeout: a service that accepts SearchItems and never replies
-    must not hold the splash or the rest of the UI.
+    must not hold the splash or the rest of the UI. Unlocking and saving can
+    show the user a prompt, so those get a timeout long enough to answer it.
     """
     from keyring.backends.SecretService import Keyring
     from keyring.errors import PasswordDeleteError
@@ -177,6 +200,10 @@ def _secret_service_backend_class() -> type:
             )
             # Unlocked copies first, so a locked duplicate never prompts.
             return sorted(items, key=lambda item: item.is_locked())
+
+        def unlock(self, item):
+            _note_prompt()
+            super().unlock(item)
 
         def _read_password(self, service, username):
             import secretstorage
@@ -192,13 +219,21 @@ def _secret_service_backend_class() -> type:
             return _run_with_timeout(
                 lambda: self._read_password(service, username),
                 SECRET_SERVICE_TIMEOUT_S,
+                prompt_timeout_s=SECRET_SERVICE_PROMPT_TIMEOUT_S,
             )
 
         def set_password(self, service, username, password):
             parent_set = super().set_password
+
+            def save():
+                # Saving may create or unlock the keyring, which prompts.
+                _note_prompt()
+                return parent_set(service, username, password)
+
             return _run_with_timeout(
-                lambda: parent_set(service, username, password),
+                save,
                 SECRET_SERVICE_TIMEOUT_S,
+                prompt_timeout_s=SECRET_SERVICE_PROMPT_TIMEOUT_S,
             )
 
         def _remove_password(self, service, username):
@@ -216,6 +251,7 @@ def _secret_service_backend_class() -> type:
             return _run_with_timeout(
                 lambda: self._remove_password(service, username),
                 SECRET_SERVICE_TIMEOUT_S,
+                prompt_timeout_s=SECRET_SERVICE_PROMPT_TIMEOUT_S,
             )
 
     return LookupOnlySecretService

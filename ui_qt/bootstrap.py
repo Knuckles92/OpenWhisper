@@ -164,6 +164,29 @@ def process_qt_events() -> None:
     QCoreApplication.processEvents()
 
 
+def qt_thread_callback(target):
+    """A callable any thread may call that runs ``target`` on the Qt thread.
+
+    Call it from the Qt thread. A later launch's show request arrives on the
+    ui-instance accept thread, which has no Qt event loop: a
+    ``QTimer.singleShot`` started there never fires, so the window never
+    came forward. A signal emitted there is queued to the Qt thread instead.
+    """
+    from PyQt6.QtCore import QObject, pyqtSignal
+
+    class _Bridge(QObject):
+        requested = pyqtSignal()
+
+    bridge = _Bridge()
+    bridge.requested.connect(lambda: target())
+
+    def call() -> None:
+        bridge.requested.emit()
+
+    call.bridge = bridge  # keeps the QObject alive as long as the callback
+    return call
+
+
 def create_deferred_local_whisper_backend():
     """Construct the local Whisper backend without loading the model.
 
@@ -305,12 +328,8 @@ def main() -> int:
         loading_screen = None
 
         ui_controller.show_main_window()
-        from PyQt6.QtCore import QTimer
-
         instance.attach_activate(
-            lambda: QTimer.singleShot(
-                0, ui_controller.main_window.restore_from_tray
-            )
+            qt_thread_callback(ui_controller.main_window.restore_from_tray)
         )
         profiler.mark("main_window_shown")
         from services.credentials import (

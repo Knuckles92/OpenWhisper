@@ -257,6 +257,35 @@ class TestSecretServiceLookups:
         assert time.monotonic() - started < 2.0
 
 
+    def test_unlock_prompt_gets_time_to_answer(self, monkeypatch):
+        import time
+
+        class _SlowUnlockItem(_FakeItem):
+            def unlock(self):
+                time.sleep(0.5)  # the user typing the keyring password
+                return super().unlock()
+
+        monkeypatch.setattr(credentials, "SECRET_SERVICE_TIMEOUT_S", 0.2)
+        monkeypatch.setattr(credentials, "SECRET_SERVICE_PROMPT_TIMEOUT_S", 5.0)
+        monkeypatch.setitem(sys.modules, "secretstorage",
+                            _FakeSecretStorage([_SlowUnlockItem(SECRET, locked=True)]))
+        credentials._secret_service_backend_class.cache_clear()
+        backend = credentials._secret_service_backend_class()()
+        assert backend.get_password("OpenWhisper", NAME) == SECRET
+
+    def test_prompt_wait_still_ends(self):
+        import time
+
+        def stuck_prompt():
+            credentials._note_prompt()
+            time.sleep(30)
+
+        started = time.monotonic()
+        with pytest.raises(CredentialStoreTimeout, match=KEYRING_NO_RESPONSE):
+            credentials._run_with_timeout(stuck_prompt, 0.1, prompt_timeout_s=0.4)
+        assert 0.3 < time.monotonic() - started < 2.0
+
+
 class TestResolutionOrder:
     def test_saved_key_wins_over_environment(self, monkeypatch):
         monkeypatch.setenv(NAME, "env-value")

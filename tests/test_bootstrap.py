@@ -1,9 +1,10 @@
 """Unit tests for the extracted Qt bootstrap flow."""
 
-import pytest
 import logging
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import pytest
 
 from ui_qt import bootstrap
 
@@ -276,7 +277,9 @@ class TestCudaPreloadSummary:
 @pytest.mark.parametrize("readiness_error,acknowledged", [("database unavailable", True), ("", False), ("", True)])
 def test_update_health_requires_database_and_matching_transaction(monkeypatch, readiness_error, acknowledged):
     from unittest.mock import MagicMock
+
     from PyQt6.QtCore import QTimer
+
     from services import app_update_apply
 
     timers = []
@@ -330,3 +333,28 @@ def test_main_hands_off_to_the_running_ui(_mock_setup_logging, _mock_hf_env):
     ), patch.object(bootstrap, "get_early_runtime_components") as early:
         assert bootstrap.main() == 0
     early.assert_not_called()
+
+
+def test_show_request_from_another_thread_runs_on_the_qt_thread():
+    import threading
+    import time
+
+    from PyQt6.QtCore import QCoreApplication, QThread
+
+    from ui_qt.bootstrap import qt_thread_callback
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    ran_on = []
+    callback = qt_thread_callback(
+        lambda: ran_on.append(QThread.currentThread() is app.thread())
+    )
+
+    # The ui-instance accept thread has no Qt event loop of its own.
+    caller = threading.Thread(target=callback)
+    caller.start()
+    caller.join(2)
+    deadline = time.monotonic() + 2
+    while not ran_on and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    assert ran_on == [True]
