@@ -3,6 +3,7 @@
 import asyncio
 import json
 import socket
+import sys
 import time
 
 import httpx2
@@ -525,7 +526,13 @@ def test_occupied_port_and_missing_database_are_recoverable(mcp_database):
     assert "database" in wait_for(missing, "error").message
 
 
-def test_token_store_error_names_a_missing_store_not_an_unlock():
+@pytest.fixture
+def linux_store(monkeypatch):
+    """Copy about a missing store names GNOME Keyring or KWallet only on Linux."""
+    monkeypatch.setattr(sys, "platform", "linux")
+
+
+def test_token_store_error_names_a_missing_store_not_an_unlock(linux_store):
     missing = CredentialStore(
         lambda: (_ for _ in ()).throw(RuntimeError("Secret Service not available"))
     )
@@ -544,7 +551,7 @@ def test_token_store_error_names_a_missing_store_not_an_unlock():
     assert "Unlock" in _token_store_error(CredentialStore(memory_backend))
 
 
-def test_failed_credentials_do_not_start_listener(mcp_database):
+def test_failed_credentials_do_not_start_listener(mcp_database, linux_store):
     def unavailable():
         raise RuntimeError("Secret Service not available")
 
@@ -566,7 +573,7 @@ def test_locked_credential_store_asks_to_unlock(mcp_database):
     assert not server.token()
 
 
-def test_retry_starts_after_the_credential_store_appears(mcp_database):
+def test_retry_starts_after_the_credential_store_appears(mcp_database, linux_store):
     """A store that was missing at first probe must be seen again on Retry."""
     from services.credentials import SERVICE_NAME
 
