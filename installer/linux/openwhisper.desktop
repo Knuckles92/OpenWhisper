@@ -11,4 +11,3 @@ Categories=AudioVideo;Audio;
 Keywords=audio;dictation;microphone;speech;transcription;whisper;
 StartupNotify=true
 StartupWMClass=OpenWhisper
-SingleMainWindow=true
