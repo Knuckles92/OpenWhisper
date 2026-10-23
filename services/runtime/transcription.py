@@ -1484,9 +1484,11 @@ class TranscriptionRuntime:
         if session is None:
             raise RuntimeError("The walkthrough's screenshots are missing")
         shots = session.saved_shots()
+        from services.walkthrough.decode import bind as bind_section_decoder
+
         texts = self._timed_decode(backend, lambda: finish.transcribe_sections(
             audio_path, shots,
-            lambda path: recognition_context.transcribe(self._incremental, backend, path, recognition),
+            bind_section_decoder(backend, recognition, self._incremental, audio_path),
             before_each=self._report_section,
         ))
         self._raise_if_canceled()
@@ -1542,9 +1544,15 @@ class TranscriptionRuntime:
         Returns ``(cleaned, raw, info)``: the finished words, the words
         before AI cleanup, and the first cleanup's CleanupInfo or None.
         """
+        from services.walkthrough.decode import UNTRANSCRIBED
+
         cleaned, raws, first_info = [], [], None
         for text in texts:
             self._raise_if_canceled()
+            if (text or "").strip() == UNTRANSCRIBED:
+                cleaned.append(UNTRANSCRIBED)
+                raws.append(UNTRANSCRIBED)
+                continue
             fixed, raw_text, info = self._maybe_cleanup_transcript(text)
             cleaned.append(fixed or "")
             raws.append(raw_text if raw_text is not None else (fixed or ""))

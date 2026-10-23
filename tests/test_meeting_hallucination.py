@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from meeting.asr.hallucination import is_hallucination
+from meeting.asr.hallucination import is_hallucination, is_stock_phrase
 
 
 def seg(text, no_speech=0.0, logprob=-0.2, compression=1.3):
@@ -17,6 +17,7 @@ def seg(text, no_speech=0.0, logprob=-0.2, compression=1.3):
     seg("We should ship on Friday.", no_speech=0.7, logprob=-1.3),
     seg("the plan the plan the plan the plan the plan", compression=3.1),
     seg(" Thanks for watching!", no_speech=0.4),
+    seg("Thank you guys", no_speech=0.4),
     seg("You", logprob=-0.9),
 ])
 def test_non_speech_is_dropped(segment):
@@ -71,3 +72,10 @@ def test_backends_without_scores_are_never_filtered():
     assert not is_hallucination(SimpleNamespace(
         text="you", avg_logprob=0.0, no_speech_prob=0.0,
     ))
+
+
+def test_stock_phrases_are_recognized_without_decoder_scores():
+    assert is_stock_phrase("Thank you guys.")
+    assert is_stock_phrase("  THANKS FOR WATCHING  ")
+    assert not is_stock_phrase("Thank you.")
+    assert not is_stock_phrase("Step three. The history list now shows the new entry.")

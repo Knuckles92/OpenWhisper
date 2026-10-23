@@ -312,6 +312,30 @@ def test_each_section_is_cleaned_up_on_its_own(h, monkeypatch):
     assert h.built[0].texts == ["FIRST PART", "SECOND PART"]
 
 
+def test_a_section_with_speech_that_comes_back_empty_is_marked(h, monkeypatch):
+    from services.walkthrough.decode import UNTRANSCRIBED
+
+    seen = []
+
+    def cleanup(text, *args, **kwargs):
+        seen.append(text)
+        return text.upper(), text, None
+
+    monkeypatch.setattr(h.runtime, "_maybe_cleanup_transcript", cleanup)
+    _write_recording(h.audio, [_tone(2.0), np.zeros(int(0.3 * RATE), np.int16), _tone(2.0)])
+    h.backend.transcribe = lambda path: (
+        "" if Path(path).name == "section-1.wav" else "second part"
+    )
+    _record(h, [2.2], length_s=4.3)
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    assert h.built[0].texts == [UNTRANSCRIBED, "SECOND PART"]
+    assert seen == ["second part"]
+    assert UNTRANSCRIBED in h.history.entries[0]["text"]
+    assert "SECOND PART" in h.history.entries[0]["text"]
+
+
 def test_screenshots_without_words_still_make_a_walkthrough(h):
     _write_recording(h.audio, [np.zeros(4 * RATE, np.int16)])
     h.backend.words = ["", ""]

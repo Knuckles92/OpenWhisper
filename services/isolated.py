@@ -141,6 +141,50 @@ class IsolatedWhisperModel:
                 except FileNotFoundError:
                     pass  # The worker removes the audio immediately after reading.
 
+    def detect_language(self, audio, *, should_cancel=None, vad_filter=True,
+                        language_detection_segments=2,
+                        language_detection_threshold=0.5):
+        """``(language, probability)`` for ``audio`` (a path or float32 array)."""
+        cancel = _CallbackCancel(should_cancel)
+        with self._state_lock:
+            generation = self._generation
+        temporary = None
+        try:
+            if cancel.is_set():
+                raise RuntimeError("Transcription canceled")
+            if isinstance(audio, (str, os.PathLike)):
+                path = os.fspath(audio)
+            else:
+                import numpy as np
+                fd, temporary = tempfile.mkstemp(
+                    prefix=f"whisper-worker-{os.getpid()}-", suffix=".npy"
+                )
+                with os.fdopen(fd, "wb") as output:
+                    np.save(output, np.asarray(audio, dtype=np.float32), allow_pickle=False)
+                path = temporary
+            with self._request_lock:
+                if cancel.is_set():
+                    raise RuntimeError("Transcription canceled")
+                process = self._worker(generation, cancel)
+                try:
+                    result = process.request(
+                        "whisper_detect_language", audio_path=path,
+                        numpy_audio=temporary is not None, vad_filter=vad_filter,
+                        language_detection_segments=language_detection_segments,
+                        language_detection_threshold=language_detection_threshold,
+                        timeout=300., cancel=cancel,
+                    )
+                except BaseException:
+                    self.cancel()
+                    raise
+            return result.get("language") or "", float(result.get("language_probability") or 0.0)
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+
     def cancel(self):
         with self._state_lock:
             self._generation += 1

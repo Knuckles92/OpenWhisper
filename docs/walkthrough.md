@@ -66,7 +66,11 @@ Whatever you say after the last screenshot comes last.
   the screenshot.
 - Each section is transcribed on its own with your usual voice model,
   through the same call a dictation uses, so every engine works, including
-  a paired host. No engine has to report timestamps.
+  a paired host. No engine has to report timestamps. When the language is
+  auto, it is read from the whole recording first so a few seconds of
+  speech are not guessed as another language. Short Whisper clips are
+  decoded as one utterance. A section that still comes back empty, even
+  though it held speech, is marked in the document rather than left blank.
 - Your dictionary, snippets and AI cleanup run on each section separately,
   so cleanup can never move a sentence across a screenshot. The app you
   started in and the text near your cursor play no part: a walkthrough

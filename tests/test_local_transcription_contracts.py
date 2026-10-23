@@ -36,6 +36,29 @@ def test_public_transcribe_consumes_lazy_segments_and_forwards_options(backend, 
         vad_parameters={"min_silence_duration_ms":config.FASTER_WHISPER_VAD_MIN_SILENCE_MS} if vad else None)
 
 
+def test_decode_options_override_defaults_and_keep_hints(backend, monkeypatch):
+    from services.recognition_context import RecognitionContext
+    from transcriber.local_backend import whisper_section_options
+
+    monkeypatch.setattr(config, "FASTER_WHISPER_VAD_ENABLED", True)
+    backend.model.transcribe.return_value = (
+        iter([SimpleNamespace(text="kept")]),
+        SimpleNamespace(language="en", language_probability=0.99),
+    )
+    text = backend.transcribe(
+        "clip.wav",
+        recognition=RecognitionContext(language="en"),
+        decode_options=whisper_section_options(1.3),
+    )
+    assert text == "kept"
+    kwargs = backend.model.transcribe.call_args.kwargs
+    assert kwargs["language"] == "en"
+    assert kwargs["without_timestamps"] is True
+    assert kwargs["no_speech_threshold"] is None
+    assert kwargs["vad_filter"] is False
+    assert kwargs["vad_parameters"] is None
+
+
 @pytest.mark.parametrize("failure", ["cancel", "generator"])
 def test_lazy_failure_resets_busy_and_next_call_can_succeed(backend, failure):
     def segments():

@@ -27,8 +27,9 @@ STOCK_PHRASE_AVG_LOGPROB = -0.8
 
 _STOCK_PHRASES = frozenset({
     "you",
-    "thank you for watching",
+    "thank you guys",
     "thanks for watching",
+    "thank you for watching",
     "thank you for watching and see you next time",
     "thank you so much for watching",
     "please subscribe",
@@ -74,3 +75,8 @@ def is_hallucination(seg: Any) -> bool:
             or avg_logprob < STOCK_PHRASE_AVG_LOGPROB
         )
     return False
+
+
+def is_stock_phrase(text: str) -> bool:
+    """True when ``text`` is only a known Whisper filler phrase."""
+    return _normalized(text or "") in _STOCK_PHRASES

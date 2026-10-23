@@ -37,6 +37,8 @@ for line in incoming:
         Path(os.environ['TEST_WORKER_STARTED']).write_text(op)
         time.sleep(100)
     result = {}
+    if op == 'whisper_detect_language':
+        result = {'language': 'fr', 'language_probability': 0.87}
     if op == 'whisper_transcribe':
         text = 'fresh result'
         if r.get('numpy_audio'):
@@ -92,6 +94,15 @@ def test_native_cancel_reaps_stalled_worker_and_next_decode_reloads(native_worke
     finally:
         model.close()
     assert all(p.poll() is not None for p in processes)
+
+
+def test_detect_language_round_trips_through_the_worker(native_worker):
+    model = isolated.IsolatedWhisperModel("base", device="cpu", local_files_only=True)
+    try:
+        model.load()
+        assert model.detect_language("clip.wav") == ("fr", 0.87)
+    finally:
+        model.close()
 
 
 def test_preview_numpy_audio_uses_same_cancelable_model_contract(native_worker, tmp_path, monkeypatch):

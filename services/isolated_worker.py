@@ -95,6 +95,34 @@ def _transcribe_whisper(model, request: dict) -> dict:
                      "language_probability": info.language_probability}}
 
 
+def _detect_language_whisper(model, request: dict) -> dict:
+    if model is None:
+        raise RuntimeError("Whisper model is not loaded")
+    audio = request["audio_path"]
+    if request.get("numpy_audio"):
+        import numpy as np
+        audio_path = audio
+        audio = np.load(audio_path, allow_pickle=False)
+        os.unlink(audio_path)
+    else:
+        from faster_whisper.audio import decode_audio
+        audio = decode_audio(audio, sampling_rate=16000)
+    if getattr(audio, "size", 1) == 0:
+        return {"language": "", "language_probability": 0.0}
+    try:
+        language, probability, _all = model.detect_language(
+            audio,
+            vad_filter=bool(request.get("vad_filter", True)),
+            language_detection_segments=int(request.get("language_detection_segments") or 2),
+            language_detection_threshold=float(
+                request.get("language_detection_threshold") or 0.5
+            ),
+        )
+    except Exception:
+        return {"language": "", "language_probability": 0.0}
+    return {"language": language or "", "language_probability": float(probability or 0.0)}
+
+
 def _run_operation(op, request: dict, model, protocol) -> dict:
     """Every operation but ``whisper_load``, which replaces the worker's model."""
     if op == "discover_whisper_models":
@@ -103,6 +131,8 @@ def _run_operation(op, request: dict, model, protocol) -> dict:
             request["repo_id"], request.get("subfolder", ""))}
     if op == "whisper_transcribe":
         return _transcribe_whisper(model, request)
+    if op == "whisper_detect_language":
+        return _detect_language_whisper(model, request)
     if op == "download_model":
         from services.hf_access import _download_model_files_in_process
         progress = _progress_writer(protocol, request)

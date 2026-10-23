@@ -57,6 +57,14 @@ class GpuFallbackCause:
     UNKNOWN = "unknown"
 
 
+#: Whisper pads every clip to this window. A walkthrough section shorter
+#: than that sits in mostly silence, which makes language detection guess
+#: and trips the no-speech skip (empty text, or a stock hallucination).
+WHISPER_WINDOW_S = 30.0
+#: Below this, Silero VAD often drops the only burst of speech in the clip.
+SHORT_VAD_S = 2.0
+
+
 def whisper_hints(recognition) -> dict:
     """faster-whisper options for a RecognitionContext; empty adds none.
 
@@ -74,6 +82,35 @@ def whisper_hints(recognition) -> dict:
     if language:
         options["language"] = language
     return options
+
+
+def whisper_section_options(duration_s: float) -> dict:
+    """faster-whisper options for one walkthrough section; JSON-safe.
+
+    Short clips are decoded as a single utterance: timestamp mode and the
+    default no-speech skip both treat the padded 30 s window as silence.
+    Very short clips also skip VAD, which otherwise drops the only burst.
+    """
+    if duration_s >= WHISPER_WINDOW_S:
+        return {}
+    options = {
+        "without_timestamps": True,
+        "no_speech_threshold": None,
+    }
+    if duration_s < SHORT_VAD_S:
+        options["vad_filter"] = False
+        options["vad_parameters"] = None
+    return options
+
+
+def whisper_section_retry_options() -> dict:
+    """A second pass that keeps whatever speech the first pass dropped."""
+    return {
+        "without_timestamps": True,
+        "no_speech_threshold": None,
+        "vad_filter": False,
+        "vad_parameters": None,
+    }
 
 
 class LocalWhisperBackend(TranscriptionBackend):
@@ -446,11 +483,14 @@ class LocalWhisperBackend(TranscriptionBackend):
                 f"Model '{self.model_name}' failed to load after download"
             )
 
-    def transcribe(self, audio_path: str, recognition=None) -> str:
+    def transcribe(self, audio_path: str, recognition=None, *, decode_options=None) -> str:
         """Transcribe an audio file with the loaded faster-whisper model.
 
         ``recognition``'s phrases become ``hotwords``, which faster-whisper
         puts in every window's prompt, and its language replaces detection.
+        ``decode_options`` overlays extra ``model.transcribe`` kwargs (JSON
+        values only) after the defaults; walkthrough sections use this for
+        short-utterance decoding.
         """
         if not self.is_available():
             raise Exception("Faster-whisper model is not available.")
@@ -475,14 +515,14 @@ class LocalWhisperBackend(TranscriptionBackend):
             else:
                 transcribe = model.transcribe
                 cancel_options = {}
-            segments, info = transcribe(
-                audio_path,
-                beam_size=config.FASTER_WHISPER_BEAM_SIZE,
-                vad_filter=config.FASTER_WHISPER_VAD_ENABLED,
-                vad_parameters=vad_params,
-                **whisper_hints(recognition),
-                **cancel_options,
-            )
+            options = {
+                "beam_size": config.FASTER_WHISPER_BEAM_SIZE,
+                "vad_filter": config.FASTER_WHISPER_VAD_ENABLED,
+                "vad_parameters": vad_params,
+            }
+            options.update(whisper_hints(recognition))
+            options.update(dict(decode_options or {}))
+            segments, info = transcribe(audio_path, **options, **cancel_options)
 
             logger.info(f"Detected language: {info.language} "
                         f"(probability: {info.language_probability:.2f})")
@@ -510,6 +550,37 @@ class LocalWhisperBackend(TranscriptionBackend):
             raise
         finally:
             self.is_transcribing = False
+
+    def detect_language(self, audio_path: str) -> tuple[str, float]:
+        """``(language, probability)`` from the first stretch of ``audio_path``.
+
+        ``("", 0.0)`` when the model is missing or detection fails. Walkthroughs
+        call this on the whole recording so short clips are not left on auto.
+        """
+        if not self.is_available():
+            return "", 0.0
+        from services.isolated import IsolatedWhisperModel
+
+        model = self.model
+        try:
+            if isinstance(model, IsolatedWhisperModel):
+                return model.detect_language(
+                    audio_path, should_cancel=lambda: self.should_cancel
+                )
+            detect = getattr(model, "detect_language", None)
+            if not callable(detect):
+                return "", 0.0
+            result = detect(audio_path)
+            if not isinstance(result, tuple) or not result:
+                return "", 0.0
+            language = result[0] or ""
+            probability = float(result[1]) if len(result) > 1 else 0.0
+            return language, probability
+        except Exception as exc:
+            if "canceled" in str(exc).lower():
+                raise
+            logger.debug("Whisper language detection failed: %s", exc)
+            return "", 0.0
 
     def is_available(self) -> bool:
         """Return whether a model is loaded."""

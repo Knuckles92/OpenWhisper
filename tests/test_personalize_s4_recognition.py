@@ -89,6 +89,17 @@ class TestLocalWhisper:
         hints = whisper_hints(RecognitionContext(language="fr", phrases=PHRASES))
         assert json.loads(json.dumps(hints)) == hints
 
+    def test_section_options_stay_json_including_nulls(self):
+        import json
+
+        from transcriber.local_backend import (
+            whisper_section_options,
+            whisper_section_retry_options,
+        )
+
+        for options in (whisper_section_options(1.0), whisper_section_retry_options()):
+            assert json.loads(json.dumps(options)) == options
+
 
 def test_a_dictation_reaches_whisper_with_hints_and_replacements(tmp_path):
     """Saved dictionary → job context → hotwords, then "sounds like" fixes the text."""

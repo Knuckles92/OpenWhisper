@@ -7,6 +7,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Fixed
+- **Short walkthrough sections are no longer left blank or in the wrong language** — each screenshot still transcribes on its own, but Local Whisper no longer treats a few seconds of speech like a 30-second clip of silence. Auto language is read from the whole recording first, short clips are decoded as one utterance, and a section that still cannot be transcribed is marked in the document instead of sitting empty under its screenshot.
+
 ### Added
 - **Have your coding agent write your walkthroughs up** — turn on **AI write-up** in **Settings → Dictation → Walkthroughs**, choose Claude Code, Codex or OpenCode, and when a walkthrough finishes it lays out a cleaner document with a title, tidy wording, and each screenshot where it helps most. That write-up is what gets copied, in the same PDF style. The instructions are a loose default you can replace with your own. Claude Code reads the walkthrough's PDF and can read only that folder; Codex and OpenCode read no files at all and are sent the words and screenshots instead, so their model must take images. Each runs on your own plan. The as-spoken PDF is always kept, and if the write-up fails the walkthrough is copied as spoken with the reason in the status.
 
