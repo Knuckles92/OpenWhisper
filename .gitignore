@@ -1,6 +1,13 @@
 # Logs and diagnostics
 *.log
 *.log.*
+# Runtime diagnostic samples/failure journal (services/diagnostics.py writes
+# these next to the log in the data root; local-only input to the opt-in
+# support report, regenerated on every run — never commit them)
+diagnostic-metrics.json
+diagnostic-metrics.tmp
+diagnostic-failures.json
+diagnostic-failures.tmp
 
 # Audio artifacts
 *.wav
@@ -37,6 +44,9 @@ transcription_history.json
 transcription_history.json.bak
 meetings.json
 meetings.json.bak
+# MCP event subscriptions and the Scratchpad's autosaved text (data root)
+mcp_event_subscriptions.json
+scratchpad.txt
 
 # Environment files
 *.env
