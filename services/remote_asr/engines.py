@@ -162,6 +162,9 @@ class WhisperEngine(HostEngine):
                 language=whisper_language(language),
                 beam_size=config.FASTER_WHISPER_BEAM_SIZE,
                 vad_filter=config.FASTER_WHISPER_VAD_ENABLED,
+                # Same as local dictation and meetings: do not let a bad
+                # window's text skip the rest of a long take.
+                condition_on_previous_text=False,
                 **options,
             )
             # faster-whisper decodes while the generator is consumed.

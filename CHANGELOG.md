@@ -13,6 +13,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Changed
 - **Walkthroughs have their own Settings page** — **Settings → Dictation → Walkthroughs** now holds the Walkthrough and Screenshot shortcuts, how the document looks, and the AI write-up, which were spread across General and Hotkeys. Hotkeys links to it.
 
+### Fixed
+- **Long walkthrough sections no longer lose most of their words** — talking for a minute or more before a screenshot could come back as a fragment, or nothing, with the header still showing the full length. Local Whisper was feeding each 30-second window's text into the next, so a bad window skipped the rest, and VAD could drop speech on a long take while the live preview held the CPU. That feedback is off (as it already was in Meeting Mode); a long stretch that still comes back far too short is decoded once more without VAD; and if a section is still a fragment, the status says so and History **Transcribe again** recovers the words from the same audio. Short empty or garbled sections are a separate failure.
+
 ## [2.7.7] - 2026-10-22
 
 ### Added

@@ -1,11 +1,28 @@
 """Bounded decoding windows for file transcription; timestamps stay in source time."""
 from __future__ import annotations
 
+import wave
+from pathlib import Path
+from typing import Optional, Union
+
 import numpy as np
 
 SAMPLE_RATE = 16000
 MAX_SAMPLES = 30 * SAMPLE_RATE
 MIN_SAMPLES = 24 * SAMPLE_RATE
+
+#: Peak below this (float32, full scale 1.0) is digital silence; matches
+#: ``LocalSpeechBackend._audible``.
+AUDIBLE_PEAK = 0.00025
+#: Whisper's internal window is 30 s. Long-form skip/truncation shows up
+#: around 75 s of speech, so this sits between one window and that floor.
+LONG_TRANSCRIPT_S = 45.0
+#: Typical English is about 12 characters per second of speech. A third of
+#: that still flags a section that lost most of its words, without treating
+#: slow or paused speech as a failure.
+MIN_CHARS_PER_SPEECH_S = 4.0
+
+_WavPath = Union[str, Path]
 
 
 def split_point(audio: np.ndarray) -> int:
@@ -88,3 +105,56 @@ def windows(audio_path: str):
             yield from splitter.push(convert.resample(frame))
         yield from splitter.push(convert.resample(None))
         yield from splitter.finish()
+
+
+def wav_duration_s(path: _WavPath) -> Optional[float]:
+    """Length of a 16-bit PCM WAV in seconds, or None if it cannot be read."""
+    try:
+        with wave.open(str(path), "rb") as wav:
+            rate = wav.getframerate()
+            if rate <= 0:
+                return None
+            return wav.getnframes() / float(rate)
+    except (OSError, wave.Error, EOFError):
+        return None
+
+
+def audible_duration_s(path: _WavPath, *, frame_s: float = 0.1) -> Optional[float]:
+    """Seconds of ``path`` whose 100 ms peaks rise above digital silence."""
+    try:
+        with wave.open(str(path), "rb") as wav:
+            rate = wav.getframerate()
+            channels = wav.getnchannels()
+            width = wav.getsampwidth()
+            frames = wav.getnframes()
+            pcm = wav.readframes(frames)
+    except (OSError, wave.Error, EOFError):
+        return None
+    if rate <= 0 or width != 2 or channels < 1:
+        return None
+    samples = np.frombuffer(pcm, dtype="<i2")
+    usable = (len(samples) // channels) * channels
+    if usable <= 0:
+        return 0.0
+    samples = samples[:usable]
+    if channels > 1:
+        samples = samples.reshape(-1, channels).max(axis=1)
+    audio = samples.astype(np.float32) / 32768.0
+    hop = max(1, int(round(frame_s * rate)))
+    n = (len(audio) // hop) * hop
+    if n <= 0:
+        return float(np.max(np.abs(audio)) > AUDIBLE_PEAK) * (len(audio) / rate)
+    peaks = np.max(np.abs(audio[:n].reshape(-1, hop)), axis=1)
+    return float(np.count_nonzero(peaks > AUDIBLE_PEAK)) * (hop / rate)
+
+
+def transcript_looks_truncated(text: str, speech_s: float) -> bool:
+    """Whether ``text`` is far too short for ``speech_s`` of audible audio.
+
+    Used to retry a long Local Whisper pass without VAD, and to tell the user
+    when a walkthrough section still came back as a fragment. Short clips are
+    left alone: empty or garbled few-second sections are a different failure.
+    """
+    if speech_s < LONG_TRANSCRIPT_S:
+        return False
+    return len((text or "").strip()) < speech_s * MIN_CHARS_PER_SPEECH_S

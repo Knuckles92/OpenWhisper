@@ -312,6 +312,20 @@ def test_each_section_is_cleaned_up_on_its_own(h, monkeypatch):
     assert h.built[0].texts == ["FIRST PART", "SECOND PART"]
 
 
+def test_a_long_truncated_section_is_mentioned_in_the_status(h):
+    _write_recording(h.audio, [_tone(50.0), _tone(2.0)])
+    h.backend.words = ["The", "And that is the last sentence."]
+    _record(h, [50.0], length_s=52.0)
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    assert h.session.result.short_sections == (1,)
+    assert any(
+        "much shorter than its audio" in status and "Transcribe again" in status
+        for status in h.ui.statuses
+    )
+
+
 def test_screenshots_without_words_still_make_a_walkthrough(h):
     _write_recording(h.audio, [np.zeros(4 * RATE, np.int16)])
     h.backend.words = ["", ""]

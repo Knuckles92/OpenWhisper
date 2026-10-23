@@ -451,6 +451,11 @@ class LocalWhisperBackend(TranscriptionBackend):
 
         ``recognition``'s phrases become ``hotwords``, which faster-whisper
         puts in every window's prompt, and its language replaces detection.
+
+        Long files are decoded with ``condition_on_previous_text=False`` so
+        Whisper's 30 s windows cannot skip the rest of the audio after a
+        bad window (meetings already do this). If VAD still drops most of a
+        long stretch of speech, the same file is decoded once more without it.
         """
         if not self.is_available():
             raise Exception("Faster-whisper model is not available.")
@@ -459,13 +464,8 @@ class LocalWhisperBackend(TranscriptionBackend):
             self.is_transcribing = True
             self.reset_cancel_flag()
 
-            logger.info(f"Processing audio with faster-whisper (VAD={config.FASTER_WHISPER_VAD_ENABLED})...")
-
-            vad_params = None
-            if config.FASTER_WHISPER_VAD_ENABLED:
-                vad_params = dict(
-                    min_silence_duration_ms=config.FASTER_WHISPER_VAD_MIN_SILENCE_MS
-                )
+            vad = config.FASTER_WHISPER_VAD_ENABLED
+            logger.info(f"Processing audio with faster-whisper (VAD={vad})...")
 
             from services.isolated import IsolatedWhisperModel
             model = self.model
@@ -475,33 +475,27 @@ class LocalWhisperBackend(TranscriptionBackend):
             else:
                 transcribe = model.transcribe
                 cancel_options = {}
-            segments, info = transcribe(
-                audio_path,
-                beam_size=config.FASTER_WHISPER_BEAM_SIZE,
-                vad_filter=config.FASTER_WHISPER_VAD_ENABLED,
-                vad_parameters=vad_params,
-                **whisper_hints(recognition),
-                **cancel_options,
+
+            transcript, info = self._decode_file(
+                transcribe, audio_path, recognition, vad=vad,
+                cancel_options=cancel_options,
             )
+            if vad and self._should_retry_without_vad(audio_path, transcript):
+                logger.warning(
+                    "Local Whisper returned %d characters for a long recording; "
+                    "decoding again without VAD",
+                    len(transcript),
+                )
+                retried, retry_info = self._decode_file(
+                    transcribe, audio_path, recognition, vad=False,
+                    cancel_options=cancel_options,
+                )
+                if len(retried) >= len(transcript):
+                    transcript, info = retried, retry_info
 
             logger.info(f"Detected language: {info.language} "
                         f"(probability: {info.language_probability:.2f})")
-
-            # faster-whisper performs transcription while this generator is consumed.
-            text_parts = []
-            for segment in segments:
-                if self.should_cancel:
-                    logger.info("Transcription canceled by user")
-                    raise Exception("Transcription canceled")
-                text_parts.append(segment.text)
-
-            transcript = " ".join(text_parts).strip()
-
-            import re
-            transcript = re.sub(r'\s+', ' ', transcript)
-
             logger.info(f"Transcription complete. Length: {len(transcript)} characters")
-
             return transcript
 
         except Exception as e:
@@ -510,6 +504,51 @@ class LocalWhisperBackend(TranscriptionBackend):
             raise
         finally:
             self.is_transcribing = False
+
+    def _decode_file(self, transcribe, audio_path, recognition, *, vad, cancel_options):
+        """One faster-whisper pass over ``audio_path``; ``(text, info)``."""
+        import re
+
+        vad_params = None
+        if vad:
+            vad_params = dict(
+                min_silence_duration_ms=config.FASTER_WHISPER_VAD_MIN_SILENCE_MS
+            )
+        segments, info = transcribe(
+            audio_path,
+            beam_size=config.FASTER_WHISPER_BEAM_SIZE,
+            vad_filter=vad,
+            vad_parameters=vad_params,
+            # Meetings set this so a bad 30 s window cannot starve the rest
+            # of a long take. Dictation and walkthrough sections were still
+            # using faster-whisper's default True, which dropped most of a
+            # 75 s+ stretch, worse while the live preview held the CPU.
+            condition_on_previous_text=False,
+            **whisper_hints(recognition),
+            **cancel_options,
+        )
+        text_parts = []
+        for segment in segments:
+            if self.should_cancel:
+                logger.info("Transcription canceled by user")
+                raise Exception("Transcription canceled")
+            text_parts.append(segment.text)
+        return re.sub(r"\s+", " ", " ".join(text_parts)).strip(), info
+
+    @staticmethod
+    def _should_retry_without_vad(audio_path: str, transcript: str) -> bool:
+        """Whether a long, speech-heavy file came back as a fragment."""
+        from services.local_asr.audio import (
+            audible_duration_s,
+            transcript_looks_truncated,
+            wav_duration_s,
+        )
+
+        duration = wav_duration_s(audio_path)
+        if duration is None or not transcript_looks_truncated(transcript, duration):
+            return False
+        speech = audible_duration_s(audio_path)
+        return speech is not None and transcript_looks_truncated(transcript, speech)
 
     def is_available(self) -> bool:
         """Return whether a model is loaded."""

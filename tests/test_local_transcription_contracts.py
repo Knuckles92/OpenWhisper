@@ -33,7 +33,8 @@ def test_public_transcribe_consumes_lazy_segments_and_forwards_options(backend, 
     assert not backend.is_transcribing
     backend.model.transcribe.assert_called_once_with("synthetic.wav",
         beam_size=config.FASTER_WHISPER_BEAM_SIZE, vad_filter=vad,
-        vad_parameters={"min_silence_duration_ms":config.FASTER_WHISPER_VAD_MIN_SILENCE_MS} if vad else None)
+        vad_parameters={"min_silence_duration_ms":config.FASTER_WHISPER_VAD_MIN_SILENCE_MS} if vad else None,
+        condition_on_previous_text=False)
 
 
 @pytest.mark.parametrize("failure", ["cancel", "generator"])

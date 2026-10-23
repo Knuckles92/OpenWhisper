@@ -1484,19 +1484,20 @@ class TranscriptionRuntime:
         if session is None:
             raise RuntimeError("The walkthrough's screenshots are missing")
         shots = session.saved_shots()
-        texts = self._timed_decode(backend, lambda: finish.transcribe_sections(
+        decoded = self._timed_decode(backend, lambda: finish.transcribe_sections(
             audio_path, shots,
             lambda path: recognition_context.transcribe(self._incremental, backend, path, recognition),
             before_each=self._report_section,
         ))
         self._raise_if_canceled()
-        cleaned, raws, info = self._clean_sections(texts)
+        cleaned, raws, info = self._clean_sections(decoded.texts)
         self._raise_if_canceled()
         self.controller.status_update.emit("Writing the walkthrough...")
         result = finish.build_documents(
             session, shots, cleaned, raws,
             duration_s=self.controller._pending_audio_duration or 0.0,
         )
+        result = dataclasses.replace(result, short_sections=decoded.short)
         session.result = self._maybe_write_up(result, shots)
         return session.result.history_text, session.result.history_raw, info
 
@@ -2115,6 +2116,11 @@ class TranscriptionRuntime:
             status = f"{result.name} saved ({count}); copying it failed — drag it from the card"
         if result.write_up_error:
             status += f". Write-up failed, so it's as spoken: {result.write_up_error}"
+        if result.short_sections:
+            status += (
+                ". A section came back much shorter than its audio — "
+                "Transcribe again in History recovers the words"
+            )
         ui.set_status(status)
         ui.show_walkthrough_ready(result, copied=copied)
 

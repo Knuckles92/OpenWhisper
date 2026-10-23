@@ -9,13 +9,23 @@ from __future__ import annotations
 import logging
 import tempfile
 import wave
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional, Sequence, Union
 
 from services.walkthrough.sections import split_recording
 from services.walkthrough.session import Shot, WalkthroughResult, WalkthroughSession
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class SectionTranscripts:
+    """Each section's words, plus any that came back far too short for their audio."""
+
+    texts: list[str]
+    #: 1-based indexes of sections whose transcript was a fragment of the speech.
+    short: tuple[int, ...] = ()
 
 
 def transcribe_sections(
@@ -24,7 +34,7 @@ def transcribe_sections(
     transcribe: Callable[[str], str],
     *,
     before_each: Callable[[int, int], None] = lambda index, total: None,
-) -> list[str]:
+) -> SectionTranscripts:
     """The words of each section, one more than there are screenshots.
 
     Args:
@@ -41,12 +51,42 @@ def transcribe_sections(
             # Every word above the first screenshot beats losing them.
             logger.warning("Could not cut the walkthrough audio; transcribing it whole", exc_info=True)
             before_each(1, 1)
-            return [transcribe(audio_path)] + [""] * len(shots)
+            text = transcribe(audio_path)
+            short = (1,) if _section_looks_truncated(text, audio_path) else ()
+            return SectionTranscripts([text] + [""] * len(shots), short)
         texts = []
+        short: list[int] = []
         for index, clip in enumerate(clips, start=1):
             before_each(index, len(clips))
-            texts.append(transcribe(str(clip.path)) if clip.path is not None else "")
-        return texts
+            if clip.path is None:
+                texts.append("")
+                continue
+            text = transcribe(str(clip.path))
+            texts.append(text)
+            if _section_looks_truncated(text, clip.path, clip.duration_s):
+                logger.warning(
+                    "Walkthrough section %d: %.0fs of audio came back as %d characters",
+                    index, clip.duration_s, len((text or "").strip()),
+                )
+                short.append(index)
+        return SectionTranscripts(texts, tuple(short))
+
+
+def _section_looks_truncated(
+    text: str, path: Union[str, Path], duration_s: Optional[float] = None,
+) -> bool:
+    """Whether a long, speech-heavy section came back as a fragment."""
+    from services.local_asr.audio import (
+        audible_duration_s,
+        transcript_looks_truncated,
+        wav_duration_s,
+    )
+
+    duration = duration_s if duration_s is not None else wav_duration_s(path)
+    if duration is None or not transcript_looks_truncated(text, duration):
+        return False
+    speech = audible_duration_s(path)
+    return speech is not None and transcript_looks_truncated(text, speech)
 
 
 def marked_text(texts: Sequence[str], shots: int) -> str:

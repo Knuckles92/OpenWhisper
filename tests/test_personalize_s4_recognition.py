@@ -81,7 +81,10 @@ class TestLocalWhisper:
     @pytest.mark.parametrize("recognition", [None, RecognitionContext(), RecognitionContext(language="auto")])
     def test_nothing_is_added_without_hints(self, backend, recognition):
         backend.transcribe("a.wav", recognition=recognition)
-        assert set(backend.model.transcribe.call_args.kwargs) == {"beam_size", "vad_filter", "vad_parameters"}
+        assert set(backend.model.transcribe.call_args.kwargs) == {
+            "beam_size", "vad_filter", "vad_parameters", "condition_on_previous_text",
+        }
+        assert backend.model.transcribe.call_args.kwargs["condition_on_previous_text"] is False
 
     def test_options_stay_json_for_the_isolated_worker(self):
         import json

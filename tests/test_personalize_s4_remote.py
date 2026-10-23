@@ -212,4 +212,5 @@ def test_whisper_engine_turns_phrases_into_hotwords():
     engine.transcribe(np.zeros(16000, np.float32), "en", phrases=("Ksenia", "Kubernetes"))
     assert "hotwords" not in calls[0]
     assert calls[1]["hotwords"] == "Ksenia Kubernetes"
+    assert calls[0]["condition_on_previous_text"] is False
 

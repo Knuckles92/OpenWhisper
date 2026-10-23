@@ -57,6 +57,8 @@ class WalkthroughResult:
     written_up: bool = False
     #: Why a write-up that was asked for isn't there, or "".
     write_up_error: str = ""
+    #: 1-based sections whose transcript was much shorter than their audio.
+    short_sections: tuple[int, ...] = ()
 
     @property
     def name(self) -> str:
