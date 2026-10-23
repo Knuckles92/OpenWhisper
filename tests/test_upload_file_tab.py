@@ -1097,6 +1097,74 @@ class TestUploadFileTab:
         assert tab.model_combo.isEnabled()
         assert tab.file_info_card._settle_timer.isActive()
 
+    def test_stop_on_a_queue_marks_the_working_file_stopped(self, tmp_path):
+        """Stop used to leave the running row on Working after the job ended."""
+        tab, paths = self._tab_with_files(tmp_path)
+        tab._on_transcribe()
+        tab.set_batch_progress(1, 2, "a.wav")
+        assert [row.state for row in tab.file_info_card.queue.rows()] == [
+            "active",
+            "pending",
+        ]
+
+        tab.file_info_card.progress.stop_btn.click()
+        tab.set_progress_state(OverlayState.CANCELING)
+        tab.show_job_error("Error: Transcription canceled")
+
+        rows = tab.file_info_card.queue.rows()
+        assert [row.state for row in rows] == ["stopped", "pending"]
+        assert rows[0].state_chip.text() == "Stopped"
+        assert not tab.is_transcribing
+        assert tab.file_info_card.transcribe_btn.isEnabled()
+
+        tab._on_transcribe()
+        assert all(row.state == "pending" for row in tab.file_info_card.queue.rows())
+
+    def test_stop_after_the_first_file_keeps_done_and_marks_the_working_file_stopped(
+        self, tmp_path
+    ):
+        tab, paths = self._tab_with_files(tmp_path)
+        tab._on_transcribe()
+        tab.set_batch_item_finished(1, True, "Hello from a")
+        tab.set_batch_progress(2, 2, "b.wav")
+
+        tab.set_progress_state(OverlayState.CANCELING)
+        tab.set_transcript("## a.wav\n\nHello from a")
+
+        rows = tab.file_info_card.queue.rows()
+        assert [row.state for row in rows] == ["done", "stopped"]
+        assert rows[1].state_chip.text() == "Stopped"
+        assert not tab.is_transcribing
+
+    def test_a_failed_queue_job_marks_the_working_file_failed(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+        tab._on_transcribe()
+        tab.set_batch_progress(1, 2, "a.wav")
+
+        tab.show_job_error(
+            "Error: The speech model isn't downloaded yet. Approve the download, "
+            "then try again."
+        )
+
+        assert [row.state for row in tab.file_info_card.queue.rows()] == [
+            "failed",
+            "pending",
+        ]
+        assert not tab.is_transcribing
+
+    def test_none_while_a_queue_job_runs_clears_the_working_badge(self, tmp_path):
+        tab, paths = self._tab_with_files(tmp_path)
+        tab._on_transcribe()
+        tab.set_batch_progress(1, 2, "a.wav")
+
+        tab.set_progress_state(OverlayState.NONE)
+
+        assert [row.state for row in tab.file_info_card.queue.rows()] == [
+            "failed",
+            "pending",
+        ]
+        assert not tab.is_transcribing
+
     def test_queue_controls_hide_while_a_job_runs(self, tmp_path):
         tab, paths = self._tab_with_files(tmp_path)
         queue = tab.file_info_card.queue

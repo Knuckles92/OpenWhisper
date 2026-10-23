@@ -26,6 +26,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **Local Whisper works after a README source install** — `pip install -r requirements.txt` was pulling PyAV 19, and every transcription then failed with `open() got an unexpected keyword argument 'metadata_errors'`. Source installs now stay on PyAV 18, the same as the packaged release.
 - **Esc no longer becomes a system-wide shortcut while editing one** — backing out of a shortcut field with Esc (Walkthrough, Screenshot, and the other Hotkeys fields on X11/Windows) cancels capture and keeps the previous shortcut. It had been saved as Esc, so every later Esc started a walkthrough or screenshot. Command Mode on the Commands page already cancelled correctly.
 - **API & MCP Retry works after the credential store appears** — turning on API & MCP with no Secret Service said "Unlock your system credential store" and Retry kept failing even after GNOME Keyring or KWallet was running; only a restart worked. The page now says no store was found and what to install or start, and Retry (or toggling the switch) looks again.
+- **Stopping a multi-file upload no longer leaves a file "Working"** — with two or more files queued, Stop canceled the job and brought Transcribe back, but the file that was running kept its blue Working badge and highlight. That file now shows Stopped; files that already finished stay Done, and files that had not started stay Queued.
 
 ## [2.7.7] - 2026-10-22
 

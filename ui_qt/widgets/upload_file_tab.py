@@ -92,6 +92,7 @@ _ROW_STATE_TEXT = {
     "active": "Working",
     "done": "Done",
     "failed": "Failed",
+    "stopped": "Stopped",
 }
 
 
@@ -305,7 +306,7 @@ class QueueItem:
     path: str
     preview: Optional[AudioFilePreview] = None
     error: Optional[str] = None
-    #: reading | pending | active | done | failed
+    #: reading | pending | active | done | failed | stopped
     state: str = "reading"
     #: This file's own finished transcript, when the job produced one per file.
     transcript: str = ""
@@ -1059,6 +1060,8 @@ class UploadFileTab(TranscriptionTabBase):
         # Transcribe removed; shown in the queue header until the next drop,
         # clear, or job.
         self._queue_note = ""
+        # Stop on this tab, until the job's terminal signal settles the rows.
+        self._stop_requested = False
 
         settings = settings_manager.load_all_settings()
         self._relation = resolve_transcript_batch_relation(settings)
@@ -1123,6 +1126,7 @@ class UploadFileTab(TranscriptionTabBase):
         if not self.is_transcribing:
             return
         if state is OverlayState.NONE:
+            self._release_working_queue_rows(success=False)
             self.file_info_card.finish_transcribing(success=False)
             self._unlock_engine()
             return
@@ -1452,6 +1456,7 @@ class UploadFileTab(TranscriptionTabBase):
             return
 
         self._queue_note = ""
+        self._stop_requested = False
         for item in self._items:
             item.state = "pending"
             item.transcript = ""
@@ -1482,15 +1487,46 @@ class UploadFileTab(TranscriptionTabBase):
             return
         # The tab stays locked until the runtime's terminal signal arrives;
         # unlocking here would let a second job start under the first.
+        self._stop_requested = True
         self.file_info_card.progress.set_stopping()
         self.cancel_requested.emit()
+
+    def _release_working_queue_rows(
+        self, *, success: bool, canceled: bool = False
+    ) -> None:
+        """Clear any Working badge once the job has ended.
+
+        Batch progress marks a row active when that file starts, and done or
+        failed when it finishes. Stop (and any other end that skips that
+        second update) left the row highlighted as if work were still running.
+        """
+        if (
+            canceled
+            or self._stop_requested
+            or self.file_info_card.progress.stage is ProgressStage.CANCELED
+        ):
+            outcome = "stopped"
+        elif success:
+            outcome = "done"
+        else:
+            outcome = "failed"
+        self._stop_requested = False
+        changed = False
+        for item in self._items:
+            if item.state == "active":
+                item.state = outcome
+                changed = True
+        if changed:
+            self.file_info_card.queue.render(self._items)
 
     def set_transcript(self, text: str, raw=None):
         self._batch_result = None
         super().set_transcript(text, raw=raw)
         stripped = (text or "").strip()
         failed = stripped.startswith("Error:")
+        canceled = failed and "canceled" in stripped.lower()
         copyable = bool(stripped) and stripped != EMPTY_ASR_MESSAGE and not failed
+        self._release_working_queue_rows(success=not failed, canceled=canceled)
         self.file_info_card.finish_transcribing(success=not failed)
         self._unlock_engine()
         self.file_info_card.set_copy_enabled(copyable)
@@ -1500,11 +1536,13 @@ class UploadFileTab(TranscriptionTabBase):
     def show_job_error(self, message: str) -> None:
         """End a failed or canceled job; the card, not the transcript, says why."""
         self.clear_transcription()
+        canceled = "canceled" in (message or "").lower()
+        self._release_working_queue_rows(success=False, canceled=canceled)
         self.file_info_card.finish_transcribing(success=False)
         self._unlock_engine()
         self.file_info_card.set_copy_enabled(False)
         reason = message.removeprefix("Error: ").strip()
-        if reason and "canceled" not in reason.lower():
+        if reason and not canceled:
             self.file_info_card.set_error_note(reason)
 
     def set_batch_result(self, result: BatchResult) -> None:
