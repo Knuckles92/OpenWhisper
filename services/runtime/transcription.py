@@ -567,7 +567,10 @@ class TranscriptionRuntime:
             self.controller.status_update.emit(message)
             return False
         if self.has_active_job:
-            self._report_busy("starting another recording")
+            # The status line is out of sight when the window is in the tray
+            # or a walkthrough overlay is already up, so the pointer notice
+            # is what the user sees.
+            self._notify(self._report_busy("starting another recording"))
             return False
         if self.controller.recorder.is_recording:
             return False
@@ -2156,12 +2159,19 @@ class TranscriptionRuntime:
             self._notify("Inserted", done=True)
 
     def _notify(self, text: str, *, done: bool = False) -> None:
-        """Show a command or transform's outcome near the pointer; Qt thread.
+        """Show a shortcut's outcome near the pointer; any thread.
 
         They are run from other apps, where the status line is out of sight.
+        A Qt signal hops here from the hotkey thread.
         """
+        if not text:
+            return
+        hop = getattr(self.controller, "notice_requested", None)
+        if hop is not None:
+            hop.emit(text, done)
+            return
         show = getattr(self.controller.ui_controller, "show_notice", None)
-        if callable(show) and text:
+        if callable(show):
             show(text, done=done)
 
     def _history_context(self, job, cleanup_info, *, live: bool) -> dict:

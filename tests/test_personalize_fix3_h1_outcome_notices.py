@@ -115,6 +115,23 @@ def test_a_recording_in_progress_keeps_its_overlay(overlay):
     overlay.set_state(overlay.STATE_TRANSCRIBING)
     overlay.show_notice("Nothing to paste yet")
     assert overlay.current_state == overlay.STATE_TRANSCRIBING
+    assert overlay._caption == "Nothing to paste yet"
+    _paint(overlay)
+
+
+@pytest.mark.parametrize("state", [
+    WaveformOverlay.STATE_PROCESSING,
+    WaveformOverlay.STATE_TRANSCRIBING,
+    WaveformOverlay.STATE_CLEANING,
+    WaveformOverlay.STATE_REWRITING,
+])
+def test_a_job_in_progress_keeps_its_overlay_and_shows_the_notice(overlay, state):
+    busy = "A transcription is already in progress — wait before starting another recording"
+    overlay.show_at_cursor(state)
+    overlay.show_notice(busy)
+    assert overlay.current_state == state
+    assert overlay._caption == busy
+    _paint(overlay)
 
 
 def test_the_main_window_in_front_gets_no_notice():

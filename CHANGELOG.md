@@ -13,6 +13,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Changed
 - **Walkthroughs have their own Settings page** — **Settings → Dictation → Walkthroughs** now holds the Walkthrough and Screenshot shortcuts, how the document looks, and the AI write-up, which were spread across General and Hotkeys. Hotkeys links to it.
 
+### Fixed
+- **A dictation or Walkthrough shortcut pressed while a transcription is still running now says so next to the pointer** — it used to update only the status line in the main window, so a hotkey during an upload or while the previous walkthrough still said Transcribing… was silently ignored. The next press then started a recording when the user meant to stop one. The overlay already on screen keeps going and shows the reason; if nothing is up, a notice appears by the pointer.
+
 ## [2.7.7] - 2026-10-22
 
 ### Added

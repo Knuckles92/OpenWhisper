@@ -38,6 +38,7 @@ class Signal:
 class FakeUI:
     def __init__(self):
         self.statuses = []
+        self.notices = []
         self.stages = []
         self.copied = []
         self.scratchpad = []
@@ -59,6 +60,9 @@ class FakeUI:
 
     def set_status(self, text):
         self.statuses.append(text)
+
+    def show_notice(self, text, done=False):
+        self.notices.append((text, done))
 
     def refresh_history(self):
         pass
@@ -249,6 +253,18 @@ def test_cancel_and_failed_start_leave_no_job(h):
     h.controller.recorder.start_ok = False
     assert not h.runtime.start_recording()
     assert h.runtime._job is None
+
+
+def test_a_busy_recording_or_walkthrough_start_shows_by_the_pointer(h):
+    busy = "A transcription is already in progress — wait before starting another recording"
+    assert h.runtime._claim_job()
+
+    assert not h.runtime.start_recording()
+    assert not h.runtime.start_walkthrough(SimpleNamespace())
+    h.runtime.toggle_recording()
+    assert not h.controller.recorder.is_recording
+    assert h.ui.notices == [(busy, False), (busy, False), (busy, False)]
+    assert h.controller.status_update.calls[-1] == (busy,)
 
 
 def test_a_failed_stop_drops_the_job_and_an_upload_gets_none(h):
