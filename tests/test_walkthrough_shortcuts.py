@@ -326,3 +326,39 @@ def test_sessions_start_now(h):
     session = _begin(h)
 
     assert session.started_at >= before
+
+
+def test_a_screenshot_that_cannot_be_saved_says_so_and_the_walkthrough_goes_on(h, monkeypatch):
+    import errno
+
+    def read_only(started_at):
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(walkthrough_module, "WalkthroughSession",
+                        lambda started_at: WalkthroughSession(started_at=started_at,
+                                                              make_folder=read_only))
+    session = _begin(h)
+
+    h.runtime.snap()
+    h.ui.snaps[0].keep()
+
+    assert session.open
+    assert h.ui.captions == []
+    assert h.ui.copied == []
+    assert ("Couldn't save the screenshot (Permission denied) — the walkthrough keeps recording",
+            False) in h.ui.notices
+    h.controller.stop_recording.assert_not_called()
+
+
+def test_a_plain_screenshot_without_a_writable_folder_is_still_copied(h, monkeypatch):
+    def read_only(taken_at):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(storage, "new_screenshot_path", read_only)
+
+    h.runtime.snap()
+    h.ui.snaps[0].keep()
+
+    ((paths, text, _image),) = h.ui.copied
+    assert paths == [] and text == ""
+    assert ("Screenshot copied (its file couldn't be saved)", False) in h.ui.notices

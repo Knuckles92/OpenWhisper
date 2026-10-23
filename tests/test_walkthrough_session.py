@@ -127,3 +127,51 @@ def test_ending_keeps_the_files(tmp_path):
 
     assert shot.path.exists()
     assert not session.open
+
+
+def test_a_folder_that_cannot_be_made_refuses_the_screenshot_not_the_walkthrough(tmp_path):
+    import errno
+
+    import pytest
+
+    from services.walkthrough.session import ScreenshotNotSaved
+
+    def read_only(started_at):
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    session = WalkthroughSession(started_at=datetime(2026, 10, 21, 14, 32, 5), make_folder=read_only)
+
+    with pytest.raises(ScreenshotNotSaved, match="Permission denied"):
+        session.add_shot(_image(), 1.0)
+
+    assert session.open
+    assert session.shot_count == 0
+    assert session.saved_shots() == []
+    session.end()
+
+
+class _FullDiskImage:
+    """Saves the way a full disk does: part of the file, then failure."""
+
+    def copy(self):
+        return self
+
+    def save(self, path, fmt):
+        with open(path, "wb") as out:
+            out.write(b"\x89PNG truncated")
+        return False
+
+
+def test_a_screenshot_that_fails_to_write_is_reported_and_leaves_no_partial_file(tmp_path):
+    failed = []
+    session = _session(tmp_path)
+    session.on_save_failed = failed.append
+
+    shot = session.add_shot(_FullDiskImage(), 1.0)
+    saved = session.saved_shots()
+
+    assert saved == []
+    assert failed == [1]
+    assert session.lost_shots == 1
+    assert not shot.path.exists()
+    session.end()

@@ -82,6 +82,9 @@ class FakeUI:
     def show_walkthrough_ready(self, result, *, copied):
         self.ready.append((result, copied))
 
+    def dismiss_walkthrough_panel(self):
+        self.dismissed = getattr(self, "dismissed", 0) + 1
+
 
 class FakeRecorder:
     def __init__(self):
@@ -333,6 +336,49 @@ def test_no_screenshots_and_no_words_is_no_speech(h):
     assert h.history.entries == []
     assert h.ui.ready == []
     assert h.runtime._walkthrough is None
+    # No empty document is written, and the column stops saying
+    # "Writing it up…".
+    assert h.built == []
+    assert h.ui.dismissed == 1
+
+
+def test_a_document_that_cannot_be_written_keeps_the_words(h, monkeypatch):
+    import errno
+
+    _write_recording(h.audio, [_tone(1.9), np.zeros(int(0.3 * RATE), np.int16), _tone(1.8)])
+    _record(h, [2.0], length_s=4.0)
+
+    def disk_full(*args, **kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(finish, "build_documents", disk_full)
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    (entry,) = h.history.entries
+    assert entry["text"] == "first part\n\n[Screenshot 1]\n\nsecond part"
+    assert h.ui.copied_files == [([], entry["text"])]
+    assert h.ui.ready == []
+    assert h.ui.dismissed == 1
+    assert any(
+        status.startswith("Couldn't save the walkthrough document (No space left on device)")
+        and "copied and kept in History" in status
+        for status in h.ui.statuses
+    )
+
+
+def test_screenshots_that_could_not_be_saved_are_named_in_the_status(h, monkeypatch):
+    from services.walkthrough import session as session_module
+
+    _write_recording(h.audio, [_tone(4.0)])
+    monkeypatch.setattr(session_module, "_write_png", lambda image, path: False)
+    _record(h, [2.0], length_s=4.0)
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    (result, _copied), = h.ui.ready
+    assert result.lost_shots == 1
+    assert any("1 screenshot couldn't be saved and is left out" in s for s in h.ui.statuses)
 
 
 def test_canceling_a_walkthrough_deletes_its_screenshots(h):

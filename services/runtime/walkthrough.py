@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtCore import QTimer
 
-from services.walkthrough.session import WalkthroughSession
+from services.walkthrough.session import ScreenshotNotSaved, WalkthroughSession
 
 if TYPE_CHECKING:
     from services.application_controller import ApplicationController
@@ -82,6 +82,10 @@ class WalkthroughRuntime:
             self._tell(unavailable)
             return
         session = WalkthroughSession(started_at=datetime.now())
+        # The writer thread can only reach the status line, a Qt signal.
+        session.on_save_failed = lambda number: self.controller.status_update.emit(
+            f"Screenshot {number} couldn't be saved — the walkthrough keeps recording"
+        )
         if not self.controller.transcription_runtime.start_walkthrough(session, source=source):
             return
         self._active = True
@@ -135,7 +139,15 @@ class WalkthroughRuntime:
         session, self._snap, self._snap_for = self._snap_for, None, None
         shot = None
         if session is not None:
-            shot = session.add_shot(image, self.controller.recorder.get_recording_duration())
+            try:
+                shot = session.add_shot(image, self.controller.recorder.get_recording_duration())
+            except ScreenshotNotSaved as exc:
+                # The recording goes on: its words are worth keeping even
+                # where its screenshots can't be.
+                self._tell(f"Couldn't save the screenshot ({exc.strerror or exc}) — "
+                           "the walkthrough keeps recording")
+                self._finish_if_asked()
+                return
         if shot is not None:
             self.controller.recording_destination_changed.emit(shots_label(shot.number))
             self._ui.add_walkthrough_shot(shot.number, image)
@@ -164,17 +176,26 @@ class WalkthroughRuntime:
     def _copy_screenshot(self, image, *, finished: bool) -> None:
         from services.walkthrough.storage import new_screenshot_path
 
-        path = new_screenshot_path(datetime.now())
-        saved = image.save(str(path), "PNG")
+        try:
+            path = new_screenshot_path(datetime.now())
+            saved = image.save(str(path), "PNG")
+        except OSError:
+            logger.exception("Could not create the screenshots folder")
+            saved = False
+        if not saved:
+            # The image still reaches the clipboard; only the file is missing.
+            logger.error("Could not save the screenshot file")
         copied = self._ui.copy_files_to_clipboard(
             [path] if saved else [], text=str(path) if saved else "", image=image,
         )
+        unsaved = "" if saved else " (its file couldn't be saved)"
         if not copied:
-            self._tell("Couldn't copy the screenshot")
+            self._tell("Couldn't copy the screenshot" + unsaved)
         elif finished:
-            self._tell("Screenshot copied — the walkthrough had already stopped", done=True)
+            self._tell(f"Screenshot copied{unsaved} — the walkthrough had already stopped",
+                       done=saved)
         else:
-            self._tell("Screenshot copied", done=True)
+            self._tell("Screenshot copied" + unsaved, done=saved)
 
     # ---- the recording ending ----
 
