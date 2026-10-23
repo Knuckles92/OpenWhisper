@@ -122,13 +122,18 @@ class TestSettingsGeneralLayout(unittest.TestCase):
 
             general = dialog._pages[GENERAL]
             tiles = general.findChildren(SettingTile)
-            self.assertEqual(len(tiles), 7)
-            self.assertEqual(len(general.findChildren(FieldTile)), 0)
+            self.assertEqual(len(tiles), 10)
+            self.assertEqual(
+                set(general.findChildren(FieldTile)),
+                {dialog.walkthrough_title_tile, dialog.walkthrough_page_size_tile},
+            )
             self.assertIs(dialog.auto_paste_check, dialog.auto_paste_tile.checkbox)
             self.assertIs(
                 dialog.update_notify_check, dialog.update_notify_tile.checkbox
             )
-            self.assertEqual(group_titles(general), ["Output", "Window", "Updates"])
+            self.assertEqual(
+                group_titles(general), ["Output", "Walkthroughs", "Window", "Updates"]
+            )
             # Every visual setting lives on Appearance.
             appearance = dialog._pages[APPEARANCE]
             self.assertEqual(

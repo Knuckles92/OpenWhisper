@@ -317,6 +317,17 @@ class SettingsKey:
     AUTOMATION_FILTERS: Final[str] = "automation_filters"
     # The MCP Events draft extension (events/subscribe with webhook delivery).
     MCP_EVENTS_ENABLED: Final[str] = "mcp_events_enabled"
+    # How a walkthrough's PDF and Markdown look (services/walkthrough/document.py):
+    # the heading ("" for none), the line with the date, length and screenshot
+    # count, the note on how to read it, screenshot captions, and the paper.
+    WALKTHROUGH_TITLE: Final[str] = "walkthrough_title"
+    WALKTHROUGH_SHOW_DETAILS: Final[str] = "walkthrough_show_details"
+    WALKTHROUGH_SHOW_ABOUT: Final[str] = "walkthrough_show_about"
+    WALKTHROUGH_SHOW_CAPTIONS: Final[str] = "walkthrough_show_captions"
+    WALKTHROUGH_PAGE_SIZE: Final[str] = "walkthrough_page_size"
+    # The "New" badge on Quick Record's walkthrough button gives way to a
+    # "?" once a walkthrough has started.
+    WALKTHROUGH_INTRO_SEEN: Final[str] = "walkthrough_intro_seen"
 
 
 #: Keys the single live-preview toggle replaced. Dropped whenever that toggle
@@ -378,6 +389,20 @@ class UiTheme:
         LIGHT: "Light",
         SYSTEM: "Match system",
         OMARCHY: "Omarchy desktop",
+    }
+
+
+class WalkthroughPageSize:
+    """Values for ``SettingsKey.WALKTHROUGH_PAGE_SIZE``. Labels are what Settings shows."""
+    AUTO: Final[str] = "auto"  # Letter where the locale measures in US units, else A4
+    LETTER: Final[str] = "letter"
+    A4: Final[str] = "a4"
+
+    ALL: Final[Tuple[str, ...]] = (AUTO, LETTER, A4)
+    LABELS: Final[Dict[str, str]] = {
+        AUTO: "Automatic (Letter or A4 for your region)",
+        LETTER: "Letter",
+        A4: "A4",
     }
 
 
@@ -745,6 +770,13 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.AUTOMATION_PROGRAMS: [],
     SettingsKey.AUTOMATION_FILTERS: [],
     SettingsKey.MCP_EVENTS_ENABLED: False,
+    # Walkthroughs
+    SettingsKey.WALKTHROUGH_TITLE: "Walkthrough",
+    SettingsKey.WALKTHROUGH_SHOW_DETAILS: True,
+    SettingsKey.WALKTHROUGH_SHOW_ABOUT: True,
+    SettingsKey.WALKTHROUGH_SHOW_CAPTIONS: True,
+    SettingsKey.WALKTHROUGH_PAGE_SIZE: WalkthroughPageSize.AUTO,
+    SettingsKey.WALKTHROUGH_INTRO_SEEN: False,
 })
 
 
@@ -1262,6 +1294,18 @@ resolve_flow_features_intro_seen = _bool_resolver(SettingsKey.FLOW_FEATURES_INTR
 resolve_voice_routing_enabled = _bool_resolver(SettingsKey.VOICE_ROUTING_ENABLED)
 resolve_voice_routing_on_dictation = _bool_resolver(SettingsKey.VOICE_ROUTING_ON_DICTATION)
 resolve_mcp_events_enabled = _bool_resolver(SettingsKey.MCP_EVENTS_ENABLED)
+resolve_walkthrough_show_details = _bool_resolver(SettingsKey.WALKTHROUGH_SHOW_DETAILS)
+resolve_walkthrough_show_about = _bool_resolver(SettingsKey.WALKTHROUGH_SHOW_ABOUT)
+resolve_walkthrough_show_captions = _bool_resolver(SettingsKey.WALKTHROUGH_SHOW_CAPTIONS)
+resolve_walkthrough_page_size = _choice_resolver(
+    SettingsKey.WALKTHROUGH_PAGE_SIZE, WalkthroughPageSize.ALL)
+resolve_walkthrough_intro_seen = _bool_resolver(SettingsKey.WALKTHROUGH_INTRO_SEEN)
+
+
+def resolve_walkthrough_title(settings: Optional[Mapping[str, Any]] = None) -> str:
+    """The walkthrough documents' heading, trimmed; "" leaves it out."""
+    raw = setting_value(SettingsKey.WALKTHROUGH_TITLE, settings)
+    return raw.strip() if isinstance(raw, str) else SETTING_DEFAULTS[SettingsKey.WALKTHROUGH_TITLE]
 
 
 def resolve_max_saved_recordings(

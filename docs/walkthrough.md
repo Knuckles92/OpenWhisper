@@ -19,7 +19,9 @@ recording overlay offers **Snap** and **Done**, so it works without any
 shortcut. Those two take clicks on Windows and X11, where clicking the
 overlay leaves the app you are explaining in front. Both shortcuts start
 unassigned: set them under **Settings → Hotkeys → Walkthroughs**. The tray
-menu has **Start Walkthrough** and **Take Screenshot** too.
+menu has **Start Walkthrough** and **Take Screenshot** too. Hovering the
+button shows its shortcut, like the buttons above it; the badge in its
+corner (**New** until your first walkthrough, then **?**) says what it does.
 
 - **Walkthrough** starts recording. Talk as you would to a colleague looking
   over your shoulder. The recording overlay says **Walkthrough**, then how
@@ -71,6 +73,13 @@ folder (next to `meetings`):
 | `walkthrough.md` | The same as Markdown, linking `shot-1.png` and so on. |
 | `walkthrough.json` | The sections, screenshot names and times, for tools (and a later AI write-up) to read. |
 | `shot-N.png` | Each annotated screenshot, full resolution. |
+
+**Settings → General → Walkthroughs** sets how the PDF and Markdown look:
+the title (empty for none), the line with the date, length and screenshot
+count, the note on how to read the document, the screenshot captions, and
+the PDF's paper size (Letter or A4 by your region unless you choose).
+Your words and screenshots are always in, and `walkthrough.json` always
+keeps everything. Changes apply to the next walkthrough.
 
 The clipboard gets two things at once:
 

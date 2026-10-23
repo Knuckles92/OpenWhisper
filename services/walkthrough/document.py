@@ -80,6 +80,24 @@ class Walkthrough:
     sections: tuple[Section, ...]
 
 
+@dataclass(frozen=True)
+class DocumentFormat:
+    """What the documents show besides the words and screenshots.
+
+    The defaults are the full layout; Settings → General → Walkthroughs
+    changes them. The manifest always keeps everything.
+    """
+
+    #: The heading; "" leaves it out.
+    title: str = TITLE
+    #: The line with the date, the length and the screenshot count.
+    details: bool = True
+    #: The note saying what the document is and how to read it.
+    about: bool = True
+    #: "Screenshot 2 · 1:12" under each screenshot.
+    captions: bool = True
+
+
 # --- What every format shares -----------------------------------------------
 
 
@@ -157,6 +175,16 @@ def _about(shots: int) -> str:
     return f"{_ABOUT} {_ORDER}" if shots else _ABOUT
 
 
+def _header(walkthrough: Walkthrough, shots: int, document_format: DocumentFormat) -> list[str]:
+    """The lines under the title that ``document_format`` keeps, in order."""
+    lines = []
+    if document_format.details:
+        lines.append(_meta(walkthrough, shots))
+    if document_format.about:
+        lines.append(_about(shots))
+    return lines
+
+
 def _label(part: _Part, before_time: str, after_time: str = "") -> str:
     """``Screenshot 2 (1:12)``, ``Screenshot 2 · 1:12``, or without a known
     time just ``Screenshot 2``."""
@@ -182,17 +210,28 @@ _BLOCK_MARKER = re.compile(r"^([ \t]*)([#>+*-]|\d{1,9}[.)](?=\s|$))", re.MULTILI
 
 
 def markdown(
-    walkthrough: Walkthrough, *, folder: Path, absolute_images: bool = False
+    walkthrough: Walkthrough,
+    *,
+    folder: Path,
+    absolute_images: bool = False,
+    document_format: DocumentFormat = DocumentFormat(),
 ) -> str:
     """The walkthrough as Markdown, each section's words above its screenshot.
 
     Image links are relative to ``folder``, where walkthrough.md sits beside
     its screenshots. ``absolute_images`` links full paths instead, for
     Markdown read elsewhere, such as by a terminal agent from the clipboard.
+    Without captions a screenshot still keeps its label as alt text.
     """
     parts = _parts(walkthrough)
     shots = _shot_count(parts)
-    lines = [f"# {TITLE}", "", f"_{_meta(walkthrough, shots)}. {_about(shots)}_", ""]
+    lines = []
+    if document_format.title:
+        lines += [f"# {document_format.title}", ""]
+    header = _header(walkthrough, shots, document_format)
+    if header:
+        # The details line has no full stop of its own; the note does.
+        lines += [f"_{'. '.join(header)}_", ""]
     for part in parts:
         if part.words:
             lines += [_escape_markers(part.words), ""]
@@ -227,10 +266,15 @@ def _image_target(path: Path, folder: Path, absolute: bool) -> str:
     return relative
 
 
-def write_markdown(walkthrough: Walkthrough, folder: Path) -> Path:
+def write_markdown(
+    walkthrough: Walkthrough,
+    folder: Path,
+    *,
+    document_format: DocumentFormat = DocumentFormat(),
+) -> Path:
     """Write ``folder/walkthrough.md``, its images linked relative to it."""
     path = folder / MARKDOWN_NAME
-    text = markdown(walkthrough, folder=folder)
+    text = markdown(walkthrough, folder=folder, document_format=document_format)
     # newline: Windows would otherwise write CRLF.
     path.write_text(text, encoding="utf-8", newline="\n")
     return path
@@ -314,7 +358,11 @@ _CAPTION_STYLE = _Style(8.5, "#8a8278", space_before=3, centered=True)
 
 
 def write_pdf(
-    walkthrough: Walkthrough, folder: Path, *, page_size: QPageSize | None = None
+    walkthrough: Walkthrough,
+    folder: Path,
+    *,
+    page_size: QPageSize | None = None,
+    document_format: DocumentFormat = DocumentFormat(),
 ) -> Path:
     """Write ``folder/walkthrough.pdf``: the sections laid out on pages.
 
@@ -329,10 +377,13 @@ def write_pdf(
     writer = QPdfWriter(str(path))
     writer.setPageSize(page_size or _local_page_size())
     writer.setPageMargins(_MARGINS_IN, QPageLayout.Unit.Inch)
-    writer.setTitle(f"{TITLE} · {_when(walkthrough.started_at)}")
+    # The file's own title, which viewers show in their title bar, keeps a
+    # name even when the page has no heading.
+    writer.setTitle(f"{document_format.title or TITLE} · {_when(walkthrough.started_at)}")
     writer.setCreator("OpenWhisper")
     dpi = _layout_dpi()
-    doc, frames = _Composer(_text_area(writer, dpi), dpi).compose(walkthrough)
+    composer = _Composer(_text_area(writer, dpi), dpi, document_format)
+    doc, frames = composer.compose(walkthrough)
     _paint_pages(doc, frames, writer, dpi, path)
     return path
 
@@ -444,7 +495,7 @@ class _Group:
 
     first: int  # its first block; the title's for the section under the header
     image: int | None  # the screenshot's block; None when it could not be read
-    last: int  # the caption's block
+    last: int  # the caption's block, or the screenshot's without captions
 
 
 class _Composer:
@@ -454,9 +505,12 @@ class _Composer:
     lengths in points.
     """
 
-    def __init__(self, page: QSizeF, dpi: int) -> None:
+    def __init__(
+        self, page: QSizeF, dpi: int, document_format: DocumentFormat = DocumentFormat()
+    ) -> None:
         self.page = page
         self.unit = dpi / 72  # layout units per point
+        self.format = document_format
         self.doc = QTextDocument()
         self.doc.setDocumentMargin(0)
         # Laid out at screen resolution but painted at the PDF's: hinted
@@ -466,18 +520,21 @@ class _Composer:
         self.doc.setPageSize(page)
         self.cursor = QTextCursor(self.doc)
         self.groups: list[_Group] = []
-        self.header_end = 0
+        # The header's last block; None without a header.
+        self.header_end: int | None = None
+        # A new document holds one empty block, which the first block fills.
+        self.empty = True
 
     def compose(self, walkthrough: Walkthrough) -> tuple[QTextDocument, list[QRectF]]:
         """Lay out the walkthrough; returns the document and where its
         screenshots ended up."""
         parts = _parts(walkthrough)
         shots = _shot_count(parts)
-        # A new document holds one empty block; the title goes there.
-        self.cursor.setBlockFormat(self._block_format(_TITLE_STYLE))
-        self.cursor.insertText(TITLE, self._char_format(_TITLE_STYLE))
-        self._paragraph(_meta(walkthrough, shots), _META_STYLE)
-        self.header_end = self._paragraph(_about(shots), _ABOUT_STYLE)
+        if self.format.title:
+            self.header_end = self._paragraph(self.format.title, _TITLE_STYLE)
+        for index, line in enumerate(_header(walkthrough, shots, self.format)):
+            style = _ABOUT_STYLE if index else _META_STYLE
+            self.header_end = self._paragraph(line, style)
         for part in parts:
             self._section(part)
         pages = _Pages(self.doc)
@@ -488,7 +545,7 @@ class _Composer:
         # The section right under the header keeps the title company, so
         # the title never sits alone on the first page.
         under_header = self.cursor.blockNumber() == self.header_end
-        first = 0 if under_header else self.cursor.blockNumber() + 1
+        first = 0 if under_header or self.empty else self.cursor.blockNumber() + 1
         for index, paragraph in enumerate(_paragraphs(part.words)):
             style = _MORE_WORDS_STYLE if index else _WORDS_STYLE
             # A single line break stays inside its paragraph.
@@ -497,15 +554,27 @@ class _Composer:
             return
         style = _IMAGE_STYLE if part.words else _LONE_IMAGE_STYLE
         image = self._image(part.shot, part.number, style)
-        last = self._paragraph(_label(part, " · "), _CAPTION_STYLE)
-        self.groups.append(_Group(first, image, last))
+        last = image
+        if self.format.captions:
+            last = self._paragraph(_label(part, " · "), _CAPTION_STYLE)
+        if last is not None:
+            self.groups.append(_Group(first, image, last))
 
     def _paragraph(self, text: str, style: _Style) -> int:
         """Add a paragraph; returns its block number."""
         char_format = self._char_format(style)
-        self.cursor.insertBlock(self._block_format(style), char_format)
+        self._new_block(style, char_format)
         self.cursor.insertText(text, char_format)
         return self.cursor.blockNumber()
+
+    def _new_block(self, style: _Style, char_format: QTextCharFormat) -> None:
+        """Start a block in ``style``: the document's first, or a new one."""
+        if self.empty:
+            self.empty = False
+            self.cursor.setBlockFormat(self._block_format(style))
+            self.cursor.setBlockCharFormat(char_format)
+            return
+        self.cursor.insertBlock(self._block_format(style), char_format)
 
     def _image(self, path: Path, number: int, style: _Style) -> int | None:
         """Add a screenshot as its own paragraph; returns its block number.
@@ -524,7 +593,7 @@ class _Composer:
         image_format.setName(name)
         image_format.setWidth(size.width())
         image_format.setHeight(size.height())
-        self.cursor.insertBlock(self._block_format(style), self._char_format(style))
+        self._new_block(style, self._char_format(style))
         self.cursor.insertImage(image_format)
         return self.cursor.blockNumber()
 
@@ -639,14 +708,18 @@ class _Pages:
         Never below half its size: a screenshot too small to read is worse
         than one on the next page. One that starts its section has no words
         to stay with, and fits on any page as it is.
+
+        The caption, when there is one, goes below it on the same page.
         """
         image_format = self._image_format(group)
         if image_format is None or group.image == group.first:
             return
         above = self._end(group.image - 1) + self._margin(group.image)
         page_end = (self._page_of(above - _SLACK) + 1) * self.height
-        caption_top, caption_bottom = self._extent(group.last)
-        below = self._margin(group.last) + caption_bottom - caption_top
+        below = 0.0
+        if group.last != group.image:  # the caption
+            caption_top, caption_bottom = self._extent(group.last)
+            below = self._margin(group.last) + caption_bottom - caption_top
         # A unit to spare: the layout rounds an image's size to whole units.
         scale = (page_end - above - below - 1) / image_format.height()
         if not _MIN_IMAGE_SCALE <= scale < 1:

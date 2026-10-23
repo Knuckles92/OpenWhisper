@@ -13,7 +13,7 @@ handler.
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List
 
-from PyQt6.QtWidgets import QAbstractButton, QComboBox, QSpinBox
+from PyQt6.QtWidgets import QAbstractButton, QComboBox, QLineEdit, QSpinBox
 
 Settings = Dict[str, Any]
 
@@ -73,6 +73,19 @@ class SettingsBinder:
         """Save ``int(value)`` on every committed value; load ``resolve``."""
         spin.valueChanged.connect(lambda value: self._persist(key, int(value)))
         self._bindings.append(_Binding(resolve, spin.setValue))
+
+    def line_edit(
+        self,
+        edit: QLineEdit,
+        key: str,
+        resolve: Callable[[Settings], Any],
+    ) -> None:
+        """Save the trimmed text once editing finishes; load ``resolve``.
+
+        Not on every keystroke: half-typed text never reaches the file.
+        """
+        edit.editingFinished.connect(lambda: self._persist(key, edit.text().strip()))
+        self._bindings.append(_Binding(resolve, edit.setText))
 
     @property
     def binding_count(self) -> int:

@@ -21,6 +21,7 @@ from PyQt6.QtPdf import QPdfDocument
 
 from services.walkthrough import document
 from services.walkthrough.document import (
+    DocumentFormat,
     Section,
     Walkthrough,
     markdown,
@@ -503,3 +504,100 @@ def test_paper_follows_the_locale_unless_given(
     finally:
         pdf.close()
     assert (round(page.width()), round(page.height())) == points
+
+
+# --- Format -------------------------------------------------------------------
+
+
+def _one_shot(tmp_path) -> Walkthrough:
+    shot = _png(tmp_path / "shot-1.png", 800, 450)
+    return Walkthrough(STARTED, 136.4, (
+        Section("The update card is grayed out.", shot, 41.3),
+        Section("That's it.", None, None),
+    ))
+
+
+def test_markdown_without_a_header_starts_with_the_words(tmp_path):
+    bare = DocumentFormat(title="", details=False, about=False, captions=False)
+
+    text = markdown(_one_shot(tmp_path), folder=tmp_path, document_format=bare)
+
+    assert text == (
+        "The update card is grayed out.\n"
+        "\n"
+        "![Screenshot 1 (0:41)](shot-1.png)\n"
+        "\n"
+        "That's it.\n"
+    )
+
+
+@pytest.mark.parametrize(("details", "about", "line"), [
+    (True, False, "_Tue, Oct 20, 2026, 2:32 PM · 2:16 of speech · 1 screenshot_"),
+    (False, True, f"_{ABOUT}_"),
+])
+def test_markdown_keeps_the_header_lines_chosen(tmp_path, details, about, line):
+    chosen = DocumentFormat(title="Bug report", details=details, about=about)
+
+    lines = markdown(_one_shot(tmp_path), folder=tmp_path, document_format=chosen).split("\n")
+
+    assert lines[:4] == ["# Bug report", "", line, ""]
+
+
+def test_pdf_without_a_header_or_captions_holds_only_the_words(tmp_path):
+    bare = DocumentFormat(title="", details=False, about=False, captions=False)
+
+    path = write_pdf(_one_shot(tmp_path), tmp_path, page_size=LETTER, document_format=bare)
+
+    (page,) = _pages(path)
+    assert page == "The update card is grayed out. That's it."
+    pdf = _pdf(path)
+    try:
+        # The file keeps a name for viewers' title bars.
+        assert pdf.metaData(QPdfDocument.MetaDataField.Title).startswith("Walkthrough · ")
+    finally:
+        pdf.close()
+
+
+def test_pdf_uses_the_chosen_title(tmp_path):
+    titled = DocumentFormat(title="Checkout bugs", about=False)
+
+    path = write_pdf(_one_shot(tmp_path), tmp_path, page_size=LETTER, document_format=titled)
+
+    (page,) = _pages(path)
+    assert page.startswith("Checkout bugs Tue, Oct 20, 2026")
+    assert ABOUT_SHOTLESS not in page
+    assert "Screenshot 1 · 0:41" in page
+
+
+def test_without_captions_a_section_still_stays_on_one_page(tmp_path):
+    words = "Some context before the second screenshot. " * 12
+    first = _png(tmp_path / "shot-1.png", 900, 700, "#c03030")
+    second = _png(tmp_path / "shot-2.png", 900, 700, "#30c030")
+    sections = (Section("First.", first, 5.0), Section(words, second, 30.0), Section("Done."))
+    no_captions = DocumentFormat(captions=False)
+
+    path = write_pdf(
+        Walkthrough(STARTED, 40, sections), tmp_path, page_size=LETTER,
+        document_format=no_captions,
+    )
+
+    pages = _pages(path)
+    second_page = next(i for i, text in enumerate(pages) if "second screenshot" in text)
+    assert _widest(path, second_page, "#30c030") > 0
+
+
+def test_the_saved_settings_become_the_format_and_paper():
+    from services.settings import SettingsKey
+    from services.walkthrough.finish import document_settings
+
+    assert document_settings({}) == (DocumentFormat(), None)
+    chosen, paper = document_settings({
+        SettingsKey.WALKTHROUGH_TITLE: "  Notes  ",
+        SettingsKey.WALKTHROUGH_SHOW_DETAILS: False,
+        SettingsKey.WALKTHROUGH_SHOW_ABOUT: False,
+        SettingsKey.WALKTHROUGH_SHOW_CAPTIONS: False,
+        SettingsKey.WALKTHROUGH_PAGE_SIZE: "a4",
+    })
+    assert chosen == DocumentFormat(title="Notes", details=False, about=False, captions=False)
+    assert paper.id() == QPageSize.PageSizeId.A4
+    assert document_settings({SettingsKey.WALKTHROUGH_PAGE_SIZE: "legal"})[1] is None

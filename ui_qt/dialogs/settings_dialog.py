@@ -72,6 +72,7 @@ from services.settings import (
     TypeSafeTextModel,
     UiFontScale,
     UiTheme,
+    WalkthroughPageSize,
     resolve_developer_mode,
     resolve_max_saved_recordings,
     resolve_max_saved_recordings_bytes,
@@ -214,6 +215,11 @@ from ui_qt.widgets.settings_switch import SettingsSwitch
 from services.hotkey_conflicts import STANDARD, STANDARD_LABELS, hotkey_conflict
 from services.settings import (
     resolve_recording_hands_free_latch,
+    resolve_walkthrough_page_size,
+    resolve_walkthrough_show_about,
+    resolve_walkthrough_show_captions,
+    resolve_walkthrough_show_details,
+    resolve_walkthrough_title,
 )
 from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
 from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
@@ -1002,8 +1008,8 @@ class SettingsDialog(QDialog):
         self._add_page(
             GENERAL,
             "General",
-            "How finished transcriptions leave the app, and how the window "
-            "behaves when you close it.",
+            "How finished transcriptions leave the app, how walkthrough "
+            "documents look, and how the window behaves when you close it.",
             self._build_general_page,
         )
         self._add_page(
@@ -1420,6 +1426,7 @@ class SettingsDialog(QDialog):
             self._accessibility_timer.setInterval(1000)
             self._accessibility_timer.timeout.connect(self._refresh_accessibility_status)
             self._refresh_accessibility_status()
+        self._build_walkthrough_group(layout)
         self._tile_group(layout, "Window", [self.minimize_tray_tile])
         self._tile_group(
             layout,
@@ -1465,6 +1472,96 @@ class SettingsDialog(QDialog):
             self.update_restart_prompt_check,
             SettingsKey.UPDATE_RESTART_PROMPT_ENABLED,
             resolve_update_restart_prompt_enabled,
+        )
+
+    def _build_walkthrough_group(self, layout: QVBoxLayout) -> None:
+        """What a walkthrough's PDF and Markdown show besides your words and screenshots."""
+        self.walkthrough_title_edit = QLineEdit()
+        self.walkthrough_title_edit.setObjectName("walkthroughTitleEdit")
+        self.walkthrough_title_edit.setPlaceholderText("No title")
+        self.walkthrough_title_edit.setAccessibleName("Walkthrough document title")
+        self.walkthrough_title_edit.setMinimumHeight(40)
+        self.walkthrough_title_tile = FieldTile(
+            "Title",
+            "The heading at the top of the document. Leave it empty for none.",
+            self.walkthrough_title_edit,
+            design_icon("typography-blue.svg"),
+        )
+
+        self.walkthrough_page_size_combo = ElidingComboBox()
+        self.walkthrough_page_size_combo.setObjectName("walkthroughPageSizeCombo")
+        for value in WalkthroughPageSize.ALL:
+            self.walkthrough_page_size_combo.addItem(WalkthroughPageSize.LABELS[value], value)
+        self.walkthrough_page_size_combo.setMinimumHeight(40)
+        self.walkthrough_page_size_tile = FieldTile(
+            "Paper size",
+            "The PDF's page size. The Markdown copy has no pages.",
+            self.walkthrough_page_size_combo,
+            design_icon("stack-slate.svg"),
+        )
+
+        self.walkthrough_details_tile = SettingTile(
+            "Date, length and screenshot count",
+            "A line under the title, such as \"Tue, Oct 20, 2026, 2:32 PM · "
+            "2:16 of speech · 3 screenshots\".",
+            design_icon("info-blue.svg"),
+        )
+        self.walkthrough_details_check = self.walkthrough_details_tile.checkbox
+
+        self.walkthrough_about_tile = SettingTile(
+            "How to read it",
+            "A note saying the document is spoken notes with screenshots, "
+            "each screenshot right after the words about it. It helps an "
+            "agent that reads the document follow it.",
+            design_icon("info-blue.svg"),
+        )
+        self.walkthrough_about_check = self.walkthrough_about_tile.checkbox
+
+        self.walkthrough_captions_tile = SettingTile(
+            "Screenshot captions",
+            "\"Screenshot 2 · 1:12\" under each screenshot: its number and "
+            "when you took it.",
+            design_icon("palette-purple.svg"),
+        )
+        self.walkthrough_captions_check = self.walkthrough_captions_tile.checkbox
+
+        self._tile_group(
+            layout,
+            "Walkthroughs",
+            [
+                self.walkthrough_title_tile,
+                self.walkthrough_page_size_tile,
+                self.walkthrough_details_tile,
+                self.walkthrough_about_tile,
+                self.walkthrough_captions_tile,
+            ],
+            intro="How the PDF and Markdown look. Your words and screenshots "
+            "are always included; changes apply to the next walkthrough.",
+        )
+        self._bindings.line_edit(
+            self.walkthrough_title_edit,
+            SettingsKey.WALKTHROUGH_TITLE,
+            resolve_walkthrough_title,
+        )
+        self._bindings.combo(
+            self.walkthrough_page_size_combo,
+            SettingsKey.WALKTHROUGH_PAGE_SIZE,
+            resolve_walkthrough_page_size,
+        )
+        self._bindings.checkbox(
+            self.walkthrough_details_check,
+            SettingsKey.WALKTHROUGH_SHOW_DETAILS,
+            resolve_walkthrough_show_details,
+        )
+        self._bindings.checkbox(
+            self.walkthrough_about_check,
+            SettingsKey.WALKTHROUGH_SHOW_ABOUT,
+            resolve_walkthrough_show_about,
+        )
+        self._bindings.checkbox(
+            self.walkthrough_captions_check,
+            SettingsKey.WALKTHROUGH_SHOW_CAPTIONS,
+            resolve_walkthrough_show_captions,
         )
 
     def _refresh_accessibility_status(self):

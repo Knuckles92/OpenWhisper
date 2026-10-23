@@ -87,8 +87,9 @@ def build_documents(
         started_at=session.started_at, duration_s=duration_s, sections=tuple(sections),
     )
     folder = session.folder()
-    markdown_path = write_markdown(walkthrough, folder)
-    pdf = write_pdf(walkthrough, folder)
+    document_format, page_size = document_settings()
+    markdown_path = write_markdown(walkthrough, folder, document_format=document_format)
+    pdf = write_pdf(walkthrough, folder, page_size=page_size, document_format=document_format)
     write_manifest(walkthrough, folder)
     text = marked_text(texts, len(shots))
     raw = marked_text(raw_texts, len(shots))
@@ -96,13 +97,46 @@ def build_documents(
         folder=folder,
         pdf=pdf,
         markdown=markdown_path,
-        clipboard_text=markdown(walkthrough, folder=folder, absolute_images=True),
+        clipboard_text=markdown(
+            walkthrough, folder=folder, absolute_images=True, document_format=document_format,
+        ),
         history_text=text,
         history_raw=raw if raw != text else None,
         shots=len(shots),
         duration_s=duration_s,
         first_shot=shots[0].path if shots else None,
     )
+
+
+def document_settings(settings=None):
+    """The saved ``(DocumentFormat, QPageSize or None)``; None is the locale's paper."""
+    from PyQt6.QtGui import QPageSize
+
+    from services.settings import (
+        WalkthroughPageSize,
+        resolve_walkthrough_page_size,
+        resolve_walkthrough_show_about,
+        resolve_walkthrough_show_captions,
+        resolve_walkthrough_show_details,
+        resolve_walkthrough_title,
+        settings_manager,
+    )
+    from services.walkthrough.document import DocumentFormat
+
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    document_format = DocumentFormat(
+        title=resolve_walkthrough_title(settings),
+        details=resolve_walkthrough_show_details(settings),
+        about=resolve_walkthrough_show_about(settings),
+        captions=resolve_walkthrough_show_captions(settings),
+    )
+    page_ids = {
+        WalkthroughPageSize.LETTER: QPageSize.PageSizeId.Letter,
+        WalkthroughPageSize.A4: QPageSize.PageSizeId.A4,
+    }
+    page_id = page_ids.get(resolve_walkthrough_page_size(settings))
+    return document_format, QPageSize(page_id) if page_id is not None else None
 
 
 def kept_note(session: Optional[WalkthroughSession]) -> str:
