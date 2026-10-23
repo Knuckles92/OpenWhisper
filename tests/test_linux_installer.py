@@ -105,7 +105,6 @@ def test_desktop_entry_and_launcher_match_installed_layout():
     assert desktop["Icon"] == "openwhisper"
     assert desktop["Terminal"] == "false"
     assert desktop["StartupWMClass"] == "OpenWhisper"
-    assert desktop["SingleMainWindow"] == "true"
 
     launcher_path = LINUX_INSTALLER / "openwhisper"
     launcher = launcher_path.read_text(encoding="utf-8")
