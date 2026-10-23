@@ -10,7 +10,8 @@ Lockdown, per agent (verified against Claude Code 2.1, Codex 0.158 and
 OpenCode 2.0 on 2026-09-28):
 
 * Claude Code: ``--tools ""`` removes every built-in tool, ``--strict-mcp-config``
-  drops the user's MCP servers, ``--allowedTools`` pre-approves ours.
+  drops the user's MCP servers, ``--allowedTools`` pre-approves ours. A
+  pass with a ``read_folder`` gets Read too, fenced to that folder.
 * Codex: the shell and every optional tool feature disabled, read-only
   sandbox, our server pre-approved, AGENTS.md and notify hooks off.
 * OpenCode: its ``build`` agent is overridden for this process only, with
@@ -131,6 +132,9 @@ class PassRequest:
     #: (``build`` or ``plan``); a driver that fixes its system prompt per
     #: process uses it instead of ``system_prompt``.
     persona: str = "build"
+    #: A folder the agent may read files in with its own Read tool, and
+    #: nothing outside it; "" for none. Only Claude Code takes one.
+    read_folder: str = ""
 
     def emit(self, kind: str, tool: str = "") -> None:
         self.heartbeat.touch()
@@ -468,6 +472,10 @@ class ClaudeCodeDriver(HeadlessDriver):
     def _has(self, flag: str) -> bool:
         return flag in getattr(self, "_flags", "")
 
+    def supports_read_folder(self) -> bool:
+        """Whether this Claude Code can fence Read to a folder; after check_ready."""
+        return self._has("--restricted") and self._has("--add-dir")
+
     def build(self, request: PassRequest, url: str, token: str,
               workdir: str) -> Tuple[List[str], Dict[str, str]]:
         system_file = os.path.join(workdir, "system.md")
@@ -495,13 +503,19 @@ class ClaudeCodeDriver(HeadlessDriver):
             argv += ["--system-prompt-file", system_file]
         else:
             argv += ["--system-prompt", request.system_prompt]
-        argv += [
-            "--tools", "",
-            "--mcp-config", mcp_file, "--strict-mcp-config",
-            "--allowedTools", ",".join(
-                f"mcp__{SERVER_NAME}__{tool['name']}" for tool in request.tools),
-            "--settings", settings_file,
-        ]
+        if request.read_folder:
+            # --restricted confines the file tools to the working folders,
+            # which --add-dir names; without it Read reaches every file the
+            # user can (checked with Claude Code 2.1.306). A short 8.3 path
+            # is refused, so the caller passes the folder's long one.
+            argv += ["--restricted", "--tools", "Read", "--add-dir", request.read_folder]
+        else:
+            argv += ["--tools", ""]
+        argv += ["--mcp-config", mcp_file, "--strict-mcp-config"]
+        if request.tools:
+            argv += ["--allowedTools", ",".join(
+                f"mcp__{SERVER_NAME}__{tool['name']}" for tool in request.tools)]
+        argv += ["--settings", settings_file]
         for flag, value in (("--permission-prompts", "none"),
                             ("--no-session-persistence", None),
                             ("--disable-slash-commands", None)):
@@ -537,7 +551,7 @@ class ClaudeCodeDriver(HeadlessDriver):
             ours = next((s for s in servers if isinstance(s, dict)
                          and s.get("name") == SERVER_NAME), None)
             status = str((ours or {}).get("status") or "missing")
-            if status not in ("connected", "pending"):
+            if request.tools and status not in ("connected", "pending"):
                 state.fatal = ("Claude Code could not reach OpenWhisper's meeting "
                                f"tools ({status}).")
             request.emit("start")

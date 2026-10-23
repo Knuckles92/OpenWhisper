@@ -13,7 +13,8 @@ handler.
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List
 
-from PyQt6.QtWidgets import QAbstractButton, QComboBox, QLineEdit, QSpinBox
+from PyQt6.QtCore import QEvent, QObject
+from PyQt6.QtWidgets import QAbstractButton, QComboBox, QLineEdit, QPlainTextEdit, QSpinBox
 
 Settings = Dict[str, Any]
 
@@ -22,6 +23,20 @@ Settings = Dict[str, Any]
 class _Binding:
     resolve: Callable[[Settings], Any]
     apply: Callable[[Any], None]
+
+
+class _FocusOutSaver(QObject):
+    """Calls ``save`` whenever its editor, which owns it, loses focus."""
+
+    def __init__(self, edit: QPlainTextEdit, save: Callable[[], None]):
+        super().__init__(edit)
+        self._save = save
+        edit.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.FocusOut:
+            self._save()
+        return False
 
 
 class SettingsBinder:
@@ -86,6 +101,24 @@ class SettingsBinder:
         """
         edit.editingFinished.connect(lambda: self._persist(key, edit.text().strip()))
         self._bindings.append(_Binding(resolve, edit.setText))
+
+    def plain_text(
+        self,
+        edit: QPlainTextEdit,
+        key: str,
+        resolve: Callable[[Settings], Any],
+    ) -> None:
+        """Save the trimmed text once the editor loses focus; load ``resolve``.
+
+        Text that only repeats the placeholder, which shows the default,
+        saves as "", so the default stays current when it changes.
+        """
+        def save() -> None:
+            text = edit.toPlainText().strip()
+            self._persist(key, "" if text == edit.placeholderText().strip() else text)
+
+        _FocusOutSaver(edit, save)
+        self._bindings.append(_Binding(resolve, edit.setPlainText))
 
     @property
     def binding_count(self) -> int:

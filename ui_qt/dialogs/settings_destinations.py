@@ -16,6 +16,7 @@ VOICE_MODEL: Final[str] = "voice_model"
 REMOTE_ENGINE: Final[str] = "remote_engine"
 RECORDING: Final[str] = "recording"
 CLEANUP: Final[str] = "cleanup"
+WALKTHROUGHS: Final[str] = "walkthroughs"
 
 # Personalize
 DICTIONARY: Final[str] = "dictionary"

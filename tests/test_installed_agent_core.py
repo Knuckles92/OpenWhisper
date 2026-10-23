@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from meeting.agent.installed import core as core_module
+from meeting.agent.installed import drivers
 from meeting.agent.installed.core import InstalledAgentCore, installed_agent
 from meeting.agent.installed.drivers import AgentUnavailable, PassOutcome
 from meeting.agent.scheduler import INSTALLED_AGENT_CADENCE, CheckpointScheduler
@@ -293,3 +294,56 @@ def test_a_report_from_a_missing_agent_says_so(monkeypatch):
     monkeypatch.setattr("meeting.agent.installed.core.run_agent_task", missing)
     with pytest.raises(report.ReportUnavailable, match="not installed"):
         report.generate_report({"id": "m1"}, {}, [], "A brief", provider="codex", model="")
+
+
+# ---- reading tasks (walkthrough write-ups) ----
+
+class ReadingDriver(drivers.ClaudeCodeDriver):
+    def __init__(self, agent, *, fenced=True, outcome=None):
+        super().__init__(agent)
+        self.fenced = fenced
+        self.outcome = outcome or PassOutcome(ok=True, text="# Write-up")
+        self.requests = []
+
+    def start(self, server, personas=None, tools=None):
+        pass
+
+    def supports_read_folder(self):
+        return self.fenced
+
+    def run_pass(self, request):
+        self.requests.append(request)
+        return self.outcome
+
+
+def _reading_task(**overrides):
+    values = dict(model="", system_prompt="charter", user_prompt="the pdf", folder=".",
+                  timeout_s=60, stall_s=30)
+    values.update(overrides)
+    return core_module.run_reading_task("claude_code", **values)
+
+
+def test_a_reading_task_hands_claude_code_the_folders_long_path(monkeypatch, agent, tmp_path):
+    driver = ReadingDriver(agent)
+    monkeypatch.setattr(core_module, "make_driver", lambda found: driver)
+    monkeypatch.setattr(core_module.os.path, "realpath", lambda path: f"LONG:{path}")
+
+    outcome = _reading_task(folder=str(tmp_path))
+
+    assert outcome.text == "# Write-up"
+    (request,) = driver.requests
+    assert request.read_folder == f"LONG:{tmp_path}"
+    assert request.tools == [] and request.user_prompt == "the pdf"
+    assert request.system_prompt == "charter"
+
+
+def test_a_claude_code_that_cannot_be_fenced_is_refused(monkeypatch, agent):
+    monkeypatch.setattr(core_module, "make_driver", lambda found: ReadingDriver(found, fenced=False))
+    with pytest.raises(AgentUnavailable, match="claude update"):
+        _reading_task()
+
+
+def test_other_agents_cannot_run_reading_tasks(monkeypatch, agent):
+    monkeypatch.setattr(core_module, "make_driver", lambda found: FakeDriver())
+    with pytest.raises(AgentUnavailable, match="Use Claude Code"):
+        _reading_task()

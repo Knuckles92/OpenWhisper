@@ -1,6 +1,7 @@
 """A walkthrough job in TranscriptionRuntime: recorded like a dictation,
 transcribed section by section, and delivered as a document."""
 
+import dataclasses
 import wave
 from concurrent.futures import Future
 from datetime import datetime
@@ -381,6 +382,72 @@ def test_a_cancel_between_sections_stops_the_walkthrough(h):
     # Canceled after the recording stopped: thrown away all the same.
     assert not (folder / "shot-1.png").exists()
     assert not any("screenshots kept" in status for status in h.ui.statuses)
+
+
+def _write_up_on(h, monkeypatch, write_up):
+    from services.walkthrough import write_up as module
+
+    h.settings.values[SettingsKey.WALKTHROUGH_WRITE_UP] = True
+    h.settings.values[SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS] = "  Make it a checklist. "
+    monkeypatch.setattr(module, "write_up", write_up)
+    _write_recording(h.audio, [_tone(4.0)])
+    _record(h, [2.0], length_s=4.0)
+
+
+def test_a_walkthrough_written_up_is_what_gets_copied(h, monkeypatch):
+    calls = []
+
+    def write_up(result, shots, *, instructions, cancel_event):
+        calls.append((shots, instructions, cancel_event))
+        return dataclasses.replace(result, pdf=result.folder / "write-up.pdf",
+                                   clipboard_text="# Checklist", written_up=True)
+
+    _write_up_on(h, monkeypatch, write_up)
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    folder = h.session.folder()
+    ((shots, instructions, cancel_event),) = calls
+    assert shots == [folder / "shot-1.png"] and instructions == "Make it a checklist."
+    assert cancel_event is h.runtime._cancel_requested
+    assert ("Writing it up with Claude Code...",) in h.controller.status_update.calls
+    assert h.ui.copied_files == [([folder / "write-up.pdf"], "# Checklist")]
+    assert "Write-up copied (1 screenshot) — paste it into your agent" in h.ui.statuses
+
+
+def test_a_failed_write_up_copies_the_walkthrough_as_spoken(h, monkeypatch):
+    from services.walkthrough.write_up import WriteUpFailed
+
+    def write_up(result, shots, **kwargs):
+        raise WriteUpFailed("Claude Code is not signed in.")
+
+    _write_up_on(h, monkeypatch, write_up)
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    folder = h.session.folder()
+    assert h.ui.copied_files == [([folder / "walkthrough.pdf"], "# Walkthrough (markdown)")]
+    assert any(status.startswith("Walkthrough copied (1 screenshot)")
+               and status.endswith("as spoken: Claude Code is not signed in.")
+               for status in h.ui.statuses)
+    (result, _copied), = h.ui.ready
+    assert result.write_up_error == "Claude Code is not signed in."
+
+
+def test_a_cancel_during_the_write_up_stops_the_walkthrough(h, monkeypatch):
+    from services.walkthrough.write_up import WriteUpFailed
+
+    def write_up(result, shots, *, cancel_event, **kwargs):
+        cancel_event.set()
+        raise WriteUpFailed("canceled")
+
+    _write_up_on(h, monkeypatch, write_up)
+    folder = h.session.folder()
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    assert h.ui.copied_files == []
+    assert not (folder / "shot-1.png").exists()
 
 
 def test_an_unreadable_recording_is_transcribed_whole_above_the_screenshots(h):

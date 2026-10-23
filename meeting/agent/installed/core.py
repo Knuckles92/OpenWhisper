@@ -13,6 +13,7 @@ plan, so the scheduler gives these cores a wider :attr:`cadence`.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -322,6 +323,47 @@ def run_agent_task(agent_id: str, *, model: str, system_prompt: str,
             cancel_event=cancel_event or threading.Event(),
         )
         return driver.run_pass(request)
+    finally:
+        try:
+            driver.close()
+        finally:
+            server.stop()
+
+
+def run_reading_task(agent_id: str, *, model: str, system_prompt: str,
+                     user_prompt: str, folder: str, timeout_s: float,
+                     stall_s: float, effort: str = FINAL_EFFORT,
+                     cancel_event: Optional[threading.Event] = None) -> PassOutcome:
+    """Run one task in which the agent reads the files in ``folder``, and only those.
+
+    The closing reply is the task's result. Only Claude Code can be held
+    to one folder, so only it runs these.
+
+    Raises:
+        AgentUnavailable: When the agent cannot run, or cannot be fenced in.
+    """
+    from meeting.agent.installed.drivers import ClaudeCodeDriver
+
+    agent = installed_agent(agent_id)
+    driver = make_driver(agent)
+    if not isinstance(driver, ClaudeCodeDriver):
+        raise AgentUnavailable(f"{AGENT_SPECS[agent_id].name} can't be limited to one "
+                               "folder, so it can't read the walkthrough. Use Claude Code.")
+    server = LoopbackMcpServer()
+    server.start()
+    try:
+        driver.start(server)
+        if not driver.supports_read_folder():
+            raise AgentUnavailable(f"Claude Code {agent.version} is too old to read the "
+                                   "walkthrough. Run `claude update`.")
+        return driver.run_pass(PassRequest(
+            system_prompt=system_prompt, user_prompt=user_prompt, tools=[],
+            handler=lambda _n, _a, _m: ("No tools here.", True), model=model,
+            effort=effort, timeout_s=timeout_s, stall_s=stall_s,
+            cancel_event=cancel_event or threading.Event(),
+            # Its long form: Claude Code refuses an 8.3 short path.
+            read_folder=os.path.realpath(folder),
+        ))
     finally:
         try:
             driver.close()

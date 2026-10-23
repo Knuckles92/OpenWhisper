@@ -328,6 +328,11 @@ class SettingsKey:
     # The "New" badge on Quick Record's walkthrough button gives way to a
     # "?" once a walkthrough has started.
     WALKTHROUGH_INTRO_SEEN: Final[str] = "walkthrough_intro_seen"
+    # Whether Claude Code writes a finished walkthrough up from its PDF, and
+    # what it is told to make ("" for the default instructions; see
+    # services/walkthrough/write_up.py).
+    WALKTHROUGH_WRITE_UP: Final[str] = "walkthrough_write_up"
+    WALKTHROUGH_WRITE_UP_INSTRUCTIONS: Final[str] = "walkthrough_write_up_instructions"
 
 
 #: Keys the single live-preview toggle replaced. Dropped whenever that toggle
@@ -777,6 +782,8 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.WALKTHROUGH_SHOW_CAPTIONS: True,
     SettingsKey.WALKTHROUGH_PAGE_SIZE: WalkthroughPageSize.AUTO,
     SettingsKey.WALKTHROUGH_INTRO_SEEN: False,
+    SettingsKey.WALKTHROUGH_WRITE_UP: False,
+    SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS: "",
 })
 
 
@@ -1300,12 +1307,21 @@ resolve_walkthrough_show_captions = _bool_resolver(SettingsKey.WALKTHROUGH_SHOW_
 resolve_walkthrough_page_size = _choice_resolver(
     SettingsKey.WALKTHROUGH_PAGE_SIZE, WalkthroughPageSize.ALL)
 resolve_walkthrough_intro_seen = _bool_resolver(SettingsKey.WALKTHROUGH_INTRO_SEEN)
+resolve_walkthrough_write_up = _bool_resolver(SettingsKey.WALKTHROUGH_WRITE_UP)
 
 
 def resolve_walkthrough_title(settings: Optional[Mapping[str, Any]] = None) -> str:
     """The walkthrough documents' heading, trimmed; "" leaves it out."""
     raw = setting_value(SettingsKey.WALKTHROUGH_TITLE, settings)
     return raw.strip() if isinstance(raw, str) else SETTING_DEFAULTS[SettingsKey.WALKTHROUGH_TITLE]
+
+
+def resolve_walkthrough_write_up_instructions(
+    settings: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """The write-up's own instructions, trimmed; "" means the default ones."""
+    raw = setting_value(SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS, settings)
+    return raw.strip() if isinstance(raw, str) else ""
 
 
 def resolve_max_saved_recordings(

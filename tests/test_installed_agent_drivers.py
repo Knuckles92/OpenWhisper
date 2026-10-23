@@ -382,3 +382,42 @@ def test_opencode_rejects_a_model_its_providers_lack(server, monkeypatch, tmp_pa
     finally:
         driver.close()
     assert not outcome.ok and "no model 'gone/model'" in outcome.error
+
+
+def test_claude_reading_a_folder_gets_read_fenced_to_it(monkeypatch, tmp_path):
+    monkeypatch.setattr(drivers, "_help_text",
+                        lambda agent, *args: CLAUDE_HELP + " --restricted --add-dir")
+    driver = ClaudeCodeDriver(InstalledAgent("claude_code", "claude.exe", "2.1.306"))
+    driver.check_ready()
+    assert driver.supports_read_folder()
+    request = _request(Recorder(), tools=[], read_folder=r"C:\captures\run")
+    argv, _env = driver.build(request, "http://127.0.0.1:1/mcp/t", "t", str(tmp_path))
+    # --restricted is what keeps Read inside the --add-dir folder.
+    assert "--restricted" in argv
+    assert argv[argv.index("--tools") + 1] == "Read"
+    assert argv[argv.index("--add-dir") + 1] == r"C:\captures\run"
+    assert "--allowedTools" not in argv and "--strict-mcp-config" in argv
+
+
+def test_a_meeting_pass_reads_no_files(monkeypatch, tmp_path):
+    monkeypatch.setattr(drivers, "_help_text",
+                        lambda agent, *args: CLAUDE_HELP + " --restricted --add-dir")
+    driver = ClaudeCodeDriver(InstalledAgent("claude_code", "claude.exe", "2.1.306"))
+    driver.check_ready()
+    argv, _env = driver.build(_request(Recorder()), "http://127.0.0.1:1/mcp/t", "t", str(tmp_path))
+    assert "--restricted" not in argv and "--add-dir" not in argv
+
+
+def test_claude_without_restricted_cannot_read_a_folder(monkeypatch):
+    monkeypatch.setattr(drivers, "_help_text", lambda agent, *args: CLAUDE_HELP + " --add-dir")
+    driver = ClaudeCodeDriver(InstalledAgent("claude_code", "claude", "2.1.200"))
+    driver.check_ready()
+    assert not driver.supports_read_folder()
+
+
+def test_a_pass_without_tools_does_not_need_our_server():
+    state = drivers._RunState()
+    driver = ClaudeCodeDriver(InstalledAgent("claude_code", "claude", "2.1.306"))
+    driver.handle_event({"type": "system", "subtype": "init", "mcp_servers": []},
+                        state, _request(Recorder(), tools=[]))
+    assert not state.fatal

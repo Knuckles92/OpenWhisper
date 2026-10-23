@@ -159,6 +159,7 @@ from ui_qt.dialogs.settings_destinations import (
     SNIPPETS,
     STYLES,
     VOICE_MODEL,
+    WALKTHROUGHS,
     resolve_destination,
 )
 from ui_qt.dialogs.settings_downloads import DownloadsPage
@@ -220,6 +221,8 @@ from services.settings import (
     resolve_walkthrough_show_captions,
     resolve_walkthrough_show_details,
     resolve_walkthrough_title,
+    resolve_walkthrough_write_up,
+    resolve_walkthrough_write_up_instructions,
 )
 from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
 from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
@@ -260,6 +263,12 @@ _HF_POLICY_LABELS = {
 
 #: Destinations reached from search by a name the app used to use.
 _SEARCH_ALIASES = {
+    WALKTHROUGHS: (
+        "Walkthrough and screenshot settings",
+        "Dictation › Walkthroughs (moved from General and Hotkeys)",
+        "walkthrough screenshot snap capture pdf document title captions paper "
+        "letter a4 ai write-up claude code agent instructions prompt",
+    ),
     MCP: (
         "Connect an agent with MCP",
         "Automate › API & MCP",
@@ -322,6 +331,7 @@ _CHAPTERS = (
         (VOICE_MODEL, "Voice model", "microphone-blue.svg"),
         (CLEANUP, "AI cleanup", "stack-purple.svg"),
         (REMOTE_ENGINE, "Remote engine", "server-blue.svg"),
+        (WALKTHROUGHS, "Walkthroughs", "file-text-blue.svg"),
     )),
     ("Personalize", "wand-purple.svg", (
         (DICTIONARY, "Dictionary", _PAGE_MODULE_ICONS[DICTIONARY]),
@@ -919,6 +929,14 @@ class SettingsDialog(QDialog):
             lambda layout: self.remote_section.build(self, layout, design_icon),
         )
         self._add_page(
+            WALKTHROUGHS,
+            "Walkthroughs",
+            "Talk while you take screenshots, then paste one document into "
+            "your agent: its shortcuts, how the document looks, and the "
+            "optional AI write-up.",
+            self._build_walkthroughs_page,
+        )
+        self._add_page(
             RECORDING,
             "Recording",
             "Microphone, saved audio retention, and the live preview.",
@@ -1008,8 +1026,8 @@ class SettingsDialog(QDialog):
         self._add_page(
             GENERAL,
             "General",
-            "How finished transcriptions leave the app, how walkthrough "
-            "documents look, and how the window behaves when you close it.",
+            "How finished transcriptions leave the app and how the window "
+            "behaves when you close it.",
             self._build_general_page,
         )
         self._add_page(
@@ -1426,7 +1444,6 @@ class SettingsDialog(QDialog):
             self._accessibility_timer.setInterval(1000)
             self._accessibility_timer.timeout.connect(self._refresh_accessibility_status)
             self._refresh_accessibility_status()
-        self._build_walkthrough_group(layout)
         self._tile_group(layout, "Window", [self.minimize_tray_tile])
         self._tile_group(
             layout,
@@ -1473,6 +1490,33 @@ class SettingsDialog(QDialog):
             SettingsKey.UPDATE_RESTART_PROMPT_ENABLED,
             resolve_update_restart_prompt_enabled,
         )
+
+    def _build_walkthroughs_page(self, layout: QVBoxLayout) -> None:
+        """Everything about walkthroughs: shortcuts, the document, the write-up.
+
+        The shortcut rows are the same ones Hotkeys used to show; they share
+        its capture, conflict checks and Reset to defaults.
+        """
+        layout.addWidget(self._hotkey_group_title("Shortcuts"))
+        layout.addWidget(
+            self._hotkey_shortcut_row(
+                "walkthrough",
+                "Walkthrough",
+                "Talk while you take screenshots. Press again for one file with "
+                "your words and pictures, copied to paste into an agent.",
+                optional=True,
+            )
+        )
+        layout.addWidget(
+            self._hotkey_shortcut_row(
+                "screenshot",
+                "Screenshot",
+                "Freeze the screen and mark it up. During a walkthrough it joins "
+                "the walkthrough; otherwise it's copied.",
+                optional=True,
+            )
+        )
+        self._build_walkthrough_group(layout)
 
     def _build_walkthrough_group(self, layout: QVBoxLayout) -> None:
         """What a walkthrough's PDF and Markdown show besides your words and screenshots."""
@@ -1527,7 +1571,7 @@ class SettingsDialog(QDialog):
 
         self._tile_group(
             layout,
-            "Walkthroughs",
+            "Document",
             [
                 self.walkthrough_title_tile,
                 self.walkthrough_page_size_tile,
@@ -1562,6 +1606,54 @@ class SettingsDialog(QDialog):
             self.walkthrough_captions_check,
             SettingsKey.WALKTHROUGH_SHOW_CAPTIONS,
             resolve_walkthrough_show_captions,
+        )
+        self._build_walkthrough_write_up_group(layout)
+
+    def _build_walkthrough_write_up_group(self, layout: QVBoxLayout) -> None:
+        """Whether Claude Code writes a finished walkthrough up, and how."""
+        from services.walkthrough.write_up import AGENT_NAME, DEFAULT_INSTRUCTIONS
+
+        self.walkthrough_write_up_tile = SettingTile(
+            f"Write it up with {AGENT_NAME}",
+            f"When a walkthrough finishes, {AGENT_NAME} reads its PDF and lays "
+            "out a cleaner document, which is what gets copied. It can read "
+            "only that walkthrough's folder, uses your own plan, and usually "
+            "takes under a minute. The as-spoken PDF is kept beside it.",
+            design_icon("wand-purple.svg"),
+        )
+        self.walkthrough_write_up_check = self.walkthrough_write_up_tile.checkbox
+
+        # Plain, not QTextEdit: the placeholder, the default instructions,
+        # wraps instead of being clipped to one line.
+        self.walkthrough_write_up_edit = QPlainTextEdit()
+        self.walkthrough_write_up_edit.setObjectName("walkthroughWriteUpEditor")
+        self.walkthrough_write_up_edit.setPlaceholderText(DEFAULT_INSTRUCTIONS)
+        self.walkthrough_write_up_edit.setMinimumHeight(96)
+        self.walkthrough_write_up_edit.setMaximumHeight(150)
+        self.walkthrough_write_up_edit.setAccessibleName("Write-up instructions")
+        self.walkthrough_write_up_instructions_tile = FieldTile(
+            "Instructions",
+            "What to make of your words and screenshots. While it's empty, "
+            "the box shows the default.",
+            self.walkthrough_write_up_edit,
+            design_icon("typography-blue.svg"),
+        )
+        self._tile_group(
+            layout,
+            "AI write-up",
+            [self.walkthrough_write_up_tile, self.walkthrough_write_up_instructions_tile],
+            columns=1,
+            intro="Optional. Your words and screenshots stay as spoken unless you turn this on.",
+        )
+        self._bindings.checkbox(
+            self.walkthrough_write_up_check,
+            SettingsKey.WALKTHROUGH_WRITE_UP,
+            resolve_walkthrough_write_up,
+        )
+        self._bindings.plain_text(
+            self.walkthrough_write_up_edit,
+            SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS,
+            resolve_walkthrough_write_up_instructions,
         )
 
     def _refresh_accessibility_status(self):
@@ -3117,26 +3209,6 @@ class SettingsDialog(QDialog):
             )
         )
 
-        layout.addWidget(self._hotkey_group_title("Walkthroughs"))
-        layout.addWidget(
-            self._hotkey_shortcut_row(
-                "walkthrough",
-                "Walkthrough",
-                "Talk while you take screenshots. Press again for one file with "
-                "your words and pictures, copied to paste into an agent.",
-                optional=True,
-            )
-        )
-        layout.addWidget(
-            self._hotkey_shortcut_row(
-                "screenshot",
-                "Screenshot",
-                "Freeze the screen and mark it up. During a walkthrough it joins "
-                "the walkthrough; otherwise it's copied.",
-                optional=True,
-            )
-        )
-
         layout.addWidget(self._hotkey_group_title("OpenWhisper"))
         layout.addWidget(
             self._hotkey_shortcut_row(
@@ -3159,18 +3231,16 @@ class SettingsDialog(QDialog):
         actions_link = neutral_button(Button("Action shortcuts…"))
         actions_link.clicked.connect(lambda: self.select_destination(ACTIONS))
         fit_compact_button(actions_link, 0)
+        walkthrough_link = neutral_button(Button("Walkthrough shortcuts…"))
+        walkthrough_link.clicked.connect(lambda: self.select_destination(WALKTHROUGHS))
+        fit_compact_button(walkthrough_link, 0)
         reset_button = neutral_button(Button("Reset to defaults"))
         reset_button.setObjectName("hotkeyResetButton")
         fit_compact_button(reset_button, 150)
         reset_button.clicked.connect(self._confirm_reset_hotkeys)
-        # The link keeps its label's width; Reset moves under it when both
-        # don't fit side by side.
-        profile_row = QWidget()
-        profile_row_layout = QHBoxLayout(profile_row)
-        profile_row_layout.setContentsMargins(0, 0, 0, 0)
-        profile_row_layout.addWidget(profile_link)
-        profile_row_layout.addWidget(actions_link)
-        profile_row_layout.addStretch()
+        # The links keep their labels' widths and wrap; Reset moves under
+        # them when they don't fit side by side.
+        profile_row = ButtonRow((profile_link, actions_link, walkthrough_link))
         layout.addSpacing(4)
         layout.addWidget(Reflow(profile_row, reset_button))
 
@@ -3438,8 +3508,9 @@ class SettingsDialog(QDialog):
         if self._backup_busy and key != BACKUP:
             self.rail.select(BACKUP)
             return
-        if key != HOTKEYS:
-            self._cancel_hotkey_capture()
+        # Hotkeys and Walkthroughs both hold shortcut fields; a capture
+        # belongs to the page it started on.
+        self._cancel_hotkey_capture()
         if key != OVERVIEW and self.home is not None:
             self.home.cancel_capture()
         self._cancel_page_captures(keep=key)
@@ -3732,6 +3803,9 @@ class SettingsDialog(QDialog):
         self.rail.set_value(MEETING_DASHBOARD, _meeting_dashboard_rail_value(settings))
         self.rail.set_value(API_KEYS, self._api_key_rail_value())
         self.rail.set_value(HOTKEYS, self._hotkey_rail_value())
+        self.rail.set_value(
+            WALKTHROUGHS, "AI write-up on" if resolve_walkthrough_write_up(settings) else "As spoken"
+        )
         self.rail.set_value(DOWNLOADS, self.downloads.rail_value())
         if BACKUP in self._built_pages:
             frequency = self.backup_page.frequency_combo.currentData()
@@ -5114,7 +5188,7 @@ class SettingsDialog(QDialog):
 
     def _load_settings(self) -> None:
         settings = self._settings_snapshot()
-        if not self.current_hotkeys or self._initializing_page in (None, HOTKEYS):
+        if not self.current_hotkeys or self._initializing_page in (None, HOTKEYS, WALKTHROUGHS):
             self._load_hotkey_settings()
         self._bindings.load(settings, start=self._initial_binding_start)
         self._load_cleanup_pages(settings)

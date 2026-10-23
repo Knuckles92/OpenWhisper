@@ -84,7 +84,7 @@ class Walkthrough:
 class DocumentFormat:
     """What the documents show besides the words and screenshots.
 
-    The defaults are the full layout; Settings → General → Walkthroughs
+    The defaults are the full layout; Settings → Dictation → Walkthroughs
     changes them. The manifest always keeps everything.
     """
 
@@ -388,6 +388,34 @@ def write_pdf(
     return path
 
 
+def write_markdown_pdf(
+    text: str,
+    path: Path,
+    *,
+    folder: Path,
+    title: str,
+    page_size: QPageSize | None = None,
+) -> Path:
+    """Write ``text``, any Markdown, as a PDF in the walkthrough's look.
+
+    For a document someone else laid out, such as an agent's write-up. Its
+    images are file names in ``folder``; one that is missing is left out.
+    Raw HTML is shown as text, never run. Safe to call from a worker thread.
+
+    Raises:
+        OSError: The file could not be written.
+    """
+    writer = QPdfWriter(str(path))
+    writer.setPageSize(page_size or _local_page_size())
+    writer.setPageMargins(_MARGINS_IN, QPageLayout.Unit.Inch)
+    writer.setTitle(title)
+    writer.setCreator("OpenWhisper")
+    dpi = _layout_dpi()
+    doc, frames = _MarkdownComposer(_text_area(writer, dpi), dpi, folder).compose(text)
+    _paint_pages(doc, frames, writer, dpi, path)
+    return path
+
+
 def _local_page_size() -> QPageSize:
     """Letter where the locale measures in US units, A4 everywhere else."""
     us_units = QLocale.MeasurementSystem.ImperialUSSystem
@@ -478,6 +506,20 @@ def _page_index(top: float, height: float) -> int:
     """The page something starting at ``top`` is on; pagination puts every
     line, and so every screenshot, wholly on one."""
     return int((top + _SLACK) // height)
+
+
+def _shown_size(image: QImage, page: QSizeF, unit: float) -> QSizeF:
+    """A pixel to 1/96 inch, scaled down to the text width and height limit.
+
+    ``unit`` is layout units per point.
+    """
+    natural = QSizeF(image.width(), image.height()) * (unit * 72 / 96)
+    scale = min(
+        1.0,
+        page.width() / natural.width(),
+        page.height() * _MAX_IMAGE_HEIGHT / natural.height(),
+    )
+    return natural * scale
 
 
 def _document_font() -> QFont:
@@ -588,7 +630,7 @@ class _Composer:
         name = f"shot-{number}"
         resource = QTextDocument.ResourceType.ImageResource
         self.doc.addResource(resource, QUrl(name), image)
-        size = self._shown_size(image)
+        size = _shown_size(image, self.page, self.unit)
         image_format = QTextImageFormat()
         image_format.setName(name)
         image_format.setWidth(size.width())
@@ -596,16 +638,6 @@ class _Composer:
         self._new_block(style, self._char_format(style))
         self.cursor.insertImage(image_format)
         return self.cursor.blockNumber()
-
-    def _shown_size(self, image: QImage) -> QSizeF:
-        """A pixel to 1/96 inch, scaled down to the text width and height limit."""
-        natural = QSizeF(image.width(), image.height()) * (self.unit * 72 / 96)
-        scale = min(
-            1.0,
-            self.page.width() / natural.width(),
-            self.page.height() * _MAX_IMAGE_HEIGHT / natural.height(),
-        )
-        return natural * scale
 
     def _char_format(self, style: _Style) -> QTextCharFormat:
         char_format = QTextCharFormat()
@@ -794,3 +826,122 @@ class _Pages:
             QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor
         )
         return cursor
+
+
+#: Space above a heading, by level, in points; the first block has none.
+_HEADING_SPACE = {1: 0.0, 2: 18.0, 3: 14.0}
+#: Space between a heading and what it heads, in points.
+_HEADING_GAP = 5.0
+_BODY_LINE_HEIGHT = 140
+
+
+def _words(block: QTextBlock) -> str:
+    """The block's text without its images."""
+    return block.text().replace("\N{OBJECT REPLACEMENT CHARACTER}", "").strip()
+
+
+class _MarkdownComposer:
+    """Lays free-form Markdown out as a paginated QTextDocument.
+
+    Qt's own Markdown reader does the structure; this gives it the
+    walkthrough's font, line spacing and screenshot sizing and framing.
+    """
+
+    def __init__(self, page: QSizeF, dpi: int, folder: Path) -> None:
+        self.page = page
+        self.unit = dpi / 72  # layout units per point
+        self.folder = folder
+        self.doc = QTextDocument()
+        self.doc.setDocumentMargin(0)
+        self.doc.setUseDesignMetrics(True)
+        self.doc.setDefaultFont(_document_font())
+        self.doc.setPageSize(page)
+
+    def compose(self, text: str) -> tuple[QTextDocument, list[QRectF]]:
+        """Lay out ``text``; returns the document and where its screenshots ended up."""
+        features = QTextDocument.MarkdownFeature
+        self.doc.setMarkdown(
+            text, features(features.MarkdownDialectGitHub.value | features.MarkdownNoHTML.value)
+        )
+        groups = []
+        block = self.doc.begin()
+        while block.isValid():
+            if self._style_block(block):
+                number = block.blockNumber()
+                groups.append(_Group(self._lead_in(number), number, number))
+            block = block.next()
+        pages = _Pages(self.doc)
+        pages.paginate(groups)
+        return self.doc, pages.frames(groups)
+
+    def _style_block(self, block: QTextBlock) -> bool:
+        """Space and size one block; True when it is a screenshot on its own."""
+        block_format = block.blockFormat()
+        level = block_format.headingLevel()
+        images = self._size_images(block)
+        alone = images == 1 and not _words(block)
+        if level:
+            space = 0.0 if block.blockNumber() == 0 else _HEADING_SPACE.get(level, 12.0)
+            block_format.setTopMargin(space * self.unit)
+            block_format.setBottomMargin(_HEADING_GAP * self.unit)
+        elif alone:
+            # Not the body's line height: on a line as tall as a screenshot
+            # it would open a gap under it.
+            block_format.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            block_format.setTopMargin(_IMAGE_STYLE.space_before * self.unit * 2)
+        else:
+            block_format.setLineHeight(
+                _BODY_LINE_HEIGHT, QTextBlockFormat.LineHeightTypes.ProportionalHeight.value
+            )
+        QTextCursor(block).setBlockFormat(block_format)
+        return alone
+
+    def _lead_in(self, image: int) -> int:
+        """Where the words leading into the screenshot in block ``image`` start.
+
+        The paragraph right before it, and the heading over that paragraph,
+        stay on the screenshot's page; the screenshot itself when neither
+        is there. With only headings above them, they keep the title
+        company, so it never sits alone on the first page.
+        """
+        first = image
+        for number in (image - 1, image - 2):
+            block = self.doc.findBlockByNumber(number)
+            if not block.isValid() or not _words(block):
+                break
+            first = number
+            if block.blockFormat().headingLevel():
+                break
+        above = (self.doc.findBlockByNumber(number) for number in range(first))
+        if all(block.blockFormat().headingLevel() for block in above):
+            return 0
+        return first
+
+    def _size_images(self, block: QTextBlock) -> int:
+        """Load and size the block's images; returns how many it shows."""
+        shown = 0
+        resource = QTextDocument.ResourceType.ImageResource
+        iterator = block.begin()
+        while not iterator.atEnd():
+            fragment = iterator.fragment()
+            iterator += 1
+            char_format = fragment.charFormat()
+            if not char_format.isImageFormat():
+                continue
+            image_format = char_format.toImageFormat()
+            name = image_format.name()
+            image = QImage(str(self.folder / name))
+            cursor = QTextCursor(self.doc)
+            cursor.setPosition(fragment.position())
+            cursor.setPosition(fragment.position() + fragment.length(), QTextCursor.MoveMode.KeepAnchor)
+            if image.isNull():
+                logger.warning("Could not read %s for the walkthrough write-up", name)
+                cursor.removeSelectedText()
+                continue
+            self.doc.addResource(resource, QUrl(name), image)
+            size = _shown_size(image, self.page, self.unit)
+            image_format.setWidth(size.width())
+            image_format.setHeight(size.height())
+            cursor.setCharFormat(image_format)
+            shown += 1
+        return shown

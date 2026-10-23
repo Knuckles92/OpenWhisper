@@ -166,3 +166,29 @@ def test_bound_combo_and_spin_save_their_keys_immediately(isolated_dialog):
     saved = manager.load_all_settings()
     assert saved[SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY] == "normal"
     assert saved[SettingsKey.MEETING_SERVER_PORT] == 9000
+
+
+def test_plain_text_saves_on_focus_out_and_keeps_the_default_unsaved(app):
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QFocusEvent
+    from PyQt6.QtWidgets import QPlainTextEdit
+
+    persist = _Recorder()
+    binder = SettingsBinder(persist)
+    edit = QPlainTextEdit()
+    edit.setPlaceholderText("The default.")
+    binder.plain_text(edit, "notes", lambda settings: settings.get("notes", ""))
+
+    def leave():
+        QApplication.sendEvent(edit, QFocusEvent(QEvent.Type.FocusOut))
+
+    edit.setPlainText("  Mine  ")
+    assert persist.saved == []  # not while typing
+    leave()
+    edit.setPlainText("The default.")
+    leave()
+    assert persist.saved == [("notes", "Mine"), ("notes", "")]
+
+    persist.loading = True
+    binder.load({"notes": "Saved"})
+    assert edit.toPlainText() == "Saved"

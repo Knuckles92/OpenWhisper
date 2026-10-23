@@ -52,6 +52,16 @@ class WalkthroughResult:
     duration_s: float
     #: The first screenshot, for the card that says it's ready.
     first_shot: Optional[Path]
+    #: Whether ``pdf`` and ``markdown`` are Claude Code's write-up rather
+    #: than the words as spoken.
+    written_up: bool = False
+    #: Why a write-up that was asked for isn't there, or "".
+    write_up_error: str = ""
+
+    @property
+    def name(self) -> str:
+        """What the status and the card call the document."""
+        return "Write-up" if self.written_up else "Walkthrough"
 
 
 def _default_folder(started_at: datetime) -> Path:

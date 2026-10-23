@@ -7,6 +7,12 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+- **Have Claude Code write your walkthroughs up** — turn on **AI write-up** in **Settings → Dictation → Walkthroughs** and, when a walkthrough finishes, your installed Claude Code reads its PDF and lays out a cleaner document with a title, tidy wording, and each screenshot where it helps most. That write-up is what gets copied, in the same PDF style. The instructions are a loose default you can replace with your own. Claude Code can read only that walkthrough's folder and runs on your own plan. The as-spoken PDF is always kept, and if the write-up fails the walkthrough is copied as spoken with the reason in the status.
+
+### Changed
+- **Walkthroughs have their own Settings page** — **Settings → Dictation → Walkthroughs** now holds the Walkthrough and Screenshot shortcuts, how the document looks, and the AI write-up, which were spread across General and Hotkeys. Hotkeys links to it.
+
 ## [2.7.7] - 2026-10-22
 
 ### Added

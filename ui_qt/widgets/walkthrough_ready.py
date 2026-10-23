@@ -211,10 +211,11 @@ class WalkthroughReadyCard(QWidget):
         self._result = result
         count = f"{result.shots} screenshot{'' if result.shots == 1 else 's'}"
         if copied:
-            self.title.setText("Walkthrough copied")
-            self.subtitle.setText(f"{count} · {clock(result.duration_s)} — paste it into your agent")
+            self.title.setText(f"{result.name} copied")
+            note = "write-up failed, copied as spoken" if result.write_up_error else "paste it into your agent"
+            self.subtitle.setText(f"{count} · {clock(result.duration_s)} — {note}")
         else:
-            self.title.setText("Walkthrough saved")
+            self.title.setText(f"{result.name} saved")
             self.subtitle.setText(f"{count} · copying failed — drag it from here")
         thumb = _thumbnail(result.first_shot)
         self.thumb.setVisible(thumb is not None)

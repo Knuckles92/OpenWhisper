@@ -49,6 +49,7 @@ from ui_qt.dialogs.settings_dialog import (
     SNIPPETS,
     STYLES,
     VOICE_MODEL,
+    WALKTHROUGHS,
     SettingsDialog,
 )
 from ui_qt.utils.font_scale import apply_ui_font_scale
@@ -79,6 +80,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     VOICE_MODEL,
                     CLEANUP,
                     REMOTE_ENGINE,
+                    WALKTHROUGHS,
                     DICTIONARY,
                     SNIPPETS,
                     STYLES,
@@ -122,18 +124,26 @@ class TestSettingsGeneralLayout(unittest.TestCase):
 
             general = dialog._pages[GENERAL]
             tiles = general.findChildren(SettingTile)
-            self.assertEqual(len(tiles), 10)
-            self.assertEqual(
-                set(general.findChildren(FieldTile)),
-                {dialog.walkthrough_title_tile, dialog.walkthrough_page_size_tile},
-            )
+            self.assertEqual(len(tiles), 7)
+            self.assertEqual(general.findChildren(FieldTile), [])
             self.assertIs(dialog.auto_paste_check, dialog.auto_paste_tile.checkbox)
             self.assertIs(
                 dialog.update_notify_check, dialog.update_notify_tile.checkbox
             )
             self.assertEqual(
-                group_titles(general), ["Output", "Walkthroughs", "Window", "Updates"]
+                group_titles(general), ["Output", "Window", "Updates"]
             )
+            # Everything about walkthroughs is on its own page under Dictation.
+            walkthroughs = dialog._pages[WALKTHROUGHS]
+            self.assertEqual(group_titles(walkthroughs), ["Document", "AI write-up"])
+            self.assertEqual(
+                set(walkthroughs.findChildren(FieldTile)),
+                {dialog.walkthrough_title_tile, dialog.walkthrough_page_size_tile,
+                 dialog.walkthrough_write_up_instructions_tile},
+            )
+            for key in ("walkthrough", "screenshot"):
+                self.assertTrue(walkthroughs.isAncestorOf(dialog.hotkey_inputs[key]))
+                self.assertFalse(dialog._pages[HOTKEYS].isAncestorOf(dialog.hotkey_inputs[key]))
             # Every visual setting lives on Appearance.
             appearance = dialog._pages[APPEARANCE]
             self.assertEqual(
@@ -286,7 +296,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 for card in hotkeys.findChildren(QFrame)
                 if card.objectName() == "hotkeyShortcutCard"
             ]
-            self.assertEqual(len(shortcut_cards), 12)
+            self.assertEqual(len(shortcut_cards), 10)
             self.assertEqual(
                 set(dialog.hotkey_inputs),
                 {

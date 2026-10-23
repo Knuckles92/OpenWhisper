@@ -1493,11 +1493,39 @@ class TranscriptionRuntime:
         cleaned, raws, info = self._clean_sections(texts)
         self._raise_if_canceled()
         self.controller.status_update.emit("Writing the walkthrough...")
-        session.result = finish.build_documents(
+        result = finish.build_documents(
             session, shots, cleaned, raws,
             duration_s=self.controller._pending_audio_duration or 0.0,
         )
+        session.result = self._maybe_write_up(result, shots)
         return session.result.history_text, session.result.history_raw, info
+
+    def _maybe_write_up(self, result, shots):
+        """``result`` written up by Claude Code when Settings asks for it; worker.
+
+        A failure keeps the words as spoken and says why. A Cancel stops the
+        job, as it does at every other step.
+        """
+        from services.settings import (
+            resolve_walkthrough_write_up,
+            resolve_walkthrough_write_up_instructions,
+        )
+        from services.walkthrough import write_up
+
+        settings = settings_manager.load_all_settings()
+        if not resolve_walkthrough_write_up(settings):
+            return result
+        self.controller.status_update.emit(f"Writing it up with {write_up.AGENT_NAME}...")
+        try:
+            return write_up.write_up(
+                result, [shot.path for shot in shots],
+                instructions=resolve_walkthrough_write_up_instructions(settings),
+                cancel_event=self._cancel_requested,
+            )
+        except write_up.WriteUpFailed as exc:
+            self._raise_if_canceled()
+            logger.warning("Walkthrough write-up failed: %s", exc)
+            return dataclasses.replace(result, write_up_error=str(exc))
 
     def _report_section(self, index: int, total: int) -> None:
         """Stop a canceled walkthrough between sections, or say which one is next."""
@@ -2079,9 +2107,11 @@ class TranscriptionRuntime:
         copied = ui.copy_files_to_clipboard([result.pdf], text=result.clipboard_text)
         count = f"{result.shots} screenshot{'' if result.shots == 1 else 's'}"
         if copied:
-            status = f"Walkthrough copied ({count}) — paste it into your agent"
+            status = f"{result.name} copied ({count}) — paste it into your agent"
         else:
-            status = f"Walkthrough saved ({count}); copying it failed — drag it from the card"
+            status = f"{result.name} saved ({count}); copying it failed — drag it from the card"
+        if result.write_up_error:
+            status += f". Write-up failed, so it's as spoken: {result.write_up_error}"
         ui.set_status(status)
         ui.show_walkthrough_ready(result, copied=copied)
 
