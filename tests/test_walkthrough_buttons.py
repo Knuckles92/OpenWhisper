@@ -93,6 +93,48 @@ def test_the_button_shows_the_walkthrough_shortcut(tab):
     tab.walkthrough_button.set_hotkey.assert_called_once_with("Ctrl+Alt+W")
 
 
+def test_the_button_leaves_its_explanation_to_the_badge(tab):
+    # Its own hover shows the shortcut pill, as the buttons above it do.
+    assert tab.walkthrough_button.toolTip() == ""
+    assert "screenshots" in tab.walkthrough_badge.toolTip()
+    assert tab.walkthrough_badge.parent() is tab.walkthrough_button
+
+
+def test_the_badge_sits_in_the_buttons_top_right_corner(tab):
+    # A hidden widget gets its resize event only once shown.
+    tab.show()
+    tab.walkthrough_button.resize(300, 48)
+
+    badge = tab.walkthrough_badge.geometry()
+    assert badge.right() < 300 and badge.right() > 300 - 12
+    assert 0 < badge.top() < 12
+
+
+def test_clicking_the_badge_never_starts_a_walkthrough(tab):
+    tab.show()
+    spy = QSignalSpy(tab.walkthrough_requested)
+
+    QTest.mouseClick(tab.walkthrough_badge, Qt.MouseButton.LeftButton)
+
+    assert len(spy) == 0
+
+
+def test_the_badge_says_new_until_the_first_walkthrough(tab):
+    from services.settings import SettingsKey, settings_manager
+
+    assert tab.walkthrough_badge.text() == "New"
+
+    tab.set_walkthrough_active(True)
+
+    assert tab.walkthrough_badge.text() == "?"
+    assert settings_manager.load_all_settings()[SettingsKey.WALKTHROUGH_INTRO_SEEN] is True
+    again = QuickRecordTab()
+    try:
+        assert again.walkthrough_badge.text() == "?"
+    finally:
+        again.close()
+
+
 # --- Snap and Done on the overlay -------------------------------------------
 
 

@@ -13,7 +13,13 @@ from ui_qt.widgets.engine_field import engine_combo
 from services import text_rewrite
 from services.cleanup_profiles import load_cleanup_profiles
 from services.hotkey_manager import format_hotkey_display
-from services.settings import SettingsKey, setting_value, settings_manager
+from services.settings import (
+    SettingsKey,
+    resolve_walkthrough_intro_seen,
+    setting_value,
+    settings_manager,
+)
+from ui_qt.widgets.feature_badge import FeatureBadge
 
 logger = logging.getLogger(__name__)
 
@@ -252,9 +258,15 @@ class QuickRecordTab(TranscriptionTabBase):
         self.stop_button.set_active(False)
         self.walkthrough_button = PrimaryButton("Start Walkthrough")
         self.walkthrough_button.setProperty("buttonId", "walkthrough")
-        self.walkthrough_button.setToolTip(
+        # Hovering the button shows its shortcut, like the buttons above it;
+        # the badge in its corner says what it does.
+        self.walkthrough_badge = FeatureBadge(
+            self.walkthrough_button,
             "Talk while you take screenshots, then get one document with your "
-            "words and pictures, copied to paste into an agent"
+            "words and pictures in order, copied to paste into an agent or chat.",
+        )
+        self.walkthrough_badge.set_new(
+            not resolve_walkthrough_intro_seen(settings_manager.load_all_settings())
         )
 
         buttons_widget = QWidget()
@@ -332,6 +344,9 @@ class QuickRecordTab(TranscriptionTabBase):
     def set_walkthrough_active(self, active: bool) -> None:
         """Whether the recording in progress is a walkthrough, which the button finishes."""
         self.walkthrough_active = bool(active)
+        if self.walkthrough_active and self.walkthrough_badge.text() == FeatureBadge.NEW:
+            settings_manager.save_setting(SettingsKey.WALKTHROUGH_INTRO_SEEN, True)
+            self.walkthrough_badge.set_new(False)
         self._refresh_walkthrough_button()
 
     def _refresh_walkthrough_button(self) -> None:
