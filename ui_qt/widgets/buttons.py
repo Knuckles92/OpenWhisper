@@ -208,6 +208,8 @@ class Button(QPushButton):
         self._active = True
         self._base_min_height = 44
         self._base_min_width = 140
+        # Extra width kept clear around the label, for a chip on the button.
+        self._label_reserve = 0
         self._hotkey_hint_filter = HotkeyHintFilter(self)
 
     def setText(self, text: str):
@@ -227,6 +229,11 @@ class Button(QPushButton):
         """
         self._base_min_width = width
         self._base_min_height = height
+        self._refresh_size()
+
+    def reserve_beside_label(self, width: int) -> None:
+        """Keep ``width`` pixels more than the label needs, whatever it says."""
+        self._label_reserve = width
         self._refresh_size()
 
     def set_active(self, active: bool):
@@ -262,6 +269,8 @@ class Button(QPushButton):
         # sizeHint includes stylesheet padding/borders; fontMetrics alone can
         # still undershoot by a pixel or two on macOS.
         fitted = max(text_width + horizontal_padding, self.sizeHint().width())
+        if self._label_reserve:
+            fitted = max(fitted, text_width + self._label_reserve)
         self.setMinimumWidth(max(self._base_min_width, fitted))
         self.setMinimumHeight(self._base_min_height)
 

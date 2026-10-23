@@ -67,6 +67,12 @@ class FeatureBadge(QWidget):
     def is_compact(self) -> bool:
         return self._compact
 
+    @classmethod
+    def room_beside_label(cls) -> int:
+        """Width a button needs beyond its centred label for the chip, at its
+        most compact, to clear that label (the same margin on both sides)."""
+        return 2 * (cls._RIGHT_INSET + cls._CLEARANCE + cls._HEIGHT)
+
     def sizeHint(self) -> QSize:
         return self._size(self._compact)
 

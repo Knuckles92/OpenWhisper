@@ -66,11 +66,11 @@ def test_a_stopped_walkthrough_takes_no_more_screenshots(tmp_path):
 
 def test_a_screenshot_that_could_not_be_written_is_left_out(tmp_path, monkeypatch):
     real_write = session_module._write_png
-    calls = []
+    first = tmp_path / "capture" / "shot-1.png"
 
+    # By path, not by call: an earlier test's writer may still be finishing.
     def flaky(image, path):
-        calls.append(path.name)
-        return False if len(calls) == 1 else real_write(image, path)
+        return False if path == first else real_write(image, path)
 
     monkeypatch.setattr(session_module, "_write_png", flaky)
     session = _session(tmp_path)
