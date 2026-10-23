@@ -42,6 +42,7 @@ class _FakeUIController:
         self.cleaned_up = False
         self.apply_error_checked = False
         self.guided_setup_offered = False
+        self.ambient_status = None
         self.agent_data_changed = SimpleNamespace(emit=lambda *_args: None)
 
     def show_main_window(self):
@@ -49,6 +50,9 @@ class _FakeUIController:
 
     def offer_guided_setup(self):
         self.guided_setup_offered = True
+
+    def set_ambient_status(self, status):
+        self.ambient_status = status
 
     def set_device_info(self, device_info, ready=None):
         self.device_info = device_info
@@ -154,6 +158,7 @@ class TestBootstrap:
         assert loading_screen.destroyed
         assert ui_controller.guided_setup_offered
         assert ui_controller.show_main_window_called
+        assert ui_controller.ambient_status is None
         # Device info is filled in after the background Whisper load, not
         # before the window appears.
         assert ui_controller.device_info is None
@@ -197,6 +202,41 @@ class TestBootstrap:
         assert loading_screen.destroyed
         assert len(_FakeApplicationController.instances) == 1
         assert _FakeApplicationController.instances[0].cleaned_up
+
+    @patch("services.settings.is_hf_hub_offline_env_set", return_value=False)
+    @patch.object(bootstrap, "create_deferred_local_whisper_backend", return_value=None)
+    @patch.object(bootstrap, "run_with_ui_pulse", side_effect=lambda fn: fn())
+    @patch.object(bootstrap, "process_qt_events")
+    @patch.object(bootstrap, "setup_logging")
+    def test_main_tells_the_user_when_the_keyring_does_not_answer(
+        self,
+        _mock_setup_logging,
+        _mock_process_events,
+        _mock_pulse,
+        _mock_load_backend,
+        _mock_hf_env,
+    ):
+        from services.credentials import UNRESPONSIVE_KEYRING_STATUS
+
+        qt_app = _FakeQtApplication()
+        ui_controller = _FakeUIController()
+        loading_screen = _FakeLoadingScreen()
+
+        with patch(
+            "services.credentials.keyring_did_not_respond", return_value=True
+        ), patch.object(
+            bootstrap,
+            "get_early_runtime_components",
+            return_value=(lambda: qt_app, lambda: loading_screen),
+        ), patch.object(
+            bootstrap,
+            "get_late_runtime_components",
+            return_value=(lambda: ui_controller, _FakeApplicationController),
+        ):
+            assert bootstrap.main() == 123
+
+        assert ui_controller.show_main_window_called
+        assert ui_controller.ambient_status == UNRESPONSIVE_KEYRING_STATUS
 
 
 class TestCudaPreloadSummary:

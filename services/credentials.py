@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 SERVICE_NAME = "OpenWhisper"
 MAX_API_KEY_LEN = 512
 _MIN_MASK_SUFFIX_LEN = 12
+#: Seconds a Secret Service D-Bus call may block. A locked keyring whose
+#: unlock prompt never appears would otherwise hold the splash forever.
+SECRET_SERVICE_TIMEOUT_S = 4.0
+KEYRING_NO_RESPONSE = "the system keyring did not respond"
 
 
 class CredentialSource:
@@ -49,6 +53,10 @@ class CredentialStoreStatus:
 
 class CredentialStoreError(RuntimeError):
     """The OS store refused an operation. The message never contains a secret."""
+
+
+class CredentialStoreTimeout(CredentialStoreError):
+    """The OS store accepted a call but never answered."""
 
 
 class CredentialBackend(Protocol):
@@ -106,8 +114,41 @@ def platform_backend() -> tuple[CredentialBackend, str]:
         from keyring.backends.macOS import Keyring as Backend
     else:
         Backend = _secret_service_backend_class()
+
+        def probe() -> tuple[CredentialBackend, str]:
+            Backend.priority  # noqa: B018 - raises RuntimeError when unusable
+            return Backend(), name
+
+        return _run_with_timeout(probe, SECRET_SERVICE_TIMEOUT_S)
     Backend.priority  # noqa: B018 - raises RuntimeError when unusable
     return Backend(), name
+
+
+def _run_with_timeout(fn: Callable[[], object], timeout_s: float):
+    """Run ``fn``; raise ``CredentialStoreTimeout`` if it does not finish.
+
+    The worker is a daemon, so a Secret Service call that never returns does
+    not keep the process alive. The next lookup does not wait for it.
+    """
+    box: dict[str, object] = {}
+    done = threading.Event()
+
+    def worker() -> None:
+        try:
+            box["result"] = fn()
+        except Exception as exc:
+            box["error"] = exc
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=worker, name="secret-service", daemon=True)
+    thread.start()
+    if not done.wait(timeout_s):
+        raise CredentialStoreTimeout(KEYRING_NO_RESPONSE)
+    error = box.get("error")
+    if error is not None:
+        raise error
+    return box.get("result")
 
 
 @functools.cache
@@ -120,7 +161,9 @@ def _secret_service_backend_class() -> type:
     per read. Lookups and deletes here search every collection through the
     service instead. Only a matching item that is locked asks to be unlocked,
     because then a key really was saved. Saving still goes through keyring,
-    where creating the keyring is what the user asked for.
+    where creating the keyring is what the user asked for. Every D-Bus call
+    has a timeout: a service that accepts SearchItems and never replies
+    must not hold the splash or the rest of the UI.
     """
     from keyring.backends.SecretService import Keyring
     from keyring.errors import PasswordDeleteError
@@ -135,7 +178,7 @@ def _secret_service_backend_class() -> type:
             # Unlocked copies first, so a locked duplicate never prompts.
             return sorted(items, key=lambda item: item.is_locked())
 
-        def get_password(self, service, username):
+        def _read_password(self, service, username):
             import secretstorage
 
             with closing(secretstorage.dbus_init()) as connection:
@@ -145,7 +188,20 @@ def _secret_service_backend_class() -> type:
                     return item.get_secret().decode("utf-8")
             return None
 
-        def delete_password(self, service, username):
+        def get_password(self, service, username):
+            return _run_with_timeout(
+                lambda: self._read_password(service, username),
+                SECRET_SERVICE_TIMEOUT_S,
+            )
+
+        def set_password(self, service, username, password):
+            parent_set = super().set_password
+            return _run_with_timeout(
+                lambda: parent_set(service, username, password),
+                SECRET_SERVICE_TIMEOUT_S,
+            )
+
+        def _remove_password(self, service, username):
             import secretstorage
 
             with closing(secretstorage.dbus_init()) as connection:
@@ -155,6 +211,12 @@ def _secret_service_backend_class() -> type:
                     item.delete()
                     return
             raise PasswordDeleteError("No such password!")
+
+        def delete_password(self, service, username):
+            return _run_with_timeout(
+                lambda: self._remove_password(service, username),
+                SECRET_SERVICE_TIMEOUT_S,
+            )
 
     return LookupOnlySecretService
 
@@ -211,6 +273,10 @@ class CredentialStore:
             )
         return self._backend
 
+    def _mark_unresponsive(self) -> None:
+        name = self._status.backend_name if self._status is not None else platform_backend_name()
+        self._status = CredentialStoreStatus(False, name, KEYRING_NO_RESPONSE)
+
     def get(self, name: str) -> str | None:
         name = validate_credential_name(name)
         with self._lock:
@@ -221,10 +287,17 @@ class CredentialStore:
             try:
                 value = self._backend.get_password(SERVICE_NAME, name)  # type: ignore[union-attr]
             except Exception as exc:
-                logger.warning(
-                    "Reading %s from the credential store failed: %s",
-                    name, type(exc).__name__,
-                )
+                if isinstance(exc, CredentialStoreTimeout):
+                    logger.warning(
+                        "Reading %s from the credential store timed out: %s",
+                        name, KEYRING_NO_RESPONSE,
+                    )
+                    self._mark_unresponsive()
+                else:
+                    logger.warning(
+                        "Reading %s from the credential store failed: %s",
+                        name, type(exc).__name__,
+                    )
                 # Remembered like a missing key: retrying on every read put
                 # a fresh unlock prompt up at each launch step and recording.
                 # Saving or removing the key in Settings clears it.
@@ -244,6 +317,8 @@ class CredentialStore:
             try:
                 backend.set_password(SERVICE_NAME, name, value)
             except Exception as exc:
+                if isinstance(exc, CredentialStoreTimeout):
+                    self._mark_unresponsive()
                 logger.error(
                     "Saving %s to the credential store failed: %s",
                     name, type(exc).__name__,
@@ -268,6 +343,8 @@ class CredentialStore:
                 self._cache[name] = None
                 return False
             except Exception as exc:
+                if isinstance(exc, CredentialStoreTimeout):
+                    self._mark_unresponsive()
                 logger.error(
                     "Removing %s from the credential store failed: %s",
                     name, type(exc).__name__,
@@ -286,6 +363,17 @@ _store = CredentialStore()
 
 def store() -> CredentialStore:
     return _store
+
+
+UNRESPONSIVE_KEYRING_STATUS = (
+    "The system keyring did not respond. Saved API keys are unavailable."
+)
+
+
+def keyring_did_not_respond(status: CredentialStoreStatus | None = None) -> bool:
+    """True when Secret Service accepted a call and never answered."""
+    current = status if status is not None else _store.status()
+    return current.reason == KEYRING_NO_RESPONSE
 
 
 def set_store(replacement: CredentialStore | None) -> CredentialStore:

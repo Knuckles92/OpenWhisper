@@ -19,6 +19,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **A dictation sent to a busy host waits instead of failing** — when a Host Mode computer was busy with other computers' work, a paired computer's dictation failed at once and was lost, even though the host asked it to try again in a second. It now waits for room for up to a minute and a half, and Cancel still stops it right away.
 - **Shortcuts no longer type into the app you're dictating into on Linux (X11)** — the default Num * dictation shortcut also typed a `*`, so every dictation started with `**`, and Num − left a `-`. OpenWhisper now takes its shortcuts' key presses for itself. A shortcut another program already owns still works as before, and shortcut fields in Settings still receive every key.
 - **An empty walkthrough no longer leaves the column stuck on "Writing it up…"** — finishing a walkthrough with no screenshots and no words now closes the column and writes no empty document.
+- **Linux no longer stays on the splash when the system keyring does not answer** — a Secret Service that accepts D-Bus calls but never replies (a locked GNOME Keyring or KWallet waiting for an unlock prompt that never appears) used to block "Creating interface…" forever, even with API transcription and MCP off. Lookups now give up after a few seconds, the window opens without saved keys, the status line and Settings → API keys explain that the keyring did not respond, and keys from the environment or `.env` still work.
 
 ## [2.7.7] - 2026-10-22
 
