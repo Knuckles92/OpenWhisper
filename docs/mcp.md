@@ -68,8 +68,8 @@ listener; substituting a LAN address alone will not make it reachable.
 
 The token is generated once and saved in the operating system credential store
 under service `OpenWhisper`, account `OPENWHISPER_MCP_TOKEN`. It is separate from
-the headless History API token and never enters the settings JSON. If the store
-is locked or unavailable, the page explains the failure and offers **Retry**.
+the headless History API token and never enters the settings JSON. If no store
+is found, or it is locked, the page says so and **Retry** checks again.
 Copying the token puts it on the system clipboard. Manual client configuration
 may store it in that client's config file; share it only with trusted agents.
 

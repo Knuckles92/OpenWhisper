@@ -283,6 +283,19 @@ class CredentialStore:
                 self._status = self._probe()
             return self._status
 
+    def refresh(self) -> CredentialStoreStatus:
+        """Try the OS store again after a previous probe found it unusable.
+
+        A failed probe is remembered so Settings pages do not re-prompt on
+        every redraw. Retry and save are the user asking us to look again:
+        they may have started or unlocked the store since launch.
+        """
+        with self._lock:
+            self._status = None
+            self._backend = None
+            self._cache.clear()
+            return self.status()
+
     def _probe(self) -> CredentialStoreStatus:
         try:
             backend, name = self._factory()
