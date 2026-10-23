@@ -41,6 +41,8 @@ _BADGE_MARGIN = 9
 _CONTROL_LABELS = {"snap": "Snap", "finish": "Done"}
 _CONTROL_GAP = 5
 _CONTROL_ICON = 12
+#: Its distance from the screen's corner while a walkthrough records or a snap is open.
+_PARK_MARGIN = 16
 #: How fast a finish runs in each stage; the step to Transcribing eases up.
 _WORK_RATES = {"processing": 1.0, "transcribing": 1.7}
 _WORK_EASE_S = 0.3
@@ -162,6 +164,10 @@ class WaveformOverlay(QWidget):
         self._streaming_font_size = resolve_streaming_overlay_font_size()
         # Cursor anchor used to keep the overlay on-screen as it grows.
         self._anchor_pos: Optional[QPoint] = None
+        # Where it was before a snap parked it in the corner (park/unpark).
+        self._unparked_at: Optional[QPoint] = None
+        # A walkthrough keeps it in its screen's top-left corner until dragged.
+        self._cornered = False
 
         self.large_file_size_mb = 0.0
 
@@ -464,7 +470,7 @@ class WaveformOverlay(QWidget):
             y = max(0, parent.height() - self.height() - 64)
             self.move(x, y)
             return
-        if self._dragged():
+        if self._placed():
             # Where the user put it stays put; growing only nudges it back on screen.
             screen = self.screen()
             if screen is not None:
@@ -473,6 +479,11 @@ class WaveformOverlay(QWidget):
                     screen.availableGeometry(),
                 ))
             return
+        if self._cornered:
+            available = self._available_geometry_for_anchor()
+            if available is not None:
+                self.move(available.left() + _PARK_MARGIN, available.top() + _PARK_MARGIN)
+                return
         if self._anchor_pos is None:
             return
         available = self._available_geometry_for_anchor()
@@ -491,7 +502,7 @@ class WaveformOverlay(QWidget):
         """Soft config max, further limited by free space near the anchor."""
         if self._embedded:
             return min(self._streaming_max_height, max(self._base_height, self.parentWidget().height() // 3))
-        if self._dragged() and self.screen() is not None:
+        if self._placed() and self.screen() is not None:
             # Grow down from where the user put it, as far as the screen allows.
             available = self.screen().availableGeometry()
             room = available.y() + available.height() - 8 - self.y()
@@ -828,8 +839,16 @@ class WaveformOverlay(QWidget):
     # ---- Snap and Done while a walkthrough records ----
 
     def set_walkthrough_controls(self, on: bool) -> None:
-        """Offer Snap and Done on the overlay while a walkthrough records."""
+        """Offer Snap and Done on the overlay while a walkthrough records.
+
+        A walkthrough also sends the overlay to the top-left corner, out of
+        what is being explained, until the user drags it elsewhere; it stays
+        there until it hides, through the walkthrough's finish.
+        """
         self._walkthrough_controls = bool(on)
+        if on and not self._cornered:
+            self._cornered = True
+            self._reposition_near_anchor()
         if not on:
             self._control_rects = {}
             if self._hover in _CONTROL_LABELS:
@@ -969,6 +988,32 @@ class WaveformOverlay(QWidget):
 
     def _dragged(self) -> bool:
         return self._drag is not None and self._drag.moved
+
+    def _placed(self) -> bool:
+        """Where the overlay sits was chosen (dragged or parked), not taken from the pointer."""
+        return self._dragged() or self._unparked_at is not None
+
+    def park(self, area: QRect) -> None:
+        """Sit in ``area``'s top-left corner above other windows until ``unpark``.
+
+        A snap covers the screen while a walkthrough records; parked in its
+        corner the recording stays in sight without sitting on what's drawn.
+        """
+        if self._embedded or self._preview or not self.isVisible():
+            return
+        if self._unparked_at is None:
+            self._unparked_at = self.pos()
+        self.move(area.left() + _PARK_MARGIN, area.top() + _PARK_MARGIN)
+        self.raise_()
+
+    def unpark(self) -> None:
+        """Go back to where the overlay was before ``park``."""
+        if self._unparked_at is None:
+            return
+        spot, self._unparked_at = self._unparked_at, None
+        self.move(spot)
+        # It may have grown while parked.
+        self._reposition_near_anchor()
 
     def hideEvent(self, event):
         self._set_hover("")
@@ -1384,6 +1429,8 @@ class WaveformOverlay(QWidget):
         self.cancel_progress = 0.0
         self._streaming_preview_text = ""
         self._anchor_pos = None
+        self._unparked_at = None
+        self._cornered = False
         if self._drag is not None:
             self._drag.reset()
         self._end_listening_extras()
