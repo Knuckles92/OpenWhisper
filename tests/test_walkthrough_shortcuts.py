@@ -69,6 +69,7 @@ class FakeUI:
         self.excluded = []
         self.active = []
         self.captions = []
+        self.column = []
         self.copied = []
         self.notices = []
         self.statuses = []
@@ -90,6 +91,9 @@ class FakeUI:
 
     def show_overlay_caption(self, text):
         self.captions.append(text)
+
+    def add_walkthrough_shot(self, number, image):
+        self.column.append((number, image))
 
     def copy_files_to_clipboard(self, paths, text="", *, image=None):
         self.copied.append((list(paths), text, image))
@@ -187,6 +191,7 @@ def test_a_screenshot_during_a_walkthrough_joins_it(h):
     assert shot.number == 1 and shot.kept_at_s == 12.5
     assert h.controller.recording_destination_changed.calls == [("Walkthrough · 1 shot",)]
     assert h.ui.captions == ["Screenshot 1 added"]
+    assert [number for number, _image in h.ui.column] == [1]
     assert h.ui.copied == []
     session.end()
 

@@ -318,6 +318,8 @@ class UIController(QObject):
         self.on_walkthrough: Optional[Callable[[str], None]] = None
         self.on_screenshot: Optional[Callable[[str], None]] = None
         self._walkthrough_ready = None
+        # The column that writes a walkthrough as it records; made on first use.
+        self._walkthrough_panel = None
         self.get_missing_local_runtime: Optional[Callable[[], Optional[str]]] = None
 
         self.on_component_install: Optional[Callable] = None
@@ -673,6 +675,8 @@ class UIController(QObject):
         else:
             self.main_window.clear_transcription()
         self.hide_overlay()
+        if self._walkthrough_panel is not None:
+            self._walkthrough_panel.dismiss()
 
     def _apply_status_to_main_window(self, status: str):
         if self.main_window.quick_record_tab.engine_loading:
@@ -685,6 +689,8 @@ class UIController(QObject):
 
     def _apply_audio_levels_to_overlay(self, levels: List[float]):
         self.overlay.update_audio_levels(levels)
+        if self._walkthrough_panel is not None and levels:
+            self._walkthrough_panel.hear(max(levels))
 
     def start_recording(self, profile_id: str = "", *, source: str = "ui"):
         """Request a recording start; UI flips only after the stream opens.
@@ -853,6 +859,8 @@ class UIController(QObject):
 
         if state is OverlayState.CANCELING:
             self.tray_manager.set_recording(False)
+            if self._walkthrough_panel is not None:
+                self._walkthrough_panel.dismiss()
             self._start_cancel_animation()
             return
 
@@ -1046,6 +1054,8 @@ class UIController(QObject):
         from ui_qt.snap import start_snap
 
         keep_out = (self.overlay,) if self.overlay.isWindow() else ()
+        if self._walkthrough_panel is not None and self._walkthrough_panel.isVisible():
+            keep_out += (self._walkthrough_panel,)
         return start_snap(keep_out=keep_out, hint=hint, parent=self)
 
     def keep_overlay_out_of_screenshots(self, enabled: bool) -> bool:
@@ -1065,6 +1075,31 @@ class UIController(QObject):
         self.tray_manager.set_walkthrough_active(active)
         self.main_window.quick_record_tab.set_walkthrough_active(active)
         self.overlay.set_walkthrough_controls(active)
+        self._show_walkthrough_panel(active)
+
+    def _show_walkthrough_panel(self, recording: bool) -> None:
+        """Open the column that writes the walkthrough, or let it finish writing."""
+        from ui_qt.snap import keep_out_of_screenshots
+        from ui_qt.widgets.walkthrough_panel import make_panel
+
+        panel = self._walkthrough_panel
+        if not recording:
+            if panel is not None:
+                panel.finish()
+            return
+        if panel is None:
+            panel = self._walkthrough_panel = make_panel()
+            if panel is None:
+                return
+        panel.begin()
+        # After show(): the exclusion is set on the native window. Where it
+        # can't be, a screenshot hides the column for a moment (start_snap).
+        keep_out_of_screenshots(panel, True)
+
+    def add_walkthrough_shot(self, number: int, image) -> None:
+        """Drop a kept screenshot into the walkthrough's column."""
+        if self._walkthrough_panel is not None:
+            self._walkthrough_panel.add_shot(number, image)
 
     def _on_window_walkthrough(self) -> None:
         if self.on_walkthrough is not None:
@@ -1088,6 +1123,8 @@ class UIController(QObject):
         from ui_qt.widgets.walkthrough_ready import show_ready
 
         self._walkthrough_ready = show_ready(self._walkthrough_ready, result, copied=copied)
+        if self._walkthrough_panel is not None:
+            self._walkthrough_panel.complete(result)
 
     def toggle_scratchpad(self) -> None:
         from ui_qt.widgets import scratchpad

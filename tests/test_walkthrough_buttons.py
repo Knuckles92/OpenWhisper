@@ -255,7 +255,7 @@ def test_snaps_keep_the_overlay_out_only_when_it_is_its_own_window(monkeypatch, 
 
     seen = {}
     monkeypatch.setattr(snap, "start_snap", lambda **kwargs: seen.update(kwargs) or "session")
-    ui = SimpleNamespace(overlay=Mock())
+    ui = SimpleNamespace(overlay=Mock(), _walkthrough_panel=None)
     ui.overlay.isWindow.return_value = window
 
     assert UIController.start_snap(ui, hint="talk") == "session"
@@ -269,6 +269,7 @@ def test_the_controller_shows_the_walkthrough_everywhere():
         tray_manager=Mock(),
         main_window=SimpleNamespace(quick_record_tab=Mock()),
         overlay=Mock(),
+        _show_walkthrough_panel=Mock(),
     )
 
     UIController.set_walkthrough_active(ui, True)
@@ -276,6 +277,22 @@ def test_the_controller_shows_the_walkthrough_everywhere():
     ui.tray_manager.set_walkthrough_active.assert_called_once_with(True)
     ui.main_window.quick_record_tab.set_walkthrough_active.assert_called_once_with(True)
     ui.overlay.set_walkthrough_controls.assert_called_once_with(True)
+    ui._show_walkthrough_panel.assert_called_once_with(True)
+
+
+def test_snaps_keep_the_walkthrough_column_out_while_it_shows(monkeypatch):
+    import ui_qt.snap as snap
+
+    seen = {}
+    monkeypatch.setattr(snap, "start_snap", lambda **kwargs: seen.update(kwargs) or "session")
+    panel = Mock()
+    panel.isVisible.return_value = True
+    ui = SimpleNamespace(overlay=Mock(), _walkthrough_panel=panel)
+    ui.overlay.isWindow.return_value = True
+
+    UIController.start_snap(ui, hint="")
+
+    assert seen["keep_out"] == (ui.overlay, panel)
 
 
 def test_buttons_reach_the_walkthrough_as_the_user():

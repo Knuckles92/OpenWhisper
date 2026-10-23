@@ -138,6 +138,7 @@ class WalkthroughRuntime:
             shot = session.add_shot(image, self.controller.recorder.get_recording_duration())
         if shot is not None:
             self.controller.recording_destination_changed.emit(shots_label(shot.number))
+            self._ui.add_walkthrough_shot(shot.number, image)
             self._ui.show_overlay_caption(f"Screenshot {shot.number} added")
         else:
             # A plain screenshot, or the walkthrough stopped while this one

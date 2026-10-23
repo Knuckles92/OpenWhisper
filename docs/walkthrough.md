@@ -34,6 +34,15 @@ corner (**New** until your first walkthrough, then **?**) says what it does.
   first.
 - **Cancel** throws the walkthrough away, screenshots included.
 
+While a walkthrough records, a column at the right edge of the screen
+writes it as you go: your voice shows as rows of ticks, like lines of
+writing, and each screenshot you keep drops in below what you said before
+it, so you can see what the document will hold. At **Done** the ticks close
+up into lines while the document is written, the header says its length and
+how many screenshots it has, and the column fades once the document is
+ready. It never takes clicks or focus and never appears in screenshots.
+Compositor-placed desktops (Wayland) don't show it.
+
 Drawing tools, with their keys: arrow (A), box (B), pen (P), highlighter
 (H), text (T) and numbered steps (N); colours 1–4; undo Ctrl+Z, redo
 Ctrl+Shift+Z or Ctrl+Y. Pressing **Screenshot** again while drawing keeps
