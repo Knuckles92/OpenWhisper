@@ -144,20 +144,29 @@ class WalkthroughSession:
         return saved
 
     def discard(self) -> None:
-        """Delete the screenshots and the folder they made; the user canceled."""
+        """Delete what the walkthrough wrote, and its folder if that empties it.
+
+        The user canceled. A Cancel during the write-up comes after the
+        as-spoken documents are written, so they go with the screenshots.
+        """
+        from services.walkthrough import document, write_up
+
         self.close()
         with self._lock:
             writer, self._writer = self._writer, None
             shots, folder = list(self._shots), self._folder
         if writer is not None:
             writer.shutdown(wait=True)
-        for shot in shots:
-            shot.path.unlink(missing_ok=True)
-        if folder is not None:
-            try:
-                folder.rmdir()
-            except OSError:
-                logger.debug("Walkthrough folder kept: it isn't empty", exc_info=True)
+        if folder is None:
+            return
+        names = (document.MARKDOWN_NAME, document.PDF_NAME, document.MANIFEST_NAME,
+                 write_up.MARKDOWN_NAME, write_up.PDF_NAME)
+        for path in [shot.path for shot in shots] + [folder / name for name in names]:
+            path.unlink(missing_ok=True)
+        try:
+            folder.rmdir()
+        except OSError:
+            logger.debug("Walkthrough folder kept: it isn't empty", exc_info=True)
 
     def end(self) -> None:
         """Let the writer thread go once the screenshots are written; files stay."""

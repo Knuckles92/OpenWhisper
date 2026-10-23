@@ -154,6 +154,7 @@ def test_the_write_up_becomes_the_document_and_the_as_spoken_one_stays(walkthrou
     (PassOutcome(ok=False, error="Claude Code: overloaded"), None, "Claude Code: overloaded"),
     (PassOutcome(ok=False, canceled=True, error="canceled"), None, "canceled"),
     (PassOutcome(ok=True, text="   "), None, "sent back no document"),
+    (PassOutcome(ok=True, text="```"), None, "sent back no document"),
     (None, AgentUnavailable("Claude Code is not installed"), "not installed"),
 ])
 def test_a_write_up_that_fails_says_why_and_writes_nothing(walkthrough, outcome, raises, message):
@@ -195,6 +196,54 @@ def test_any_markdown_lays_out_with_its_screenshots_framed(tmp_path):
     words = _text(pdf)
     for expected in ("Title", "First step", "Second step", "After."):
         assert expected in words
+
+
+def test_list_numbers_and_bullets_are_in_the_pdf(tmp_path):
+    text = "1. First step\n2. Second step\n\n- A point\n  - A smaller one"
+
+    pdf = write_markdown_pdf(text, tmp_path / "write-up.pdf", folder=tmp_path, title="t")
+
+    words = _text(pdf)
+    for expected in ("1. First step", "2. Second step", "\N{BULLET} A point", "\N{BULLET} A smaller one"):
+        assert expected in words
+
+
+def test_a_screenshot_in_a_list_keeps_to_its_column(tmp_path):
+    from PyQt6.QtCore import QSizeF
+
+    from services.walkthrough.document import _MarkdownComposer
+
+    _png(tmp_path / "shot-1.png", 1600, 900)
+    page = QSizeF(600, 800)
+    doc, _frames = _MarkdownComposer(page, 96, tmp_path).compose(
+        "1. A step\n\n   ![wide](shot-1.png)\n")
+
+    block = doc.findBlockByNumber(1)
+    left = block.blockFormat().indent() * doc.indentWidth()
+    image = block.begin().fragment().charFormat().toImageFormat()
+    assert left > 0 and image.width() <= page.width() - left
+
+
+def test_a_tables_cells_are_placed_below_the_title(tmp_path):
+    from PyQt6.QtCore import QSizeF
+    from PyQt6.QtGui import QTextCursor
+
+    from services.walkthrough.document import _MarkdownComposer, _origin
+
+    doc, _frames = _MarkdownComposer(QSizeF(600, 800), 96, tmp_path).compose(
+        "# Title\n\nWords.\n\n| Setting | Value |\n| --- | --- |\n| Agent | Codex |\n")
+
+    title = doc.begin()
+    title_bottom = _origin(doc, title).y() + title.layout().boundingRect().height()
+    cells = [block for block in _blocks(doc) if QTextCursor(block).currentTable() is not None]
+    assert cells and all(_origin(doc, cell).y() > title_bottom for cell in cells)
+
+
+def _blocks(doc):
+    block = doc.begin()
+    while block.isValid():
+        yield block
+        block = block.next()
 
 
 def test_a_missing_screenshot_is_left_out_and_html_is_only_text(tmp_path):

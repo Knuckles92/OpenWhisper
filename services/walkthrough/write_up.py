@@ -202,7 +202,9 @@ def document_text(reply: str, names: Sequence[str]) -> str:
         logger.info("Dropped an image the write-up named outside its screenshots")
         return ""
 
-    return _IMAGE.sub(keep, text).strip()
+    text = _IMAGE.sub(keep, text).strip()
+    # Only punctuation, such as a lone ``` fence, is no document at all.
+    return text if re.search(r"\w", text) else ""
 
 
 def _write(result: WalkthroughResult, text: str) -> WalkthroughResult:

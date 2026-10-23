@@ -96,6 +96,19 @@ def test_canceling_deletes_the_screenshots_but_nothing_else(tmp_path):
     assert keep.exists()
 
 
+def test_canceling_after_the_documents_are_written_deletes_them_too(tmp_path):
+    session = _session(tmp_path)
+    session.add_shot(_image(), 1.0)
+    session.saved_shots()
+    folder = tmp_path / "capture"
+    for name in ("walkthrough.md", "walkthrough.pdf", "walkthrough.json", "write-up.md"):
+        (folder / name).write_text("written", encoding="utf-8")
+
+    session.discard()
+
+    assert not folder.exists()
+
+
 def test_canceling_removes_the_folder_it_made(tmp_path):
     session = _session(tmp_path)
     session.add_shot(_image(), 1.0)

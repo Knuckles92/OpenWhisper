@@ -43,6 +43,10 @@ from PyQt6.QtGui import (
     QTextImageFormat,
     QTextLayout,
     QTextLine,
+    QTextList,
+    QTextListFormat,
+    QTextOption,
+    QTextTable,
 )
 
 logger = logging.getLogger(__name__)
@@ -329,6 +333,17 @@ _FRAME_COLOR = "#dcd5cb"
 _FRAME_WIDTH_PT = 0.6
 #: Layout units of give at page edges, where layout positions are rounded.
 _SLACK = 0.5
+#: In a write-up: a list marker's room in its item's indent, code shading
+#: and how far a quote's bar stands off its words; points.
+_LIST_HANG_PT = 16.0
+_BULLETS = {
+    QTextListFormat.Style.ListDisc: "\N{BULLET}",
+    QTextListFormat.Style.ListCircle: "\N{WHITE BULLET}",
+    QTextListFormat.Style.ListSquare: "\N{BLACK SMALL SQUARE}",
+}
+_CODE_FILL = "#f5f1eb"
+_CODE_PAD_PT = 4.0
+_QUOTE_GAP_PT = 9.0
 
 
 @dataclass(frozen=True)
@@ -482,6 +497,7 @@ def _paint_page(
     height = doc.pageSize().height()
     painter.save()
     painter.translate(0, -index * height)
+    _paint_marks(painter, doc, index, pen)
     for line, origin in _lines(doc):
         if _page_index(origin.y() + line.y(), height) == index:
             line.draw(painter, origin)
@@ -497,9 +513,93 @@ def _lines(doc: QTextDocument) -> Iterator[tuple[QTextLine, QPointF]]:
     block = doc.begin()
     while block.isValid():
         layout = block.layout()
+        origin = _origin(doc, block)
         for number in range(layout.lineCount()):
-            yield layout.lineAt(number), layout.position()
+            yield layout.lineAt(number), origin
         block = block.next()
+
+
+def _origin(doc: QTextDocument, block: QTextBlock) -> QPointF:
+    """Where ``block``'s lines are placed on the document.
+
+    A table cell's block is placed within its cell, so its layout's own
+    position is (0, 0) for every cell; the document layout knows the cell's.
+    """
+    if QTextCursor(block).currentTable() is None:
+        return block.layout().position()
+    return doc.documentLayout().blockBoundingRect(block).topLeft()
+
+
+def _line_extent(doc: QTextDocument, block: QTextBlock) -> QRectF:
+    """The rectangle ``block``'s lines take up on the document."""
+    layout = block.layout()
+    if not layout.lineCount():
+        return QRectF()
+    first, last = layout.lineAt(0), layout.lineAt(layout.lineCount() - 1)
+    left = min(layout.lineAt(n).x() for n in range(layout.lineCount()))
+    rect = QRectF(left, first.y(), doc.pageSize().width() - left, last.y() + last.height() - first.y())
+    return rect.translated(_origin(doc, block))
+
+
+def _paint_marks(painter: QPainter, doc: QTextDocument, index: int, pen: QPen) -> None:
+    """Paint what Qt would draw beside the lines on page ``index``.
+
+    Painting line by line (see _paint_page) leaves out horizontal rules,
+    quote bars, code shading and table rules, so they are drawn here, in
+    the screenshot frames' hairline. Only a write-up's Markdown has them.
+    """
+    height = doc.pageSize().height()
+    unit = pen.widthF() / _FRAME_WIDTH_PT
+    painter.save()
+    painter.setPen(pen)
+    block = doc.begin()
+    while block.isValid():
+        block_format = block.blockFormat()
+        rect = _line_extent(doc, block)
+        if rect.isNull() or _page_index(rect.top(), height) != index:
+            block = block.next()
+            continue
+        if block_format.hasProperty(QTextFormat.Property.BlockTrailingHorizontalRulerWidth):
+            middle = rect.center().y()
+            painter.drawLine(QPointF(0, middle), QPointF(doc.pageSize().width(), middle))
+        elif block_format.hasProperty(QTextFormat.Property.BlockCodeFence):
+            pad = _CODE_PAD_PT * unit
+            painter.fillRect(rect.adjusted(-pad, -pad / 2, 0, pad / 2), QColor(_CODE_FILL))
+        elif block_format.hasProperty(QTextFormat.Property.BlockQuoteLevel):
+            x = rect.left() - _QUOTE_GAP_PT * unit
+            painter.drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()))
+        block = block.next()
+    for frame in doc.rootFrame().childFrames():
+        if isinstance(frame, QTextTable):
+            _paint_table_rules(painter, doc, frame, index)
+    painter.restore()
+
+
+def _paint_table_rules(painter: QPainter, doc: QTextDocument, table: QTextTable, index: int) -> None:
+    """A rule above the table, under each row, and a firmer one under the header."""
+    height = doc.pageSize().height()
+    layout = doc.documentLayout()
+    box = layout.frameBoundingRect(table)
+    padding = table.format().cellPadding()
+    edges = []
+    for row in range(table.rows()):
+        cells = [table.cellAt(row, column) for column in range(table.columns())]
+        edges.append(min(layout.blockBoundingRect(cell.firstCursorPosition().block()).top()
+                         for cell in cells) - padding)
+    # Under the last row's tallest cell, not the frame's own margin below it.
+    edges.append(max(layout.blockBoundingRect(cell.lastCursorPosition().block()).bottom()
+                     for cell in cells) + padding)
+    for number, y in enumerate(edges):
+        if _page_index(y, height) != index:
+            continue
+        pen = painter.pen()
+        if number == 1:
+            pen = QPen(pen)
+            pen.setWidthF(pen.widthF() * 2)
+        painter.save()
+        painter.setPen(pen)
+        painter.drawLine(QPointF(box.left(), y), QPointF(box.right(), y))
+        painter.restore()
 
 
 def _page_index(top: float, height: float) -> int:
@@ -835,6 +935,12 @@ _HEADING_GAP = 5.0
 _BODY_LINE_HEIGHT = 140
 
 
+def _list_marker(text_list: QTextList, block: QTextBlock) -> str:
+    """The number ("2.", "b.") or bullet Qt would draw before ``block``."""
+    bullet = _BULLETS.get(text_list.format().style())
+    return bullet or text_list.itemText(block)
+
+
 def _words(block: QTextBlock) -> str:
     """The block's text without its images."""
     return block.text().replace("\N{OBJECT REPLACEMENT CHARACTER}", "").strip()
@@ -863,6 +969,7 @@ class _MarkdownComposer:
         self.doc.setMarkdown(
             text, features(features.MarkdownDialectGitHub.value | features.MarkdownNoHTML.value)
         )
+        self._write_list_markers()
         groups = []
         block = self.doc.begin()
         while block.isValid():
@@ -873,6 +980,38 @@ class _MarkdownComposer:
         pages = _Pages(self.doc)
         pages.paginate(groups)
         return self.doc, pages.frames(groups)
+
+    def _write_list_markers(self) -> None:
+        """Write each list item's number or bullet into its text.
+
+        The pages are painted line by line, which leaves out what Qt draws
+        beside a line, list markers included. As text they are painted, and
+        copied and searched with the words. The marker hangs in the item's
+        indent, so wrapped lines start under the words.
+        """
+        items = []
+        block = self.doc.begin()
+        while block.isValid():
+            text_list = block.textList()
+            if text_list is not None:
+                # Every number first: taking an item out of its list renumbers the rest.
+                items.append((block, text_list, _list_marker(text_list, block)))
+            block = block.next()
+        hang = _LIST_HANG_PT * self.unit
+        for block, text_list, marker in items:
+            text_list.remove(block)  # keeps the list's indent as the block's
+            block_format = block.blockFormat()
+            block_format.setTextIndent(-hang)
+            # From where the first line starts: the words line up with the wrapped lines.
+            block_format.setTabPositions([QTextOption.Tab(hang, QTextOption.TabType.LeftTab)])
+            cursor = QTextCursor(block)
+            cursor.setBlockFormat(block_format)
+            cursor.insertText(f"{marker}\t", block.charFormat())
+
+    def _left(self, block: QTextBlock) -> float:
+        """How far the block's text starts in from the page's left edge."""
+        block_format = block.blockFormat()
+        return block_format.leftMargin() + block_format.indent() * self.doc.indentWidth()
 
     def _style_block(self, block: QTextBlock) -> bool:
         """Space and size one block; True when it is a screenshot on its own."""
@@ -889,6 +1028,8 @@ class _MarkdownComposer:
             # it would open a gap under it.
             block_format.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             block_format.setTopMargin(_IMAGE_STYLE.space_before * self.unit * 2)
+            # The same below, or a list item after it touches its frame.
+            block_format.setBottomMargin(_IMAGE_STYLE.space_before * self.unit * 2)
         else:
             block_format.setLineHeight(
                 _BODY_LINE_HEIGHT, QTextBlockFormat.LineHeightTypes.ProportionalHeight.value
@@ -921,6 +1062,12 @@ class _MarkdownComposer:
         """Load and size the block's images; returns how many it shows."""
         shown = 0
         resource = QTextDocument.ResourceType.ImageResource
+        # An indented screenshot (in a list or quote) keeps to its column;
+        # one in a table to its share of the width.
+        room = QSizeF(self.page.width() - self._left(block), self.page.height())
+        table = QTextCursor(block).currentTable()
+        if table is not None:
+            room.setWidth(room.width() / table.columns())
         iterator = block.begin()
         while not iterator.atEnd():
             fragment = iterator.fragment()
@@ -939,7 +1086,7 @@ class _MarkdownComposer:
                 cursor.removeSelectedText()
                 continue
             self.doc.addResource(resource, QUrl(name), image)
-            size = _shown_size(image, self.page, self.unit)
+            size = _shown_size(image, room, self.unit)
             image_format.setWidth(size.width())
             image_format.setHeight(size.height())
             cursor.setCharFormat(image_format)

@@ -20,8 +20,8 @@ shortcut. Those two take clicks on Windows and X11, where clicking the
 overlay leaves the app you are explaining in front. Both shortcuts start
 unassigned: set them under **Settings → Dictation → Walkthroughs**. The tray
 menu has **Start Walkthrough** and **Take Screenshot** too. Hovering the
-button shows its shortcut, like the buttons above it; the badge in its
-corner (**New** until your first walkthrough, then **?**) says what it does.
+button shows its shortcut, like the buttons above it; the badge at its
+right end (**New** until your first walkthrough, then **?**) says what it does.
 
 - **Walkthrough** starts recording. Talk as you would to a colleague looking
   over your shoulder. The recording overlay says **Walkthrough**, then how
@@ -40,8 +40,9 @@ writing, and each screenshot you keep drops in below what you said before
 it, so you can see what the document will hold. At **Done** the ticks close
 up into lines while the document is written, the header says its length and
 how many screenshots it has, and the column fades once the document is
-ready. It never takes clicks or focus and never appears in screenshots.
-Compositor-placed desktops (Wayland) don't show it.
+ready. It never takes focus and never appears in screenshots. Drag it
+aside if it covers something; the next walkthrough opens it at the edge
+again. Compositor-placed desktops (Wayland) don't show it.
 
 Drawing tools, with their keys: arrow (A), box (B), pen (P), highlighter
 (H), text (T) and numbered steps (N); colours 1–4; undo Ctrl+Z, redo

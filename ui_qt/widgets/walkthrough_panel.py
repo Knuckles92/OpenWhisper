@@ -72,7 +72,9 @@ FADE_S = 0.32
 #: How long the finished column says what the walkthrough came to.
 HOLD_S = 2.6
 #: The document never came (it failed without saying so): stop waiting.
-GIVE_UP_S = 180.0
+#: Past the slowest real job: a long walkthrough transcribed on the CPU,
+#: then an AI write-up, which may take up to 5 minutes.
+GIVE_UP_S = 600.0
 
 
 @dataclass
