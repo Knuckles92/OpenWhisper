@@ -82,7 +82,7 @@ folder (next to `meetings`):
 | `walkthrough.md` | The same as Markdown, linking `shot-1.png` and so on. |
 | `walkthrough.json` | The sections, screenshot names and times, for tools (and a later AI write-up) to read. |
 | `shot-N.png` | Each annotated screenshot, full resolution. |
-| `write-up.pdf`, `write-up.md` | Claude Code's write-up, when it is turned on (see below). |
+| `write-up.pdf`, `write-up.md` | Your agent's write-up, when it is turned on (see below). |
 
 **Settings → Dictation → Walkthroughs** holds everything about walkthroughs:
 its two shortcuts, and under **Document** how the PDF and Markdown look:
@@ -117,32 +117,39 @@ terminals each take the form they want.
 
 ## AI write-up
 
-**AI write-up**, on the same page, can have Claude Code, if you have it
-installed and signed in, write each walkthrough up for you. It is off by
-default. Once the as-spoken documents are written, Claude Code reads
-`walkthrough.pdf` (and the screenshots beside it, if it wants a closer look)
-and replies with a document in Markdown. OpenWhisper lays that out in the
-same style as `write-up.pdf` and `write-up.md`, and those are what get
-copied. The card and the status say **Write-up copied**.
+**AI write-up**, on the same page, can have your own coding agent write each
+walkthrough up for you: Claude Code, Codex or OpenCode, whichever you choose
+under **Agent**, if you have it installed and signed in. It is off by
+default. Once the as-spoken documents are written, the agent replies with a
+document in Markdown. OpenWhisper lays that out in the same style as
+`write-up.pdf` and `write-up.md`, and those are what get copied. The card
+and the status say **Write-up copied**.
 
-- **The instructions are yours.** By default Claude Code is asked to organize
+- **The instructions are yours.** By default the agent is asked to organize
   your words and screenshots into a simple but good-looking walkthrough
   document with a short title, tidy the wording, and put each screenshot
   where it helps most. It chooses the layout: steps, sections or short
   paragraphs. **Instructions** in Settings replaces that; leave it empty for
   the default.
-- **It can read only that walkthrough's folder.** Claude Code runs with its
-  Read tool alone, fenced to the folder (`--restricted --add-dir`), without
-  your own MCP servers, hooks or settings files. Your words are passed as a
-  transcript, never as instructions to it.
-- **It uses your own Claude Code plan** and usually takes 10 to 60 seconds.
-  Dictation waits for it, as for any job.
-- **The as-spoken files always stay.** If the write-up fails (Claude Code
+- **Claude Code reads only that walkthrough's folder.** It reads
+  `walkthrough.pdf` (and the screenshots beside it, if it wants a closer
+  look) with its Read tool alone, fenced to the folder (`--restricted
+  --add-dir`), without your own MCP servers, hooks or settings files.
+- **Codex and OpenCode read no files at all.** Codex's Windows sandbox
+  can't keep reads inside one folder, so rather than fence them, both get
+  what Claude Code would read in the message itself: `walkthrough.md` as
+  text and the screenshots attached as images. They run with the same lockdown as for
+  meetings: no shell, no file tools and none of your own MCP servers. Their
+  model must take images; OpenCode's default model is the one in your own
+  OpenCode settings.
+- **Your words are passed as a transcript**, never as instructions to the
+  agent.
+- **It uses your own plan** and usually takes 10 to 60 seconds. Dictation
+  waits for it, as for any job.
+- **The as-spoken files always stay.** If the write-up fails (the agent
   missing or signed out, a timeout, or no usable reply), the walkthrough is
   copied as spoken and the status says why. **Cancel** during the write-up
   cancels the walkthrough, as it does at every other step.
-- Only Claude Code for now: Codex and OpenCode can't yet be held to one
-  folder while reading a PDF.
 
 ## Where it works
 
@@ -157,8 +164,8 @@ copied. The card and the status say **Write-up copied**.
 
 ## Not in this version
 
-- A write-up by Codex or OpenCode, or with a model of your choosing; Claude
-  Code uses its own default model.
+- A write-up with a model of your choosing; each agent uses its own default
+  model.
 - Backups don't include `captures` yet, and walkthrough folders aren't
   pruned; delete them from the folder when you no longer need them.
 - A paired host stores a walkthrough's History entry and audio like a

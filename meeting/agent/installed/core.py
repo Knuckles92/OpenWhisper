@@ -337,7 +337,8 @@ def run_reading_task(agent_id: str, *, model: str, system_prompt: str,
     """Run one task in which the agent reads the files in ``folder``, and only those.
 
     The closing reply is the task's result. Only Claude Code can be held
-    to one folder, so only it runs these.
+    to one folder, so only it runs these; the others run
+    :func:`run_viewing_task` instead.
 
     Raises:
         AgentUnavailable: When the agent cannot run, or cannot be fenced in.
@@ -363,6 +364,44 @@ def run_reading_task(agent_id: str, *, model: str, system_prompt: str,
             cancel_event=cancel_event or threading.Event(),
             # Its long form: Claude Code refuses an 8.3 short path.
             read_folder=os.path.realpath(folder),
+        ))
+    finally:
+        try:
+            driver.close()
+        finally:
+            server.stop()
+
+
+def run_viewing_task(agent_id: str, *, model: str, system_prompt: str,
+                     user_prompt: str, images: List[str], timeout_s: float,
+                     stall_s: float, effort: str = FINAL_EFFORT,
+                     cancel_event: Optional[threading.Event] = None) -> PassOutcome:
+    """Run one task in which the agent sees ``images`` beside the prompt, and no files.
+
+    For Codex and OpenCode, which can't be fenced to a folder: they keep
+    the meeting lockdown (no shell, no file tools, none of the user's MCP
+    servers) and get everything they need in the prompt itself. The
+    closing reply is the task's result.
+
+    Raises:
+        AgentUnavailable: When the agent cannot run, or is Claude Code
+            (which reads the folder, through :func:`run_reading_task`).
+    """
+    from meeting.agent.installed.drivers import ClaudeCodeDriver
+
+    agent = installed_agent(agent_id)
+    driver = make_driver(agent)
+    if isinstance(driver, ClaudeCodeDriver):
+        raise AgentUnavailable("Claude Code reads the folder instead: use run_reading_task.")
+    server = LoopbackMcpServer()
+    server.start()
+    try:
+        driver.start(server, {"build": system_prompt}, [])
+        return driver.run_pass(PassRequest(
+            system_prompt=system_prompt, user_prompt=user_prompt, tools=[],
+            handler=lambda _n, _a, _m: ("No tools here.", True), model=model,
+            effort=effort, timeout_s=timeout_s, stall_s=stall_s,
+            cancel_event=cancel_event or threading.Event(), images=list(images),
         ))
     finally:
         try:

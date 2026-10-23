@@ -222,6 +222,7 @@ from services.settings import (
     resolve_walkthrough_show_details,
     resolve_walkthrough_title,
     resolve_walkthrough_write_up,
+    resolve_walkthrough_write_up_agent,
     resolve_walkthrough_write_up_instructions,
 )
 from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
@@ -1610,18 +1611,32 @@ class SettingsDialog(QDialog):
         self._build_walkthrough_write_up_group(layout)
 
     def _build_walkthrough_write_up_group(self, layout: QVBoxLayout) -> None:
-        """Whether Claude Code writes a finished walkthrough up, and how."""
-        from services.walkthrough.write_up import AGENT_NAME, DEFAULT_INSTRUCTIONS
+        """Whether an installed agent writes a finished walkthrough up, which, and how."""
+        from services.walkthrough.write_up import AGENTS, DEFAULT_INSTRUCTIONS, agent_name
 
         self.walkthrough_write_up_tile = SettingTile(
-            f"Write it up with {AGENT_NAME}",
-            f"When a walkthrough finishes, {AGENT_NAME} reads its PDF and lays "
-            "out a cleaner document, which is what gets copied. It can read "
-            "only that walkthrough's folder, uses your own plan, and usually "
-            "takes under a minute. The as-spoken PDF is kept beside it.",
+            "Write it up with an AI agent",
+            "When a walkthrough finishes, your coding agent lays out a cleaner "
+            "document from your words and screenshots, which is what gets "
+            "copied. It uses your own plan and usually takes under a minute. "
+            "The as-spoken PDF is kept beside it.",
             design_icon("wand-purple.svg"),
         )
         self.walkthrough_write_up_check = self.walkthrough_write_up_tile.checkbox
+
+        self.walkthrough_write_up_agent_combo = ElidingComboBox()
+        self.walkthrough_write_up_agent_combo.setObjectName("walkthroughWriteUpAgentCombo")
+        for agent in AGENTS:
+            self.walkthrough_write_up_agent_combo.addItem(agent_name(agent), agent)
+        self.walkthrough_write_up_agent_combo.setMinimumHeight(40)
+        self.walkthrough_write_up_agent_tile = FieldTile(
+            "Agent",
+            "Claude Code reads the walkthrough's PDF and can open only that "
+            "folder. Codex and OpenCode open no files: they're sent the words "
+            "and screenshots, so their model must take images.",
+            self.walkthrough_write_up_agent_combo,
+            design_icon("cpu-blue.svg"),
+        )
 
         # Plain, not QTextEdit: the placeholder, the default instructions,
         # wraps instead of being clipped to one line.
@@ -1641,7 +1656,8 @@ class SettingsDialog(QDialog):
         self._tile_group(
             layout,
             "AI write-up",
-            [self.walkthrough_write_up_tile, self.walkthrough_write_up_instructions_tile],
+            [self.walkthrough_write_up_tile, self.walkthrough_write_up_agent_tile,
+             self.walkthrough_write_up_instructions_tile],
             columns=1,
             intro="Optional. Your words and screenshots stay as spoken unless you turn this on.",
         )
@@ -1649,6 +1665,11 @@ class SettingsDialog(QDialog):
             self.walkthrough_write_up_check,
             SettingsKey.WALKTHROUGH_WRITE_UP,
             resolve_walkthrough_write_up,
+        )
+        self._bindings.combo(
+            self.walkthrough_write_up_agent_combo,
+            SettingsKey.WALKTHROUGH_WRITE_UP_AGENT,
+            resolve_walkthrough_write_up_agent,
         )
         self._bindings.plain_text(
             self.walkthrough_write_up_edit,

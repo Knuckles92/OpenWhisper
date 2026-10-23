@@ -1501,13 +1501,14 @@ class TranscriptionRuntime:
         return session.result.history_text, session.result.history_raw, info
 
     def _maybe_write_up(self, result, shots):
-        """``result`` written up by Claude Code when Settings asks for it; worker.
+        """``result`` written up by the chosen agent when Settings asks for it; worker.
 
         A failure keeps the words as spoken and says why. A Cancel stops the
         job, as it does at every other step.
         """
         from services.settings import (
             resolve_walkthrough_write_up,
+            resolve_walkthrough_write_up_agent,
             resolve_walkthrough_write_up_instructions,
         )
         from services.walkthrough import write_up
@@ -1515,10 +1516,12 @@ class TranscriptionRuntime:
         settings = settings_manager.load_all_settings()
         if not resolve_walkthrough_write_up(settings):
             return result
-        self.controller.status_update.emit(f"Writing it up with {write_up.AGENT_NAME}...")
+        agent = resolve_walkthrough_write_up_agent(settings)
+        self.controller.status_update.emit(
+            f"Writing it up with {write_up.agent_name(agent)}...")
         try:
             return write_up.write_up(
-                result, [shot.path for shot in shots],
+                result, [shot.path for shot in shots], agent=agent,
                 instructions=resolve_walkthrough_write_up_instructions(settings),
                 cancel_event=self._cancel_requested,
             )

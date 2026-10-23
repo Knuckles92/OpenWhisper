@@ -19,6 +19,7 @@ OpenCode 2.0 on 2026-09-28):
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -135,6 +136,10 @@ class PassRequest:
     #: A folder the agent may read files in with its own Read tool, and
     #: nothing outside it; "" for none. Only Claude Code takes one.
     read_folder: str = ""
+    #: PNG files sent along with the prompt, in order. Codex and OpenCode
+    #: see a walkthrough's screenshots this way, as they can't be fenced
+    #: to its folder.
+    images: List[str] = field(default_factory=list)
 
     def emit(self, kind: str, tool: str = "") -> None:
         self.heartbeat.touch()
@@ -708,6 +713,10 @@ class CodexDriver(HeadlessDriver):
         if request.effort:
             overrides.append(f"model_reasoning_effort={request.effort}")
         argv = [self.agent.path, "exec", "--json"]
+        for image in request.images:
+            # --image takes several values, so it goes before the next flag
+            # and never right before the "-" that reads the prompt.
+            argv += ["--image", image]
         if "--ephemeral" in getattr(self, "_exec_help", ""):
             argv.append("--ephemeral")
         argv += ["--skip-git-repo-check", "-s", "read-only", "-C", agent_workspace_dir()]
@@ -843,6 +852,7 @@ class OpenCodeDriver:
         self._router: Optional[McpEndpoint] = None
         self._conn: Optional[AcpConnection] = None
         self._capabilities: Dict[str, Any] = {}
+        self._takes_images = False
         self._passes: Dict[str, _AcpPass] = {}
         self._personas: Dict[str, str] = {}
         self._lock = threading.Lock()
@@ -956,8 +966,9 @@ class OpenCodeDriver:
         except AcpError as exc:
             conn.close()
             raise AgentUnavailable(f"OpenCode could not start: {exc}") from exc
-        self._capabilities = (info.get("agentCapabilities") or {}).get(
-            "sessionCapabilities") or {}
+        capabilities = info.get("agentCapabilities") or {}
+        self._capabilities = capabilities.get("sessionCapabilities") or {}
+        self._takes_images = bool((capabilities.get("promptCapabilities") or {}).get("image"))
         self._conn = conn
         self._ready = False
 
@@ -1047,6 +1058,13 @@ class OpenCodeDriver:
                 return PassOutcome(ok=False, error=str(exc))
             conn = self._conn
         assert conn is not None
+        if request.images and not self._takes_images:
+            return PassOutcome(ok=False, error=(
+                f"OpenCode {self.agent.version} can't be sent pictures. Update OpenCode."))
+        try:
+            images = [_image_block(path) for path in request.images]
+        except OSError as exc:
+            return PassOutcome(ok=False, error=f"Could not read a picture for OpenCode: {exc}")
         cancel = request.cancel_event
         try:
             session = conn.request("session/new", {
@@ -1064,7 +1082,7 @@ class OpenCodeDriver:
             problem = self._prepare(conn, session, session_id, request)
             if problem:
                 return PassOutcome(ok=False, error=problem)
-            blocks = [{"type": "text", "text": request.user_prompt}]
+            blocks = [{"type": "text", "text": request.user_prompt}, *images]
             if request.persona not in self._personas:
                 # No start-time persona for this pass: carry its charter in
                 # the turn, the weaker fallback.
@@ -1200,6 +1218,13 @@ class OpenCodeDriver:
         if reason == "refusal":
             return PassOutcome(ok=False, error="OpenCode's model refused the pass", usage=usage)
         return PassOutcome(ok=True, usage=usage)
+
+
+def _image_block(path: str) -> Dict[str, Any]:
+    """An ACP image content block holding the PNG at ``path``."""
+    with open(path, "rb") as handle:
+        data = base64.b64encode(handle.read()).decode("ascii")
+    return {"type": "image", "mimeType": "image/png", "data": data}
 
 
 def make_driver(agent: InstalledAgent):

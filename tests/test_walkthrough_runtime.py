@@ -397,20 +397,21 @@ def _write_up_on(h, monkeypatch, write_up):
 def test_a_walkthrough_written_up_is_what_gets_copied(h, monkeypatch):
     calls = []
 
-    def write_up(result, shots, *, instructions, cancel_event):
-        calls.append((shots, instructions, cancel_event))
+    def write_up(result, shots, *, agent, instructions, cancel_event):
+        calls.append((shots, agent, instructions, cancel_event))
         return dataclasses.replace(result, pdf=result.folder / "write-up.pdf",
                                    clipboard_text="# Checklist", written_up=True)
 
+    h.settings.values[SettingsKey.WALKTHROUGH_WRITE_UP_AGENT] = "codex"
     _write_up_on(h, monkeypatch, write_up)
 
     h.runtime.transcribe_audio_file(str(h.audio))
 
     folder = h.session.folder()
-    ((shots, instructions, cancel_event),) = calls
+    ((shots, agent, instructions, cancel_event),) = calls
     assert shots == [folder / "shot-1.png"] and instructions == "Make it a checklist."
-    assert cancel_event is h.runtime._cancel_requested
-    assert ("Writing it up with Claude Code...",) in h.controller.status_update.calls
+    assert agent == "codex" and cancel_event is h.runtime._cancel_requested
+    assert ("Writing it up with Codex...",) in h.controller.status_update.calls
     assert h.ui.copied_files == [([folder / "write-up.pdf"], "# Checklist")]
     assert "Write-up copied (1 screenshot) — paste it into your agent" in h.ui.statuses
 

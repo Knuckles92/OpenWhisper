@@ -56,7 +56,10 @@ def handle(msg):
     log({"method": method, "params": params})
     if method == "initialize":
         return {"protocolVersion": 1, "agentInfo": {"name": "Fake", "version": "2.0.0"},
-                "agentCapabilities": {"sessionCapabilities": {"delete": {}}}}
+                "agentCapabilities": {
+                    "sessionCapabilities": {"delete": {}},
+                    "promptCapabilities": {"image": not os.environ.get("FAKE_ACP_NO_IMAGES")},
+                }}
     if method == "session/new":
         session_id = f"ses_{state['next']}"
         state["next"] += 1

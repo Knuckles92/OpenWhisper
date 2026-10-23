@@ -139,6 +139,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             self.assertEqual(
                 set(walkthroughs.findChildren(FieldTile)),
                 {dialog.walkthrough_title_tile, dialog.walkthrough_page_size_tile,
+                 dialog.walkthrough_write_up_agent_tile,
                  dialog.walkthrough_write_up_instructions_tile},
             )
             for key in ("walkthrough", "screenshot"):

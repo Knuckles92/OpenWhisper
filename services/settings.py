@@ -328,10 +328,11 @@ class SettingsKey:
     # The "New" badge on Quick Record's walkthrough button gives way to a
     # "?" once a walkthrough has started.
     WALKTHROUGH_INTRO_SEEN: Final[str] = "walkthrough_intro_seen"
-    # Whether Claude Code writes a finished walkthrough up from its PDF, and
-    # what it is told to make ("" for the default instructions; see
-    # services/walkthrough/write_up.py).
+    # Whether an installed agent writes a finished walkthrough up, which one
+    # (a MeetingAgentCore.INSTALLED id), and what it is told to make ("" for
+    # the default instructions; see services/walkthrough/write_up.py).
     WALKTHROUGH_WRITE_UP: Final[str] = "walkthrough_write_up"
+    WALKTHROUGH_WRITE_UP_AGENT: Final[str] = "walkthrough_write_up_agent"
     WALKTHROUGH_WRITE_UP_INSTRUCTIONS: Final[str] = "walkthrough_write_up_instructions"
 
 
@@ -783,6 +784,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.WALKTHROUGH_PAGE_SIZE: WalkthroughPageSize.AUTO,
     SettingsKey.WALKTHROUGH_INTRO_SEEN: False,
     SettingsKey.WALKTHROUGH_WRITE_UP: False,
+    SettingsKey.WALKTHROUGH_WRITE_UP_AGENT: MeetingAgentCore.CLAUDE_CODE,
     SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS: "",
 })
 
@@ -1308,6 +1310,8 @@ resolve_walkthrough_page_size = _choice_resolver(
     SettingsKey.WALKTHROUGH_PAGE_SIZE, WalkthroughPageSize.ALL)
 resolve_walkthrough_intro_seen = _bool_resolver(SettingsKey.WALKTHROUGH_INTRO_SEEN)
 resolve_walkthrough_write_up = _bool_resolver(SettingsKey.WALKTHROUGH_WRITE_UP)
+resolve_walkthrough_write_up_agent = _choice_resolver(
+    SettingsKey.WALKTHROUGH_WRITE_UP_AGENT, MeetingAgentCore.INSTALLED)
 
 
 def resolve_walkthrough_title(settings: Optional[Mapping[str, Any]] = None) -> str:

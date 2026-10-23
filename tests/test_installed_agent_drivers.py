@@ -3,6 +3,7 @@
 No real agent runs: ``tests/fakes/fake_agent_cli.py`` and ``fake_acp_agent.py``
 stand in for the CLIs and make real MCP calls back over HTTP.
 """
+import base64
 import json
 import sys
 import threading
@@ -397,6 +398,58 @@ def test_claude_reading_a_folder_gets_read_fenced_to_it(monkeypatch, tmp_path):
     assert argv[argv.index("--tools") + 1] == "Read"
     assert argv[argv.index("--add-dir") + 1] == r"C:\captures\run"
     assert "--allowedTools" not in argv and "--strict-mcp-config" in argv
+
+
+def test_codex_gets_pictures_with_the_prompt_and_still_no_shell(monkeypatch, tmp_path):
+    listing = "shell_tool   stable   true\nview_image   stable   true\n"
+    monkeypatch.setattr(drivers, "_help_text", lambda agent, *args: (
+        "[]" if args[-3:] == ("mcp", "list", "--json") else
+        listing if args[:1] == ("features",) else "--json --ephemeral"))
+    driver = CodexDriver(InstalledAgent("codex", "codex.exe", "0.163.0"))
+    driver.check_ready()
+    request = _request(Recorder(), tools=[], images=[r"C:\run\shot-1.png", r"C:\run\shot-2.png"])
+    argv, _env = driver.build(request, "http://127.0.0.1:1/mcp/t", "t", str(tmp_path))
+    # Each --image is followed by its file and then another flag, never by
+    # the "-" that reads the prompt: --image takes several values.
+    assert argv[3:7] == ["--image", r"C:\run\shot-1.png", "--image", r"C:\run\shot-2.png"]
+    assert argv[7].startswith("-") and argv[-1] == "-" and argv[-2] != r"C:\run\shot-2.png"
+    disabled = [argv[i + 1] for i, a in enumerate(argv) if a == "--disable"]
+    assert disabled == ["shell_tool", "view_image"]
+
+
+def test_opencode_gets_pictures_as_image_blocks(server, monkeypatch, tmp_path):
+    log = tmp_path / "acp.jsonl"
+    shot = tmp_path / "shot-1.png"
+    shot.write_bytes(b"\x89PNG fake")
+    monkeypatch.setenv("FAKE_ACP_LOG", str(log))
+    monkeypatch.setattr(drivers, "_TOOLS_REGISTERED_GRACE_S", 0.0)
+    driver = _FakeOpenCode(InstalledAgent("opencode_cli", "fake", "2.1.2"))
+    driver.start(server, {"build": "WRITER"}, [])
+    try:
+        outcome = driver.run_pass(_request(Recorder(), tools=[], model="", images=[str(shot)]))
+    finally:
+        driver.close()
+    assert outcome.ok, outcome.error
+    prompt = next(e["params"] for e in _acp_log(log) if e["method"] == "session/prompt")
+    assert prompt["prompt"] == [
+        {"type": "text", "text": "transcript"},
+        {"type": "image", "mimeType": "image/png",
+         "data": base64.b64encode(b"\x89PNG fake").decode("ascii")},
+    ]
+
+
+def test_an_opencode_that_takes_no_pictures_refuses_them(server, monkeypatch, tmp_path):
+    monkeypatch.setenv("FAKE_ACP_LOG", str(tmp_path / "acp.jsonl"))
+    monkeypatch.setenv("FAKE_ACP_NO_IMAGES", "1")
+    monkeypatch.setattr(drivers, "_TOOLS_REGISTERED_GRACE_S", 0.0)
+    driver = _FakeOpenCode(InstalledAgent("opencode_cli", "fake", "1.0.0"))
+    driver.start(server, {"build": "WRITER"}, [])
+    try:
+        outcome = driver.run_pass(_request(Recorder(), tools=[], images=[str(tmp_path / "x.png")]))
+    finally:
+        driver.close()
+    assert not outcome.ok and "can't be sent pictures" in outcome.error
+    assert not any(e["method"] == "session/prompt" for e in _acp_log(tmp_path / "acp.jsonl"))
 
 
 def test_a_meeting_pass_reads_no_files(monkeypatch, tmp_path):

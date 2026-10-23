@@ -347,3 +347,30 @@ def test_other_agents_cannot_run_reading_tasks(monkeypatch, agent):
     monkeypatch.setattr(core_module, "make_driver", lambda found: FakeDriver())
     with pytest.raises(AgentUnavailable, match="Use Claude Code"):
         _reading_task()
+
+
+def _viewing_task(agent_id="codex", **overrides):
+    values = dict(model="", system_prompt="charter", user_prompt="the words",
+                  images=["a.png", "b.png"], timeout_s=60, stall_s=30)
+    values.update(overrides)
+    return core_module.run_viewing_task(agent_id, **values)
+
+
+def test_a_viewing_task_sends_the_pictures_and_offers_no_tools(monkeypatch, agent):
+    driver = FakeDriver(calls=[], outcome=PassOutcome(ok=True, text="# Write-up"))
+    monkeypatch.setattr(core_module, "make_driver", lambda found: driver)
+
+    outcome = _viewing_task()
+
+    assert outcome.text == "# Write-up" and driver.closed
+    # OpenCode fixes its system prompt per process, so it is the build persona.
+    assert driver.personas == {"build": "charter"}
+    (request,) = driver.requests
+    assert request.images == ["a.png", "b.png"] and request.tools == []
+    assert request.read_folder == "" and request.user_prompt == "the words"
+
+
+def test_claude_code_reads_the_folder_rather_than_viewing(monkeypatch, agent):
+    monkeypatch.setattr(core_module, "make_driver", lambda found: ReadingDriver(found))
+    with pytest.raises(AgentUnavailable, match="run_reading_task"):
+        _viewing_task("claude_code")
