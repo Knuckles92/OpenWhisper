@@ -194,6 +194,25 @@ def test_hovering_a_control_shows_a_pointing_hand(overlay):
     assert overlay._control_rects == {}
 
 
+def test_hovering_a_control_shows_its_shortcut(overlay):
+    overlay.set_control_hotkeys("Ctrl+Alt+S", "")
+    _recording_walkthrough(overlay)
+
+    QTest.mouseMove(overlay, _center(overlay, "snap"))
+    hint = overlay._hotkey_hint
+    assert hint is not None and hint.isVisible()
+    assert hint._text_label.text() == "Ctrl+Alt+S"
+    assert hint.geometry().bottom() < overlay.mapToGlobal(QPoint(0, 0)).y() + overlay._control_rects["snap"].top()
+
+    # Done's Walkthrough shortcut is unset: no pill.
+    QTest.mouseMove(overlay, _center(overlay, "finish"))
+    assert not hint.isVisible()
+
+    QTest.mouseMove(overlay, _center(overlay, "snap"))
+    overlay.hide()
+    assert not hint.isVisible()
+
+
 def test_beside_a_language_chip_the_controls_drop_their_words(overlay):
     overlay._language, overlay._language_choices = "en", ("en", "es")
     _recording_walkthrough(overlay)

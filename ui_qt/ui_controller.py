@@ -2202,6 +2202,9 @@ class UIController(QObject):
         self.main_window.update_hotkeys(
             record_key, cancel_key, enable_disable_key, minimize_key, walkthrough_key
         )
+        self.overlay.set_control_hotkeys(
+            format_hotkey_display(hotkeys.get('screenshot') or ""), walkthrough_key
+        )
 
     def _on_check_for_updates_requested(self) -> None:
         """Manual update checks always hit GitHub."""

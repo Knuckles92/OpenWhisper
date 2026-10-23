@@ -27,6 +27,7 @@ from ui_qt.utils.overlay_position import (
 from ui_qt.overlays import live_recording, moments, recording_looks
 from ui_qt.utils.palette import token_color
 from ui_qt.waveform_styles import Particle, ParticleStyle, round_pen
+from ui_qt.widgets.buttons import hide_hotkey_hint, show_hotkey_hint
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +207,9 @@ class WaveformOverlay(QWidget):
         # Snap and Done, while a walkthrough records (set_walkthrough_controls).
         self._walkthrough_controls = False
         self._control_rects: dict[str, QRectF] = {}
+        # Their shortcuts, shown in a pill above the one hovered.
+        self._control_hotkeys: dict[str, str] = {}
+        self._hotkey_hint = None
         self._caption = ""
         self._caption_started = 0.0
         self._notice = ""
@@ -832,6 +836,10 @@ class WaveformOverlay(QWidget):
                 self._set_hover("")
         self.update()
 
+    def set_control_hotkeys(self, snap: str, finish: str) -> None:
+        """The Screenshot and Walkthrough shortcuts, which Snap and Done press."""
+        self._control_hotkeys = {"snap": snap, "finish": finish}
+
     def _controls_clickable(self) -> bool:
         return (
             self._walkthrough_controls
@@ -962,6 +970,10 @@ class WaveformOverlay(QWidget):
     def _dragged(self) -> bool:
         return self._drag is not None and self._drag.moved
 
+    def hideEvent(self, event):
+        self._set_hover("")
+        super().hideEvent(event)
+
     def leaveEvent(self, event):
         self._set_hover("")
         super().leaveEvent(event)
@@ -970,6 +982,12 @@ class WaveformOverlay(QWidget):
         if target == self._hover:
             return
         self._hover = target
+        hotkey = self._control_hotkeys.get(target, "")
+        if hotkey and target in self._control_rects:
+            area = self._control_rects[target].toAlignedRect()
+            self._hotkey_hint = show_hotkey_hint(self._hotkey_hint, self, area, hotkey)
+        else:
+            hide_hotkey_hint(self._hotkey_hint)
         if target:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
         elif self._drag is not None:

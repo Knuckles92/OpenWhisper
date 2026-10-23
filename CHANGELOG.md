@@ -7,6 +7,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+- **The overlay's Snap and Done show their shortcuts** — while a walkthrough records, hovering Snap on the recording overlay shows your Screenshot shortcut, and Done shows your Walkthrough shortcut, in the same pill the main window uses. Nothing shows for a shortcut you haven't set.
+
 ## [2.7.8] - 2026-10-23
 
 ### Added

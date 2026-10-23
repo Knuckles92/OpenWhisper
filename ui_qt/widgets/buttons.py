@@ -18,6 +18,7 @@ from PyQt6.QtCore import (
     QObject,
     QPoint,
     QPropertyAnimation,
+    QRect,
     QRectF,
     QTimer,
 )
@@ -148,36 +149,45 @@ class HotkeyHintFilter(QObject):
             return
 
         self._hide_timer.stop()
-        if compositor_managed():
-            # Qt anchors its native tooltip to the parent Wayland surface.
-            from PyQt6.QtWidgets import QApplication
-
-            global_keys = QApplication.instance().property("omarchyGlobalHotkeys") or []
-            scope = "desktop shortcut" if self._hotkey in global_keys else "while OpenWhisper is focused"
-            QToolTip.showText(
-                self._button.mapToGlobal(QPoint(0, self._button.height())),
-                f"{self._hotkey} · {scope}", self._button,
-            )
-            return
-        if self._hint is None:
-            self._hint = HotkeyHoverHint(self._button.window())
-        self._hint.set_hotkey(self._hotkey)
-
-        top_center = self._button.mapToGlobal(QPoint(self._button.width() // 2, 0))
-        hint_width = self._hint.sizeHint().width()
-        hint_height = self._hint.sizeHint().height()
-        self._hint.move(
-            top_center.x() - hint_width // 2,
-            top_center.y() - hint_height - 8,
-        )
-        self._hint.show()
-        self._hint.raise_()
+        self._hint = show_hotkey_hint(self._hint, self._button, self._button.rect(), self._hotkey)
 
     def hide_hint(self) -> None:
-        if compositor_managed():
-            QToolTip.hideText()
-        if self._hint is not None:
-            self._hint.hide()
+        hide_hotkey_hint(self._hint)
+
+
+def show_hotkey_hint(
+    hint: Optional[HotkeyHoverHint], anchor: QWidget, area: QRect, hotkey: str
+) -> Optional[HotkeyHoverHint]:
+    """Show ``hotkey`` above ``area`` (in ``anchor``'s coordinates).
+
+    Returns the pill to keep for next time, made on first use; where the
+    compositor places windows, Qt's own tooltip stands in for it.
+    """
+    if compositor_managed():
+        # Qt anchors its native tooltip to the parent Wayland surface.
+        from PyQt6.QtWidgets import QApplication
+
+        global_keys = QApplication.instance().property("omarchyGlobalHotkeys") or []
+        scope = "desktop shortcut" if hotkey in global_keys else "while OpenWhisper is focused"
+        QToolTip.showText(anchor.mapToGlobal(area.bottomLeft()), f"{hotkey} · {scope}", anchor)
+        return hint
+    if hint is None:
+        hint = HotkeyHoverHint(anchor.window())
+    hint.set_hotkey(hotkey)
+
+    top_center = anchor.mapToGlobal(QPoint(area.center().x(), area.top()))
+    size = hint.sizeHint()
+    hint.move(top_center.x() - size.width() // 2, top_center.y() - size.height() - 8)
+    hint.show()
+    hint.raise_()
+    return hint
+
+
+def hide_hotkey_hint(hint: Optional[HotkeyHoverHint]) -> None:
+    if compositor_managed():
+        QToolTip.hideText()
+    if hint is not None:
+        hint.hide()
 
 
 class Button(QPushButton):
