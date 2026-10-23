@@ -19,7 +19,7 @@ from services.text_transforms import Transform
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
-from ui_qt.dialogs.settings_dialog import HOTKEYS
+from ui_qt.dialogs.settings_dialog import HOTKEYS, WALKTHROUGHS
 from ui_qt.widgets import hotkey_capture
 from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput
 from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
@@ -32,6 +32,7 @@ class _FakeCaptureThread:
 
     def __init__(self, _parent=None):
         self.captured = MagicMock()
+        self.cancelled = MagicMock()
         self.failed = MagicMock()
         self.finished = MagicMock()
         self.stopped = False
@@ -244,6 +245,54 @@ def test_unsupported_desktop_explains_and_keeps_capturing(make_dialog):
     dialog.close()
 
 
+@pytest.mark.parametrize(
+    "page,key",
+    [
+        (HOTKEYS, "command_mode"),
+        (HOTKEYS, "record_toggle"),
+        (WALKTHROUGHS, "walkthrough"),
+        (WALKTHROUGHS, "screenshot"),
+    ],
+)
+def test_escape_cancels_capture_without_binding_a_global_shortcut(make_dialog, page, key):
+    dialog, store = make_dialog({SettingsKey.HOTKEYS: {"walkthrough": "ctrl+alt+w"}})
+    dialog.select_destination(page)
+    dialog.show()
+    field = dialog.hotkey_inputs[key]
+    previous = dialog.current_hotkeys[key]
+    QTest.mouseClick(field, Qt.MouseButton.LeftButton)
+    assert dialog.capturing == key
+    assert field.text() == hotkey_capture.CAPTURE_HINT
+
+    QTest.keyClick(field, Qt.Key.Key_Escape)
+
+    assert dialog.capturing is None
+    assert dialog.current_hotkeys[key] == previous
+    saved = store.load_hotkey_settings()
+    assert saved.get(key, previous) == previous
+    assert saved.get(key) != "esc"
+    assert field.text() == format_hotkey_display(previous)
+    assert dialog.isVisible()
+    assert "updated" not in dialog.message_label.text().lower()
+    dialog.close()
+
+
+def test_captured_escape_from_the_listener_is_not_saved(make_dialog):
+    dialog, store = make_dialog()
+    dialog.select_destination(WALKTHROUGHS)
+    field = dialog.hotkey_inputs["screenshot"]
+    QTest.mouseClick(field, Qt.MouseButton.LeftButton)
+    thread = dialog.capture_thread
+    assert dialog.capturing == "screenshot"
+
+    dialog._on_hotkey_captured(thread, "esc")
+
+    assert dialog.capturing is None
+    assert store.load_hotkey_settings().get("screenshot", "") == ""
+    assert field.text() == format_hotkey_display("")
+    dialog.close()
+
+
 def test_wayland_rows_capture_in_qt_and_explain_side_buttons(make_dialog):
     dialog, store = make_dialog(wayland=True)
     field = dialog.hotkey_inputs["scratchpad_toggle"]
@@ -305,6 +354,92 @@ def test_side_button_notes_depend_on_the_desktop():
         assert hotkey_capture.mouse_shortcut_note("alt+mouse4") == ""
 
 
+def test_escape_key_names_are_treated_as_cancel():
+    assert hotkey_capture.is_escape_key("esc")
+    assert hotkey_capture.is_escape_key("Escape")
+    assert not hotkey_capture.is_escape_key("f8")
+    assert not hotkey_capture.is_escape_key("")
+    assert not hotkey_capture.is_escape_key(None)
+
+
+def test_escape_on_a_capturing_field_emits_cancelled_not_a_shortcut(
+    _session_qt_application,
+):
+    field = HotkeyCaptureInput()
+    cancelled, requested = [], []
+    field.capture_cancelled.connect(lambda: cancelled.append(True))
+    field.capture_requested.connect(lambda: requested.append(True))
+    field.set_capturing(True)
+    QTest.keyClick(field, Qt.Key.Key_Escape)
+    assert cancelled == [True]
+    assert requested == []
+    field.set_capturing(False)
+    QTest.keyClick(field, Qt.Key.Key_Escape)
+    assert cancelled == [True]
+
+
+@pytest.mark.skipif(
+    not hotkey_capture.USE_PYNPUT_BACKEND, reason="pynput capture thread"
+)
+def test_pynput_capture_treats_escape_as_cancel(_session_qt_application):
+    captured, cancelled, failed = [], [], []
+
+    class FakeListener:
+        def __init__(self, on_press, on_release, suppress=False):
+            self.on_press = on_press
+
+        def start(self):
+            self.on_press(object())
+
+        def join(self):
+            pass
+
+        def stop(self):
+            pass
+
+    with patch.object(hotkey_capture, "get_listener_class", return_value=FakeListener), \
+            patch.object(hotkey_capture, "modifier_of", return_value=None), \
+            patch.object(hotkey_capture, "key_to_name", return_value="esc"):
+        thread = hotkey_capture.HotkeyCaptureThread()
+        thread.captured.connect(captured.append, Qt.ConnectionType.DirectConnection)
+        thread.cancelled.connect(lambda: cancelled.append(True), Qt.ConnectionType.DirectConnection)
+        thread.failed.connect(failed.append, Qt.ConnectionType.DirectConnection)
+        thread.start()
+        assert thread.wait(2000)
+    assert captured == []
+    assert cancelled == [True]
+    assert failed == []
+
+
+@pytest.mark.skipif(
+    not hotkey_capture.USE_PYNPUT_BACKEND, reason="pynput capture thread"
+)
+def test_pynput_capture_still_binds_a_normal_key(_session_qt_application):
+    captured = []
+
+    class FakeListener:
+        def __init__(self, on_press, on_release, suppress=False):
+            self.on_press = on_press
+
+        def start(self):
+            self.on_press(object())
+
+        def join(self):
+            pass
+
+        def stop(self):
+            pass
+
+    with patch.object(hotkey_capture, "get_listener_class", return_value=FakeListener), \
+            patch.object(hotkey_capture, "modifier_of", return_value=None), \
+            patch.object(hotkey_capture, "key_to_name", return_value="f8"):
+        thread = hotkey_capture.HotkeyCaptureThread()
+        thread.captured.connect(captured.append, Qt.ConnectionType.DirectConnection)
+        thread.start()
+        assert thread.wait(2000)
+    assert captured == ["f8"]
+
+
 @pytest.mark.skipif(hotkey_capture.USE_PYNPUT_BACKEND, reason="Windows capture thread")
 def test_windows_capture_removes_only_its_own_hook(_session_qt_application):
     hooked = threading.Event()
@@ -345,6 +480,36 @@ def test_windows_capture_removes_only_its_own_hook(_session_qt_application):
         assert thread.wait(2000)
     assert captured == ["win+f9"]
     assert calls["unhook_all"] == 0
+
+
+@pytest.mark.skipif(hotkey_capture.USE_PYNPUT_BACKEND, reason="Windows capture thread")
+def test_windows_capture_treats_escape_as_cancel(_session_qt_application):
+    hooked = threading.Event()
+    hooks = []
+
+    def hook(callback, suppress):
+        hooks.append(callback)
+        hooked.set()
+        return "capture-hook"
+
+    stub = types.SimpleNamespace(
+        KEY_UP="up", hook=hook, unhook=lambda _hook: None, unhook_all=lambda: None,
+        get_hotkey_name=lambda names: "esc",
+    )
+    captured, cancelled, failed = [], [], []
+    with patch.object(hotkey_capture, "keyboard", stub):
+        thread = hotkey_capture.HotkeyCaptureThread()
+        thread.captured.connect(captured.append, Qt.ConnectionType.DirectConnection)
+        thread.cancelled.connect(lambda: cancelled.append(True), Qt.ConnectionType.DirectConnection)
+        thread.failed.connect(failed.append, Qt.ConnectionType.DirectConnection)
+        thread.start()
+        assert hooked.wait(2)
+        hooks[-1](types.SimpleNamespace(event_type="down", name="esc", is_keypad=False))
+        hooks[-1](types.SimpleNamespace(event_type="up", name="esc", is_keypad=False))
+        assert thread.wait(2000)
+    assert captured == []
+    assert cancelled == [True]
+    assert failed == []
 
 
 # Fit: classic and Omarchy, narrow windows, large fonts

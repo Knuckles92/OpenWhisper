@@ -58,7 +58,7 @@ from services.typesafe import text_model_route as typesafe_text_model_route
 from services.typesafe import verify_key as typesafe_verify_key
 from services.format_utils import format_file_size
 from services.history_manager import history_manager
-from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display
+from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display, parse_hotkey
 from services.recorder import AudioRecorder
 from services.settings import (
     LEGACY_STREAMING_KEYS,
@@ -206,8 +206,10 @@ from ui_qt.widgets.buttons import (
     neutral_button,
 )
 from ui_qt.widgets.hotkey_capture import (
+    CAPTURE_HINT,
     HotkeyCaptureInput,
     HotkeyCaptureThread,
+    is_escape_key,
     mouse_shortcut_note,
 )
 from ui_qt.widgets.hotkey_row import ReflowCard
@@ -3411,6 +3413,7 @@ class SettingsDialog(QDialog):
             field.capture_requested.connect(
                 lambda key=key, field=field: self._start_hotkey_capture(key, field)
             )
+            field.capture_cancelled.connect(self._cancel_hotkey_capture)
             field.mouse_captured.connect(
                 lambda hotkey, key=key: self._on_mouse_hotkey_captured(key, hotkey)
             )
@@ -4842,6 +4845,20 @@ class SettingsDialog(QDialog):
         self.cleanup_rule_activity.finish()
         self._update_cleanup_rule_controls()
 
+    def event(self, event):
+        # While a global capture is waiting, Esc must not reject Settings.
+        # The field also accepts ShortcutOverride; this covers focus elsewhere
+        # on the page. capturing is set after QDialog.__init__, which already
+        # delivers events, so look it up only once it exists.
+        if (
+            getattr(self, "capturing", None) is not None
+            and event.type() == QEvent.Type.ShortcutOverride
+            and event.key() == Qt.Key.Key_Escape
+        ):
+            event.accept()
+            return True
+        return super().event(event)
+
     def keyPressEvent(self, event) -> None:
         # Esc while a rule is being dictated discards just the take; Settings
         # stays open.
@@ -4850,6 +4867,10 @@ class SettingsDialog(QDialog):
             and self._rule_dictation_state == "recording"
         ):
             self._cancel_rule_dictation()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Escape and self.capturing is not None:
+            self._cancel_hotkey_capture()
             event.accept()
             return
         # Settings saves as you go and has no default action, but QDialog
@@ -5017,7 +5038,7 @@ class SettingsDialog(QDialog):
         self._cancel_hotkey_capture()
         self.capturing = key
         self.current_hotkey_input = input_field
-        input_field.setText("Press keys…")
+        input_field.setText(CAPTURE_HINT)
         input_field.set_capturing(True)
         # A key or side button that is already bound would fire its action
         # (or be swallowed by the hook) instead of reaching the capture.
@@ -5030,6 +5051,9 @@ class SettingsDialog(QDialog):
             lambda hotkey, thread=thread: self._on_hotkey_captured(
                 thread, hotkey
             )
+        )
+        thread.cancelled.connect(
+            lambda thread=thread: self._on_hotkey_capture_cancelled(thread)
         )
         thread.failed.connect(
             lambda message, thread=thread: self._on_hotkey_capture_failed(
@@ -5053,9 +5077,17 @@ class SettingsDialog(QDialog):
     ) -> None:
         if thread is not self.capture_thread or self.capturing is None:
             return
+        if is_escape_key(parse_hotkey(hotkey or "")[1]):
+            self._cancel_hotkey_capture()
+            return
         key = self.capturing
         self._finish_hotkey_capture(thread)
         self._apply_captured_hotkey(key, hotkey)
+
+    def _on_hotkey_capture_cancelled(self, thread: HotkeyCaptureThread) -> None:
+        if thread is not self.capture_thread:
+            return
+        self._cancel_hotkey_capture()
 
     def _on_mouse_hotkey_captured(self, key: str, hotkey: str) -> None:
         if self.capturing != key:
@@ -5111,6 +5143,7 @@ class SettingsDialog(QDialog):
         if thread is not None:
             try:
                 thread.captured.disconnect()
+                thread.cancelled.disconnect()
                 thread.failed.disconnect()
             except (RuntimeError, TypeError):
                 pass

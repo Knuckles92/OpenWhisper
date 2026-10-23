@@ -13,6 +13,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Changed
 - **Walkthroughs have their own Settings page** — **Settings → Dictation → Walkthroughs** now holds the Walkthrough and Screenshot shortcuts, how the document looks, and the AI write-up, which were spread across General and Hotkeys. Hotkeys links to it.
 
+### Fixed
+- **Esc no longer becomes a system-wide shortcut while editing one** — backing out of a shortcut field with Esc (Walkthrough, Screenshot, and the other Hotkeys fields on X11/Windows) cancels capture and keeps the previous shortcut. It had been saved as Esc, so every later Esc started a walkthrough or screenshot. Command Mode on the Commands page already cancelled correctly.
+
 ## [2.7.7] - 2026-10-22
 
 ### Added
