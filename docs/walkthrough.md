@@ -49,6 +49,16 @@ Drawing tools, with their keys: arrow (A), box (B), pen (P), highlighter
 Ctrl+Shift+Z or Ctrl+Y. Pressing **Screenshot** again while drawing keeps
 the screenshot. The overlay never appears in its own screenshots, and on
 Windows neither does the recording overlay while a walkthrough records.
+A snap freezes every monitor, so you can select on any of them. Starting a
+selection on one monitor clears the others. On Hyprland a snap covers only
+the focused monitor.
+
+A walkthrough sends the recording overlay to the top-left corner of the
+screen it opened on. It stays there until you drag it somewhere else, and then
+it keeps that spot for the rest of the recording. While you draw, it waits in
+the corner above the dimmed screen, still animating, and goes back to its
+spot afterward. None of this applies on Wayland, where the overlay is part of
+the main window.
 
 ## How your words line up with the screenshots
 

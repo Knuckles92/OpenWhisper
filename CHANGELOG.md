@@ -12,6 +12,12 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **Leave notes for the agent while you record a walkthrough** — with the AI write-up on, turn on **Follow notes left for the agent** in **Settings → Dictation → Walkthroughs** and say things like "note for the agent: make the text purple" or "for whoever writes this up, skip the setup part" while you talk. The agent follows the note instead of writing it into the document. Notes can change only what the write-up says and how it looks, including its text and heading colours and font, which now carry into the write-up's PDF. It is off by default, and the as-spoken files still keep every word.
 - **The overlay's Snap and Done show their shortcuts** — while a walkthrough records, hovering Snap on the recording overlay shows your Screenshot shortcut, and Done shows your Walkthrough shortcut, in the same pill the main window uses. Nothing shows for a shortcut you haven't set.
 
+### Changed
+- **The recording overlay waits in the top-left corner during a walkthrough** — it moves there when the walkthrough starts and stays for the whole recording unless you drag it somewhere else. While you draw a screenshot it stays in sight above the dimmed screen, still animating, instead of disappearing under it, then goes back to where you had it. It still never appears in the screenshot itself.
+
+### Fixed
+- **Screenshots work on every monitor** — the Screenshot shortcut used to freeze only the monitor under the pointer, so you couldn't select anything on your other monitors. Now every monitor is frozen and you can select on any of them. Starting a selection on one monitor clears the selection on the others. Hyprland still covers only the focused monitor.
+
 ## [2.7.8] - 2026-10-23
 
 ### Added
