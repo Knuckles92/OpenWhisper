@@ -32,6 +32,7 @@ class _FakeSignal:
 class _FakeCaptureThread:
     def __init__(self):
         self.captured = _FakeSignal()
+        self.cancelled = _FakeSignal()
         self.failed = _FakeSignal()
         self.stopped = False
         self.waited = False
@@ -203,6 +204,7 @@ class TestHotkeySettingsPage(unittest.TestCase):
             dialog._on_destination_changed(GENERAL)
 
             self.assertTrue(thread.captured.disconnected)
+            self.assertTrue(thread.cancelled.disconnected)
             self.assertTrue(thread.failed.disconnected)
             self.assertTrue(thread.stopped)
             self.assertTrue(thread.waited)

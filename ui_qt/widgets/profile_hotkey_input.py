@@ -5,7 +5,11 @@ import sys
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 
 from services.hotkey_manager import format_hotkey, format_hotkey_display
-from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput, qt_modifier_names
+from ui_qt.widgets.hotkey_capture import (
+    CAPTURE_HINT,
+    HotkeyCaptureInput,
+    qt_modifier_names,
+)
 
 
 class ProfileHotkeyInput(HotkeyCaptureInput):
@@ -37,7 +41,7 @@ class ProfileHotkeyInput(HotkeyCaptureInput):
         self._capturing = True
         self._pending = None
         self.set_capturing(True)
-        self.setText("Press keys… (Esc cancels)")
+        self.setText(CAPTURE_HINT)
         self.capture_changed.emit(True)
         self._timer.start()
 
