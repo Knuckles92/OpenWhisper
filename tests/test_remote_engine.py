@@ -1902,3 +1902,49 @@ def test_settings_page_explains_how_to_get_tailscale(tmp_path):
         service.shutdown()
         dialog.close()
         dialog.deleteLater()
+
+
+def test_a_request_the_host_refuses_as_busy_is_sent_again(paired_backend, host, engine, monkeypatch):
+    from transcriber import remote_backend
+
+    backend = paired_backend
+    backend.reload_model()
+    real_acquire = host._work_admission.acquire
+    refusals = []
+
+    def busy_twice(still_connected):
+        if len(refusals) < 2:
+            refusals.append(True)
+            return False
+        return real_acquire(still_connected)
+
+    monkeypatch.setattr(host._work_admission, "acquire", busy_twice)
+    monkeypatch.setattr(remote_backend, "BUSY_RETRY_MAX_DELAY_S", 0.05)
+
+    assert backend.decode_window(_tone(1600))
+    assert len(refusals) == 2
+
+
+def test_a_host_that_stays_busy_fails_with_a_reason(paired_backend, host, monkeypatch):
+    from transcriber import remote_backend
+
+    backend = paired_backend
+    backend.reload_model()
+    monkeypatch.setattr(host._work_admission, "acquire", lambda still_connected: False)
+    monkeypatch.setattr(remote_backend, "BUSY_RETRY_S", 0.3)
+    monkeypatch.setattr(remote_backend, "BUSY_RETRY_MAX_DELAY_S", 0.05)
+
+    with pytest.raises(RuntimeError, match="busy.*stayed busy for 0 seconds"):
+        backend.decode_window(_tone(1600))
+
+
+def test_a_cancel_ends_the_wait_for_a_busy_host(paired_backend, host, monkeypatch):
+    backend = paired_backend
+    backend.reload_model()
+    monkeypatch.setattr(host._work_admission, "acquire", lambda still_connected: False)
+    threading.Timer(0.3, backend.cancel_transcription).start()
+    started = time.monotonic()
+
+    with pytest.raises(RuntimeError, match="canceled"):
+        backend.decode_window(_tone(1600))
+    assert time.monotonic() - started < 5

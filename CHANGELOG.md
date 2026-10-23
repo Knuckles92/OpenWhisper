@@ -16,6 +16,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Fixed
 - **A screenshot that can't be saved no longer closes the app** — when the captures folder couldn't be written to (read-only, or a failing disk), keeping a walkthrough screenshot quit OpenWhisper at once and lost the walkthrough. It now says the screenshot couldn't be saved and the walkthrough keeps recording. A plain screenshot is still copied and says its file couldn't be saved.
 - **A full disk no longer throws away a walkthrough's words** — when the document couldn't be written, the transcribed words were lost along with it. They are now copied and kept in History, and the status says the document couldn't be saved. A screenshot whose file couldn't be written no longer leaves a broken file behind, and the status says how many were left out.
+- **A dictation sent to a busy host waits instead of failing** — when a Host Mode computer was busy with other computers' work, a paired computer's dictation failed at once and was lost, even though the host asked it to try again in a second. It now waits for room for up to a minute and a half, and Cancel still stops it right away.
 - **An empty walkthrough no longer leaves the column stuck on "Writing it up…"** — finishing a walkthrough with no screenshots and no words now closes the column and writes no empty document.
 
 ## [2.7.7] - 2026-10-22
