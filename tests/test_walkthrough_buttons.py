@@ -100,14 +100,28 @@ def test_the_button_leaves_its_explanation_to_the_badge(tab):
     assert tab.walkthrough_badge.parent() is tab.walkthrough_button
 
 
-def test_the_badge_sits_in_the_buttons_top_right_corner(tab):
+def test_the_badge_sits_on_the_buttons_right_side_clear_of_its_label(tab):
     # A hidden widget gets its resize event only once shown.
     tab.show()
-    tab.walkthrough_button.resize(300, 48)
+    tab.walkthrough_button.resize(360, 48)
 
     badge = tab.walkthrough_badge.geometry()
-    assert badge.right() < 300 and badge.right() > 300 - 12
-    assert 0 < badge.top() < 12
+    assert 360 - 20 < badge.right() < 360
+    assert abs(badge.center().y() - 24) <= 1
+    label = tab.walkthrough_button.fontMetrics().horizontalAdvance("Start Walkthrough")
+    assert badge.left() > (360 + label) / 2
+    assert not tab.walkthrough_badge.is_compact()
+
+
+def test_in_a_narrow_button_new_folds_to_its_sparkle(tab):
+    tab.show()
+    tab.walkthrough_button.resize(220, 48)
+
+    badge = tab.walkthrough_badge
+    assert badge.is_compact()
+    assert badge.width() == badge.height()
+    label = tab.walkthrough_button.fontMetrics().horizontalAdvance("Start Walkthrough")
+    assert badge.geometry().left() > (220 + label) / 2
 
 
 def test_clicking_the_badge_never_starts_a_walkthrough(tab):

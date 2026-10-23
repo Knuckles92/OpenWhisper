@@ -1,36 +1,51 @@
-"""A small "New" or "?" pill in a button's top-right corner that explains it."""
-from PyQt6.QtCore import QEvent, QPoint, QRectF, QSize, Qt
-from PyQt6.QtGui import QFont, QPainter, QPen
+"""A small "New" or "?" chip on a button's right side that explains it."""
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRectF, QSize, Qt
+from PyQt6.QtGui import QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import QPushButton, QToolTip, QWidget
 
 from ui_qt.utils.palette import token_color
 
 
 class FeatureBadge(QWidget):
-    """Hover or click the pill for what its button does.
+    """Hover or click the chip for what its button does.
 
     The button's own hover keeps showing its shortcut pill above it, so the
     explanation lives here instead of in the button's tooltip. A click on
-    the badge shows the explanation and never reaches the button.
+    the chip shows the explanation and never reaches the button.
+
+    It is frosted glass over the button's fill: a tint of the label colour,
+    not a sticker of its own colour, so it reads as part of the button.
     """
 
     NEW = "New"
     HELP = "?"
-    _INSET = 5  # from the button's top and right edges
-    _HEIGHT = 16
+    _HEIGHT = 18
+    _RIGHT_INSET = 12  # from the button's right edge, clear of its rounding
+    _PAD = 7  # inside the "New" chip, left and right
+    _SPARKLE = 10  # the star before "NEW"
+    _GAP = 4  # between the star and the word
+    _CLEARANCE = 8  # kept between the chip and the button's centred label
 
     def __init__(self, button: QPushButton, explanation: str):
         super().__init__(button)
         self.setObjectName("featureBadge")
         self._button = button
         self._text = self.NEW
-        font = QFont(self.font())
-        font.setPixelSize(10)
-        font.setWeight(QFont.Weight.Bold)
-        self.setFont(font)
+        self._hovered = False
+        # In a narrow button "New" shrinks to its star, clear of the label.
+        self._compact = False
+        self._placed_for: tuple = ()
+        self._word_font = QFont(self.font())
+        self._word_font.setPixelSize(9)
+        self._word_font.setWeight(QFont.Weight.Bold)
+        self._word_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.8)
+        self._mark_font = QFont(self.font())
+        self._mark_font.setPixelSize(11)
+        self._mark_font.setWeight(QFont.Weight.Bold)
         self.setCursor(Qt.CursorShape.WhatsThisCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.set_explanation(explanation)
-        # Follows the corner as the button resizes.
+        # Follows the button's size and its active/inactive look.
         button.installEventFilter(self)
         self._place()
 
@@ -49,39 +64,109 @@ class FeatureBadge(QWidget):
     def text(self) -> str:
         return self._text
 
+    def is_compact(self) -> bool:
+        return self._compact
+
     def sizeHint(self) -> QSize:
-        if self._text == self.HELP:
+        return self._size(self._compact)
+
+    def _size(self, compact: bool) -> QSize:
+        if self._text == self.HELP or compact:
             return QSize(self._HEIGHT, self._HEIGHT)
-        width = self.fontMetrics().horizontalAdvance(self._text.upper()) + 12
-        return QSize(width, self._HEIGHT)
+        # Letter spacing trails the last letter too; that space is not ink.
+        word = (QFontMetrics(self._word_font).horizontalAdvance(self._text.upper())
+                - round(self._word_font.letterSpacing()))
+        return QSize(self._PAD * 2 + self._SPARKLE + self._GAP + word, self._HEIGHT)
 
     def _place(self) -> None:
+        button = self._button
+        key = (button.width(), button.height(), button.text(), self._text)
+        if key == self._placed_for:
+            return
+        self._placed_for = key
+        label = button.fontMetrics().horizontalAdvance(button.text())
+        room = (button.width() - label) // 2 - self._RIGHT_INSET - self._CLEARANCE
+        self._compact = self._size(False).width() > room
         size = self.sizeHint()
         self.resize(size)
-        self.move(self._button.width() - size.width() - self._INSET, self._INSET)
+        x = button.width() - size.width() - self._RIGHT_INSET
+        self.move(x, (button.height() - size.height()) // 2)
         self.raise_()
+        self.update()
+
+    def event(self, event):
+        if event.type() in (QEvent.Type.HoverEnter, QEvent.Type.HoverLeave):
+            self._hovered = event.type() == QEvent.Type.HoverEnter
+            self.update()
+        return super().event(event)
 
     def mousePressEvent(self, event):
-        QToolTip.showText(self.mapToGlobal(QPoint(0, self.height())), self.toolTip(), self)
+        QToolTip.showText(self.mapToGlobal(QPoint(0, self.height() + 4)), self.toolTip(), self)
         event.accept()
 
     def mouseReleaseEvent(self, event):
         event.accept()
 
+    def eventFilter(self, obj, event):
+        if obj is self._button:
+            # A new label ("Finish Walkthrough") repaints the button without
+            # resizing it; _place returns at once when nothing changed.
+            if event.type() in (QEvent.Type.Resize, QEvent.Type.Paint):
+                self._place()
+            elif event.type() == QEvent.Type.DynamicPropertyChange:
+                self.update()  # "inactive" changed the button's look
+        return False
+
+    def _colors(self):
+        """``(ink, fill, edge)`` for the button's current look."""
+        if self._button.property("inactive"):
+            # The button is flat and grey while a dictation runs.
+            ink = token_color("text-muted")
+            return ink, token_color("text-muted", 28), token_color("text-muted", 70)
+        ink = token_color("on-accent")
+        fill = token_color("on-accent", 92 if self._hovered else 46)
+        return ink, fill, token_color("on-accent", 150 if self._hovered else 80)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        ink, fill, edge = self._colors()
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         radius = rect.height() / 2.0
-        # White on the accent fill, and still a pill with an edge on the
-        # flat look the button has while another recording runs.
-        painter.setPen(QPen(token_color("accent-border"), 1.0))
-        painter.setBrush(token_color("on-accent"))
+        painter.setPen(QPen(edge, 1.0))
+        painter.setBrush(fill)
         painter.drawRoundedRect(rect, radius, radius)
-        painter.setPen(token_color("accent-pressed"))
-        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._text.upper())
+        if self._text == self.HELP:
+            painter.setFont(self._mark_font)
+            painter.setPen(ink)
+            # Half a pixel down: a question mark's ink sits high in its box.
+            painter.drawText(rect.translated(0, 0.5), Qt.AlignmentFlag.AlignCenter, self.HELP)
+            return
+        star_x = rect.center().x() if self._compact else self._PAD + self._SPARKLE / 2
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(ink)
+        painter.drawPath(_sparkle(QPointF(star_x, rect.center().y()), self._SPARKLE / 2))
+        if self._compact:
+            return
+        painter.setFont(self._word_font)
+        painter.setPen(ink)
+        word_left = self._PAD + self._SPARKLE + self._GAP
+        word_rect = QRectF(word_left, 0, self.width() - word_left - self._PAD + 2, self.height())
+        painter.drawText(word_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                         self._text.upper())
 
-    def eventFilter(self, obj, event):
-        if obj is self._button and event.type() == QEvent.Type.Resize:
-            self._place()
-        return False
+
+def _sparkle(center: QPointF, radius: float) -> QPainterPath:
+    """A four-point sparkle: points on the axes joined by inward curves.
+
+    Straight sides with a narrow waist read as a plus sign at this size.
+    """
+    pull = radius * 0.08  # how far each curve bends toward the centre
+    points = [(0, -radius), (radius, 0), (0, radius), (-radius, 0)]
+    path = QPainterPath(QPointF(center.x(), center.y() - radius))
+    for (x0, y0), (x1, y1) in zip(points, points[1:] + points[:1]):
+        bend = QPointF(center.x() + (x0 + x1) * pull / radius,
+                       center.y() + (y0 + y1) * pull / radius)
+        path.quadTo(bend, QPointF(center.x() + x1, center.y() + y1))
+    path.closeSubpath()
+    return path
