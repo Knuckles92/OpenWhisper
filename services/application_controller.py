@@ -273,6 +273,8 @@ class ApplicationController(QObject):
     paste_last_original_requested = pyqtSignal()
     walkthrough_requested = pyqtSignal()
     screenshot_requested = pyqtSignal()
+    # A shortcut's outcome near the pointer; any thread, shown on the Qt thread.
+    notice_requested = pyqtSignal(str, bool)
     # A push-and-hold recording latched into, or left, hands-free.
     hands_free_changed = pyqtSignal(bool)
     # (old, new) microphone names after a recording moved to the next one.
@@ -2677,6 +2679,9 @@ class ApplicationController(QObject):
         )
         self.walkthrough_requested.connect(lambda: self.walkthrough_runtime.toggle())
         self.screenshot_requested.connect(lambda: self.walkthrough_runtime.snap())
+        self.notice_requested.connect(
+            lambda text, done: self.ui_controller.show_notice(text, done=done)
+        )
         self.recording_state_changed.connect(self.walkthrough_runtime.on_recording_state_changed)
         self.ui_controller.on_walkthrough = self.walkthrough_runtime.toggle
         self.ui_controller.on_screenshot = self.walkthrough_runtime.snap

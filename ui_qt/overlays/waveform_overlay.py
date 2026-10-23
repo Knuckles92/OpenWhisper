@@ -341,7 +341,8 @@ class WaveformOverlay(QWidget):
             self.style.draw_processing_state(painter, rect, "")
         else:
             self.style.draw_transcribing_state(painter, rect, "")
-        self._draw_work_label(painter)
+        if not self._caption:
+            self._draw_work_label(painter)
 
     def _draw_work_label(self, painter: QPainter) -> None:
         """The stage's name; a new stage's rises in as the old one lifts away."""
@@ -571,13 +572,14 @@ class WaveformOverlay(QWidget):
                 color,
             )
 
-        painter.setPen(QPen(purple))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        painter.drawText(
-            rect.adjusted(0, h - 25, 0, 0),
-            Qt.AlignmentFlag.AlignCenter,
-            text,
-        )
+        if not self._caption:
+            painter.setPen(QPen(purple))
+            painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+            painter.drawText(
+                rect.adjusted(0, h - 25, 0, 0),
+                Qt.AlignmentFlag.AlignCenter,
+                text,
+            )
 
     def _moment(self) -> Optional[moments.Moment]:
         """How the current state plays, if it is a one-shot moment."""
@@ -658,6 +660,8 @@ class WaveformOverlay(QWidget):
         if self.current_state not in self.LISTENING_STATES:
             self._chip_rect = QRectF()
             self._control_rects = {}
+            if self._caption:
+                self._draw_caption(painter)
             return
         latched = self._hands_free or self.current_state == self.STATE_COMMAND_LISTENING
         if not self._recording_destination and latched:
@@ -1240,8 +1244,8 @@ class WaveformOverlay(QWidget):
     def show_notice(self, text: str, *, done: bool = False) -> None:
         """Briefly show an action's outcome near the pointer, even while hidden.
 
-        A recording in progress keeps its overlay and gets the text as a
-        caption; a transcription or rewrite in progress is left alone.
+        A recording, transcription or rewrite already on screen keeps its
+        overlay and gets the text as a caption.
 
         Args:
             text: The outcome, such as "Select the text to change first".
@@ -1250,8 +1254,7 @@ class WaveformOverlay(QWidget):
         if not text:
             return
         if self.isVisible() and self.current_state not in self._TRANSIENT_STATES | {self.STATE_IDLE}:
-            if self.current_state in self.LISTENING_STATES:
-                self.show_caption(text)
+            self.show_caption(text)
             return
         self._notice, self._notice_done = text, done
         if self.current_state == self.STATE_NOTICE and self.isVisible():
