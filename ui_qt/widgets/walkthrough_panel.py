@@ -6,7 +6,8 @@ they can see what the document holds before it exists. At Done the ticks
 close up into lines while the document is written, the header says what it
 came to, and the column fades once the document is ready.
 
-The column never takes focus or clicks, and it is left out of screenshots.
+The column never takes focus, and it is left out of screenshots. It can be
+dragged aside; each walkthrough opens it at the screen's edge again.
 Compositor-managed desktops (Wayland) place their own windows, so there is
 no column there.
 """
@@ -32,6 +33,7 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 from services.walkthrough.document import clock
 from ui_qt.utils.desktop import compositor_managed
+from ui_qt.utils.drag_move import DragToMove
 from ui_qt.utils.loudness import level_to_height
 from ui_qt.utils.palette import token_color
 
@@ -156,8 +158,8 @@ class WalkthroughPanel(QWidget):
         self.setWindowFlags(
             Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus
-            | Qt.WindowType.WindowTransparentForInput
         )
+        self._drag = DragToMove(self)
         self.state = self.HIDDEN
         self.column = WalkthroughColumn()
         self._clock = QElapsedTimer()
@@ -181,6 +183,7 @@ class WalkthroughPanel(QWidget):
         self._recorded_s = 0.0
         self._clock.start()
         self._enter(self.RECORDING)
+        self._drag.reset()
         self._place()
         self.show()
         self.raise_()
@@ -262,6 +265,18 @@ class WalkthroughPanel(QWidget):
         self.setFixedSize(width, height)
         self.move(area.right() - width - SCREEN_MARGIN + SHADOW + 1,
                   area.top() + (area.height() - height) // 2)
+
+    def mousePressEvent(self, event) -> None:
+        if not self._drag.press(event):
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if not self._drag.move(event):
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if not self._drag.release(event):
+            super().mouseReleaseEvent(event)
 
     # ---- painting ----
 

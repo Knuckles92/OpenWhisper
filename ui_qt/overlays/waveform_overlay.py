@@ -18,7 +18,9 @@ from services.settings import (
     resolve_streaming_overlay_font_size,
     settings_manager,
 )
+from ui_qt.utils.drag_move import DragToMove
 from ui_qt.utils.overlay_position import (
+    clamp_rect_to_available,
     max_height_for_anchor,
     preferred_overlay_position,
 )
@@ -121,6 +123,9 @@ class WaveformOverlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, not (self._embedded or preview))
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # The floating overlay can be dragged aside; it opens by the pointer again
+        # each time it is shown afresh.
+        self._drag: Optional[DragToMove] = None
         if preview:
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         elif self._embedded:
@@ -131,6 +136,7 @@ class WaveformOverlay(QWidget):
             # clicking the overlay may take it (WS_EX_NOACTIVATE on Windows).
             self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
             self.setMouseTracking(True)
+            self._drag = DragToMove(self)
         if sys.platform == "darwin":
             # On macOS, Qt Tool windows are hidden whenever the app is not the
             # frontmost application (or when its main window is minimized). During
@@ -453,6 +459,15 @@ class WaveformOverlay(QWidget):
             y = max(0, parent.height() - self.height() - 64)
             self.move(x, y)
             return
+        if self._dragged():
+            # Where the user put it stays put; growing only nudges it back on screen.
+            screen = self.screen()
+            if screen is not None:
+                self.move(*clamp_rect_to_available(
+                    self.x(), self.y(), self.overlay_width, self.overlay_height,
+                    screen.availableGeometry(),
+                ))
+            return
         if self._anchor_pos is None:
             return
         available = self._available_geometry_for_anchor()
@@ -471,6 +486,11 @@ class WaveformOverlay(QWidget):
         """Soft config max, further limited by free space near the anchor."""
         if self._embedded:
             return min(self._streaming_max_height, max(self._base_height, self.parentWidget().height() // 3))
+        if self._dragged() and self.screen() is not None:
+            # Grow down from where the user put it, as far as the screen allows.
+            available = self.screen().availableGeometry()
+            room = available.y() + available.height() - 8 - self.y()
+            return max(self._base_height, min(self._streaming_max_height, room))
         available = self._available_geometry_for_anchor()
         if available is None or self._anchor_pos is None:
             return self._streaming_max_height
@@ -920,11 +940,23 @@ class WaveformOverlay(QWidget):
             event.accept()
             signal.emit()
             return
+        if self._drag is not None and self._drag.press(event):
+            return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self._drag is not None and self._drag.move(event):
+            return
         self._set_hover(self._hit(event.position()))
         super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._drag is not None and self._drag.release(event):
+            return
+        super().mouseReleaseEvent(event)
+
+    def _dragged(self) -> bool:
+        return self._drag is not None and self._drag.moved
 
     def leaveEvent(self, event):
         self._set_hover("")
@@ -936,6 +968,8 @@ class WaveformOverlay(QWidget):
         self._hover = target
         if target:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
+        elif self._drag is not None:
+            self.setCursor(Qt.CursorShape.OpenHandCursor)
         else:
             self.unsetCursor()
         self.update()
@@ -1329,6 +1363,8 @@ class WaveformOverlay(QWidget):
         self.cancel_progress = 0.0
         self._streaming_preview_text = ""
         self._anchor_pos = None
+        if self._drag is not None:
+            self._drag.reset()
         self._end_listening_extras()
         self._recording_destination = ""
         self._notice = ""

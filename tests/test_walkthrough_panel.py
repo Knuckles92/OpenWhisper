@@ -12,7 +12,6 @@ from ui_qt.widgets.walkthrough_panel import (
     Paragraph,
     ShotItem,
     WalkthroughColumn,
-    WalkthroughPanel,
 )
 
 LOUD = 0.05  # about -26 dBFS: speech on a desk microphone
@@ -158,12 +157,12 @@ def test_a_new_walkthrough_starts_an_empty_column(panel, clock):
     assert panel.column.shots == 0 and panel.column.items[-1].ticks == []
 
 
-def test_the_column_never_takes_focus_or_clicks(panel):
+def test_the_column_never_takes_focus_but_takes_the_pointer_to_be_dragged(panel):
     from PyQt6.QtCore import Qt
 
     flags = panel.windowFlags()
-    assert flags & Qt.WindowType.WindowTransparentForInput
     assert flags & Qt.WindowType.WindowDoesNotAcceptFocus
+    assert not flags & Qt.WindowType.WindowTransparentForInput
 
 
 def test_no_column_where_the_compositor_places_windows(monkeypatch):
