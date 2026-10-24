@@ -101,6 +101,19 @@ def _seconds(value) -> float:
     return value
 
 
+def _shot_file(folder: Path, name, *, required: bool = True) -> Path | None:
+    if name is not None and not (isinstance(name, str) and _SHOT.fullmatch(name)):
+        raise ValueError("Invalid screenshot name")
+    if not name:
+        return None
+    try:
+        return local_file(folder, name)
+    except ValueError:
+        if required:
+            raise
+        return None  # an omitted PNG deleted by hand just can't come back
+
+
 def load_document(folder: Path) -> Walkthrough:
     # The Qt renderer loads only here and below: recovery and retention run
     # on the startup worker, which must not import it.
@@ -111,13 +124,12 @@ def load_document(folder: Path) -> Walkthrough:
         raise ValueError("Unsupported walkthrough version")
     sections = []
     for section in value["sections"]:
-        name = section.get("shot")
-        if name is not None and not _SHOT.fullmatch(name):
-            raise ValueError("Invalid screenshot name")
-        shot = local_file(folder, name) if name else None
+        shot = _shot_file(folder, section.get("shot"))
+        omitted = _shot_file(folder, section.get("omitted_shot"), required=False)
         stamp = section.get("kept_at_s")
         sections.append(document.Section(str(section["text"]), shot,
-                                         _seconds(stamp) if stamp is not None else None))
+                                         _seconds(stamp) if stamp is not None else None,
+                                         None if shot else omitted))
     return document.Walkthrough(datetime.fromisoformat(value["started_at"]),
                                 _seconds(value["duration_s"]), tuple(sections))
 
@@ -170,19 +182,22 @@ def save_review(folder: Path, texts: list[str], keep: list[bool]) -> Walkthrough
     original = load_document(folder)
     if len(texts) != len(original.sections) or len(keep) != len(texts):
         raise ValueError("The document changed; reopen Review")
+    def revise(section, text, included):
+        image = section.shot or section.omitted
+        return replace(section, text=text, shot=image if included else None,
+                       omitted=None if included else image)
     updated = replace(original, sections=tuple(
-        replace(section, text=text, shot=section.shot if included else None,
-                kept_at_s=section.kept_at_s if included else None)
-        for section, text, included in zip(original.sections, texts, keep, strict=True)))
+        revise(*fields) for fields in zip(original.sections, texts, keep, strict=True)))
     fmt, page_size = document_settings()
     # Render in isolation first: a failed PDF cannot destroy the saved document.
     with tempfile.TemporaryDirectory(prefix=".review-", dir=folder) as staging:
         stage = Path(staging)
         staged = replace(updated, sections=tuple(
-            replace(s, shot=stage / s.shot.name) if s.shot else s for s in updated.sections))
+            replace(s, shot=s.shot and stage / s.shot.name,
+                    omitted=s.omitted and stage / s.omitted.name) for s in updated.sections))
         for s in updated.sections:
-            if s.shot:
-                shutil.copyfile(s.shot, stage / s.shot.name)
+            if s.shot or s.omitted:
+                shutil.copyfile(s.shot or s.omitted, stage / (s.shot or s.omitted).name)
         document.write_markdown(staged, stage, document_format=fmt)
         document.write_pdf(staged, stage, document_format=fmt, page_size=page_size)
         document.write_manifest(staged, stage)

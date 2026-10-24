@@ -125,7 +125,8 @@ the clipboard has been overwritten.
 
 **Saved Walkthroughs…** lists completed documents and interrupted drafts.
 Edit each section's transcript, uncheck an accidental screenshot, then choose
-**Save review** to regenerate the PDF, Markdown, and manifest. Nothing is
+**Save review** to regenerate the PDF, Markdown, and manifest. An unchecked
+screenshot stays listed, faded, so a later review can include it again. Nothing is
 shared by opening or saving the review; use a copy button when ready. The
 original PNGs remain, and the first revision's manifest is kept as
 `walkthrough.original.json`. A review clears an earlier AI write-up because

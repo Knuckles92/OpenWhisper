@@ -735,19 +735,20 @@ class WalkthroughLibraryDialog(QDialog):
         step.setFixedSize(22, 22)
         step.setAlignment(Qt.AlignmentFlag.AlignCenter)
         top.addWidget(step)
+        image = section.shot or section.omitted
         if section.kept_at_s is not None:
-            stamp = QLabel(f"Screenshot at {clock(section.kept_at_s)}" if section.shot
+            stamp = QLabel(f"Screenshot at {clock(section.kept_at_s)}" if image
                            else f"Until {clock(section.kept_at_s)}")
             stamp.setObjectName("wlStamp")
             top.addWidget(stamp)
         top.addStretch(1)
         check = SettingsSwitch()
         check.setChecked(section.shot is not None)
-        check.setEnabled(section.shot is not None)
-        check.setAccessibleName(f"Include {section.shot.name}" if section.shot else "No screenshot")
+        check.setEnabled(image is not None)
+        check.setAccessibleName(f"Include {image.name}" if image else "No screenshot")
         check.toggled.connect(self._changed)
         self._checks.append(check)
-        if section.shot:
+        if image:
             include = QLabel("Include screenshot")
             include.setObjectName("wlInclude")
             top.addWidget(include)
@@ -759,18 +760,18 @@ class WalkthroughLibraryDialog(QDialog):
         editor.textChanged.connect(self._changed)
         column.addWidget(editor)
         self._editors.append(editor)
-        if section.shot:
+        if image:
             ratio = self.devicePixelRatioF()
-            shown, faded = _preview(section.shot, ratio, False), _preview(section.shot, ratio, True)
+            shown, faded = _preview(image, ratio, False), _preview(image, ratio, True)
             preview = QLabel()
             preview.setObjectName("wlPreview")
-            preview.setAccessibleName(f"Preview of {section.shot.name}")
+            preview.setAccessibleName(f"Preview of {image.name}")
             preview.setAlignment(Qt.AlignmentFlag.AlignLeft)
             if shown is not None:
-                preview.setPixmap(shown)
+                preview.setPixmap(shown if section.shot else faded)
                 check.toggled.connect(lambda on: preview.setPixmap(shown if on else faded))
             else:
-                preview.setText(f"{section.shot.name} is missing")
+                preview.setText(f"{image.name} is missing")
                 preview.setObjectName("wlStamp")
             column.addWidget(preview)
         return card

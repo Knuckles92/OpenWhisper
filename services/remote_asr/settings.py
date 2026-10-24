@@ -18,6 +18,9 @@ from services.remote_asr import protocol
 
 logger = logging.getLogger(__name__)
 
+#: The installed app's token. A source checkout with its own data directory
+#: pairs as a separate device under a name scoped to that directory; see
+#: ``token_credential``.
 TOKEN_CREDENTIAL = "OPENWHISPER_REMOTE_ENGINE_TOKEN"
 #: Pairing, forgetting, and following a moved host each read then write the
 #: saved pairing; a connection finishing as the host is forgotten must not
@@ -122,9 +125,39 @@ def load_client_pairing(settings: Optional[Dict[str, Any]] = None) -> Optional[C
     )
 
 
+def token_credential() -> str:
+    """The credential name holding this data directory's device token.
+
+    Pairings live in each data directory's settings, but the OS credential
+    store is per user. A development checkout keeps its own settings
+    (``config._source_data_dir``), so one shared name let the installed app
+    and a ``uv run`` overwrite each other's token while each kept its own
+    pairing, and the host then refused whichever token was overwritten.
+    The per-user directory keeps the original name; any other data directory
+    gets a name derived from its path.
+    """
+    import hashlib
+    import os
+
+    from config import data_root, local_app_dir
+
+    root = os.path.normcase(os.path.realpath(data_root()))
+    if root == os.path.normcase(os.path.realpath(local_app_dir())):
+        return TOKEN_CREDENTIAL
+    suffix = hashlib.sha256(root.encode("utf-8")).hexdigest()[:12].upper()
+    return f"{TOKEN_CREDENTIAL}_{suffix}"
+
+
 def load_client_token() -> Optional[str]:
     from services.credentials import resolve_credential
 
+    name = token_credential()
+    token = resolve_credential(name)
+    if token or name == TOKEN_CREDENTIAL:
+        return token
+    # A checkout paired before tokens were scoped saved under the shared
+    # name. Read it until the next pairing saves a scoped one; never write
+    # or delete it from here, since it may be the installed app's.
     return resolve_credential(TOKEN_CREDENTIAL)
 
 
@@ -132,7 +165,7 @@ def save_client_pairing(host: str, port: int, result) -> ClientPairing:
     """Store a fresh pairing: token first, so settings never name a host we can't use."""
     from services.credentials import store
 
-    store().set(TOKEN_CREDENTIAL, result.token)
+    store().set(token_credential(), result.token)
     pairing = ClientPairing(
         host=host,
         port=port,
@@ -237,7 +270,7 @@ def forget_client_pairing() -> None:
     with _PAIRING_LOCK:
         settings_manager.update_settings({}, remove=(SettingsKey.REMOTE_ENGINE_CLIENT,))
     try:
-        store().delete(TOKEN_CREDENTIAL)
+        store().delete(token_credential())
     except Exception as exc:
         logger.warning("Could not delete the remote engine token: %s", type(exc).__name__)
 

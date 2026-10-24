@@ -12,6 +12,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ### Fixed
 - **Retry remote pairing after denying Keychain access** — a failed connection-key save now offers **Retry Keychain access**, **Open Keychain Access**, and steps to allow access on macOS. Retrying finishes the connection the host already approved without another code or approval, even after closing and reopening Settings while OpenWhisper stays running. Other platforms offer **Retry saving key** for their credential store.
+- **A source checkout and the installed app no longer unpair each other** — both saved their remote-engine connection key under one Keychain entry while keeping separate pairings, so pairing one overwrote the other's key and the host then rejected it as "isn't paired with the host anymore." A checkout with its own data folder now pairs as a separate device with its own key; the installed app keeps its existing one.
+- **Include an omitted walkthrough screenshot again** — a screenshot you unchecked in **Saved Walkthroughs** now stays listed, faded, with its switch, so a later **Save review** can put it back. Before, it disappeared from Review after saving even though its PNG was kept. Screenshots omitted in 2.7.9 aren't remembered and stay out.
 
 ## [2.7.9] - 2026-10-23
 
