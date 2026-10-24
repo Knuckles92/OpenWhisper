@@ -708,6 +708,9 @@ class AppConfig:
     MEETING_LANGUAGE: str = "auto"
     MEETING_LLM_MODEL: str = "openrouter/free"
     MEETING_AGENT_CORE: str = "pi"
+    # Installed agents: live passes favour speed; the final report may think harder.
+    MEETING_LIVE_THINKING: str = "low"
+    MEETING_FINAL_THINKING: str = "medium"
     MEETING_SPEAKER_ID_BACKEND: str = "local"
     MEETING_END_REDECODE: bool = False
     MEETING_END_POLISH: bool = True

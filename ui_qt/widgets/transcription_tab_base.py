@@ -309,6 +309,7 @@ class TranscriptionTabBase(QWidget):
         self.cleanup_check = QCheckBox("AI cleanup")
         self.cleanup_check.setObjectName("engineCleanupCheck")
         self.cleanup_check.setToolTip(
+            "On-demand dictation only; not walkthroughs.\n"
             "Use your AI model to fix punctuation, remove\n"
             "filler words, and apply your cleanup rules.\n"
             "May change wording and adds processing time."

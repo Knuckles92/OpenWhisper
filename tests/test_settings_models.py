@@ -201,6 +201,18 @@ class _DialogTestCase:
         return host.models, values
 
 
+def _assert_agent_card(dialog, agent_id):
+    """One Cleanup model card: the agent's model row and the thinking level."""
+    tile = dialog.cleanup_model_tile
+    assert not tile.isHidden()
+    assert tile.isAncestorOf(dialog.cleanup_agent_picker.model_card)
+    assert not dialog.text_model_picker.isVisibleTo(tile)
+    assert dialog.cleanup_reasoning_combo.isEnabled()
+    name = agent_picker.AGENT_SPECS[agent_id].name
+    assert name in tile.description_label.text()
+    assert f"Sent to {name}" in dialog.cleanup_reasoning_note.text()
+
+
 class TestCleanupAgents(_DialogTestCase):
     @pytest.mark.parametrize("appearance", ["classic", "omarchy"])
     @pytest.mark.parametrize("agent_id", TranscriptCleanupProvider.INSTALLED)
@@ -212,7 +224,7 @@ class TestCleanupAgents(_DialogTestCase):
         dialog._on_cleanup_agent_choice(agent_id)
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] == agent_id
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == ""
-        assert dialog.cleanup_model_tile.isHidden()
+        _assert_agent_card(dialog, agent_id)
         assert dialog.cleanup_agent_picker.choice() == agent_id
         dialog._on_cleanup_agent_model_chosen(agent_id, "chosen-model")
         dialog._load_text_settings()
@@ -222,10 +234,25 @@ class TestCleanupAgents(_DialogTestCase):
         dialog._on_cleanup_agent_choice(agent_picker.BUILTIN)
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] == "openai"
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == "gpt-test"
-        assert not dialog.cleanup_model_tile.isHidden()
+        assert dialog.text_model_picker.isVisibleTo(dialog.cleanup_model_tile)
+        assert "API keys" in dialog.cleanup_model_tile.description_label.text()
         assert dialog.cleanup_agent_picker.tiles[agent_picker.BUILTIN].name == "API / local model"
         dialog._on_cleanup_agent_choice(agent_id)
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == "chosen-model"
+
+    def test_cleanup_agent_card_shows_the_saved_model_and_thinking_level(self):
+        dialog, values = self._make_dialog(extra_settings={
+            SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "claude_code",
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "haiku",
+            SettingsKey.TRANSCRIPT_CLEANUP_REASONING: "high",
+            "cleanup_model_memory": {"claude_code": "opus"},
+        })
+        _assert_agent_card(dialog, "claude_code")
+        assert dialog.cleanup_agent_picker._saved_models["claude_code"] == "haiku"
+        combo = dialog.cleanup_reasoning_combo
+        assert combo.currentData() == "high"
+        combo.setCurrentIndex(combo.findData("off"))
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] == "off"
 
     def test_cleanup_agent_loads_saved_selection_without_api_key_warning(self):
         dialog, _ = self._make_dialog(extra_settings={
@@ -233,7 +260,7 @@ class TestCleanupAgents(_DialogTestCase):
             SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "",
         })
         assert dialog.cleanup_agent_picker.choice() == "codex"
-        assert dialog.cleanup_model_tile.isHidden()
+        _assert_agent_card(dialog, "codex")
         assert dialog.text_summary() == "Codex · default model"
         from ui_qt.dialogs.settings_home import HomePage
         assert "API key needed" not in HomePage._cleanup_status({

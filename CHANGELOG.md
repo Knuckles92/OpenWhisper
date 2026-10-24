@@ -8,7 +8,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ## [Unreleased]
 
 ### Added
-- **AI cleanup through your installed coding agent** — choose Claude Code, Codex, or OpenCode in **Settings → AI cleanup**, with its own model or default and existing sign-in. Standard dictation and cleanup profiles use the same choice. Agents receive text and cleanup instructions with tools disabled; cancellation stops the run, and a failed run keeps the original transcript.
+- **AI cleanup through your installed coding agent** — choose Claude Code, Codex, or OpenCode in **Settings → AI cleanup**, with its own model or default and existing sign-in. Standard dictation and cleanup profiles use the same choice. One **Cleanup model** card holds the chosen agent's or endpoint's model and the **Thinking level**, which agents receive as their reasoning effort (Off runs them at Low). Agents receive text and cleanup instructions with tools disabled; cancellation stops the run, and a failed run keeps the original transcript.
 - **Walkthrough screenshots on macOS** — the recording overlay's **Snap** and **Done**, the menu bar's **Take Screenshot**, and the Screenshot shortcut now work on macOS. Snap freezes every display, covering the menu bar and Dock, and full-screen apps too. When you finish or cancel, the app you were working in gets the focus back. Clicking Snap, Done, or the language chip no longer takes the focus from the app you're dictating into. Snap briefly hides the recording overlay and walkthrough column for capture, then restores them while you draw; other apps' recordings and shares can include them. The first snap asks for Screen Recording permission. Grant it in System Settings, then reopen OpenWhisper.
 
 ### Fixed

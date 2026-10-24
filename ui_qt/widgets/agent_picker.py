@@ -1127,6 +1127,9 @@ class AgentPicker(QWidget):
     The picker scans and reports; it saves nothing. The host saves a choice
     when :attr:`choice_requested` or :attr:`model_chosen` fires and answers
     with :meth:`set_choice` and :meth:`set_saved_models`.
+
+    With ``framed_models=False`` the model row is not laid out in the
+    picker: the host adds :attr:`model_card` to a card of its own.
     """
 
     #: A tile was chosen: an agent id, or :data:`BUILTIN`.
@@ -1136,7 +1139,7 @@ class AgentPicker(QWidget):
     #: A scan result was applied (fresh or cached).
     results_changed = pyqtSignal()
 
-    def __init__(self, parent=None, *, purpose="AI insights"):
+    def __init__(self, parent=None, *, purpose="AI insights", framed_models=True):
         super().__init__(parent)
         self.setObjectName("agentPicker")
         self._purpose = purpose
@@ -1217,11 +1220,19 @@ class AgentPicker(QWidget):
         self.notice.hide()
         layout.addWidget(self.notice)
 
-        self.model_card = QFrame(self)
-        self.model_card.setObjectName("settingsTile")
-        self.model_card.setProperty("kind", "field")
-        card = QVBoxLayout(self.model_card)
-        card.setContentsMargins(16, 14, 16, 14)
+        if framed_models:
+            self.model_card = QFrame(self)
+            self.model_card.setObjectName("settingsTile")
+            self.model_card.setProperty("kind", "field")
+            card = QVBoxLayout(self.model_card)
+            card.setContentsMargins(16, 14, 16, 14)
+        else:
+            # The host puts the model row in a card of its own, beside the
+            # settings that apply to every choice.
+            self.model_card = QWidget(self)
+            self.model_card.setObjectName("agentModelSection")
+            card = QVBoxLayout(self.model_card)
+            card.setContentsMargins(0, 0, 0, 0)
         card.setSpacing(8)
         self.model_field = QWidget(self.model_card)
         self.model_field.setObjectName("modelManagerFieldGroup")
@@ -1253,7 +1264,8 @@ class AgentPicker(QWidget):
         self.usage_label.setObjectName("infoLabel")
         card.addWidget(self.usage_label)
         self.model_card.hide()
-        layout.addWidget(self.model_card)
+        if framed_models:
+            layout.addWidget(self.model_card)
 
         self._tick = QTimer(self)
         self._tick.setInterval(_TICK_MS)

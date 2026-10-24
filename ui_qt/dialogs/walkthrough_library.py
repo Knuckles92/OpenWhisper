@@ -561,6 +561,11 @@ class WalkthroughLibraryDialog(QDialog):
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         column.addWidget(self.scroll, 1)
         column.addWidget(self._save_bar())
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        self.close_button = self._button("Close", "wlSecondary", self.reject)
+        footer.addWidget(self.close_button)
+        column.addLayout(footer)
         return column
 
     def _save_bar(self) -> QFrame:

@@ -44,6 +44,7 @@ from services.hf_access import (
     resolve_model_repo,
     scan_cached_models,
 )
+from services.installed_agents import AGENT_SPECS
 from services.whisper_sources import custom_models
 from ui_qt.dialogs.custom_whisper_dialog import add_custom_models
 from services.settings import (
@@ -109,6 +110,11 @@ from ui_qt.widgets.speech_backend_picker import (
 )
 
 logger = logging.getLogger(__name__)
+
+_CLEANUP_ENDPOINT_DESCRIPTION = (
+    "The provider and model that rewrite each dictation. Cleanup "
+    "profiles use it too. The provider's key lives under API keys."
+)
 
 _ENGINE_CAPTIONS = {
     "local_whisper": "Local faster-whisper on this computer.",
@@ -408,7 +414,7 @@ class ModelAssignments(QObject):
 
     def build_cleanup_model_section(self, layout: QVBoxLayout) -> InfoTile:
         """The language model AI cleanup runs, embedded in the AI cleanup page."""
-        self.cleanup_agent_picker = AgentPicker(purpose="AI cleanup")
+        self.cleanup_agent_picker = AgentPicker(purpose="AI cleanup", framed_models=False)
         self.cleanup_agent_picker.choice_requested.connect(self._on_cleanup_agent_choice)
         self.cleanup_agent_picker.model_chosen.connect(self._on_cleanup_agent_model_chosen)
         layout.addWidget(self.cleanup_agent_picker)
@@ -438,19 +444,18 @@ class ModelAssignments(QObject):
             self._on_cleanup_reasoning_changed
         )
 
+        # One card for whichever runner is chosen above: its model, then the
+        # thinking level, which agents and API models both take.
         self.cleanup_model_tile = InfoTile(
-            "Cleanup model",
-            "The provider and model that rewrite each dictation. Cleanup "
-            "profiles use it too. The provider's key lives under API keys.",
-            _design_icon("box-blue.svg"),
+            "Cleanup model", _CLEANUP_ENDPOINT_DESCRIPTION, _design_icon("box-blue.svg"),
         )
+        self.cleanup_model_tile.add_body(self.cleanup_agent_picker.model_card)
         self.cleanup_model_tile.add_body(self.text_model_picker)
         self.cleanup_model_tile.add_body(
             self._field("Thinking level", self.cleanup_reasoning_combo)
         )
-        self.cleanup_model_tile.add_body(
-            self._caption("Used only by models with configurable reasoning.")
-        )
+        self.cleanup_reasoning_note = self._caption("")
+        self.cleanup_model_tile.add_body(self.cleanup_reasoning_note)
         layout.addWidget(self.cleanup_model_tile)
         self._built.add(CLEANUP)
         return self.cleanup_model_tile
@@ -1174,9 +1179,7 @@ class ModelAssignments(QObject):
     # ---- catalog loading ----
 
     def _on_text_provider_changed(self, provider: str) -> None:
-        self._update_cleanup_reasoning_controls(
-            provider, self.text_model_picker.model_combo.currentText()
-        )
+        self._update_cleanup_reasoning_controls()
         if self.rail.current_key() == CLEANUP:
             self._fetch_catalog_models(
                 provider, picker=self.text_model_picker
@@ -1315,25 +1318,49 @@ class ModelAssignments(QObject):
         if text_picker is not None and text_picker.provider == provider:
             # A server the user runs reports each model's reasoning control
             # with its catalog.
-            self._update_cleanup_reasoning_controls(
-                provider, text_picker.model_combo.currentText().strip()
-            )
+            self._update_cleanup_reasoning_controls()
 
-    def _update_cleanup_reasoning_controls(self, provider: str, model: str) -> None:
-        from services.text_model_catalog import model_spec
-        profile = get_profile(provider, self._settings_snapshot())
-        supported = profile is not None and profile.kind in ("openai", "openrouter")
-        if profile is not None and model:
-            try:
-                # Includes local servers that said this model takes an effort.
-                supported = supported or model_spec(profile, model).reasoning_format in ("openai", "deepseek")
-            except ValueError:
-                pass
-        self.cleanup_reasoning_combo.setEnabled(supported)
-        self.cleanup_reasoning_combo.setToolTip(
-            "Thinking effort for this model." if supported
-            else "This model uses its provider's default reasoning behavior."
+    def _show_cleanup_runner(self) -> None:
+        """Fit the Cleanup model card to the runner: an agent or an endpoint."""
+        provider = self._active_text_provider
+        agent = AGENT_SPECS[provider] if provider in TranscriptCleanupProvider.INSTALLED else None
+        self.text_model_picker.setVisible(agent is None)
+        self.cleanup_model_tile.set_description(
+            f"{agent.name} rewrites each dictation. Cleanup profiles use it too."
+            if agent is not None else _CLEANUP_ENDPOINT_DESCRIPTION
         )
+        self._update_cleanup_reasoning_controls()
+
+    def _update_cleanup_reasoning_controls(self) -> None:
+        """Say what the thinking level does for the runner the card shows."""
+        from services.text_model_catalog import model_spec
+        provider = self._active_text_provider
+        if provider in TranscriptCleanupProvider.INSTALLED:
+            # Agents take an effort but have no "off"; cleanup sends Low.
+            name = AGENT_SPECS[provider].name
+            supported = True
+            note = f"Sent to {name} as its reasoning effort. Off runs it at Low."
+            if AGENT_SPECS[provider].transport == "acp":
+                note = (f"Sent to {name} as its reasoning effort when the model "
+                        "offers one. Off runs it at Low.")
+        else:
+            # The API picker may show a choice that isn't saved yet.
+            provider = self.text_model_picker.provider
+            model = self.text_model_picker.model_combo.currentText().strip()
+            profile = get_profile(provider, self._settings_snapshot())
+            supported = profile is not None and profile.kind in ("openai", "openrouter")
+            if profile is not None and model:
+                try:
+                    # Includes local servers that said this model takes an effort.
+                    supported = supported or model_spec(profile, model).reasoning_format in ("openai", "deepseek")
+                except ValueError:
+                    pass
+            note = ("How much the model reasons before it rewrites. Higher is slower."
+                    if supported else
+                    "This model doesn't take a thinking level, so it uses its provider's default.")
+        self.cleanup_reasoning_combo.setEnabled(supported)
+        self.cleanup_reasoning_combo.setToolTip(note)
+        self.cleanup_reasoning_note.setText(note)
 
     def _validate_text_model(self, provider: str, model: str) -> bool:
         from services.text_model_catalog import model_spec
@@ -1390,7 +1417,7 @@ class ModelAssignments(QObject):
             self._settings_snapshot().get("cleanup_model_memory", {})
         )
         self.cleanup_agent_picker.set_choice(agent_id)
-        self.cleanup_model_tile.hide()
+        self._show_cleanup_runner()
         self._say(f"AI cleanup will run through {self.text_summary()}")
         self._refresh_rail_values()
 
@@ -1422,8 +1449,7 @@ class ModelAssignments(QObject):
         self._active_text_model = model
         self.text_model_picker.set_active_selection(provider, model)
         self.cleanup_agent_picker.set_choice(BUILTIN)
-        self.cleanup_model_tile.show()
-        self._update_cleanup_reasoning_controls(provider, model)
+        self._show_cleanup_runner()
         self._say(f"Text model set to {self.text_summary()}")
         self._refresh_rail_values()
 
@@ -1504,10 +1530,14 @@ class ModelAssignments(QObject):
             endpoint = config.TRANSCRIPT_CLEANUP_PROVIDER
         self.text_model_picker.set_provider(endpoint if installed else provider, "" if installed else model)
         self.text_model_picker.set_active_selection(provider, model)
-        self.cleanup_agent_picker.set_saved_models(settings.get("cleanup_model_memory", {}))
+        memory = settings.get("cleanup_model_memory")
+        memory = dict(memory) if isinstance(memory, dict) else {}
+        if installed:
+            # The saved model is what runs, whatever the memory last held.
+            memory[provider] = model
+        self.cleanup_agent_picker.set_saved_models(memory)
         self.cleanup_agent_picker.set_choice(provider if installed else BUILTIN)
-        self.cleanup_model_tile.setVisible(not installed)
-        self._update_cleanup_reasoning_controls(provider, model)
+        self._show_cleanup_runner()
 
     def _load_meeting_settings(self) -> None:
         settings = self._settings_snapshot()

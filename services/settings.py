@@ -162,6 +162,10 @@ class SettingsKey:
     MEETING_AGENT_CORE: Final[str] = "meeting_agent_core"
     #: ``{agent_id: model}`` for installed agents; "" keeps the agent's default.
     MEETING_AGENT_MODELS: Final[str] = "meeting_agent_models"
+    #: ``TranscriptCleanupReasoning`` values for an installed agent's live
+    #: passes and its final report.
+    MEETING_LIVE_THINKING: Final[str] = "meeting_live_thinking"
+    MEETING_FINAL_THINKING: Final[str] = "meeting_final_thinking"
     MEETING_END_REDECODE: Final[str] = "meeting_end_redecode"
     MEETING_REDECODE_COVERAGE_GUARD: Final[str] = "meeting_redecode_coverage_guard"
     MEETING_END_POLISH: Final[str] = "meeting_end_polish"
@@ -732,6 +736,8 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.MEETING_LLM_MODEL: config.MEETING_LLM_MODEL,
     SettingsKey.MEETING_AGENT_CORE: config.MEETING_AGENT_CORE,
     SettingsKey.MEETING_AGENT_MODELS: {},
+    SettingsKey.MEETING_LIVE_THINKING: config.MEETING_LIVE_THINKING,
+    SettingsKey.MEETING_FINAL_THINKING: config.MEETING_FINAL_THINKING,
     SettingsKey.MEETING_SPEAKER_ID_BACKEND: config.MEETING_SPEAKER_ID_BACKEND,
     SettingsKey.MEETING_END_REDECODE: config.MEETING_END_REDECODE,
     SettingsKey.MEETING_REDECODE_COVERAGE_GUARD: False,
@@ -1263,6 +1269,10 @@ resolve_transcript_batch_relation = _choice_resolver(
     SettingsKey.TRANSCRIPT_BATCH_RELATION, BatchRelation.ALL)
 resolve_meeting_agent_core = _choice_resolver(
     SettingsKey.MEETING_AGENT_CORE, MeetingAgentCore.ALL)
+resolve_meeting_live_thinking = _choice_resolver(
+    SettingsKey.MEETING_LIVE_THINKING, TranscriptCleanupReasoning.ALL)
+resolve_meeting_final_thinking = _choice_resolver(
+    SettingsKey.MEETING_FINAL_THINKING, TranscriptCleanupReasoning.ALL)
 resolve_meeting_server_bind = _choice_resolver(
     SettingsKey.MEETING_SERVER_BIND, MeetingServerBind.ALL)
 resolve_transcript_cleanup_level = _choice_resolver(

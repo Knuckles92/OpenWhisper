@@ -1464,6 +1464,7 @@ QWidget#backupSettingsPage QLabel#backupCalendarPlanned {
 /* Meeting intelligence: who runs AI insights. The tiles paint their own
    cards (lift, glow, scan shimmer); these rules set their type. */
 QWidget#agentPicker,
+QWidget#agentModelSection,
 QWidget#agentTileGrid,
 QWidget#agentTile {
     background-color: transparent;
