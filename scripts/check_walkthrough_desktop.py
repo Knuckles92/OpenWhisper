@@ -1,6 +1,6 @@
 """Opt-in real-desktop smoke test (not run by pytest).
 
-Run from the checkout with its Python on Windows, X11, or Hyprland. This briefly
+Run from the checkout with its Python on macOS, Windows, X11, or Hyprland. This briefly
 covers the selected screen with a test card, captures/annotates that card, then
 checks review and PDF generation. It never records the microphone, contacts an
 AI provider, changes settings, or keeps screenshots of the user's desktop.
@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 from services.walkthrough import finish, library
 from services.walkthrough.session import WalkthroughSession
-from ui_qt.snap import support
+from ui_qt.snap import affinity, support
 from ui_qt.snap.session import start_snap
 
 
@@ -54,11 +54,45 @@ def main():
                        area.y() + area.height() // 4 - 30, 60, 60)
     marker.show()
     QTest.qWait(300)
+    # Exercise the same exclusion decision as the recording overlay. Merely
+    # checking a successful native API call misses macOS accepting the legacy
+    # sharing flag while still capturing the window's pixels.
+    excluded = affinity.keep_out_of_screenshots(marker, True)
     snap = None
+    real_overlays = []
+    overlay_samples = []
     try:
+        if app.platformName() == "cocoa":
+            from ui_qt.snap import macos
+            from ui_qt.overlays.waveform_overlay import WaveformOverlay
+            from ui_qt.widgets.walkthrough_panel import WalkthroughPanel
+            from ui_qt.widgets.walkthrough_ready import WalkthroughReadyCard
+
+            assert macos.make_nonactivating(marker), "Could not create a non-activating panel"
+            previous = macos.set_level(marker, macos.PARKED_LEVEL)
+            assert previous is not None, "Could not park above the snap overlay"
+            assert macos.set_level(marker, previous) == macos.PARKED_LEVEL
+            pill = WaveformOverlay()
+            pill.show_at_cursor(pill.STATE_RECORDING)
+            pill.set_walkthrough_controls(True)
+            column = WalkthroughPanel()
+            column.begin()
+            ready = WalkthroughReadyCard()
+            real_overlays.extend((pill, column, ready))
+            for widget in (column, ready):
+                assert not macos._ns_window(widget).hidesOnDeactivate(), (
+                    f"{type(widget).__name__} hides while the user works in another app")
+            QTest.qWait(300)
+            # Translucent animated windows take longer to disappear than the
+            # solid marker. Check their old positions in the kept pixels too.
+            for widget in (pill, column):
+                for x, y in ((40, 20), (widget.width() - 40, widget.height() - 30)):
+                    overlay_samples.append((widget.x() - area.x() + x,
+                                            widget.y() - area.y() + y))
         # Keep the capture deferred until signals are connected. The test card
         # stays visible throughout; no desktop pixels are saved to disk.
-        snap = start_snap(keep_out=(marker,), hint="Desktop smoke test")
+        snap = start_snap(keep_out=(marker, *real_overlays), hint="Desktop smoke test",
+                          float_above=(real_overlays[0],) if real_overlays else ())
         kept, failed = [], []
         snap.kept.connect(kept.append)
         snap.failed.connect(failed.append)
@@ -91,6 +125,11 @@ def main():
         sample = image.pixelColor(image.width() // 4, image.height() // 4)
         assert sum(abs(sample.getRgb()[i] - expected.getRgb()[i]) for i in range(3)) < 20, (
             f"Unexpected captured card colour: {sample.name()}")
+        for x, y in overlay_samples:
+            colour = image.pixelColor(round(x * image.devicePixelRatio()),
+                                      round(y * image.devicePixelRatio()))
+            assert sum(abs(colour.getRgb()[i] - expected.getRgb()[i]) for i in range(3)) < 20, (
+                f"A walkthrough overlay entered the capture: {colour.name()}")
         with tempfile.TemporaryDirectory(prefix="openwhisper-desktop-smoke-") as root:
             folder = Path(root) / "2026-10-21_14-32-05"
             folder.mkdir()
@@ -106,13 +145,17 @@ def main():
             assert "Reviewed capture" in reviewed.clipboard_text
             assert reviewed.shots == 1
         print(json.dumps(dict(platform=app.platformName(),
-                              capture="grim" if support.uses_grim() else "Qt X11/Windows",
+                              capture="grim" if support.uses_grim() else f"Qt {app.platformName()}",
+                              overlay_exclusion="native" if excluded else "hide before grab",
                               width=image.width(), height=image.height(),
                               ratio=image.devicePixelRatio(), pixel=sample.name(),
                               capture_keep_review_pdf="passed")))
     finally:
         if snap is not None and snap.active:
             snap.drop()
+        for widget in real_overlays:
+            widget.close()
+            widget.deleteLater()
         marker.close()
         card.close()
         app.processEvents()

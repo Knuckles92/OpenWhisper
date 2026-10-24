@@ -1,13 +1,13 @@
-"""macOS window plumbing for Snap: the Screen Recording grant, capture
-exclusion, the cover's window level, and handing the focus back.
+"""macOS window plumbing for Snap: the Screen Recording grant,
+the cover's window level, and handing the focus back.
 
 Qt's screen grab works on macOS, but without the Screen Recording grant it
 returns only the wallpaper and menu bar (and our own windows): other apps'
 windows are left out, so Snap asks for the grant before it captures.
 
-An ``NSWindow`` whose ``sharingType`` is ``NSWindowSharingNone`` stays on
-screen yet out of every capture, as ``WDA_EXCLUDEFROMCAPTURE`` does on
-Windows. The window functions do nothing (returning False or None) unless
+Snap briefly hides its own windows before capture: the legacy
+``NSWindowSharingNone`` flag does not reliably exclude them on macOS.
+The window functions do nothing (returning False or None) unless
 Qt runs on Cocoa, or when AppKit can't be reached.
 """
 
@@ -84,23 +84,6 @@ def _ns_window(widget: QWidget):
 
     view = objc.objc_object(c_void_p=int(widget.window().winId()))
     return view.window()
-
-
-def set_shared(widget: QWidget, shared: bool) -> bool:
-    """Put ``widget``'s window in screen captures, or leave it out; True when set."""
-    if not _on_macos():
-        return False
-    try:
-        import AppKit
-
-        window = _ns_window(widget)
-        window.setSharingType_(
-            AppKit.NSWindowSharingReadOnly if shared else AppKit.NSWindowSharingNone
-        )
-    except Exception:
-        logger.warning("Setting a window's sharing type failed", exc_info=True)
-        return False
-    return True
 
 
 def set_level(widget: QWidget, level: int) -> int | None:

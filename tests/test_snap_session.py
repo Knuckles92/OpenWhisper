@@ -482,26 +482,22 @@ class TestAffinity:
         assert user32.calls == [(int(window.winId()), 0x11)]
         assert affinity.is_kept_out(window)
 
-    def test_macos_shares_the_window_as_none(self, monkeypatch, window):
-        shared = []
+    def test_macos_hides_windows_even_with_a_remembered_exclusion(
+        self, monkeypatch, window, grabs
+    ):
         monkeypatch.setattr(support, "_platform", lambda: "darwin")
-        monkeypatch.setattr(
-            affinity.macos, "set_shared", lambda w, on: shared.append((w, on)) or True
-        )
-
-        assert affinity.keep_out_of_screenshots(window, True) is True
-        assert affinity.is_kept_out(window)
-        assert affinity.keep_out_of_screenshots(window, False) is True
-        assert not affinity.is_kept_out(window)
-
-        assert shared == [(window, False), (window, True)]
-
-    def test_a_macos_window_left_shared_is_not_remembered(self, monkeypatch, window):
-        monkeypatch.setattr(support, "_platform", lambda: "darwin")
-        monkeypatch.setattr(affinity.macos, "set_shared", lambda w, on: False)
+        # macOS can accept NSWindowSharingNone without excluding any pixels.
+        # A stale native handle must not make Snap trust that legacy flag.
+        window.setProperty(affinity._EXCLUDED_HWND, int(window.winId()))
 
         assert affinity.keep_out_of_screenshots(window, True) is False
         assert not affinity.is_kept_out(window)
+        snap = start_snap(keep_out=[window])
+        assert not window.isVisible()
+        assert _pump_until(lambda: snap._overlay is not None)
+        assert window not in grabs[0]["visible"]
+        assert window.isVisible()
+        snap.drop()
 
     def test_elsewhere_it_does_nothing(self, monkeypatch, window):
         fake = FakeUser32()
@@ -779,3 +775,9 @@ class TestCapture:
 
         monkeypatch.setattr(support, "uses_grim", lambda: True)
         assert capture.settle_ms(screen) == capture.HYPRLAND_SETTLE_MS
+
+    def test_cocoa_waits_for_translucent_tool_windows_to_leave_the_capture(self, monkeypatch):
+        monkeypatch.setattr(support, "uses_grim", lambda: False)
+        monkeypatch.setattr(QGuiApplication, "platformName", lambda: "cocoa")
+        assert capture.settle_ms(SimpleNamespace(refreshRate=lambda: 144.0)) == 300
+        assert capture.settle_ms(SimpleNamespace(refreshRate=lambda: 30.0)) == 300

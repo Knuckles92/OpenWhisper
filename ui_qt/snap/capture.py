@@ -15,12 +15,16 @@ from ui_qt.snap import affinity, grim, support
 
 logger = logging.getLogger(__name__)
 
-#: Two frames at 60 Hz: a hidden window is gone from the composed screen by then.
+#: At least two frames at 60 Hz, with additional compositor settling below.
 MIN_SETTLE_MS = 34
 #: Hyprland plays a close animation from a snapshot of the window (about
 #: 150 ms in its default and Omarchy's configs) and grim would capture it
 #: mid-fade, so a hidden window gets this long to be gone.
 HYPRLAND_SETTLE_MS = 200
+#: Cocoa's translucent Tool windows can remain in the composed image after
+#: orderOut reports them hidden. Native pixel tests of the animated recording
+#: pill and walkthrough column need this settling time, not just two frames.
+MACOS_SETTLE_MS = 300
 _PAINTABLE = (
     QImage.Format.Format_RGB32,
     QImage.Format.Format_ARGB32,
@@ -84,10 +88,12 @@ def grab(screen: QScreen) -> QImage | None:
 
 
 def settle_ms(screen: QScreen | None) -> int:
-    """How long a hidden window takes to leave: two frames, or Hyprland's fade."""
+    """How long hidden windows take to leave the desktop's composed image."""
     rate = screen.refreshRate() if screen is not None else 0.0
     two_frames = math.ceil(2000 / rate) if rate >= 24 else MIN_SETTLE_MS
     floor = HYPRLAND_SETTLE_MS if support.uses_grim() else MIN_SETTLE_MS
+    if QGuiApplication.platformName() == "cocoa":
+        floor = max(floor, MACOS_SETTLE_MS)
     return max(two_frames, floor)
 
 

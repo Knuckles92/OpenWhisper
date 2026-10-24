@@ -15,6 +15,7 @@ no column there.
 from __future__ import annotations
 
 import math
+import sys
 import time
 from dataclasses import dataclass, field
 
@@ -161,6 +162,9 @@ class WalkthroughPanel(QWidget):
             Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus
         )
+        if sys.platform == "darwin":
+            # The user works in another app while this column records.
+            self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self._drag = DragToMove(self)
         self.state = self.HIDDEN
         self.column = WalkthroughColumn()

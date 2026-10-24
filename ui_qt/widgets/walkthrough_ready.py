@@ -11,6 +11,7 @@ windows, so there the status line and the overlay's notice say it instead.
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -168,6 +169,9 @@ class WalkthroughReadyCard(QWidget):
             Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus
         )
+        if sys.platform == "darwin":
+            # Keep Open, Copy and the drag chip available in the destination app.
+            self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self._result = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
