@@ -480,10 +480,11 @@ class TestLabels:
     ("platform", "wayland", "kind", "on_top"),
     [
         ("win32", False, Qt.WindowType.Tool, True),
+        ("darwin", False, Qt.WindowType.Tool, True),
         ("linux", False, Qt.WindowType.Window, True),
         ("linux", True, Qt.WindowType.Window, False),
     ],
-    ids=["windows", "x11", "wayland"],
+    ids=["windows", "macos", "x11", "wayland"],
 )
 def test_window_flags_suit_each_desktop(monkeypatch, platform, wayland, kind, on_top):
     monkeypatch.setattr(support, "_platform", lambda: platform)

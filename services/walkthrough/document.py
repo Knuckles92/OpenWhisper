@@ -69,6 +69,8 @@ class Section:
     shot: Path | None = None
     #: Seconds into the recording when that screenshot was kept.
     kept_at_s: float | None = None
+    #: A screenshot Review left out of the documents; kept so it can return.
+    omitted: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -313,11 +315,16 @@ def write_manifest(walkthrough: Walkthrough, folder: Path) -> Path:
         "duration_s": walkthrough.duration_s,
         "sections": [
             {
-                "text": part.words,
-                "shot": _shot_name(part.shot, folder),
-                "kept_at_s": part.kept_at_s,
+                "text": _tidy(section.text),
+                "shot": _shot_name(section.shot, folder),
+                "kept_at_s": section.kept_at_s,
+                # Older readers ignore this and see a section without a screenshot.
+                **({"omitted_shot": _shot_name(section.omitted, folder)} if section.omitted else {}),
             }
-            for part in _parts(walkthrough)
+            # As in the documents, an empty section is dropped, unless Review
+            # is holding a screenshot for it.
+            for section in walkthrough.sections
+            if section.shot is not None or section.omitted is not None or _tidy(section.text)
         ],
     }
     path = folder / MANIFEST_NAME

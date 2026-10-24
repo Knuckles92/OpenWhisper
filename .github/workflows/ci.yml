@@ -217,6 +217,10 @@ jobs:
           tests/test_meeting_asr.py tests/test_meeting_remote.py
           tests/test_meeting_delivery_cursor.py tests/test_remote_host_admission.py
           tests/test_remote_engine.py tests/test_client_history.py
+          tests/test_walkthrough_document.py tests/test_walkthrough_library.py
+          tests/test_walkthrough_library_ui.py tests/test_walkthrough_sections.py
+          tests/test_walkthrough_session.py tests/test_walkthrough_storage.py
+          tests/test_walkthrough_write_up.py tests/test_walkthrough_runtime.py
       - name: Gate lifecycle timing and process exit in a fresh process
         run: python scripts/check_release_health.py --output release-health.json --timeout 45
       - name: Preserve environment and timing evidence

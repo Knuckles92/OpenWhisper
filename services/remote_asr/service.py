@@ -987,7 +987,7 @@ class RemoteEngineService:
                 pending = self._pending_pairing
             if pending is None:
                 raise ValueError("Connect to a computer before retrying key storage.")
-            store().request_access(remote_settings.TOKEN_CREDENTIAL)
+            store().request_access(remote_settings.token_credential())
             return self._paired(*pending)
 
     def remote_model_request(self, op: str, *, expected_pairing=None, **fields) -> dict:

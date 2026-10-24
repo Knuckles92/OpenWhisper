@@ -66,6 +66,8 @@ def _run_package_self_test() -> None:
                 "ScreenCaptureKit",
                 "CoreMedia",
                 "Quartz",
+                # Snap: window levels, capture exclusion, handing focus back.
+                "AppKit",
             )
         )
     else:

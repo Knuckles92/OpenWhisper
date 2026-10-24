@@ -72,6 +72,33 @@ def test_review_edits_words_and_omits_screenshot_but_keeps_the_original(capture)
     assert library.read_json(capture.folder / "walkthrough.original.json") == original
 
 
+def test_review_can_include_an_omitted_screenshot_again(capture):
+    library.save_review(capture.folder, ["first", "", "last"], [True, False, True])
+    saved = library.load_document(capture.folder)
+    # The emptied section survives so its screenshot can come back.
+    assert len(saved.sections) == 3
+    assert saved.sections[1].shot is None
+    assert saved.sections[1].omitted.name == "shot-2.png"
+    assert saved.sections[1].kept_at_s == 2.0
+    manifest = library.read_json(capture.folder / document.MANIFEST_NAME)
+    assert manifest["sections"][1] == {"text": "", "shot": None, "kept_at_s": 2.0,
+                                       "omitted_shot": "shot-2.png"}
+    assert "shot-2.png" not in (capture.folder / document.MARKDOWN_NAME).read_text()
+    result = library.save_review(capture.folder, ["first", "back", "last"], [True, True, True])
+    saved = library.load_document(capture.folder)
+    assert [s.shot.name if s.shot else None for s in saved.sections] == ["shot-1.png", "shot-2.png", None]
+    assert saved.sections[1].omitted is None
+    assert result.shots == 2
+    assert "omitted_shot" not in json.dumps(library.read_json(capture.folder / document.MANIFEST_NAME))
+
+
+def test_a_deleted_omitted_screenshot_does_not_break_the_document(capture):
+    library.save_review(capture.folder, ["first", "second", "last"], [False, True, True])
+    (capture.folder / "shot-1.png").unlink()
+    saved = library.load_document(capture.folder)
+    assert saved.sections[0].shot is None and saved.sections[0].omitted is None
+
+
 def test_review_failure_keeps_existing_documents_and_write_up(capture, monkeypatch):
     before = {p.name: p.read_bytes() for p in capture.folder.iterdir()}
     def fail(*args, **kwargs):

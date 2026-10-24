@@ -127,6 +127,7 @@ class WalkthroughRuntime:
         supported, reason = self._ui.snap_support()
         if not supported:
             self._tell(reason)
+            self._ui.request_snap_access()
             return
         session = self.controller.transcription_runtime.recording_walkthrough
         snap = self._ui.start_snap(hint=RECORDING_HINT if session is not None else "")

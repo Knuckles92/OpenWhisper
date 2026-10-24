@@ -29,7 +29,7 @@ class DeniedBackend(credentials.MemoryCredentialBackend):
         self.read_threads = []
 
     def get_password(self, service, username):
-        if username == remote_settings.TOKEN_CREDENTIAL:
+        if username == remote_settings.token_credential():
             self.read_threads.append(threading.get_ident())
         if not self.read_allowed:
             raise RuntimeError("access denied")

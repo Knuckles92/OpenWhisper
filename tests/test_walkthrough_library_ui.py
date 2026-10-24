@@ -70,6 +70,13 @@ def test_save_regenerates_and_releases_the_app_gate(dialog, capture):
     assert not dialog._dirty
     result = library.load_result(capture.folder)
     assert result.shots == 1
+    # The omitted screenshot stays switchable, so the next save can restore it.
+    assert [c.isChecked() for c in dialog._checks] == [False, True, False]
+    assert dialog._checks[0].isEnabled()
+    dialog._checks[0].setChecked(True)
+    dialog.save_button.click()
+    _wait(dialog)
+    assert library.load_result(capture.folder).shots == 2
     assert "corrected" in result.clipboard_text
 
 

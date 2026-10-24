@@ -105,6 +105,7 @@ elif sys.platform == "darwin":
             "ScreenCaptureKit",
             "CoreMedia",
             "Quartz",
+            "AppKit",
             "ApplicationServices",
             "CoreText",
             "Cocoa",

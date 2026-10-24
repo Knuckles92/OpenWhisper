@@ -66,6 +66,7 @@ class FakeUI:
     def __init__(self):
         self.snaps = []
         self.supported = (True, "")
+        self.access_requests = 0
         self.excluded = []
         self.active = []
         self.captions = []
@@ -76,6 +77,9 @@ class FakeUI:
 
     def snap_support(self):
         return self.supported
+
+    def request_snap_access(self):
+        self.access_requests += 1
 
     def start_snap(self, *, hint=""):
         snap = FakeSnap(hint)
@@ -286,6 +290,8 @@ def test_a_desktop_without_screenshots_says_why(h):
 
     assert h.ui.snaps == []
     assert ("Install grim to take screenshots on Hyprland.", False) in h.ui.notices
+    # Where the system can grant what's missing (macOS), it is asked.
+    assert h.ui.access_requests == 1
 
 
 def test_a_failed_capture_says_why(h):

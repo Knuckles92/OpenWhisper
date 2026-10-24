@@ -482,6 +482,27 @@ class TestAffinity:
         assert user32.calls == [(int(window.winId()), 0x11)]
         assert affinity.is_kept_out(window)
 
+    def test_macos_shares_the_window_as_none(self, monkeypatch, window):
+        shared = []
+        monkeypatch.setattr(support, "_platform", lambda: "darwin")
+        monkeypatch.setattr(
+            affinity.macos, "set_shared", lambda w, on: shared.append((w, on)) or True
+        )
+
+        assert affinity.keep_out_of_screenshots(window, True) is True
+        assert affinity.is_kept_out(window)
+        assert affinity.keep_out_of_screenshots(window, False) is True
+        assert not affinity.is_kept_out(window)
+
+        assert shared == [(window, False), (window, True)]
+
+    def test_a_macos_window_left_shared_is_not_remembered(self, monkeypatch, window):
+        monkeypatch.setattr(support, "_platform", lambda: "darwin")
+        monkeypatch.setattr(affinity.macos, "set_shared", lambda w, on: False)
+
+        assert affinity.keep_out_of_screenshots(window, True) is False
+        assert not affinity.is_kept_out(window)
+
     def test_elsewhere_it_does_nothing(self, monkeypatch, window):
         fake = FakeUser32()
         monkeypatch.setattr(support, "_platform", lambda: "linux")
@@ -541,16 +562,67 @@ class TestSupport:
         assert "Wayland" in reason
         assert not support.uses_grim()
 
-    @pytest.mark.parametrize(
-        ("platform", "word"), [("darwin", "macOS"), ("freebsd14", "system")]
-    )
-    def test_other_systems_are_not_supported_yet(self, desktop, platform, word):
-        desktop(platform)
+    def test_other_systems_are_not_supported_yet(self, desktop):
+        desktop("freebsd14")
 
         supported, reason = support.snap_support()
 
         assert not supported
-        assert word in reason
+        assert "system" in reason
+
+    def test_macos_with_screen_recording_is_supported(self, desktop, monkeypatch):
+        desktop("darwin")
+        monkeypatch.setattr(support.macos, "capture_granted", lambda: True)
+
+        assert support.snap_support() == (True, "")
+
+    def test_macos_without_screen_recording_says_where_to_grant_it(
+        self, desktop, monkeypatch
+    ):
+        desktop("darwin")
+        monkeypatch.setattr(support.macos, "capture_granted", lambda: False)
+
+        supported, reason = support.snap_support()
+
+        assert not supported
+        assert "Screen Recording" in reason
+
+
+class TestRequestAccess:
+    @pytest.fixture
+    def mac(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(support, "_platform", lambda: "darwin")
+        monkeypatch.setattr(support, "_asked", False)
+        monkeypatch.setattr(support.macos, "capture_granted", lambda: False)
+        monkeypatch.setattr(
+            support.macos, "request_capture", lambda: calls.append("request") or False
+        )
+        monkeypatch.setattr(
+            support.macos, "open_capture_settings", lambda: calls.append("settings")
+        )
+        return calls
+
+    def test_asks_macos_once_then_opens_settings(self, mac):
+        support.request_access()
+        support.request_access()
+        support.request_access()
+
+        assert mac == ["request", "settings", "settings"]
+
+    def test_nothing_to_ask_once_granted(self, mac, monkeypatch):
+        monkeypatch.setattr(support.macos, "capture_granted", lambda: True)
+
+        support.request_access()
+
+        assert mac == []
+
+    def test_nothing_to_ask_elsewhere(self, mac, monkeypatch):
+        monkeypatch.setattr(support, "_platform", lambda: "linux")
+
+        support.request_access()
+
+        assert mac == []
 
 
 def _png(width: int, height: int) -> bytes:

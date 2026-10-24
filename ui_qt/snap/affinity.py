@@ -1,7 +1,8 @@
-"""Windows-only window plumbing for Snap: capture exclusion and taking focus.
+"""Window plumbing for Snap on Windows and macOS: capture exclusion and focus.
 
 Windows 10 2004 and later can leave a window out of every screen capture
-(``SetWindowDisplayAffinity`` with ``WDA_EXCLUDEFROMCAPTURE``): the user
+(``SetWindowDisplayAffinity`` with ``WDA_EXCLUDEFROMCAPTURE``), and macOS
+does the same for a window shared as ``NSWindowSharingNone``: the user
 still sees it, but captured pixels show what is behind it. A window kept
 out that way needs no hiding before a snap, so nothing flickers.
 """
@@ -14,7 +15,7 @@ import logging
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QWidget
 
-from ui_qt.snap import support
+from ui_qt.snap import macos, support
 
 logger = logging.getLogger(__name__)
 
@@ -62,13 +63,20 @@ def _kernel32():
 
 
 def keep_out_of_screenshots(window: QWidget, enabled: bool) -> bool:
-    """Leave ``window`` out of screen captures (Windows), or put it back.
+    """Leave ``window`` out of screen captures (Windows, macOS), or put it back.
 
-    Returns True when Windows applied the change. Elsewhere this does nothing
-    and returns False, and Snap hides the window for the moment of capture
-    instead.
+    Returns True when the system applied the change. Elsewhere this does
+    nothing and returns False, and Snap hides the window for the moment of
+    capture instead.
     """
-    if support._platform() != "win32":
+    platform = support._platform()
+    if platform == "darwin":
+        top = window.window()
+        applied = macos.set_shared(top, not enabled)
+        # winId is the NSView, which Qt recreates as it does an HWND.
+        top.setProperty(_EXCLUDED_HWND, int(top.winId()) if enabled and applied else 0)
+        return applied
+    if platform != "win32":
         return False
     top = window.window()
     hwnd = int(top.winId())

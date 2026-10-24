@@ -125,7 +125,8 @@ the clipboard has been overwritten.
 
 **Saved Walkthroughs…** lists completed documents and interrupted drafts.
 Edit each section's transcript, uncheck an accidental screenshot, then choose
-**Save review** to regenerate the PDF, Markdown, and manifest. Nothing is
+**Save review** to regenerate the PDF, Markdown, and manifest. An unchecked
+screenshot stays listed, faded, so a later review can include it again. Nothing is
 shared by opening or saving the review; use a copy button when ready. The
 original PNGs remain, and the first revision's manifest is kept as
 `walkthrough.original.json`. A review clears an earlier AI write-up because
@@ -228,7 +229,14 @@ and the status say **Write-up copied**.
   review, and PDF generation were smoke-tested on Jed's live Hyprland
   desktop. Recording and global-shortcut behavior still need interactive
   release testing.
-- **macOS and other Wayland desktops:** not yet; the shortcuts say so.
+- **macOS:** yes, once OpenWhisper has Screen Recording permission. The
+  first snap asks for it; allow OpenWhisper in **System Settings → Privacy &
+  Security → Screen & System Audio Recording**, then reopen OpenWhisper.
+  Later snaps without it open that page. While a walkthrough records, the
+  recording overlay is left out of every screen capture, as on Windows, and
+  its Snap and Done take clicks without taking the focus from the app you're
+  in.
+- **Other Wayland desktops:** not yet; the shortcuts say so.
 
 ## Not in this version
 
