@@ -1052,6 +1052,12 @@ class UIController(QObject):
 
         return snap_support()
 
+    def request_snap_access(self) -> None:
+        """Ask for what snap_support found missing (macOS: Screen Recording)."""
+        from ui_qt.snap.support import request_access
+
+        request_access()
+
     def start_snap(self, *, hint: str = ""):
         """Freeze the screen under the pointer for a screenshot; a SnapSession.
 

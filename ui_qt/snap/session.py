@@ -27,7 +27,7 @@ from PyQt6 import sip
 from PyQt6.QtGui import QCursor, QGuiApplication, QImage, QScreen
 from PyQt6.QtWidgets import QWidget
 
-from ui_qt.snap import capture, export
+from ui_qt.snap import capture, export, macos
 from ui_qt.snap.overlay import SnapOverlay
 from ui_qt.snap.support import snap_support
 
@@ -155,6 +155,9 @@ class SnapSession(QObject):
             return
         self._screens, self._hint = screens, hint
         self._float_above = tuple(float_above)
+        # Opening the overlay makes OpenWhisper active on macOS; whoever
+        # had the focus gets it back at the end (``_finish``).
+        macos.remember_focus()
         self._hidden.extend(capture.hide_windows(keep_out))
         if not self._hidden:
             self._capture()
@@ -243,6 +246,7 @@ class SnapSession(QObject):
         for overlay in overlays:
             overlay.hide()
         _unpark(self._parked)
+        macos.return_focus()
         try:
             emit()
         finally:

@@ -7,6 +7,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+- **Walkthrough screenshots on macOS** — the recording overlay's **Snap** and **Done**, the menu bar's **Take Screenshot**, and the Screenshot shortcut now work on macOS. Snap freezes every display, covering the menu bar and Dock, and full-screen apps too. When you finish or cancel, the app you were working in gets the focus back. Clicking Snap, Done, or the language chip no longer takes the focus from the app you're dictating into. While a walkthrough records, the overlay stays on screen but out of screenshots and other apps' screen recordings, as on Windows. The first snap asks for Screen Recording permission. Grant it in System Settings, then reopen OpenWhisper.
+
 ### Fixed
 - **Retry remote pairing after denying Keychain access** — a failed connection-key save now offers **Retry Keychain access**, **Open Keychain Access**, and steps to allow access on macOS. Retrying finishes the connection the host already approved without another code or approval, even after closing and reopening Settings while OpenWhisper stays running. Other platforms offer **Retry saving key** for their credential store.
 

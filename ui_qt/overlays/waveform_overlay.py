@@ -25,6 +25,7 @@ from ui_qt.utils.overlay_position import (
     preferred_overlay_position,
 )
 from ui_qt.overlays import live_recording, moments, recording_looks
+from ui_qt.snap import macos
 from ui_qt.utils.palette import token_color
 from ui_qt.waveform_styles import Particle, ParticleStyle, round_pen
 from ui_qt.widgets.buttons import hide_hotkey_hint, show_hotkey_hint
@@ -55,10 +56,10 @@ _WORK_LABELS = {"processing": "Processing...", "transcribing": "Transcribing..."
 def _platform_takes_overlay_clicks() -> bool:
     """Where a click on a non-activating window leaves the target app focused.
 
-    Windows honours WS_EX_NOACTIVATE and X11 the input hint; on macOS the Tool
-    window behaviour is unverified, so the chip there is display-only.
+    Windows honours WS_EX_NOACTIVATE, X11 the input hint, and macOS a
+    non-activating panel (macos.make_nonactivating, checked per overlay).
     """
-    return QApplication.platformName() in ("windows", "xcb")
+    return QApplication.platformName() in ("windows", "xcb", "cocoa")
 
 
 class WaveformOverlay(QWidget):
@@ -147,6 +148,14 @@ class WaveformOverlay(QWidget):
             # this the overlay disappears. Force it to stay visible regardless.
             self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
 
+        # A Cocoa panel takes clicks on Snap, Done or the language chip
+        # without activating OpenWhisper, so the app being dictated into keeps
+        # the focus (WS_EX_NOACTIVATE's twin), only once made non-activating.
+        self._takes_clicks_quietly = (
+            QApplication.platformName() != "cocoa"
+            or (not (self._embedded or preview) and macos.make_nonactivating(self))
+        )
+
         self.overlay_width = config.WAVEFORM_OVERLAY_WIDTH
         self.overlay_height = config.WAVEFORM_OVERLAY_HEIGHT
         self._base_height = self.overlay_height
@@ -166,6 +175,7 @@ class WaveformOverlay(QWidget):
         self._anchor_pos: Optional[QPoint] = None
         # Where it was before a snap parked it in the corner (park/unpark).
         self._unparked_at: Optional[QPoint] = None
+        self._unparked_level: Optional[int] = None
         # A walkthrough keeps it in its screen's top-left corner until dragged.
         self._cornered = False
 
@@ -825,6 +835,7 @@ class WaveformOverlay(QWidget):
         return (
             not self._embedded
             and _platform_takes_overlay_clicks()
+            and self._takes_clicks_quietly
             and self.current_state in self.LISTENING_STATES
             and self._chip_visible()
         )
@@ -864,6 +875,7 @@ class WaveformOverlay(QWidget):
             self._walkthrough_controls
             and not self._embedded
             and _platform_takes_overlay_clicks()
+            and self._takes_clicks_quietly
             and self.current_state in self.LISTENING_STATES
         )
 
@@ -1003,6 +1015,8 @@ class WaveformOverlay(QWidget):
             return
         if self._unparked_at is None:
             self._unparked_at = self.pos()
+            # On macOS the snap covers the menu bar at a level of its own.
+            self._unparked_level = macos.set_level(self, macos.PARKED_LEVEL)
         self.move(area.left() + _PARK_MARGIN, area.top() + _PARK_MARGIN)
         self.raise_()
 
@@ -1012,6 +1026,9 @@ class WaveformOverlay(QWidget):
             return
         spot, self._unparked_at = self._unparked_at, None
         self.move(spot)
+        level, self._unparked_level = self._unparked_level, None
+        if level is not None:
+            macos.set_level(self, level)
         # It may have grown while parked.
         self._reposition_near_anchor()
 

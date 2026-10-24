@@ -27,7 +27,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QLineEdit, QWidget
 
-from ui_qt.snap import affinity, chrome, export, support
+from ui_qt.snap import affinity, chrome, export, macos, support
 from ui_qt.snap import toolbar as toolbar_module
 from ui_qt.snap.annotations import (
     LABEL_PAD_X,
@@ -85,14 +85,15 @@ def window_flags() -> Qt.WindowType:
     Wayland offers neither stay-on-top nor positioning, so there it is a
     plain toplevel that asks for fullscreen; Hyprland fullscreens it on the
     focused monitor. On Windows it is an always-on-top tool window, which
-    keeps it off the taskbar. X11 window managers only fullscreen normal
-    windows reliably, so there it stays a normal window kept on top.
+    keeps it off the taskbar; on macOS a tool window (a panel) keeps the
+    Dock icon from appearing for it. X11 window managers only fullscreen
+    normal windows reliably, so there it stays a normal window kept on top.
     """
     frameless = Qt.WindowType.FramelessWindowHint
     if is_wayland():
         return Qt.WindowType.Window | frameless
-    windows = support._platform() == "win32"
-    kind = Qt.WindowType.Tool if windows else Qt.WindowType.Window
+    tool = support._platform() in ("win32", "darwin")
+    kind = Qt.WindowType.Tool if tool else Qt.WindowType.Window
     return kind | frameless | Qt.WindowType.WindowStaysOnTopHint
 
 
@@ -225,6 +226,9 @@ class SnapOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        # A macOS panel hides whenever another app is active; the covers on
+        # other screens must stay while the user picks.
+        self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
         self.setProperty(_HOTKEY_WINDOW_PROPERTY, True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
@@ -282,7 +286,12 @@ class SnapOverlay(QWidget):
         if self._screen is not None:
             self.setScreen(self._screen)
             self.setGeometry(self._screen.geometry())
-        self.showFullScreen()
+        if support._platform() == "darwin":
+            # A full-screen window would open its own Space (macos.cover).
+            self.show()
+            macos.cover(self)
+        else:
+            self.showFullScreen()
         self.raise_()
         self.activateWindow()
         self.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
