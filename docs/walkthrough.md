@@ -232,10 +232,12 @@ and the status say **Write-up copied**.
 - **macOS:** yes, once OpenWhisper has Screen Recording permission. The
   first snap asks for it; allow OpenWhisper in **System Settings → Privacy &
   Security → Screen & System Audio Recording**, then reopen OpenWhisper.
-  Later snaps without it open that page. While a walkthrough records, the
-  recording overlay is left out of every screen capture, as on Windows, and
-  its Snap and Done take clicks without taking the focus from the app you're
-  in.
+  Later snaps without it open that page. Snap briefly hides the recording
+  overlay and walkthrough column while capturing, then restores them while
+  you draw. Other apps' screen recordings and shares can include these
+  overlays. Snap and Done take clicks without taking the focus from the app
+  you're in. See the [Mac validation report](walkthrough-macos-validation-2026-10-23.md)
+  for the tested flows and remaining release checks.
 - **Other Wayland desktops:** not yet; the shortcuts say so.
 
 ## Not in this version
