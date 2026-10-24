@@ -12,6 +12,8 @@ diagnostic-failures.tmp
 # Audio artifacts
 *.wav
 *.mp3
+# Crash-recovery journal written next to the output file (services/recording_journal.py)
+.*-recovery/
 recordings/
 meeting_audio/
 meeting_recordings/
