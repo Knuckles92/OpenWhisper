@@ -141,7 +141,7 @@ class QuickRecordTab(TranscriptionTabBase):
         # Outside the profile card: Command Mode needs an AI model, not the
         # cleanup switch the card follows.
         self.command_row = QWidget()
-        command = QVBoxLayout(self.command_row)
+        command = QHBoxLayout(self.command_row)
         command.setContentsMargins(14, 0, 14, 0)
         command.setSpacing(0)
         self.command_hint = WrappedLabel()
@@ -153,6 +153,15 @@ class QuickRecordTab(TranscriptionTabBase):
         self.command_link.setCursor(Qt.CursorShape.PointingHandCursor)
         self.command_link.clicked.connect(lambda: self.settings_requested.emit(COMMANDS))
         command.addWidget(self.command_link, alignment=Qt.AlignmentFlag.AlignLeft)
+        command.addStretch()
+        self.walkthrough_settings_link = QPushButton("Walkthrough settings")
+        self.walkthrough_settings_link.setObjectName("walkthroughSettingsLink")
+        self.walkthrough_settings_link.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.walkthrough_settings_link.setToolTip("Open Walkthrough settings")
+        self.walkthrough_settings_link.clicked.connect(
+            lambda: self.settings_requested.emit(WALKTHROUGHS)
+        )
+        command.addWidget(self.walkthrough_settings_link)
         layout.addWidget(self.command_row)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
         self.refresh_cleanup_profiles()
@@ -298,16 +307,6 @@ class QuickRecordTab(TranscriptionTabBase):
         buttons_layout.addLayout(top_row)
         buttons_layout.addLayout(bottom_row)
         buttons_layout.addLayout(walkthrough_row)
-        self.walkthrough_settings_link = QPushButton("Walkthrough settings")
-        self.walkthrough_settings_link.setObjectName("walkthroughSettingsLink")
-        self.walkthrough_settings_link.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.walkthrough_settings_link.setToolTip("Open Walkthrough settings")
-        self.walkthrough_settings_link.clicked.connect(
-            lambda: self.settings_requested.emit(WALKTHROUGHS)
-        )
-        buttons_layout.addWidget(
-            self.walkthrough_settings_link, alignment=Qt.AlignmentFlag.AlignRight
-        )
         buttons_widget.setMaximumWidth(420)
 
         control_panel.layout.addStretch()
