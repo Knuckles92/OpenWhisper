@@ -408,6 +408,10 @@ class ModelAssignments(QObject):
 
     def build_cleanup_model_section(self, layout: QVBoxLayout) -> InfoTile:
         """The language model AI cleanup runs, embedded in the AI cleanup page."""
+        self.cleanup_agent_picker = AgentPicker(purpose="AI cleanup")
+        self.cleanup_agent_picker.choice_requested.connect(self._on_cleanup_agent_choice)
+        self.cleanup_agent_picker.model_chosen.connect(self._on_cleanup_agent_model_chosen)
+        layout.addWidget(self.cleanup_agent_picker)
         self.text_model_picker = TextModelPicker()
         self._connect_picker_profile_signals(self.text_model_picker)
         self.text_model_picker.provider_changed.connect(
@@ -667,6 +671,9 @@ class ModelAssignments(QObject):
         if key == MEETING_VOICE:
             self._refresh_meeting_source()
         elif key == CLEANUP:
+            self.cleanup_agent_picker.ensure_scanned()
+            if self._active_text_provider in TranscriptCleanupProvider.INSTALLED:
+                return
             self._detect_local_servers()
             self._fetch_catalog_models(
                 self.text_model_picker.provider, picker=self.text_model_picker
@@ -1339,6 +1346,54 @@ class ModelAssignments(QObject):
             self._say(str(exc))
             return False
 
+    def _on_cleanup_agent_choice(self, choice: str) -> None:
+        if choice == BUILTIN:
+            self._activate_text_model(self.text_model_picker.provider)
+            if self._active_text_provider == self.text_model_picker.provider:
+                self._detect_local_servers()
+                self._fetch_text_models(self.text_model_picker.provider)
+            return
+        if choice not in TranscriptCleanupProvider.INSTALLED:
+            return
+        memory = self._settings_snapshot().get("cleanup_model_memory", {})
+        model = memory.get(choice, "") if isinstance(memory, dict) else ""
+        self._save_cleanup_agent(choice, model if isinstance(model, str) else "")
+
+    def _on_cleanup_agent_model_chosen(self, agent_id: str, model: str) -> None:
+        if agent_id == self._active_text_provider:
+            self._save_cleanup_agent(agent_id, model)
+
+    def _save_cleanup_agent(self, agent_id: str, model: str) -> None:
+        try:
+            def merge(settings: dict) -> None:
+                stored = settings.get("cleanup_model_memory")
+                memory = dict(stored) if isinstance(stored, dict) else {}
+                previous_provider = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER)
+                previous_model = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_MODEL)
+                if (previous_provider not in TranscriptCleanupProvider.INSTALLED
+                        and isinstance(previous_provider, str)
+                        and isinstance(previous_model, str)):
+                    settings["cleanup_endpoint_provider"] = previous_provider
+                    memory[previous_provider] = previous_model
+                memory[agent_id] = model
+                settings["cleanup_model_memory"] = memory
+                settings[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] = agent_id
+                settings[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] = model
+
+            settings_manager.mutate_settings(merge)
+        except Exception as exc:
+            self._say(f"Couldn't set cleanup agent: {exc}")
+            return
+        self._active_text_provider = agent_id
+        self._active_text_model = model
+        self.cleanup_agent_picker.set_saved_models(
+            self._settings_snapshot().get("cleanup_model_memory", {})
+        )
+        self.cleanup_agent_picker.set_choice(agent_id)
+        self.cleanup_model_tile.hide()
+        self._say(f"AI cleanup will run through {self.text_summary()}")
+        self._refresh_rail_values()
+
     def _activate_text_model(self, provider: str) -> None:
         if provider != self.text_model_picker.provider:
             return
@@ -1356,6 +1411,7 @@ class ModelAssignments(QObject):
                 SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider,
                 SettingsKey.TRANSCRIPT_CLEANUP_MODEL: model,
                 "cleanup_model_memory": memory,
+                "cleanup_endpoint_provider": provider,
             })
         except Exception as exc:
             logger.error("Couldn't activate text model: %s", exc)
@@ -1365,6 +1421,8 @@ class ModelAssignments(QObject):
         self._active_text_provider = provider
         self._active_text_model = model
         self.text_model_picker.set_active_selection(provider, model)
+        self.cleanup_agent_picker.set_choice(BUILTIN)
+        self.cleanup_model_tile.show()
         self._update_cleanup_reasoning_controls(provider, model)
         self._say(f"Text model set to {self.text_summary()}")
         self._refresh_rail_values()
@@ -1440,8 +1498,15 @@ class ModelAssignments(QObject):
         self._active_text_model = model
         self.text_model_picker.set_sort(sort)
         self._refresh_picker_profiles()
-        self.text_model_picker.set_provider(provider, model)
+        installed = provider in TranscriptCleanupProvider.INSTALLED
+        endpoint = settings.get("cleanup_endpoint_provider", config.TRANSCRIPT_CLEANUP_PROVIDER)
+        if get_profile(endpoint, settings) is None:
+            endpoint = config.TRANSCRIPT_CLEANUP_PROVIDER
+        self.text_model_picker.set_provider(endpoint if installed else provider, "" if installed else model)
         self.text_model_picker.set_active_selection(provider, model)
+        self.cleanup_agent_picker.set_saved_models(settings.get("cleanup_model_memory", {}))
+        self.cleanup_agent_picker.set_choice(provider if installed else BUILTIN)
+        self.cleanup_model_tile.setVisible(not installed)
         self._update_cleanup_reasoning_controls(provider, model)
 
     def _load_meeting_settings(self) -> None:
@@ -1879,7 +1944,7 @@ class ModelAssignments(QObject):
         provider = profile_display_name(
             self._active_text_provider, self._settings_snapshot()
         )
-        return f"{provider} · {self._active_text_model}"
+        return f"{provider} · {self._active_text_model or 'default model'}"
 
     def meeting_model_label(self) -> str:
         if self._meeting_source() == "remote":

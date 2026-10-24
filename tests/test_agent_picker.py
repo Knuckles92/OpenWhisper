@@ -135,6 +135,26 @@ class TestTileCopy:
 
 
 class TestScanning:
+    @pytest.mark.parametrize("appearance", ["classic", "omarchy"])
+    def test_cleanup_picker_labels_usage_and_narrow_layout(self, appearance, monkeypatch):
+        monkeypatch.setenv("OPENWHISPER_UI", appearance)
+        monkeypatch.setattr(agent_picker, "cached_agents", lambda: FOUND_TWO)
+        picker = AgentPicker(purpose="AI cleanup")
+        picker.set_choice(CLAUDE_CODE)
+        picker.resize(430, 750)
+        picker.show()
+        QApplication.instance().processEvents()
+        assert "cleanup request" in picker.usage_label.text()
+        assert "no tools, files, or shell" in picker.usage_label.text()
+        assert "meeting" not in picker.usage_label.text()
+        assert "AI cleanup" in picker.tiles[CLAUDE_CODE].accessibleDescription()
+        assert picker.tiles[BUILTIN].name == "API / local model"
+        for tile in picker.tiles.values():
+            assert tile.x() + tile.card_rect().right() <= picker.grid.width()
+        picker.set_choice(BUILTIN)
+        assert picker.tiles[BUILTIN].name == "API / local model"
+        picker.close()
+
     def test_cached_scan_shows_at_once_without_animating(self):
         with patch.object(agent_picker, "cached_agents", return_value=FOUND_TWO), \
                 patch.object(agent_picker, "scan_installed_agents") as scan:

@@ -201,6 +201,47 @@ class _DialogTestCase:
         return host.models, values
 
 
+class TestCleanupAgents(_DialogTestCase):
+    @pytest.mark.parametrize("appearance", ["classic", "omarchy"])
+    @pytest.mark.parametrize("agent_id", TranscriptCleanupProvider.INSTALLED)
+    def test_cleanup_agent_persists_default_and_model_and_restores_api(self, agent_id, appearance, monkeypatch):
+        monkeypatch.setenv("OPENWHISPER_UI", appearance)
+        dialog, values = self._make_dialog()
+        monkeypatch.setattr(dialog, "_detect_local_servers", lambda: None)
+        monkeypatch.setattr(dialog, "_fetch_text_models", lambda provider: None)
+        dialog._on_cleanup_agent_choice(agent_id)
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] == agent_id
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == ""
+        assert dialog.cleanup_model_tile.isHidden()
+        assert dialog.cleanup_agent_picker.choice() == agent_id
+        dialog._on_cleanup_agent_model_chosen(agent_id, "chosen-model")
+        dialog._load_text_settings()
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == "chosen-model"
+        assert dialog.cleanup_agent_picker.choice() == agent_id
+        assert "chosen-model" in dialog.text_summary()
+        dialog._on_cleanup_agent_choice(agent_picker.BUILTIN)
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] == "openai"
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == "gpt-test"
+        assert not dialog.cleanup_model_tile.isHidden()
+        assert dialog.cleanup_agent_picker.tiles[agent_picker.BUILTIN].name == "API / local model"
+        dialog._on_cleanup_agent_choice(agent_id)
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] == "chosen-model"
+
+    def test_cleanup_agent_loads_saved_selection_without_api_key_warning(self):
+        dialog, _ = self._make_dialog(extra_settings={
+            SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "codex",
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "",
+        })
+        assert dialog.cleanup_agent_picker.choice() == "codex"
+        assert dialog.cleanup_model_tile.isHidden()
+        assert dialog.text_summary() == "Codex · default model"
+        from ui_qt.dialogs.settings_home import HomePage
+        assert "API key needed" not in HomePage._cleanup_status({
+            SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "codex",
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "",
+        })
+
+
 class TestRail(_DialogTestCase):
     """The rail lists every assignable thing and reports its current value."""
 

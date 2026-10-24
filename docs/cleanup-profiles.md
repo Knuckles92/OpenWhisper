@@ -22,6 +22,12 @@ recording and keeps the format chosen at its start.
 
 Profiles always run AI cleanup, even when cleanup is off for standard dictation.
 They share the cleanup model configured in **Settings → AI cleanup**.
+Choose **Claude Code**, **Codex**, or **OpenCode** there to use an installed,
+signed-in coding agent instead of an API or local endpoint. Each agent has its
+own model choice, including its default model, and uses its existing account.
+It receives the text and cleanup instructions with tools disabled. Starting an
+agent can take longer than a direct API request. Cancel stops the cleanup run;
+an unavailable agent, timeout, or other failure keeps the original transcript.
 Their output instructions replace the standard cleanup prompt. Learned rules are
 optional; the profile's format takes priority over conflicting formatting rules.
 Uploads and meetings use their existing settings.

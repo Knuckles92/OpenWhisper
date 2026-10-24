@@ -391,6 +391,23 @@ def test_missing_key_is_shown_without_network_probe():
     assert needs_key
 
 
+@pytest.mark.parametrize("agent_id, name", [
+    ("claude_code", "Claude Code"), ("codex", "Codex"), ("opencode_cli", "OpenCode"),
+])
+def test_cleanup_agent_summary_uses_sign_in_without_probing(agent_id, name, monkeypatch):
+    monkeypatch.setattr("services.installed_agents.cached_scan", lambda: None)
+    with patch("services.installed_agents.resolve_agent") as probe:
+        result = setup_ui.provider_summary({
+            SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: agent_id,
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "",
+        })
+    assert result[0] == name
+    assert "sign-in" in result[1]
+    assert name in result[2] and "No audio" in result[2]
+    assert result[3:] == (True, False)
+    probe.assert_not_called()
+
+
 def test_missing_key_links_to_api_keys_and_a_saved_key_to_cleanup(make_setup):
     setup, _, _ = make_setup({SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True})
     setup.show_page(setup_ui.CLEAN_UP)

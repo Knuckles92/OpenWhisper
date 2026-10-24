@@ -325,6 +325,7 @@ class SettingsKey:
     WALKTHROUGH_SHOW_ABOUT: Final[str] = "walkthrough_show_about"
     WALKTHROUGH_SHOW_CAPTIONS: Final[str] = "walkthrough_show_captions"
     WALKTHROUGH_PAGE_SIZE: Final[str] = "walkthrough_page_size"
+    WALKTHROUGH_COPY_FORMAT: Final[str] = "walkthrough_copy_format"
     # The "New" badge on Quick Record's walkthrough button gives way to a
     # "?" once a walkthrough has started.
     WALKTHROUGH_INTRO_SEEN: Final[str] = "walkthrough_intro_seen"
@@ -401,6 +402,21 @@ class UiTheme:
     }
 
 
+class WalkthroughCopyFormat:
+    """Clipboard contents when a walkthrough finishes."""
+
+    BOTH: Final[str] = "both"
+    AGENT: Final[str] = "agent"
+    PDF: Final[str] = "pdf"
+
+    ALL: Final[tuple[str, ...]] = (BOTH, AGENT, PDF)
+    LABELS: Final[dict[str, str]] = {
+        BOTH: "PDF and agent copy",
+        AGENT: "Agent copy (Markdown)",
+        PDF: "PDF copy",
+    }
+
+
 class WalkthroughPageSize:
     """Values for ``SettingsKey.WALKTHROUGH_PAGE_SIZE``. Labels are what Settings shows."""
     AUTO: Final[str] = "auto"  # Letter where the locale measures in US units, else A4
@@ -465,7 +481,8 @@ class TranscriptCleanupProvider:
 
     Custom OpenAI-compatible endpoints use ``custom_…`` profile ids stored in
     ``SettingsKey.TEXT_LLM_PROFILES``. Resolvers accept either a built-in id
-    or a known custom profile id.
+    or a known custom profile id. Cleanup also accepts ``INSTALLED`` agent
+    ids with an empty model to use the agent's default.
     """
     OPENAI: Final[str] = "openai"
     OPENROUTER: Final[str] = "openrouter"
@@ -478,6 +495,11 @@ class TranscriptCleanupProvider:
     GROQ: Final[str] = "groq"
     OPENCODE_GO: Final[str] = "opencode_go"
     OPENCODE_ZEN: Final[str] = "opencode_zen"
+
+    CLAUDE_CODE: Final[str] = "claude_code"
+    CODEX: Final[str] = "codex"
+    OPENCODE_CLI: Final[str] = "opencode_cli"
+    INSTALLED: Final[Tuple[str, ...]] = (CLAUDE_CODE, CODEX, OPENCODE_CLI)
 
     ALL: Final[Tuple[str, ...]] = (
         OPENAI, OPENROUTER, OLLAMA, LM_STUDIO, VLLM, LLAMA_CPP, LOCALAI,
@@ -785,6 +807,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.WALKTHROUGH_SHOW_ABOUT: True,
     SettingsKey.WALKTHROUGH_SHOW_CAPTIONS: True,
     SettingsKey.WALKTHROUGH_PAGE_SIZE: WalkthroughPageSize.AUTO,
+    SettingsKey.WALKTHROUGH_COPY_FORMAT: WalkthroughCopyFormat.BOTH,
     SettingsKey.WALKTHROUGH_INTRO_SEEN: False,
     SettingsKey.WALKTHROUGH_WRITE_UP: False,
     SettingsKey.WALKTHROUGH_WRITE_UP_AGENT: MeetingAgentCore.CLAUDE_CODE,
@@ -1312,6 +1335,8 @@ resolve_walkthrough_show_about = _bool_resolver(SettingsKey.WALKTHROUGH_SHOW_ABO
 resolve_walkthrough_show_captions = _bool_resolver(SettingsKey.WALKTHROUGH_SHOW_CAPTIONS)
 resolve_walkthrough_page_size = _choice_resolver(
     SettingsKey.WALKTHROUGH_PAGE_SIZE, WalkthroughPageSize.ALL)
+resolve_walkthrough_copy_format = _choice_resolver(
+    SettingsKey.WALKTHROUGH_COPY_FORMAT, WalkthroughCopyFormat.ALL)
 resolve_walkthrough_intro_seen = _bool_resolver(SettingsKey.WALKTHROUGH_INTRO_SEEN)
 resolve_walkthrough_write_up = _bool_resolver(SettingsKey.WALKTHROUGH_WRITE_UP)
 resolve_walkthrough_write_up_agent = _choice_resolver(
@@ -1413,6 +1438,8 @@ def _known_text_llm_profile_ids(
 
 def default_transcript_cleanup_model(provider: str) -> str:
     """Return the provider default; custom endpoints have no default."""
+    if provider in TranscriptCleanupProvider.INSTALLED:
+        return ""
     try:
         from services.text_llm import default_model_for_profile, get_profile
 
@@ -1442,6 +1469,10 @@ def _resolve_text_llm_assignment(
 
     provider = settings.get(provider_key)
     model = settings.get(model_key)
+    if (provider_key == SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER
+            and provider in TranscriptCleanupProvider.INSTALLED
+            and isinstance(model, str)):
+        return provider, model.strip()
     known = _known_text_llm_profile_ids(settings)
     if (
         isinstance(provider, str)

@@ -72,6 +72,7 @@ from services.settings import (
     TypeSafeTextModel,
     UiFontScale,
     UiTheme,
+    WalkthroughCopyFormat,
     WalkthroughPageSize,
     resolve_developer_mode,
     resolve_max_saved_recordings,
@@ -218,6 +219,7 @@ from ui_qt.widgets.settings_switch import SettingsSwitch
 from services.hotkey_conflicts import STANDARD, STANDARD_LABELS, hotkey_conflict
 from services.settings import (
     resolve_recording_hands_free_latch,
+    resolve_walkthrough_copy_format,
     resolve_walkthrough_page_size,
     resolve_walkthrough_show_about,
     resolve_walkthrough_show_captions,
@@ -1524,6 +1526,26 @@ class SettingsDialog(QDialog):
 
     def _build_walkthrough_group(self, layout: QVBoxLayout) -> None:
         """What a walkthrough's PDF and Markdown show besides your words and screenshots."""
+        self.walkthrough_copy_format_combo = ElidingComboBox()
+        self.walkthrough_copy_format_combo.setObjectName("walkthroughCopyFormatCombo")
+        self.walkthrough_copy_format_combo.setAccessibleName("Walkthrough default copy")
+        for value in WalkthroughCopyFormat.ALL:
+            self.walkthrough_copy_format_combo.addItem(WalkthroughCopyFormat.LABELS[value], value)
+        self.walkthrough_copy_format_combo.setMinimumHeight(40)
+        self.walkthrough_copy_format_tile = FieldTile(
+            "Default copy",
+            "What goes on the clipboard when a walkthrough finishes. "
+            "Agent copy includes Markdown with screenshot paths; PDF copy attaches the document.",
+            self.walkthrough_copy_format_combo,
+            design_icon("copy-gray.svg"),
+        )
+        self._tile_group(layout, "Copy", [self.walkthrough_copy_format_tile])
+        self._bindings.combo(
+            self.walkthrough_copy_format_combo,
+            SettingsKey.WALKTHROUGH_COPY_FORMAT,
+            resolve_walkthrough_copy_format,
+        )
+
         self.walkthrough_title_edit = QLineEdit()
         self.walkthrough_title_edit.setObjectName("walkthroughTitleEdit")
         self.walkthrough_title_edit.setPlaceholderText("No title")

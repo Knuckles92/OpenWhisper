@@ -103,7 +103,12 @@ the PDF's paper size (Letter or A4 by your region unless you choose).
 Your words and screenshots are always in, and `walkthrough.json` always
 keeps everything. Changes apply to the next walkthrough.
 
-The clipboard gets two things at once:
+Under **Copy**, the **Default copy** dropdown chooses what goes on the
+clipboard when a walkthrough finishes: **PDF copy**, **Agent copy (Markdown)**,
+or **PDF and agent copy** (the default). Both documents are always saved,
+and the ready card and library still let you copy either format separately.
+
+With **PDF and agent copy**, the clipboard gets two things at once:
 
 - **The PDF as a file.** Apps that take files on paste attach it, and so
   does a folder. Claude reads both the words and the pictures in a PDF of up

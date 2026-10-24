@@ -64,6 +64,42 @@ class TestSettingsGeneralLayout(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_walkthrough_copy_preference_saves_and_reloads(self):
+        import tempfile
+
+        from services.settings import (
+            SettingsKey,
+            SettingsManager,
+            WalkthroughCopyFormat,
+        )
+        from ui_qt.dialogs import settings_dialog as module
+
+        with tempfile.TemporaryDirectory() as folder:
+            manager = SettingsManager(os.path.join(folder, "settings.json"))
+            with patch.object(module, "settings_manager", manager):
+                dialog = SettingsDialog()
+                try:
+                    dialog.ensure_page(WALKTHROUGHS)
+                    combo = dialog.walkthrough_copy_format_combo
+                    self.assertEqual(combo.currentData(), WalkthroughCopyFormat.BOTH)
+                    self.assertEqual(
+                        [combo.itemData(i) for i in range(combo.count())],
+                        list(WalkthroughCopyFormat.ALL),
+                    )
+                    for value in (WalkthroughCopyFormat.AGENT, WalkthroughCopyFormat.PDF):
+                        combo.setCurrentIndex(combo.findData(value))
+                        self.assertEqual(manager.get(SettingsKey.WALKTHROUGH_COPY_FORMAT), value)
+                finally:
+                    dialog.close()
+                dialog = SettingsDialog()
+                try:
+                    dialog.ensure_page(WALKTHROUGHS)
+                    self.assertEqual(
+                        dialog.walkthrough_copy_format_combo.currentData(), WalkthroughCopyFormat.PDF
+                    )
+                finally:
+                    dialog.close()
+
     def test_uses_rail_and_independently_scrollable_pages(self):
         with patch.object(SettingsDialog, "_load_settings", lambda self: None):
             dialog = SettingsDialog()
@@ -135,10 +171,11 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             )
             # Everything about walkthroughs is on its own page under Dictation.
             walkthroughs = dialog._pages[WALKTHROUGHS]
-            self.assertEqual(group_titles(walkthroughs), ["Document", "AI write-up"])
+            self.assertEqual(group_titles(walkthroughs), ["Copy", "Document", "AI write-up"])
             self.assertEqual(
                 set(walkthroughs.findChildren(FieldTile)),
                 {dialog.walkthrough_title_tile, dialog.walkthrough_page_size_tile,
+                 dialog.walkthrough_copy_format_tile,
                  dialog.walkthrough_write_up_agent_tile,
                  dialog.walkthrough_write_up_instructions_tile},
             )

@@ -795,6 +795,9 @@ class HomePage(QWidget):
         provider = resolve_transcript_cleanup_provider(settings)
         profile = get_profile(provider, settings)
         name = profile_display_name(provider, settings)
+        from services.settings import TranscriptCleanupProvider
+        if provider in TranscriptCleanupProvider.INSTALLED:
+            return f"{name} · Uses your installed agent's sign-in. Transcript text is sent to its model."
         if profile and profile.is_local:
             return f"{name} · Transcript text stays on this computer."
         configured = profile and (not profile.api_key_env or resolve_credential(profile.api_key_env))

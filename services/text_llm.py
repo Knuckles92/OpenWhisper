@@ -594,6 +594,9 @@ def profile_display_name(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
     """User-visible name for a profile id, falling back to the raw id."""
+    agent_names = {"claude_code": "Claude Code", "codex": "Codex", "opencode_cli": "OpenCode"}
+    if profile_id in agent_names:
+        return agent_names[profile_id]
     profile = get_profile(profile_id, settings)
     if profile is not None:
         return profile.name

@@ -338,6 +338,28 @@ def test_each_section_is_transcribed_and_the_document_copied(h):
     assert (folder / "shot-1.png").exists()
 
 
+@pytest.mark.parametrize("copy_format, pdf, markdown", [
+    ("both", True, True),
+    ("agent", False, True),
+    ("pdf", True, False),
+    ("unknown", True, True),
+])
+def test_finished_walkthrough_uses_preferred_copy(h, copy_format, pdf, markdown):
+    h.settings.values[SettingsKey.WALKTHROUGH_COPY_FORMAT] = copy_format
+    _write_recording(h.audio, [_tone(4.0)])
+    _record(h, [2.0], length_s=4.0)
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    assert h.ui.copied_files == [(
+        [h.session.folder() / "walkthrough.pdf"] if pdf else [],
+        "# Walkthrough (markdown)" if markdown else "",
+    )]
+    assert h.ui.ready[0][1] is True
+    if copy_format == "pdf":
+        assert any("paste it where you need it" in status for status in h.ui.statuses)
+
+
 def test_each_section_is_cleaned_up_on_its_own(h, monkeypatch):
     _write_recording(h.audio, [_tone(5.0)])
     seen = []

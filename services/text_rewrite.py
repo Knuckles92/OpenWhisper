@@ -174,6 +174,12 @@ def provider_ready(settings: Mapping) -> bool:
         settings = dict(settings or {})
         provider = resolve_transcript_cleanup_provider(settings)
         model = resolve_transcript_cleanup_model(settings)
+        from services.settings import TranscriptCleanupProvider
+        if provider in TranscriptCleanupProvider.INSTALLED:
+            from services.installed_agents import resolve_agent
+
+            agent = resolve_agent(provider)
+            return agent is not None and agent.usable
         profile = get_profile(provider, settings)
         if profile is None or not model:
             return False

@@ -361,6 +361,22 @@ def test_opencode_overlay_locks_down_both_agents(server):
     assert mcp["codemode"] is False and mcp["type"] == "remote"
 
 
+def test_opencode_tool_free_cleanup_returns_text_without_meeting_tools(server, monkeypatch, tmp_path):
+    monkeypatch.setenv("FAKE_ACP_LOG", str(tmp_path / "acp.jsonl"))
+    monkeypatch.delenv("FAKE_TOOL_CALL", raising=False)
+    driver = _FakeOpenCode(InstalledAgent("opencode_cli", "fake", "2.0.18"))
+    driver.start(server, {"build": "Return only the cleaned text."}, tools=[])
+    try:
+        outcome = driver.run_pass(_request(Recorder(), tools=[], model=""))
+        assert outcome.ok and outcome.text == "Done."
+        overlay = driver._overlay()
+        assert driver._router.tools == []
+        assert "Act only through" not in overlay["agents"]["build"]["system"]
+        assert "Return only the cleaned text." in overlay["agents"]["build"]["system"]
+    finally:
+        driver.close()
+
+
 def test_opencode_refuses_every_other_permission():
     driver = OpenCodeDriver(InstalledAgent("opencode_cli", "fake", "2.0.18"))
     options = [{"optionId": "a", "kind": "allow_once"}, {"optionId": "r", "kind": "reject_once"}]

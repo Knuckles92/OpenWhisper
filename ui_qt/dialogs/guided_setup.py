@@ -129,6 +129,22 @@ def provider_summary(settings: dict) -> tuple[str, str, str, bool, bool]:
     A saved key is reported as configured, never as a tested connection.
     """
     provider = resolve_transcript_cleanup_provider(settings)
+    from services.settings import TranscriptCleanupProvider
+    if provider in TranscriptCleanupProvider.INSTALLED:
+        from services.installed_agents import AGENT_SPECS, cached_scan
+
+        name = AGENT_SPECS[provider].name
+        scan = cached_scan()
+        agent = (scan or {}).get(provider)
+        status = "Uses your agent's sign-in."
+        if scan is not None and (agent is None or not agent.usable):
+            status = "Install or sign in to this agent in All settings."
+        return (
+            name,
+            status,
+            f"Transcript text is sent to {name}'s model when cleanup is on. No audio is sent for cleanup.",
+            True, False,
+        )
     profile = get_profile(provider, settings)
     if profile is None:
         return (

@@ -1,4 +1,4 @@
-"""Post-ASR cleanup via OpenAI-compatible chat models."""
+"""Post-ASR cleanup via text endpoints or installed coding agents."""
 import logging
 import threading
 import time
@@ -110,6 +110,8 @@ class CleanupInfo:
 
 def provider_env_key(provider: str) -> str:
     """Return the environment variable name holding the provider's API key."""
+    if provider in TranscriptCleanupProvider.INSTALLED:
+        return ""
     profile = get_profile(provider)
     if profile is not None:
         return profile.api_key_env or ""
@@ -120,6 +122,8 @@ def provider_env_key(provider: str) -> str:
 
 def find_api_key(provider: str) -> Optional[str]:
     """Resolve credentials, including a dummy key for auth-free endpoints."""
+    if provider in TranscriptCleanupProvider.INSTALLED:
+        return None
     profile = get_profile(provider)
     if profile is not None:
         return resolve_api_key(profile)
@@ -166,7 +170,7 @@ def polish_cleanup_rule(
 
 
 class TranscriptCleanup:
-    """Optional chat-model cleanup step applied after ASR."""
+    """Optional text-model cleanup step applied after ASR."""
 
     def __init__(
         self,
@@ -209,11 +213,19 @@ class TranscriptCleanup:
     def _normalize_provider(provider: Optional[str]) -> str:
         if isinstance(provider, str) and get_profile(provider) is not None:
             return provider
-        if provider in TranscriptCleanupProvider.ALL:
+        if provider in (*TranscriptCleanupProvider.ALL, *TranscriptCleanupProvider.INSTALLED):
             return provider
         return config.TRANSCRIPT_CLEANUP_PROVIDER
 
     def _initialize_client(self) -> None:
+        if self.provider in TranscriptCleanupProvider.INSTALLED:
+            if self.client is not None:
+                self.client.close()
+            self.client = None
+            self._connection = None
+            # CLI startup and sign-in take longer than an HTTP request.
+            self._timeout_s = 60.0
+            return
         profile = get_profile(self.provider)
         if profile is None:
             # ``_normalize_provider`` only returns ids that resolve, so this
@@ -292,6 +304,11 @@ class TranscriptCleanup:
 
     def is_available(self) -> bool:
         """Whether cleanup can be attempted."""
+        if self.provider in TranscriptCleanupProvider.INSTALLED:
+            from services.installed_agents import resolve_agent
+
+            agent = resolve_agent(self.provider)
+            return agent is not None and agent.usable
         return self.client is not None and self.api_key is not None and bool(self.model)
 
     def _request_options(self) -> dict:
@@ -360,6 +377,8 @@ class TranscriptCleanup:
             return text
 
         try:
+            if self.provider in TranscriptCleanupProvider.INSTALLED:
+                return self._cleanup_with_agent(text, prompt, timeout_s, deadline_s)
             client, give_up_s = self._attempt_budget(timeout_s, deadline_s)
             profile = get_profile(self.provider)
             messages = [
@@ -386,6 +405,39 @@ class TranscriptCleanup:
             self.last_error = str(exc)
             logger.warning("Transcript cleanup failed; using raw text: %s", exc)
             return text
+
+    def _cleanup_with_agent(self, text: str, prompt: str,
+                            timeout_s: Optional[float], deadline_s: Optional[float]) -> str:
+        from meeting.agent.installed.core import run_agent_task
+
+        budget = deadline_s if deadline_s is not None else (
+            timeout_s if timeout_s is not None else self._timeout_s
+        )
+        cancel = threading.Event()
+        try:
+            outcome = _call_with_deadline(
+                lambda: run_agent_task(
+                    self.provider, model=self.model, system_prompt=prompt,
+                    user_prompt=text, tools=[], handler=lambda *_: ("Tools are disabled.", True),
+                    timeout_s=budget,
+                    closing="Return only the finished text requested by the instructions, without commentary.",
+                    effort="low" if self.reasoning == TranscriptCleanupReasoning.OFF else self.reasoning,
+                    cancel_event=cancel,
+                ),
+                budget, self.cancel_event,
+            )
+        finally:
+            # Stop the CLI as well as returning promptly to the dictation job.
+            cancel.set()
+        if outcome.canceled or (self.cancel_event is not None and self.cancel_event.is_set()):
+            raise _CleanupCanceled(CANCELED_REASON)
+        if not outcome.ok:
+            raise RuntimeError(outcome.error or "Agent cleanup failed")
+        cleaned = outcome.text.strip()
+        if not cleaned:
+            raise RuntimeError("empty response")
+        self.last_error = None
+        return cleaned
 
     def _attempt_budget(self, timeout_s: Optional[float], deadline_s: Optional[float]):
         """The client to call and the wall-clock limit for all of its attempts."""

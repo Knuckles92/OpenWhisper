@@ -36,6 +36,8 @@ from services.batch_upload import (
 from services.settings import (
     SETTING_DEFAULTS,
     SettingsKey,
+    WalkthroughCopyFormat,
+    resolve_walkthrough_copy_format,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
@@ -2180,9 +2182,8 @@ class TranscriptionRuntime:
     def _deliver_walkthrough(self, ui, transcript: str = "") -> None:
         """Copy a finished walkthrough and show where it is; Qt thread.
 
-        The clipboard holds the PDF as a file, which chat apps attach, and
-        the Markdown with absolute image paths as text, which is what a
-        terminal (and an agent in it) receives. Never pasted: the user
+        The clipboard holds the preferred PDF file, Markdown with absolute
+        image paths, or both. Never pasted: the user
         chooses where it goes. When the document couldn't be written, the
         words are copied as text and History keeps them.
         """
@@ -2206,7 +2207,11 @@ class TranscriptionRuntime:
             if callable(dismiss):
                 dismiss()
             return
-        copied = ui.copy_files_to_clipboard([result.pdf], text=result.clipboard_text)
+        copy_format = resolve_walkthrough_copy_format(settings_manager.load_all_settings())
+        copied = ui.copy_files_to_clipboard(
+            [] if copy_format == WalkthroughCopyFormat.AGENT else [result.pdf],
+            text="" if copy_format == WalkthroughCopyFormat.PDF else result.clipboard_text,
+        )
         count = f"{result.shots} screenshot{'' if result.shots == 1 else 's'}"
         if result.write_up_error:
             # Ahead of the rest, so a status line cut short still says it;
@@ -2214,7 +2219,11 @@ class TranscriptionRuntime:
             done = "copied as spoken" if copied else "saved as spoken; copying it failed"
             status = f"Write-up failed — {result.name} {done} ({count}): {result.write_up_error}"
         elif copied:
-            status = f"{result.name} copied ({count}) — paste it into your agent"
+            destination = (
+                "paste it where you need it" if copy_format == WalkthroughCopyFormat.PDF
+                else "paste it into your agent"
+            )
+            status = f"{result.name} copied ({count}) — {destination}"
         else:
             status = f"{result.name} saved ({count}); copying it failed — drag it from the card"
         if result.lost_shots:

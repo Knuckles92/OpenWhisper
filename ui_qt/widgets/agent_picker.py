@@ -560,6 +560,7 @@ class AgentTile(QWidget):
         super().__init__(parent)
         self.tile_id = tile_id
         self.name = name
+        self.purpose = "AI insights"
         self.setObjectName("agentTile")
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
@@ -789,7 +790,7 @@ class AgentTile(QWidget):
     def _accessible_description(self) -> str:
         parts = [self._state.detail]
         if self._selected:
-            parts.append("Runs AI insights")
+            parts.append(f"Runs {self.purpose}")
         return ". ".join(part for part in parts if part)
 
     def _set_pill(self, tone: str, text: str) -> None:
@@ -1135,9 +1136,10 @@ class AgentPicker(QWidget):
     #: A scan result was applied (fresh or cached).
     results_changed = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, purpose="AI insights"):
         super().__init__(parent)
         self.setObjectName("agentPicker")
+        self._purpose = purpose
         self._agents: Optional[Dict[str, Optional[InstalledAgent]]] = None
         self._scanning = False
         self._generation = 0
@@ -1155,7 +1157,7 @@ class AgentPicker(QWidget):
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(12)
-        heading = QLabel("Who runs AI insights".upper(), self)
+        heading = QLabel(f"Who runs {purpose}".upper(), self)
         heading.setObjectName("settingsTileGroupTitle")
         header.addWidget(heading, alignment=Qt.AlignmentFlag.AlignBottom)
         header.addStretch(1)
@@ -1171,8 +1173,7 @@ class AgentPicker(QWidget):
         layout.addLayout(header)
 
         self.count_label = WrappedLabel(
-            "Coding agents you already use can run AI insights with their own "
-            "sign-in.", self,
+            f"Coding agents you already use can run {purpose} with their own sign-in.", self,
         )
         self.count_label.setObjectName("infoLabel")
         layout.addWidget(self.count_label)
@@ -1187,8 +1188,14 @@ class AgentPicker(QWidget):
             self.tiles[agent_id] = tile
         builtin = AgentTile(BUILTIN, "Pi", "π", "#0a84ff")
         builtin.show_state(BUILTIN_STATE)
+        if purpose == "AI cleanup":
+            builtin.set_identity("API / local model", "AI")
+            builtin.show_state(TileState(
+                BUILTIN_TONE, "Built in", "The cleanup model below", True, True
+            ))
         self.tiles[BUILTIN] = builtin
         for tile in self.tiles.values():
+            tile.purpose = purpose
             tile.clicked.connect(self._on_tile_clicked)
         self.grid = _TileGrid(self.tiles.values(), self)
         layout.addWidget(self.grid)
@@ -1333,7 +1340,10 @@ class AgentPicker(QWidget):
                 animate=animate,
                 delay_ms=index * STAGGER_MS,
             )
-        self.count_label.setText(found_count_text(self._agents))
+        count_text = found_count_text(self._agents)
+        if self._purpose == "AI cleanup" and not any(self._agents.values()):
+            count_text = "No coding agents found on this computer. Choose an API or local model below."
+        self.count_label.setText(count_text)
         self._sync_selection()
         self.results_changed.emit()
 
@@ -1345,7 +1355,7 @@ class AgentPicker(QWidget):
     def set_choice(self, core: str) -> None:
         """Show ``core`` (a ``MeetingAgentCore`` value) as the chosen tile."""
         self._choice = core if core in AGENT_ORDER else BUILTIN
-        if self._choice == BUILTIN:
+        if self._choice == BUILTIN and self._purpose != "AI cleanup":
             name, monogram = ("OpenCode SDK", "OC") if core == MeetingAgentCore.OPENCODE else ("Pi", "π")
             self.tiles[BUILTIN].set_identity(name, monogram)
         self._sync_selection()
@@ -1375,6 +1385,7 @@ class AgentPicker(QWidget):
             return
         agent = self._agents.get(self._choice)
         message = blocked_notice(self._choice, agent)
+        message = message.replace("AI insights", self._purpose)
         self.notice_label.setText(message)
         self.notice.setVisible(bool(message))
         self._show_model_card(agent if agent is not None and agent.usable else None)
@@ -1393,7 +1404,14 @@ class AgentPicker(QWidget):
             self.model_card.hide()
             return
         self._shown_models_for = agent.id
-        self.usage_label.setText(usage_caption(agent))
+        caption = usage_caption(agent)
+        if self._purpose == "AI cleanup":
+            caption = caption.replace("meeting pass", "cleanup request").replace(
+                "gets OpenWhisper's meeting tools and nothing else: no files, no shell.",
+                "receives the text and cleanup instructions, with no tools, files, or shell."
+            )
+            caption += " Starting an agent can take longer than an API request."
+        self.usage_label.setText(caption)
         self.model_card.show()
         if agent.id in self._models:
             self._fill_models(agent.id)
