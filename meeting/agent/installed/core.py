@@ -56,8 +56,7 @@ logger = logging.getLogger(__name__)
 #: Live passes: a hard wall and a silence limit per run.
 _LIVE_TIMEOUT_S = 120.0
 _LIVE_STALL_S = 75.0
-#: Live passes favour speed; the final report may think harder.
-LIVE_EFFORT = "low"
+#: Effort for one-off tasks that name none (custom reports).
 FINAL_EFFORT = "medium"
 #: Repeat the same progress line at most this often.
 _PROGRESS_MIN_INTERVAL_S = 1.0
@@ -121,6 +120,8 @@ class InstalledAgentCore:
         self._progress_cb: Optional[Any] = None
         self._activity_cb: Optional[Any] = None
         self._last_progress = ("", 0.0)
+        self._live_effort = "low"
+        self._final_effort = FINAL_EFFORT
 
     @property
     def name(self) -> str:
@@ -135,9 +136,18 @@ class InstalledAgentCore:
             RuntimeError: When the agent is missing, too old, or signed out;
                 the message says what to do.
         """
+        from services.settings import (
+            resolve_meeting_final_thinking, resolve_meeting_live_thinking,
+        )
+        from services.thinking_levels import agent_levels, effective_level
+
         self._cfg = cfg
         self._tools = tools
         self._shut_down = False
+        # Live passes favour speed; the final report may think harder.
+        offered = agent_levels(self.agent_id, cfg.model or "")
+        self._live_effort = effective_level(resolve_meeting_live_thinking(), offered)
+        self._final_effort = effective_level(resolve_meeting_final_thinking(), offered)
         self._agent = installed_agent(self.agent_id)
         server = LoopbackMcpServer()
         server.start()
@@ -167,11 +177,11 @@ class InstalledAgentCore:
         if payload.is_consolidation:
             return self.consolidate(payload)
         timeout_s = max(POLISH_TIMEOUT_S, _LIVE_TIMEOUT_S) if payload.is_polish else _LIVE_TIMEOUT_S
-        return self._run(payload, timeout_s, _LIVE_STALL_S, LIVE_EFFORT)
+        return self._run(payload, timeout_s, _LIVE_STALL_S, self._live_effort)
 
     def consolidate(self, payload: CheckpointPayload) -> AgentResult:
         return self._run(payload, CONSOLIDATION_TIMEOUT_CAP_S, CONSOLIDATION_STALL_S,
-                         FINAL_EFFORT)
+                         self._final_effort)
 
     def cancel(self) -> None:
         with self._lock:

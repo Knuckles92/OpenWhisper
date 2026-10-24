@@ -4709,8 +4709,9 @@ QListWidget#transformsList::item:selected {
     color: @accent-soft;
 }
 
-/* Quick Record: the link to set a Command Mode shortcut, under the profile hint. */
-QPushButton#commandModeHintLink {
+/* Quick Record: compact links to Command Mode and Walkthrough settings. */
+QPushButton#commandModeHintLink,
+QPushButton#walkthroughSettingsLink {
     color: @accent;
     background-color: transparent;
     border: none;
@@ -4721,7 +4722,9 @@ QPushButton#commandModeHintLink {
 }
 
 QPushButton#commandModeHintLink:hover,
-QPushButton#commandModeHintLink:focus {
+QPushButton#commandModeHintLink:focus,
+QPushButton#walkthroughSettingsLink:hover,
+QPushButton#walkthroughSettingsLink:focus {
     color: @accent-soft;
     text-decoration: underline;
 }

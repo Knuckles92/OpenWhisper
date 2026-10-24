@@ -187,7 +187,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--provider", help="Text model endpoint id; default: the app's")
     parser.add_argument("--model", help="Model id; default: the app's")
-    parser.add_argument("--reasoning", help="off, low, medium or high; default: the app's")
+    parser.add_argument("--reasoning", help="Thinking level (off … ultra); the nearest the model takes runs; default: the app's")
     parser.add_argument("--level", action="append", help="Only cases at this level (repeatable)")
     parser.add_argument("--case", action="append", help="Only this case id (repeatable)")
     parser.add_argument("--delay", type=float, default=0.0, help="Seconds between requests")

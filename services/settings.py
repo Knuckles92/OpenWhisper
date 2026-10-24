@@ -556,13 +556,19 @@ class TranscriptCleanupReasoning:
 
     "off" sends a plain temperature-0 request; the other levels request the
     provider's reasoning/thinking effort (only meaningful on reasoning models).
+    Each runner accepts a subset, in this order; see
+    :mod:`services.thinking_levels`.
     """
     OFF: Final[str] = "off"
+    MINIMAL: Final[str] = "minimal"
     LOW: Final[str] = "low"
     MEDIUM: Final[str] = "medium"
     HIGH: Final[str] = "high"
+    XHIGH: Final[str] = "xhigh"
+    MAX: Final[str] = "max"
+    ULTRA: Final[str] = "ultra"
 
-    ALL: Final[Tuple[str, ...]] = (OFF, LOW, MEDIUM, HIGH)
+    ALL: Final[Tuple[str, ...]] = (OFF, MINIMAL, LOW, MEDIUM, HIGH, XHIGH, MAX, ULTRA)
 
 
 class MeetingAgentCore:

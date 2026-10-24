@@ -3,7 +3,7 @@ import logging
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QLabel
 from PyQt6.QtCore import QEvent, Qt, QSize, QTimer, pyqtSignal
 
-from ui_qt.dialogs.settings_destinations import COMMANDS
+from ui_qt.dialogs.settings_destinations import COMMANDS, WALKTHROUGHS
 from ui_qt.utils.icons import tabler_icon
 from ui_qt.widgets.cards import ControlPanel
 from ui_qt.widgets.buttons import Button, PrimaryButton, SuccessButton, DangerButton, WarningButton
@@ -298,6 +298,16 @@ class QuickRecordTab(TranscriptionTabBase):
         buttons_layout.addLayout(top_row)
         buttons_layout.addLayout(bottom_row)
         buttons_layout.addLayout(walkthrough_row)
+        self.walkthrough_settings_link = QPushButton("Walkthrough settings")
+        self.walkthrough_settings_link.setObjectName("walkthroughSettingsLink")
+        self.walkthrough_settings_link.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.walkthrough_settings_link.setToolTip("Open Walkthrough settings")
+        self.walkthrough_settings_link.clicked.connect(
+            lambda: self.settings_requested.emit(WALKTHROUGHS)
+        )
+        buttons_layout.addWidget(
+            self.walkthrough_settings_link, alignment=Qt.AlignmentFlag.AlignRight
+        )
         buttons_widget.setMaximumWidth(420)
 
         control_panel.layout.addStretch()

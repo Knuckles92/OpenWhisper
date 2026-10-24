@@ -115,6 +115,17 @@ def test_the_final_pass_thinks_harder_and_waits_longer(monkeypatch, agent):
     assert request.effort == "medium" and request.timeout_s >= 600
 
 
+def test_saved_thinking_levels_run_at_what_the_agent_takes(monkeypatch, agent):
+    monkeypatch.setattr("services.settings.resolve_meeting_live_thinking", lambda: "off")
+    monkeypatch.setattr("services.settings.resolve_meeting_final_thinking", lambda: "ultra")
+    driver = FakeDriver()
+    core, _ = _core(monkeypatch, driver)
+    core.checkpoint(_payload())
+    core.consolidate(_payload(is_consolidation=True))
+    # Claude Code has no Off and goes up to Max.
+    assert [r.effort for r in driver.requests] == ["low", "max"]
+
+
 def test_tool_calls_after_the_pass_have_no_authority(monkeypatch, agent):
     driver = FakeDriver(calls=[])
     core, tools = _core(monkeypatch, driver)

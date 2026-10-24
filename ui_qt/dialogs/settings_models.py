@@ -55,7 +55,6 @@ from services.settings import (
     SettingsKey,
     TranscriptCleanupModelSort,
     TranscriptCleanupProvider,
-    TranscriptCleanupReasoning,
     default_transcript_cleanup_model,
     resolve_meeting_agent_core,
     resolve_meeting_agent_model,
@@ -67,6 +66,8 @@ from services.settings import (
     resolve_meeting_speaker_id_backend,
     resolve_meeting_whisper_model,
     resolve_meeting_asr_source,
+    resolve_meeting_final_thinking,
+    resolve_meeting_live_thinking,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
@@ -111,10 +112,37 @@ from ui_qt.widgets.speech_backend_picker import (
 
 logger = logging.getLogger(__name__)
 
+_MEETING_SDK_DESCRIPTION = (
+    "Pi or OpenCode SDK runs live cards, the note taker, polish, summaries, "
+    "and the final report with this endpoint and your API key."
+)
+
 _CLEANUP_ENDPOINT_DESCRIPTION = (
     "The provider and model that rewrite each dictation. Cleanup "
     "profiles use it too. The provider's key lives under API keys."
 )
+
+def _fill_thinking_combo(combo, offered, saved: str):
+    """List ``offered`` levels and select ``saved``, or the nearest offered.
+
+    With nothing offered the combo shows the provider default, disabled.
+    Returns the level shown. Filling never saves.
+    """
+    from services.thinking_levels import LABELS, nearest
+
+    shown = nearest(saved, tuple(offered))
+    blocker = combo.blockSignals(True)
+    combo.clear()
+    if offered:
+        for level in offered:
+            combo.addItem(LABELS[level], level)
+        combo.setCurrentIndex(combo.findData(shown))
+    else:
+        combo.addItem("Provider default", None)
+    combo.setEnabled(bool(offered))
+    combo.blockSignals(blocker)
+    return shown
+
 
 _ENGINE_CAPTIONS = {
     "local_whisper": "Local faster-whisper on this computer.",
@@ -433,13 +461,7 @@ class ModelAssignments(QObject):
 
         self.cleanup_reasoning_combo = ElidingComboBox()
         self.cleanup_reasoning_combo.setMinimumHeight(40)
-        for label, value in (
-            ("Off", TranscriptCleanupReasoning.OFF),
-            ("Low", TranscriptCleanupReasoning.LOW),
-            ("Medium", TranscriptCleanupReasoning.MEDIUM),
-            ("High", TranscriptCleanupReasoning.HIGH),
-        ):
-            self.cleanup_reasoning_combo.addItem(label, value)
+        # Filled per runner and model by _update_cleanup_reasoning_controls.
         self.cleanup_reasoning_combo.currentIndexChanged.connect(
             self._on_cleanup_reasoning_changed
         )
@@ -544,19 +566,17 @@ class ModelAssignments(QObject):
         self._built.add(MEETING_VOICE)
 
     def build_meeting_model_section(self, layout: QVBoxLayout) -> InfoTile:
-        """Who runs AI insights, then the built-in insights model, in Intelligence.
+        """Who runs AI insights, then one Insights model card, in Intelligence.
 
-        The agent picker comes first. The insights model tile (endpoint, model,
-        agent core) belongs to the packaged SDK tile (Pi by default), so it
-        shows only while that tile is chosen.
+        The card shows the chosen agent's model, or for the packaged SDK tile
+        (Pi by default) its endpoint, model and agent core; then the thinking
+        levels, which every runner shows.
         """
-        self.meeting_agent_picker = AgentPicker()
+        self.meeting_agent_picker = AgentPicker(framed_models=False)
         self.meeting_agent_picker.choice_requested.connect(self._on_meeting_agent_choice)
         self.meeting_agent_picker.model_chosen.connect(self._on_meeting_agent_model_chosen)
         self.meeting_agent_picker.results_changed.connect(self._refresh_rail_values)
         layout.addWidget(self.meeting_agent_picker)
-        layout.addSpacing(10)
-        self.meeting_model_title = self._group_title(layout, "Model")
 
         self.meeting_model_picker = TextModelPicker(
             idle_status="Open Meeting intelligence to load the model catalog."
@@ -595,19 +615,31 @@ class ModelAssignments(QObject):
             self._on_meeting_agent_core_changed
         )
 
+        self.meeting_live_thinking_combo = ElidingComboBox()
+        self.meeting_final_thinking_combo = ElidingComboBox()
+        for combo, key in ((self.meeting_live_thinking_combo, SettingsKey.MEETING_LIVE_THINKING),
+                           (self.meeting_final_thinking_combo, SettingsKey.MEETING_FINAL_THINKING)):
+            combo.setMinimumHeight(40)
+            combo.currentIndexChanged.connect(
+                lambda _index, combo=combo, key=key: self._on_meeting_thinking_changed(combo, key)
+            )
+
         self.meeting_model_tile = InfoTile(
-            "Insights model",
-            "Pi or OpenCode SDK runs live cards, the note taker, "
-            "polish, summaries, and the final report with this endpoint and "
-            "your API key.",
-            _design_icon("box-blue.svg"),
+            "Insights model", _MEETING_SDK_DESCRIPTION, _design_icon("box-blue.svg"),
         )
+        self.meeting_model_tile.add_body(self.meeting_agent_picker.model_card)
         self.meeting_model_tile.add_body(self.meeting_model_picker)
-        self.meeting_model_tile.add_body(
-            self._field("Agent core", self.meeting_agent_core_combo)
-        )
+        self.meeting_agent_core_field = self._field("Agent core", self.meeting_agent_core_combo)
+        self.meeting_model_tile.add_body(self.meeting_agent_core_field)
         self.meeting_agent_core_notice = self._caption("")
         self.meeting_model_tile.add_body(self.meeting_agent_core_notice)
+        thinking = QHBoxLayout()
+        thinking.setSpacing(12)
+        thinking.addWidget(self._field("Thinking during the meeting", self.meeting_live_thinking_combo))
+        thinking.addWidget(self._field("Thinking for the final report", self.meeting_final_thinking_combo))
+        self.meeting_model_tile.add_body_layout(thinking)
+        self.meeting_thinking_note = self._caption("")
+        self.meeting_model_tile.add_body(self.meeting_thinking_note)
         layout.addWidget(self.meeting_model_tile)
         self._built.add(MEETING_INTELLIGENCE)
         return self.meeting_model_tile
@@ -951,15 +983,60 @@ class ModelAssignments(QObject):
         )
         if agent_id == self.meeting_agent_core():
             self._say(f"AI insights will run through {self.meeting_text_summary()}")
+            # Codex models take different levels.
+            self._refresh_meeting_thinking(agent_id)
         self._refresh_rail_values()
 
     def _apply_meeting_agent_choice(self, core: str) -> None:
         """Show the chosen agent, and chat settings only for packaged SDKs."""
         self.meeting_agent_picker.set_choice(core)
-        builtin = core not in MeetingAgentCore.INSTALLED
-        self.meeting_model_title.setVisible(builtin)
-        self.meeting_model_tile.setVisible(builtin)
+        agent = AGENT_SPECS.get(core) if core in MeetingAgentCore.INSTALLED else None
+        self.meeting_model_picker.setVisible(agent is None)
+        self.meeting_agent_core_field.setVisible(agent is None)
+        self.meeting_model_tile.set_description(
+            f"{agent.name} runs live cards, the note taker, polish, summaries, "
+            "and the final report." if agent is not None else _MEETING_SDK_DESCRIPTION
+        )
         self._refresh_meeting_agent_core_notice(core)
+        self._refresh_meeting_thinking(core)
+
+    def _refresh_meeting_thinking(self, core: str) -> None:
+        """Offer the levels the chosen agent takes; the SDKs think at Medium."""
+        from services.thinking_levels import LABELS, agent_levels
+        settings = self._settings_snapshot()
+        combos = (self.meeting_live_thinking_combo, self.meeting_final_thinking_combo)
+        if core not in MeetingAgentCore.INSTALLED:
+            # The packaged sidecars set Medium themselves.
+            name = self.meeting_agent_picker.tiles[BUILTIN].name
+            for combo in combos:
+                _fill_thinking_combo(combo, ("medium",), "medium")
+                combo.setEnabled(False)
+            note = f"{name} thinks at Medium on every pass when the model can think."
+        else:
+            name = AGENT_SPECS[core].name
+            offered = agent_levels(core, resolve_meeting_agent_model(core, settings))
+            saved = (resolve_meeting_live_thinking(settings), resolve_meeting_final_thinking(settings))
+            shown = [_fill_thinking_combo(combo, offered, level)
+                     for combo, level in zip(combos, saved, strict=True)]
+            note = (f"Sent to {name} as its reasoning effort. Live passes run every "
+                    "few minutes, so a lower level keeps cards quick.")
+            moved = [f"{LABELS[level]} runs at {LABELS[runs]}"
+                     for level, runs in zip(saved, shown, strict=True) if runs != level]
+            if moved:
+                note += f" With this model, {' and '.join(dict.fromkeys(moved))}."
+        for combo in combos:
+            combo.setToolTip(note)
+        self.meeting_thinking_note.setText(note)
+
+    def _on_meeting_thinking_changed(self, combo, key: str) -> None:
+        level = combo.currentData()
+        if not level:
+            return
+        try:
+            settings_manager.save_setting(key, level)
+        except Exception as exc:
+            logger.error("Couldn't save meeting thinking level: %s", exc)
+            self._say(f"Couldn't save thinking level: {exc}")
 
     def _refresh_meeting_agent_core_notice(self, core: str) -> None:
         """A missing SDK blocks AI insights, not recording or agent selection."""
@@ -1331,34 +1408,34 @@ class ModelAssignments(QObject):
         )
         self._update_cleanup_reasoning_controls()
 
-    def _update_cleanup_reasoning_controls(self) -> None:
-        """Say what the thinking level does for the runner the card shows."""
-        from services.text_model_catalog import model_spec
+    def _update_cleanup_reasoning_controls(self, refill: bool = True) -> None:
+        """Offer the levels the card's runner takes, and say what they do.
+
+        ``refill`` False keeps the list, for a choice made in it.
+        """
+        from services.thinking_levels import LABELS, agent_levels, endpoint_levels
+        settings = self._settings_snapshot()
         provider = self._active_text_provider
         if provider in TranscriptCleanupProvider.INSTALLED:
-            # Agents take an effort but have no "off"; cleanup sends Low.
-            name = AGENT_SPECS[provider].name
-            supported = True
-            note = f"Sent to {name} as its reasoning effort. Off runs it at Low."
-            if AGENT_SPECS[provider].transport == "acp":
-                note = (f"Sent to {name} as its reasoning effort when the model "
-                        "offers one. Off runs it at Low.")
+            spec = AGENT_SPECS[provider]
+            offered = agent_levels(provider, self._active_text_model)
+            note = (f"Sent to {spec.name} as its reasoning effort when the model "
+                    "offers that level." if spec.transport == "acp"
+                    else f"Sent to {spec.name} as its reasoning effort.")
         else:
             # The API picker may show a choice that isn't saved yet.
-            provider = self.text_model_picker.provider
-            model = self.text_model_picker.model_combo.currentText().strip()
-            profile = get_profile(provider, self._settings_snapshot())
-            supported = profile is not None and profile.kind in ("openai", "openrouter")
-            if profile is not None and model:
-                try:
-                    # Includes local servers that said this model takes an effort.
-                    supported = supported or model_spec(profile, model).reasoning_format in ("openai", "deepseek")
-                except ValueError:
-                    pass
+            offered = endpoint_levels(
+                get_profile(self.text_model_picker.provider, settings),
+                self.text_model_picker.model_combo.currentText().strip(),
+            )
             note = ("How much the model reasons before it rewrites. Higher is slower."
-                    if supported else
+                    if offered else
                     "This model doesn't take a thinking level, so it uses its provider's default.")
-        self.cleanup_reasoning_combo.setEnabled(supported)
+        saved = resolve_transcript_cleanup_reasoning(settings)
+        shown = (_fill_thinking_combo(self.cleanup_reasoning_combo, offered, saved)
+                 if refill else self.cleanup_reasoning_combo.currentData())
+        if offered and shown != saved:
+            note += f" Your {LABELS[saved]} setting runs at {LABELS[shown]} here."
         self.cleanup_reasoning_combo.setToolTip(note)
         self.cleanup_reasoning_note.setText(note)
 
@@ -1493,6 +1570,8 @@ class ModelAssignments(QObject):
         except Exception as exc:
             logger.error("Couldn't save cleanup thinking level: %s", exc)
             self._say(f"Couldn't save thinking level: {exc}")
+            return
+        self._update_cleanup_reasoning_controls(refill=False)
 
     def _load_text_settings(self) -> None:
         settings = self._settings_snapshot()
@@ -1513,13 +1592,6 @@ class ModelAssignments(QObject):
         self._active_text_model = model
         if not self._page_is_loading(CLEANUP):
             return
-        reasoning_index = self.cleanup_reasoning_combo.findData(
-            resolve_transcript_cleanup_reasoning(settings)
-        )
-        blocker = self.cleanup_reasoning_combo.blockSignals(True)
-        self.cleanup_reasoning_combo.setCurrentIndex(max(0, reasoning_index))
-        self.cleanup_reasoning_combo.blockSignals(blocker)
-
         self._active_text_provider = provider
         self._active_text_model = model
         self.text_model_picker.set_sort(sort)

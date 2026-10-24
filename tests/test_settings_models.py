@@ -251,8 +251,29 @@ class TestCleanupAgents(_DialogTestCase):
         assert dialog.cleanup_agent_picker._saved_models["claude_code"] == "haiku"
         combo = dialog.cleanup_reasoning_combo
         assert combo.currentData() == "high"
-        combo.setCurrentIndex(combo.findData("off"))
+        # Claude Code's own levels: no Off, up to Max.
+        assert [combo.itemData(i) for i in range(combo.count())] == [
+            "low", "medium", "high", "xhigh", "max"]
+        combo.setCurrentIndex(combo.findData("max"))
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] == "max"
+
+    def test_cleanup_thinking_follows_the_runner_and_says_what_runs(self, monkeypatch):
+        monkeypatch.setattr("services.installed_agents.codex_model_efforts",
+                            lambda: {"gpt-a": ("low", "medium", "high", "xhigh", "max", "ultra")})
+        dialog, values = self._make_dialog(extra_settings={
+            SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "codex",
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "gpt-a",
+            SettingsKey.TRANSCRIPT_CLEANUP_REASONING: "off",
+        })
+        combo = dialog.cleanup_reasoning_combo
+        assert combo.itemText(combo.count() - 1) == "Ultra"
+        assert combo.currentData() == "low"
+        assert "Your Off setting runs at Low here." in dialog.cleanup_reasoning_note.text()
+        # Showing the nearest level never saves it.
         assert values[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] == "off"
+        combo.setCurrentIndex(combo.findData("ultra"))
+        assert values[SettingsKey.TRANSCRIPT_CLEANUP_REASONING] == "ultra"
+        assert "runs at" not in dialog.cleanup_reasoning_note.text()
 
     def test_cleanup_agent_loads_saved_selection_without_api_key_warning(self):
         dialog, _ = self._make_dialog(extra_settings={
@@ -1013,17 +1034,33 @@ class TestMeetingAgentChoice(_DialogTestCase):
         picker = dialog.meeting_agent_picker
         assert picker.choice() == MeetingAgentCore.CLAUDE_CODE
         assert picker.tiles[MeetingAgentCore.CLAUDE_CODE].selected
-        assert dialog.meeting_model_tile.isHidden()
-        assert dialog.meeting_model_title.isHidden()
+        assert not dialog.meeting_model_picker.isVisibleTo(dialog.meeting_model_tile)
         assert dialog.rail.value(MEETING_TEXT) == "Claude Code · Haiku"
         assert picker.model_combo().currentData() == "haiku"
         assert "Claude Team" in picker.usage_label.text()
+
+    def test_agent_thinking_levels_load_and_save(self):
+        dialog, values = self._make_agent_dialog(MeetingAgentCore.CLAUDE_CODE)
+        live, final = dialog.meeting_live_thinking_combo, dialog.meeting_final_thinking_combo
+        assert dialog.meeting_model_tile.isAncestorOf(dialog.meeting_agent_picker.model_card)
+        assert "Claude Code runs live cards" in dialog.meeting_model_tile.description_label.text()
+        assert (live.currentData(), final.currentData()) == ("low", "medium")
+        assert live.isEnabled() and final.findData("max") >= 0
+        final.setCurrentIndex(final.findData("max"))
+        assert values[SettingsKey.MEETING_FINAL_THINKING] == "max"
+        assert "Sent to Claude Code" in dialog.meeting_thinking_note.text()
+
+    def test_packaged_sdk_thinks_at_medium(self):
+        dialog, _values = self._make_agent_dialog(MeetingAgentCore.PI)
+        for combo in (dialog.meeting_live_thinking_combo, dialog.meeting_final_thinking_combo):
+            assert not combo.isEnabled() and combo.currentData() == "medium"
+        assert dialog.meeting_thinking_note.text().startswith("Pi thinks at Medium")
 
     def test_built_in_core_shows_the_insights_model_tile(self):
         dialog, _values = self._make_agent_dialog(MeetingAgentCore.PI)
         assert dialog.meeting_agent_picker.choice() == agent_picker.BUILTIN
         assert dialog.meeting_agent_picker.tiles[agent_picker.BUILTIN].name_label.text() == "Pi"
-        assert not dialog.meeting_model_tile.isHidden()
+        assert dialog.meeting_model_picker.isVisibleTo(dialog.meeting_model_tile)
         assert dialog.rail.value(MEETING_TEXT) == "OpenRouter · deepseek/test-model"
 
     def test_choosing_an_agent_saves_it_and_openwhisper_restores_pi_even_if_missing(self):
@@ -1032,14 +1069,14 @@ class TestMeetingAgentChoice(_DialogTestCase):
         picker.tiles[MeetingAgentCore.CODEX].clicked.emit(MeetingAgentCore.CODEX)
         assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.CODEX
         assert picker.choice() == MeetingAgentCore.CODEX
-        assert dialog.meeting_model_tile.isHidden()
+        assert not dialog.meeting_model_picker.isVisibleTo(dialog.meeting_model_tile)
         assert dialog.rail.value(MEETING_TEXT) == "Codex · default model"
 
         picker.tiles[agent_picker.BUILTIN].clicked.emit(agent_picker.BUILTIN)
         assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.PI
         assert dialog.meeting_agent_core_combo.currentData() == MeetingAgentCore.PI
         assert not dialog.meeting_agent_core_notice.isHidden()
-        assert not dialog.meeting_model_tile.isHidden()
+        assert dialog.meeting_model_picker.isVisibleTo(dialog.meeting_model_tile)
 
     def test_openwhisper_restores_pi_when_it_was_the_last_built_in_core(self):
         with patch.object(dialog_module, "meeting_agent_payload_dir", return_value="C:/pi"):
@@ -1075,11 +1112,11 @@ class TestMeetingAgentChoice(_DialogTestCase):
             assert combo.model().item(combo.findData(MeetingAgentCore.OPENCODE)).isEnabled()
             assert combo.currentText() == "OpenCode SDK"
             picker.tiles[MeetingAgentCore.CODEX].clicked.emit(MeetingAgentCore.CODEX)
-            assert dialog.meeting_model_tile.isHidden()
+            assert not dialog.meeting_model_picker.isVisibleTo(dialog.meeting_model_tile)
             dialog.refresh_component_state()
             picker.tiles[agent_picker.BUILTIN].clicked.emit(agent_picker.BUILTIN)
             assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.OPENCODE
-            assert not dialog.meeting_model_tile.isHidden()
+            assert dialog.meeting_model_picker.isVisibleTo(dialog.meeting_model_tile)
 
     def test_sdk_download_state_refresh_preserves_selection(self):
         dialog, values = self._make_agent_dialog(MeetingAgentCore.OPENCODE)
@@ -1116,7 +1153,7 @@ class TestMeetingAgentChoice(_DialogTestCase):
         assert not picker.notice.isHidden()
         assert "until it is installed" in picker.notice_label.text()
         assert picker.model_card.isHidden()
-        assert dialog.meeting_model_tile.isHidden()
+        assert not dialog.meeting_model_picker.isVisibleTo(dialog.meeting_model_tile)
         assert values[SettingsKey.MEETING_AGENT_CORE] == MeetingAgentCore.OPENCODE_CLI
         assert dialog.rail.value(MEETING_TEXT) == "OpenCode · not installed"
 
@@ -1188,6 +1225,7 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
     @pytest.mark.parametrize("reasoning", ["off", "low", "medium", "high"])
     def test_thinking_level_loads_saves_and_refreshes(self, reasoning):
         dialog, values = self._make_dialog(extra_settings={
+            SettingsKey.TRANSCRIPT_CLEANUP_MODEL: "gpt-5-mini",
             SettingsKey.TRANSCRIPT_CLEANUP_REASONING: reasoning,
         })
         assert dialog.cleanup_reasoning_combo.currentData() == reasoning

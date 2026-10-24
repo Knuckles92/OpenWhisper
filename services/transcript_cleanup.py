@@ -321,12 +321,18 @@ class TranscriptCleanup:
         """
         profile = get_profile(self.provider)
         if profile is not None:
-            return chat_request_options(profile, self.reasoning)
+            return chat_request_options(profile, self._sent_reasoning())
         if self.reasoning == TranscriptCleanupReasoning.OFF:
             return {"temperature": 0}
         if self.provider == TranscriptCleanupProvider.OPENROUTER:
             return {"extra_body": {"reasoning": {"effort": self.reasoning}}}
         return {"reasoning_effort": self.reasoning}
+
+    def _sent_reasoning(self) -> str:
+        """The saved level, or the nearest one this model accepts."""
+        from services.thinking_levels import effective_level, levels_for
+
+        return effective_level(self.reasoning, levels_for(self.provider, self.model))
 
     def cleanup(
         self,
@@ -421,7 +427,7 @@ class TranscriptCleanup:
                     user_prompt=text, tools=[], handler=lambda *_: ("Tools are disabled.", True),
                     timeout_s=budget,
                     closing="Return only the finished text requested by the instructions, without commentary.",
-                    effort="low" if self.reasoning == TranscriptCleanupReasoning.OFF else self.reasoning,
+                    effort=self._sent_reasoning(),
                     cancel_event=cancel,
                 ),
                 budget, self.cancel_event,
@@ -460,7 +466,7 @@ class TranscriptCleanup:
         return generate(
             client, profile,
             session_id=str(uuid.uuid4()),
-            reasoning_level=self.reasoning,
+            reasoning_level=self._sent_reasoning(),
             model=self.model,
             messages=messages,
             **request_kwargs,

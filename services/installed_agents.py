@@ -620,6 +620,22 @@ def _codex_models() -> List[AgentModel]:
     return models
 
 
+def codex_model_efforts() -> Dict[str, Tuple[str, ...]]:
+    """``{slug: efforts}`` for each model in Codex's cached catalog."""
+    data = _read_json(os.path.join(_codex_home(), "models_cache.json")) or {}
+    efforts: Dict[str, Tuple[str, ...]] = {}
+    for entry in data.get("models") or []:
+        if not isinstance(entry, dict) or not isinstance(entry.get("slug"), str):
+            continue
+        levels = tuple(
+            str(level.get("effort")) for level in entry.get("supported_reasoning_levels") or ()
+            if isinstance(level, dict) and level.get("effort")
+        )
+        if levels:
+            efforts[entry["slug"]] = levels
+    return efforts
+
+
 def default_model_label(agent_id: str) -> str:
     """The first entry of every model list: the agent's own default."""
     configured = configured_default_model(agent_id)
