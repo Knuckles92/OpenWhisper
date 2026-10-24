@@ -8,8 +8,6 @@ agents have no Off. Settings offers :func:`levels_for`; the runtime sends
 """
 from __future__ import annotations
 
-from typing import Optional, Tuple
-
 from services.settings import TranscriptCleanupProvider, TranscriptCleanupReasoning
 
 ORDER: tuple[str, ...] = TranscriptCleanupReasoning.ALL

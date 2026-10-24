@@ -7,6 +7,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-10-24
+
 ### Added
 - **Thinking levels that match each model** — AI cleanup and meeting AI insights list the levels the chosen runner accepts: Claude Code up to Max, each Codex model's own (up to Ultra), and the levels an API model's catalog entry allows, from Minimal to Max. A saved level a model lacks runs at the nearest one it takes, and Settings says so. Meeting Mode's **Insights model** card is now one card for agents and Pi alike, with separate levels for live passes and the final report (Low and Medium by default, as before); Pi and OpenCode SDK still think at Medium.
 - **AI cleanup through your installed coding agent** — choose Claude Code, Codex, or OpenCode in **Settings → AI cleanup**, with its own model or default and existing sign-in. Standard dictation and cleanup profiles use the same choice. One **Cleanup model** card holds the chosen agent's or endpoint's model and the **Thinking level**. Agents receive text and cleanup instructions with tools disabled; cancellation stops the run, and a failed run keeps the original transcript.
