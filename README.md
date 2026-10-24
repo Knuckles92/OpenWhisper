@@ -214,6 +214,8 @@ Use another computer's OpenWhisper engine for dictation, uploads, or meetings:
 
 The host's selected engine handles transcription. Traffic is encrypted and limited to paired computers; remove access under **Paired computers**.
 
+If macOS Keychain refuses to save the connection key, click **Retry Keychain access** and choose **Allow** or **Always Allow** when macOS asks. If no prompt appears, use **Open Keychain Access**, unlock the **login** keychain and check the **OpenWhisper** item's **Access Control**, then retry. The approved connection stays in memory while OpenWhisper is running, so retrying does not need another pairing code or approval from the host. The connection key is only saved in the OS credential store.
+
 - **Meetings:** Select **Remote computer** in **Settings → Meeting Mode → Voice & speakers → Speech engine**. Audio goes to the host for transcription; capture, recordings, and transcripts stay on the computer running the meeting.
 - **Host models:** Use **Manage host models** to choose or download a model and install speech runtimes. The host must first enable **Allow paired computers to manage models**.
 - **Shared history:** Enable **Allow the paired host to query this computer's history** on the client so agents on the host can search it while the client is online. See [MCP setup](docs/mcp.md#query-paired-clients-directly) for queries and offline copies.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+import sys
 import threading
 import time
 from datetime import datetime
@@ -44,6 +45,7 @@ from ui_qt.widgets import (
     WrappedLabel,
 )
 from ui_qt.widgets.buttons import compact_primary_button, neutral_button
+from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.segmented_bar import SegmentedBar
 
 logger = logging.getLogger(__name__)
@@ -390,6 +392,30 @@ class RemoteEngineSection(QObject):
         self.find_message.setObjectName("remoteFindMessage")
         self.find_tile.add_body(self.find_message)
 
+        self.credential_recovery = QWidget()
+        self.credential_recovery.setObjectName("remoteCredentialRecovery")
+        recovery_layout = QVBoxLayout(self.credential_recovery)
+        recovery_layout.setContentsMargins(0, 0, 0, 0)
+        recovery_layout.setSpacing(8)
+        self.credential_help = WrappedLabel("")
+        self.credential_help.setObjectName("remoteCredentialHelp")
+        self.credential_help.setTextFormat(Qt.TextFormat.PlainText)
+        recovery_layout.addWidget(self.credential_help)
+        self.retry_key_button = neutral_button(Button(
+            "Retry Keychain access" if sys.platform == "darwin" else "Retry saving key"
+        ))
+        self.retry_key_button.setObjectName("remoteRetryKeyButton")
+        self.retry_key_button.clicked.connect(self._retry_pairing_save)
+        self.open_keychain_button = neutral_button(Button("Open Keychain Access"))
+        self.open_keychain_button.setObjectName("remoteOpenKeychainButton")
+        self.open_keychain_button.clicked.connect(self._open_keychain)
+        self.open_keychain_button.setVisible(sys.platform == "darwin")
+        credential_actions = ButtonRow([self.retry_key_button, self.open_keychain_button])
+        credential_actions.setObjectName("remoteCredentialActions")
+        recovery_layout.addWidget(credential_actions)
+        self.credential_recovery.hide()
+        self.find_tile.add_body(self.credential_recovery)
+
         self.paired_row = QWidget()
         self.paired_row.setObjectName("remotePairedRow")
         paired_layout = QVBoxLayout(self.paired_row)
@@ -725,6 +751,10 @@ class RemoteEngineSection(QObject):
         'port_spin',
     })
 
+    _UI_ATTRIBUTES |= frozenset({
+        'credential_recovery', 'credential_help', 'retry_key_button', 'open_keychain_button',
+    })
+
     def __getattr__(self, name):
         if name in self._UI_ATTRIBUTES and not self.__dict__.get("_built", False):
             host = self.parent()
@@ -885,6 +915,25 @@ class RemoteEngineSection(QObject):
                     "on both computers and sign in with the same account."
                 )
         self.pair_button.setEnabled(not self._pairing_busy)
+        pending_name = getattr(service, "pending_pairing_name", lambda: "")()
+        self.credential_recovery.setVisible(pairing is None and bool(pending_name))
+        self.retry_key_button.setEnabled(not self._pairing_busy)
+        if pending_name:
+            if sys.platform == "darwin":
+                self.credential_help.setText(
+                    f"Finish pairing with {pending_name}. macOS Keychain couldn't save the "
+                    "connection key. Click Retry Keychain "
+                    "access, then choose Allow or Always Allow if macOS asks. If no prompt "
+                    "appears, open Keychain Access, unlock the login keychain and check the "
+                    "OpenWhisper item's Access Control, then retry."
+                )
+            else:
+                from services.credentials import platform_backend_name
+
+                self.credential_help.setText(
+                    f"Finish pairing with {pending_name}. Unlock or enable "
+                    f"{platform_backend_name()}, then click Retry saving key."
+                )
 
     @staticmethod
     def _tailscale_link(text: str) -> str:
@@ -1288,6 +1337,32 @@ class RemoteEngineSection(QObject):
         else:
             self._request_pairing(host)
 
+    def _retry_pairing_save(self) -> None:
+        if self._service is None or self._pairing_busy:
+            return
+        self._pairing_busy = True
+        self._say("Requesting access to save the connection key...")
+        service, token = self._service, self._token
+        finished = _section_relay().pair_finished
+
+        def work():
+            try:
+                pairing = service.retry_pairing_save()
+            except Exception as exc:
+                finished.emit(token, None, exc, None)
+            else:
+                finished.emit(token, pairing, None, None)
+
+        threading.Thread(target=work, name="remote-engine-key-retry", daemon=True).start()
+        self.refresh()
+
+    def _open_keychain(self) -> None:
+        from PyQt6.QtCore import QProcess
+
+        started, _pid = QProcess.startDetached("/usr/bin/open", ["-b", "com.apple.keychainaccess"])
+        if not started:
+            self._say("Open Keychain Access from Applications → Utilities, then retry here.")
+
     def _request_pairing(self, host) -> None:
         """Ask the host's owner to allow this computer; both screens show a number."""
         canceled = threading.Event()
@@ -1344,8 +1419,11 @@ class RemoteEngineSection(QObject):
         )
 
     def _pair_error(self, exc, host) -> str:
+        from services.credentials import CredentialStoreError
         from services.remote_asr.client import PairingCanceled, RemoteUnreachable
 
+        if isinstance(exc, CredentialStoreError):
+            return "Couldn't save the connection key. Retry access below to finish pairing."
         if isinstance(exc, PairingCanceled):
             return "Pairing canceled."
         if isinstance(exc, RemoteUnreachable) and host is not None and host.lan is not None \

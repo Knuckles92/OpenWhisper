@@ -358,6 +358,29 @@ class CredentialStore:
     def has(self, name: str) -> bool:
         return self.get(name) is not None
 
+    def request_access(self, name: str) -> None:
+        """Retry an OS lookup on an explicit user action, allowing its access prompt.
+
+        A denied lookup is normally cached to avoid repeated prompts. Reading
+        before retrying a save also lets macOS authorize an existing item;
+        replacing it alone may fail without offering that prompt.
+        """
+        name = validate_credential_name(name)
+        with self._lock:
+            self._cache.pop(name, None)
+            self._status = None
+            self._backend = None
+            backend = self._require_backend()
+            try:
+                value = backend.get_password(SERVICE_NAME, name)
+            except Exception as exc:
+                self._cache[name] = None
+                raise CredentialStoreError(
+                    f"Couldn't access {self.status().backend_name} "
+                    f"({type(exc).__name__})."
+                ) from exc
+            self._cache[name] = value or None
+
     def set(self, name: str, value: str) -> None:
         name = validate_credential_name(name)
         value = validate_api_key(value)

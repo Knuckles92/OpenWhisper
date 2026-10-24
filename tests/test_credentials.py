@@ -171,6 +171,48 @@ class TestCredentialStore:
         finally:
             credentials.set_store(previous)
 
+    def test_explicit_access_request_retries_a_denied_read_without_logging_secrets(self, caplog):
+        class PromptingBackend(credentials.MemoryCredentialBackend):
+            denied = True
+            reads = 0
+
+            def get_password(self, service, username):
+                self.reads += 1
+                if self.denied:
+                    raise RuntimeError(SECRET)
+                return super().get_password(service, username)
+
+        backend = PromptingBackend()
+        backend.set_password(credentials.SERVICE_NAME, NAME, SECRET)
+        store = CredentialStore(backend_factory=lambda: (backend, "test store"))
+        assert store.get(NAME) is None
+        with pytest.raises(CredentialStoreError) as error:
+            store.request_access(NAME)
+        assert SECRET not in str(error.value)
+        assert SECRET not in caplog.text
+        assert store.get(NAME) is None
+        assert backend.reads == 2
+        backend.denied = False
+        store.request_access(NAME)
+        assert store.get(NAME) == SECRET
+        assert backend.reads == 3
+
+    def test_explicit_access_request_reprobes_an_unavailable_store(self):
+        backend = credentials.MemoryCredentialBackend()
+        available = False
+
+        def factory():
+            if not available:
+                raise RuntimeError("locked")
+            return backend, "test store"
+
+        store = CredentialStore(backend_factory=factory)
+        assert not store.status().available
+        available = True
+        store.request_access(NAME)
+        store.set(NAME, SECRET)
+        assert store.get(NAME) == SECRET
+
 
 class _FakeItem:
     def __init__(self, secret: str, locked: bool) -> None:

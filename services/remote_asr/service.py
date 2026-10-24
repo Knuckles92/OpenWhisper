@@ -161,6 +161,9 @@ class RemoteEngineService:
         self.on_client_changed = on_client_changed
         self.on_host_catalog = on_host_catalog
         self._lock = threading.RLock()
+        self._pairing_save_lock = threading.RLock()
+        # Keep an approved token only in memory until the OS store accepts it.
+        self._pending_pairing = None
         self._host = None
         self._host_error = ""
         self._listeners: List[Listener] = []
@@ -899,6 +902,7 @@ class RemoteEngineService:
             self._history_client.stop()
         with self._lock:
             host = self._host
+            self._pending_pairing = None
         if host is not None:
             host.stop()
 
@@ -950,7 +954,17 @@ class RemoteEngineService:
         return self._paired(host, port, result)
 
     def _paired(self, host: str, port: int, result) -> remote_settings.ClientPairing:
-        pairing = remote_settings.save_client_pairing(host, port, result)
+        from services.credentials import CredentialStoreError
+
+        with self._pairing_save_lock:
+            try:
+                pairing = remote_settings.save_client_pairing(host, port, result)
+            except CredentialStoreError:
+                with self._lock:
+                    self._pending_pairing = (host, port, result)
+                raise
+            with self._lock:
+                self._pending_pairing = None
         if self._history_client is not None:
             self._history_client.refresh()
         logger.info("Paired with remote engine host %s at %s (%s)",
@@ -959,6 +973,22 @@ class RemoteEngineService:
         if self.on_client_changed is not None:
             self.on_client_changed()
         return pairing
+
+    def pending_pairing_name(self) -> str:
+        with self._lock:
+            return self._pending_pairing[2].host_name if self._pending_pairing else ""
+
+    def retry_pairing_save(self) -> remote_settings.ClientPairing:
+        """Ask for credential access and save the already-approved pairing. Blocking."""
+        from services.credentials import store
+
+        with self._pairing_save_lock:
+            with self._lock:
+                pending = self._pending_pairing
+            if pending is None:
+                raise ValueError("Connect to a computer before retrying key storage.")
+            store().request_access(remote_settings.TOKEN_CREDENTIAL)
+            return self._paired(*pending)
 
     def remote_model_request(self, op: str, *, expected_pairing=None, **fields) -> dict:
         """One off-UI-thread management request, separate from dictation.
@@ -1056,7 +1086,10 @@ class RemoteEngineService:
         return pairing
 
     def forget_host(self) -> None:
-        remote_settings.forget_client_pairing()
+        with self._pairing_save_lock:
+            with self._lock:
+                self._pending_pairing = None
+            remote_settings.forget_client_pairing()
         if self._history_client is not None:
             self._history_client.refresh()
         self._notify("client")

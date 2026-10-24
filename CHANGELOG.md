@@ -7,6 +7,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Fixed
+- **Retry remote pairing after denying Keychain access** — a failed connection-key save now offers **Retry Keychain access**, **Open Keychain Access**, and steps to allow access on macOS. Retrying finishes the connection the host already approved without another code or approval, even after closing and reopening Settings while OpenWhisper stays running. Other platforms offer **Retry saving key** for their credential store.
+
 ## [2.7.9] - 2026-10-23
 
 ### Added
