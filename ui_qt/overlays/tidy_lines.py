@@ -14,7 +14,6 @@ from typing import Final
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QPainter, QPen
 
-from ui_qt.overlays import moments
 from ui_qt.overlays.recording_looks import smooth
 from ui_qt.utils.palette import token_color
 
@@ -90,4 +89,3 @@ def draw(painter: QPainter, cx: float, cy: float, now: float) -> None:
         alpha = int(230 * appear * (1.0 - smooth((cyc - COMB_S + 0.05) / 0.15)))
         painter.setPen(QPen(token_color("purple", alpha), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         painter.drawLine(QPointF(caret, cy - 15), QPointF(caret, cy + 15))
-        moments.draw_sparkle(painter, caret, cy - 17, 3.5, token_color("purple", alpha))
