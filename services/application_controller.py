@@ -1116,6 +1116,10 @@ class ApplicationController(QObject):
             self._startup_database_requested = True
             self._startup_executor.submit(self._initialize_startup_database)
         self.component_executor.submit(self._prune_update_leftovers)
+        # Measures every installed runtime (a walk of ~30k files for Qwen)
+        # and probes the system GPU runtime, both remembered, so Settings'
+        # first open doesn't do it on the Qt thread.
+        self.component_executor.submit(component_coordinator.list_components)
         # The GitHub metadata check waits out startup; after it, the timer
         # re-arms itself for as long as the app runs.
         self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)

@@ -224,6 +224,8 @@ class DownloadsPage(QWidget):
     component_remove_requested = pyqtSignal(str)
     #: Cache totals or download progress changed (rail value, Overview).
     inventory_changed = pyqtSignal()
+    #: Only :meth:`rail_value` changed: a running download's progress.
+    progress_changed = pyqtSignal()
 
     #: Assigned by UIController; called with the model name.
     on_download_requested: Optional[Callable[[str], None]] = None
@@ -1551,7 +1553,7 @@ class DownloadsPage(QWidget):
             if previous is None or round(previous * 100) != round(
                 self._download_fraction * 100
             ):
-                self.inventory_changed.emit()
+                self.progress_changed.emit()
 
     def finish_download(self, model_name: str, success: bool) -> None:
         if self._downloading_model == model_name:

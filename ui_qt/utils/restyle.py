@@ -18,6 +18,12 @@ def repolish(widget: QWidget) -> None:
 
 
 def set_style_property(widget: QWidget, name: str, value: Any) -> None:
-    """Set a dynamic property that stylesheets select on, then restyle."""
+    """Set a dynamic property that stylesheets select on, then restyle.
+
+    Restyling re-matches the whole stylesheet, so an unchanged value is left
+    alone.
+    """
+    if widget.property(name) == value:
+        return
     widget.setProperty(name, value)
     repolish(widget)

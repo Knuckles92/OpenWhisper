@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,9 +83,15 @@ def backend_of(model_name: str) -> str:
     return MODELS[model_name].backend if model_name in MODELS else WHISPER_BACKEND
 
 
-def artifacts(key: str) -> dict:
+@functools.cache
+def _artifacts() -> dict:
+    # Shipped with the app, so it is read once; callers only read the specs.
     with Path(__file__).with_name("models.json").open(encoding="utf-8-sig") as stream:
-        return json.load(stream)[key]
+        return json.load(stream)
+
+
+def artifacts(key: str) -> dict:
+    return _artifacts()[key]
 
 
 def selected_model(backend: str, settings: dict) -> str:

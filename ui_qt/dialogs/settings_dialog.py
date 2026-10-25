@@ -698,6 +698,7 @@ class SettingsDialog(QDialog):
         self.models.assignments_changed.connect(self._refresh_rail_values)
         self.models.downloads_requested.connect(self.show_downloads)
         self.downloads.inventory_changed.connect(self._refresh_rail_values)
+        self.downloads.progress_changed.connect(self._refresh_download_progress)
 
         self.search_palette = SearchPalette(self, self._search_index)
         self.search_palette.activated.connect(self._on_search_activated)
@@ -3919,6 +3920,10 @@ class SettingsDialog(QDialog):
             self.rail.set_value(key, value)
         if self.rail.current_key() == OVERVIEW:
             self._refresh_home()
+
+    def _refresh_download_progress(self) -> None:
+        # Once per percent: nothing but the Downloads caption changes.
+        self.rail.set_value(DOWNLOADS, self.downloads.rail_value())
 
     def _on_agent_looked_up(self, _agent_id: str) -> None:
         # Home and Commands read the agent's readiness without waiting for it.
