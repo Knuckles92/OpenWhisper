@@ -37,7 +37,7 @@ def synchronous(monkeypatch):
     module = _dialog_module()
     monkeypatch.setattr(
         module, "_run",
-        lambda work, delivery, generation: delivery.loaded.emit(generation, work(), ""),
+        lambda work, token: module._relay().loaded.emit(token, work(), ""),
     )
     return module
 
@@ -80,5 +80,5 @@ def test_enter_on_the_focused_reset_button_still_asks_first(synchronous, asked):
     QTest.keyClick(dialog.reset_button, Qt.Key.Key_Return)
     assert asked == ["Reset stats"]
     assert dialog.isVisible()
-    assert dialog.summary.dictations
+    assert dialog.summary.entries
     dialog.close()

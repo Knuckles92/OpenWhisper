@@ -693,6 +693,27 @@ class MainWindow(QMainWindow):
         }
     """
 
+    _STATS_BUTTON_STYLE = """
+        QPushButton#statsButton {
+            background-color: @surface;
+            color: @purple-text;
+            border: 1px solid @border;
+            border-radius: 8px;
+            padding: 6px 18px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+        QPushButton#statsButton:hover {
+            background-color: @purple;
+            color: @on-accent;
+            border: 1px solid @purple;
+        }
+        QPushButton#statsButton:pressed {
+            background-color: rgba(@purple-rgb, 0.8);
+            color: @on-accent;
+        }
+    """
+
     _SETTINGS_BUTTON_STYLE = """
         QPushButton#settingsButton {
             background-color: @surface;
@@ -758,6 +779,18 @@ class MainWindow(QMainWindow):
         )
         self.tray_button.clicked.connect(self.minimize_to_tray)
         footer_layout.addWidget(self.tray_button)
+
+        footer_layout.addSpacing(10)
+
+        self.stats_button = QPushButton("Stats")
+        self.stats_button.setObjectName("statsButton")
+        self.stats_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stats_button.setFixedHeight(34)
+        self.stats_button.setMinimumWidth(80)
+        self.stats_button.setStyleSheet(self._STATS_BUTTON_STYLE)
+        self.stats_button.setToolTip("Your words, pace, streak and favorite apps")
+        self.stats_button.clicked.connect(self.stats_requested.emit)
+        footer_layout.addWidget(self.stats_button)
 
         footer_layout.addSpacing(10)
 
@@ -1326,6 +1359,8 @@ class MainWindow(QMainWindow):
 
         self.tabbed_content.hide()
         self.compact_controller.show()
+        # Four footer buttons don't fit the compact width; Stats stays in the tray menu.
+        self.stats_button.hide()
         self.history_edge_tab.hide()
         self.history_sidebar.hide()
         self.title_bar.title_label.hide()
@@ -1352,6 +1387,7 @@ class MainWindow(QMainWindow):
             self.setMaximumSize(config.MAIN_WINDOW_MAX_WIDTH, UNLIMITED_HEIGHT)
         self.compact_controller.hide()
         self.tabbed_content.show()
+        self.stats_button.show()
         self.history_edge_tab.show()
         self.history_sidebar.show()
         self.title_bar.title_label.show()

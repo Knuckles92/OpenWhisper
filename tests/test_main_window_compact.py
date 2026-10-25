@@ -102,6 +102,7 @@ class TestMainWindowCompactMode:
         assert self.window.compact_controller.isVisibleTo(self.window)
         assert not self.window.tabbed_content.isVisibleTo(self.window)
         assert not self.window.history_edge_tab.isVisibleTo(self.window)
+        assert not self.window.stats_button.isVisibleTo(self.window)
         assert self.window.settings_button.text() == "Settings"
 
         self.window.set_compact_mode(False)
@@ -109,6 +110,7 @@ class TestMainWindowCompactMode:
         assert not self.window._compact_mode
         assert self.window.geometry() == full_geometry
         assert self.window.tabbed_content.isVisibleTo(self.window)
+        assert self.window.stats_button.isVisibleTo(self.window)
         assert self.window.settings_button.text() == "Settings"
 
     def test_missing_system_tray_disables_tray_only_controls(self):
@@ -148,6 +150,15 @@ class TestMainWindowCompactMode:
 
         assert opened == [True]
         assert self.window.settings_button.text() == "Settings"
+
+    def test_footer_stats_button_opens_stats(self):
+        """Footer Stats button asks for the same Stats window as View → Stats."""
+        opened = []
+        self.window.stats_requested.connect(lambda: opened.append(True))
+
+        self.window.stats_button.click()
+
+        assert opened == [True]
 
     def test_file_menu_downloads_opens_downloads(self):
         """File → Downloads opens Settings on its Downloads destination."""
@@ -277,6 +288,7 @@ class TestMainWindowCompactMode:
 
         buttons = (
             self.window.tray_button,
+            self.window.stats_button,
             self.window.settings_button,
             self.window.quit_button,
         )

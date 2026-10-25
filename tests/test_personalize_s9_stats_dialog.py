@@ -53,7 +53,7 @@ def synchronous(monkeypatch):
     module = _dialog_module()
     monkeypatch.setattr(
         module, "_run",
-        lambda work, delivery, generation: delivery.loaded.emit(generation, work(), ""),
+        lambda work, token: module._relay().loaded.emit(token, work(), ""),
     )
     return module
 
@@ -73,34 +73,72 @@ def test_it_shows_the_counts_days_and_apps(synchronous):
     dialog.show()
 
     assert dialog.pages.currentIndex() == 2
-    assert dialog.week_card.value_label.text() == "16 words"
-    assert dialog.week_card.detail_label.text() == "16 all time"
+    assert dialog.hero_caption.text() == "Last 7 days"
+    assert dialog.hero_value.text() == "16 words"
+    assert dialog.trend_chip.isHidden()
+    assert dialog.saved_value.text() == "Under a minute"
+    assert dialog.milestone_label.text() == "Next milestone: 1,000 words"
+    assert dialog.milestone_left.text() == "984 to go"
     assert dialog.pace_card.value_label.text() == "107 wpm"
+    assert dialog.pace_card.detail_label.text() == "2.7× faster than typing"
+    assert dialog.dictations_card.value_label.text() == "3"
+    assert dialog.dictations_card.detail_label.text() == "5 words each"
     assert dialog.cleanup_card.value_label.text() == "3 words"
     assert dialog.streak_card.value_label.text() == "3 days"
     assert dialog.streak_card.detail_label.text() == "Keep it going"
-    assert len(dialog.bars.days) == 14 and dialog.bars.days[-1] == (TODAY, 7)
+    assert len(dialog.bars.bars) == 7 and dialog.bars.bars[-1].words == 7
     assert dialog.app_rows == [("Slack", 11), ("Outlook", 5)]
-    assert dialog.best_day_label.text().endswith("7 words")
+    assert dialog.best_label.text().endswith("7 words")
+    assert dialog.hour_label.text() == "Most active around 12 PM"
     assert dialog.no_apps_label.isHidden()
+    assert len(dialog.activity.days) == _stats().ACTIVITY_DAYS
+    assert dialog.active_days_label.text() == "3 active days this past year"
     assert dialog.reset_button.isEnabled()
+    dialog.close()
+
+
+def test_the_period_switch_recounts_every_section(synchronous):
+    _seed()
+    dialog = synchronous.StatsDialog()
+    dialog.show()
+
+    dialog.period_bar.buttons[1].click()
+    assert dialog.period_key == "month"
+    assert dialog.hero_caption.text() == "Last 30 days"
+    assert len(dialog.bars.bars) == 30
+
+    dialog.period_bar.buttons[2].click()
+    assert dialog.hero_caption.text() == "All time"
+    assert dialog.trend_chip.text().startswith("Since ")
+    assert dialog.chart_title.text() == "Words per month"
+    assert dialog.bars.bars[-1].axis == f"{TODAY:%b}"
+    assert dialog.app_rows == [("Slack", 11), ("Outlook", 5)]
+    dialog.close()
+
+
+def test_a_new_dictation_refreshes_the_open_window(synchronous):
+    _seed()
+    dialog = synchronous.StatsDialog()
+    dialog.show()
+    _stats().record({"text": "one more for the road", "entry_kind": "dictation",
+                     "timestamp": datetime.now(timezone.utc).isoformat()}, None)
+    assert _pump(lambda: dialog.hero_value.text() == "21 words")
     dialog.close()
 
 
 def test_a_slower_older_count_never_replaces_a_newer_one(monkeypatch):
     module = _dialog_module()
     runs = []
-    monkeypatch.setattr(module, "_run", lambda work, delivery, generation: runs.append(
-        (delivery, generation)))
+    monkeypatch.setattr(module, "_run", lambda work, token: runs.append(token))
     dialog = module.StatsDialog()
     dialog.reload()
     dialog.reload()
-    (old, old_generation), (new, new_generation) = runs
-    full = _stats().StatsSummary(words_this_week=5, words_all_time=5, dictations=1)
+    old, new = runs
+    full = _stats().StatsSummary(words_all_time=5, entries=1)
     empty = _stats().StatsSummary()
 
-    new.loaded.emit(new_generation, full, "")
-    old.loaded.emit(old_generation, empty, "")
+    module._relay().loaded.emit(new, full, "")
+    module._relay().loaded.emit(old, empty, "")
 
     assert dialog.summary is full and dialog.pages.currentIndex() == 2
 
@@ -126,7 +164,7 @@ def test_counting_runs_off_the_ui_thread(monkeypatch):
 
 def test_a_failed_count_says_so(synchronous, monkeypatch):
     monkeypatch.setattr(synchronous, "_run",
-                        lambda work, delivery, generation: delivery.loaded.emit(generation, None, "locked"))
+                        lambda work, token: synchronous._relay().loaded.emit(token, None, "locked"))
     dialog = synchronous.StatsDialog()
     dialog.show()
     assert dialog.pages.currentIndex() == 0
@@ -146,7 +184,7 @@ def test_reset_asks_first_then_starts_over(synchronous):
     with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
         dialog.reset_button.click()
     assert dialog.pages.currentIndex() == 1
-    assert _stats().load_summary().dictations == 0
+    assert _stats().load_summary().entries == 0
     dialog.close()
 
 
