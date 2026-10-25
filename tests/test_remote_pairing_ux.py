@@ -690,8 +690,6 @@ def test_page_suggests_checking_every_address_when_nothing_answers(client_page, 
 
 
 def test_host_page_shows_what_may_keep_others_out(tmp_path, monkeypatch, engine):
-    from PyQt6.QtWidgets import QApplication
-
     from services.remote_asr.service import RemoteEngineService
     from services.settings import SettingsKey, settings_manager
     from ui_qt.dialogs.settings_destinations import REMOTE_ENGINE

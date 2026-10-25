@@ -1434,7 +1434,10 @@ def test_settings_page_pairs_with_a_host_and_lists_the_device(tmp_path, engine):
             "Sharing Fake Parakeet on cuda" in section.host_status.text()))
         assert service.host_state()["running"]
 
-        # Nothing is paired yet, so turning sharing on has a code ready.
+        # Nothing is paired yet, so turning sharing on has a code ready. The
+        # worker opens it just after the server reports running.
+        assert _wait_for(lambda: QApplication.processEvents() or bool(
+            section.pairing_code_label.text()))
         code = service.host_state()["pairing"][0]
         assert section.pairing_code_label.text() == f"{code[:3]} {code[3:]}"
         assert section.pair_device_button.isHidden()
