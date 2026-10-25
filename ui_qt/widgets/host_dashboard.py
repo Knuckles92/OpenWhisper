@@ -814,7 +814,8 @@ class HostDashboard(QWidget):
         self._token = token = next(_tokens)
         service_event = relay.service_event
         self._listener = lambda kind: service_event.emit(token, kind)
-        #: How host models are listed off the UI thread (tests run it inline).
+        #: How host models are listed and sharing is switched off the UI thread
+        #: (tests run it inline).
         self.run_in_background: Callable[[Callable[[], None]], None] = (
             lambda work: threading.Thread(target=work, name="host-dashboard-models",
                                           daemon=True).start()
@@ -1322,7 +1323,10 @@ class HostDashboard(QWidget):
             box.exec()
             if box.clickedButton() is not stop:
                 return
-        self._service.set_host_enabled(enabled)
+        # Stopping waits for connected computers' requests; the service's
+        # "state" event refreshes this page when it is done.
+        service = self._service
+        self.run_in_background(lambda: service.set_host_enabled(enabled))
         self.refresh()
 
     # ---- pairing and paired computers ----

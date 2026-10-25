@@ -11,6 +11,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **Settings opens quickly again with an installed agent for AI cleanup** — OpenWhisper checks the agent in the background and remembers it, instead of starting it twice on every check while the window waits. Reopening Settings takes under 0.1 s instead of over a second, the first open about 1 s instead of 3 s, and switching back to the main window or starting a transform no longer pauses.
 - **Settings opens in about 0.6 s** — installed runtimes are measured in the background at launch rather than when Settings first opens, the speech model catalog is read once, icons are drawn once, and unchanged controls are no longer restyled.
 - **Downloads no longer redraw all of Settings at every percent** — a running download updates only its progress caption.
+- **Turning sharing on or off and changing its port no longer freeze the window** — the server stops and starts in the background, so stopping while computers are connected doesn't hold up the page, and the port waits for the arrows to settle instead of restarting the server on every click.
 
 ## [2.8.0] - 2026-10-24
 

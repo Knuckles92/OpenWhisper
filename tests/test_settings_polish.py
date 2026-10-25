@@ -297,6 +297,19 @@ def test_remote_engine_opens_on_the_side_that_is_in_use(remote_page):
     assert not section.host_container.isHidden()
 
 
+def test_port_arrows_restart_sharing_once_on_the_last_port(remote_page, monkeypatch):
+    section, service = remote_page
+    ports = []
+    monkeypatch.setattr(service, "set_host_port", ports.append)
+    start = section.port_spin.value()
+    for step in (1, 2, 3):
+        section.port_spin.setValue(start + step)
+    assert ports == []  # not on the Qt thread, and not once per click
+    assert _pump(lambda: ports == [start + 3])
+    _pump(lambda: False, timeout=0.3)
+    assert ports == [start + 3]
+
+
 def test_remote_engine_keeps_the_tab_a_person_chose(remote_page):
     section, service = remote_page
     section.tabs.buttons[0].click()  # chose to look at the client side

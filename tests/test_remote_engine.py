@@ -1430,9 +1430,9 @@ def test_settings_page_pairs_with_a_host_and_lists_the_device(tmp_path, engine):
         assert not section.pair_device_button.isEnabled()
 
         section.share_tile.checkbox.setChecked(True)
-        QApplication.processEvents()
+        assert _wait_for(lambda: QApplication.processEvents() or (
+            "Sharing Fake Parakeet on cuda" in section.host_status.text()))
         assert service.host_state()["running"]
-        assert "Sharing Fake Parakeet on cuda" in section.host_status.text()
 
         # Nothing is paired yet, so turning sharing on has a code ready.
         code = service.host_state()["pairing"][0]
@@ -1457,8 +1457,7 @@ def test_settings_page_pairs_with_a_host_and_lists_the_device(tmp_path, engine):
         section.forget_button.click()
         assert service.client_pairing() is None
         section.share_tile.checkbox.setChecked(False)
-        QApplication.processEvents()
-        assert not service.host_state()["running"]
+        assert _wait_for(lambda: not service.host_state()["running"])
     finally:
         service.shutdown()
         dialog.close()

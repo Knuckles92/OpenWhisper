@@ -161,6 +161,7 @@ class RemoteEngineService:
         self.on_client_changed = on_client_changed
         self.on_host_catalog = on_host_catalog
         self._lock = threading.RLock()
+        self._apply_lock = threading.Lock()
         self._pairing_save_lock = threading.RLock()
         # Keep an approved token only in memory until the OS store accepts it.
         self._pending_pairing = None
@@ -641,35 +642,37 @@ class RemoteEngineService:
         return engine
 
     def apply_host_settings(self) -> None:
-        """Start or stop sharing to match settings. Errors land in host_state()."""
-        with self._lock:
+        """Start or stop sharing to match settings. Errors land in host_state().
+
+        Blocking: stopping waits for connected computers' requests to finish,
+        so the Qt thread calls it on a worker. Applies run one at a time, and
+        ``_lock`` is not held while the server stops or starts, so
+        ``host_state`` answers meanwhile.
+        """
+        with self._apply_lock:
             enabled = remote_settings.host_enabled()
             port = remote_settings.host_port()
-            host = self._host
-            if not enabled:
-                self._host_error = ""
-                if host is not None:
-                    host.stop()
-                self._notify("state")
-                return
+            error = ""
             try:
-                host = self._ensure_host()
-                if host.running and host.port != port:
+                with self._lock:
+                    host = self._ensure_host() if enabled else self._host
+                if host is not None and host.running and (not enabled or host.port != port):
                     host.stop()
-                if not host.running:
+                if enabled and not host.running:
                     host.start(port, bind=self._bind, discovery_port=discovery.DISCOVERY_PORT)
                     # Read fresh: the network may have changed since sharing was last on.
                     self.network_profiles(refresh=True)
-                self._host_error = ""
             except OSError as exc:
-                self._host_error = (
+                error = (
                     f"Couldn't listen on port {port} ({exc.strerror or exc}). "
                     "Another program may be using it; choose a different port."
                 )
                 logger.warning("Remote engine host could not start: %s", exc)
             except Exception as exc:
-                self._host_error = f"Couldn't start sharing: {exc}"
+                error = f"Couldn't start sharing: {exc}"
                 logger.exception("Remote engine host could not start")
+            with self._lock:
+                self._host_error = error
         self._notify("state")
 
     def set_host_enabled(self, enabled: bool) -> None:

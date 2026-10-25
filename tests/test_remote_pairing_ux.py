@@ -715,16 +715,14 @@ def test_host_page_shows_what_may_keep_others_out(tmp_path, monkeypatch, engine)
         monkeypatch.setattr(section, "_open_url", opened.append)
         dialog.select_destination(REMOTE_ENGINE)
         section.share_tile.checkbox.setChecked(True)
-        QApplication.processEvents()
-        assert not section.host_notes.isHidden()
+        assert _pump_until(lambda: not section.host_notes.isHidden())
         texts = [label.text() for label in section.host_notes.findChildren(WrappedLabel)]
         assert texts == ["Windows treats \"Home\" as a public network."]
         [button] = [b for b in section.host_notes.findChildren(Button) if b.text() == "Open network settings"]
         button.click()
         assert opened == ["ms-settings:network-wifi"]
         section.share_tile.checkbox.setChecked(False)
-        QApplication.processEvents()
-        assert section.host_notes.isHidden()
+        assert _pump_until(lambda: section.host_notes.isHidden())
     finally:
         service.shutdown()
         dialog.close()

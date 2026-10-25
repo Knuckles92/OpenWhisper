@@ -55,6 +55,8 @@ REMOTE_ENGINE_DISPLAY = "Remote computer"
 TAILSCALE_DOWNLOAD_URL = "https://tailscale.com/download"
 #: Showing the page again within this long reuses the last tailnet search.
 TAILNET_RESCAN_S = 20.0
+#: Quiet time after the last port change before sharing restarts on it.
+PORT_SETTLE_MS = 600
 
 
 def _paired_on(iso: str) -> str:
@@ -603,6 +605,11 @@ class RemoteEngineSection(QObject):
         self.port_spin.setMinimumWidth(120)
         self.port_spin.setKeyboardTracking(False)
         self.port_spin.valueChanged.connect(self._on_port_changed)
+        self._saved_port: Optional[int] = None
+        self._port_timer = QTimer(self.port_spin)
+        self._port_timer.setSingleShot(True)
+        self._port_timer.setInterval(PORT_SETTLE_MS)
+        self._port_timer.timeout.connect(self._apply_port)
         self.port_tile = FieldTile(
             "Port",
             f"Clients connect to this port. {protocol.DEFAULT_PORT} unless "
@@ -1129,9 +1136,14 @@ class RemoteEngineSection(QObject):
         checkbox.setChecked(bool(state["enabled"]))
         self.share_tile._sync_checked_property(bool(state["enabled"]))
         checkbox.blockSignals(blocked)
-        blocked = self.port_spin.blockSignals(True)
-        self.port_spin.setValue(int(state["port"] or protocol.DEFAULT_PORT))
-        self.port_spin.blockSignals(blocked)
+        port = int(state["port"] or protocol.DEFAULT_PORT)
+        # Only a new saved port is shown: one being typed is saved once the
+        # field settles, and a refresh meanwhile must not put the old one back.
+        if port != self._saved_port:
+            self._saved_port = port
+            blocked = self.port_spin.blockSignals(True)
+            self.port_spin.setValue(port)
+            self.port_spin.blockSignals(blocked)
 
         for tile, key in ((self.management_tile, "model_management"),
                           (self.keep_records_tile, "keep_records"),
@@ -1530,13 +1542,31 @@ class RemoteEngineSection(QObject):
     def _on_share_toggled(self, checked: bool) -> None:
         if self._service is None:
             return
-        self._service.set_host_enabled(checked)
-        state = self._service.host_state() if checked else None
-        if state is not None and state["running"] and not state["devices"] and not state["pairing"]:
-            # Someone turning sharing on is about to pair a computer; have a
-            # code ready for one that types it, as well as for its request.
-            self._service.open_pairing()
-            self.refresh()
+        service = self._service
+
+        def change() -> None:
+            service.set_host_enabled(checked)
+            state = service.host_state() if checked else None
+            if state is not None and state["running"] and not state["devices"] and not state["pairing"]:
+                # Someone turning sharing on is about to pair a computer; have a
+                # code ready for one that types it, as well as for its request.
+                service.open_pairing()
+
+        self._apply_sharing(change)
+
+    def _apply_sharing(self, change: Callable[[], None]) -> None:
+        """Run ``change`` on a worker: stopping the server waits for connected
+        computers' requests, and starting can create the TLS certificate."""
+        token, done = self._token, _section_relay().service_event
+
+        def run() -> None:
+            try:
+                change()
+            except Exception:
+                logger.exception("Couldn't change sharing")
+            done.emit(token, "state")
+
+        threading.Thread(target=run, name="remote-host-apply", daemon=True).start()
 
     def _on_model_management_toggled(self, checked: bool) -> None:
         if self._service is not None:
@@ -1639,9 +1669,14 @@ class RemoteEngineSection(QObject):
         if self._service is not None:
             self._service.set_tailscale_trust(checked)
 
-    def _on_port_changed(self, port: int) -> None:
+    def _on_port_changed(self, _port: int) -> None:
+        # Each arrow click is a new port, and each one restarts the server.
+        self._port_timer.start()
+
+    def _apply_port(self) -> None:
         if self._service is not None:
-            self._service.set_host_port(port)
+            service, port = self._service, self.port_spin.value()
+            self._apply_sharing(lambda: service.set_host_port(port))
 
     def _open_pairing(self) -> None:
         if self._service is not None:
