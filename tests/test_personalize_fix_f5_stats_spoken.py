@@ -53,7 +53,7 @@ def test_a_whole_snippet_counts_its_trigger(dictation, cleanup):
 
     assert entry["text"] == INTRO_TEXT
     assert _spoken_words() == [2]
-    assert _stats().load_summary().average_wpm == 100.0
+    assert _stats().load_summary().period("all").average_wpm == 100.0
 
 
 @pytest.mark.parametrize("cleanup", [True, False])
@@ -62,7 +62,7 @@ def test_an_inline_snippet_counts_the_words_around_its_trigger(dictation, cleanu
 
     assert INTRO_TEXT in entry["text"]
     assert _spoken_words() == [5]
-    assert _stats().load_summary().average_wpm == 150.0
+    assert _stats().load_summary().period("all").average_wpm == 150.0
 
 
 def test_raw_text_for_undo_still_holds_the_expansion(dictation):

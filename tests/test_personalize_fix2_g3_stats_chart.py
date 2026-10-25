@@ -1,4 +1,4 @@
-"""The Stats 14-day chart gives screen readers each day's words."""
+"""The Stats charts give screen readers each column's words."""
 import importlib
 from datetime import date, datetime, timedelta, timezone
 
@@ -34,7 +34,7 @@ def synchronous(monkeypatch):
     module = _dialog_module()
     monkeypatch.setattr(
         module, "_run",
-        lambda work, delivery, generation: delivery.loaded.emit(generation, work(), ""),
+        lambda work, token: module._relay().loaded.emit(token, work(), ""),
     )
     return module
 
@@ -44,23 +44,38 @@ def test_the_chart_reads_out_every_day(synchronous):
     dialog = synchronous.StatsDialog()
     dialog.show()
     bars = dialog.bars
-    assert bars.accessibleName() == "Words per day, last 14 days"
+    assert bars.accessibleName() == "Words per day, last 7 days"
     days = bars.accessibleDescription().split("; ")
-    assert len(days) == 14
+    assert len(days) == 7
     assert days[-1] == "Today: 7 words"
     yesterday = TODAY - timedelta(days=1)
     assert days[-2] == f"{yesterday:%a}, {yesterday:%b} {yesterday.day}: 4 words"
     assert days[-3].endswith(": 0 words")
-    first = TODAY - timedelta(days=13)
+    first = TODAY - timedelta(days=6)
     assert days[0].startswith(f"{first:%a}, {first:%b} {first.day}: ")
     dialog.close()
 
 
 def test_the_chart_text_follows_a_reload(synchronous):
+    from ui_qt.widgets.stats_charts import Bar
+
     dialog = synchronous.StatsDialog()
     bars = dialog.bars
-    bars.set_days([(TODAY - timedelta(days=1), 1), (TODAY, 2)])
+    bars.set_bars([Bar("Yesterday", 1), Bar("Today", 2)], "Words per day, last 2 days")
     assert bars.accessibleName() == "Words per day, last 2 days"
     assert bars.accessibleDescription().endswith("; Today: 2 words")
-    bars.set_days([])
+    bars.set_bars([], "Words per day")
     assert bars.accessibleDescription() == ""
+
+
+def test_the_activity_map_summarises_the_year(synchronous):
+    _seed()
+    dialog = synchronous.StatsDialog()
+    dialog.show()
+    activity = dialog.activity
+    assert activity.accessibleName() == "Activity, a square per day"
+    assert activity.accessibleDescription() == (
+        f"3 days with words; the busiest, {TODAY:%B} {TODAY.day}, had 7 words"
+    )
+    assert [activity.level(words) for words in (0, 3, 4, 7)] == [0, 1, 2, 4]
+    dialog.close()

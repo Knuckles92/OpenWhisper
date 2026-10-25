@@ -5398,6 +5398,80 @@ QLabel#statsAppWords {
     font-size: 12px;
     font-weight: 600;
 }
+
+QLabel#statsAppShare {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+/* The hero: the span's words and time saved on a soft blue-to-violet wash. */
+QFrame#statsHero {
+    background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 rgba(@accent-rgb, 0.20), stop: 1 rgba(@purple-rgb, 0.14));
+    border: 1px solid rgba(@accent-rgb, 0.32);
+    border-radius: 14px;
+}
+
+QLabel#statsHeroCaption {
+    color: @slate-text-2;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#statsHeroValue {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 32px;
+    font-weight: 800;
+}
+
+QLabel#statsHeroSaved {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+QLabel#statsHeroDetail {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+QLabel#statsTrend {
+    color: @slate-text-2;
+    background-color: rgba(@slate-text-3-rgb, 0.16);
+    border: none;
+    border-radius: 9px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLabel#statsTrend[tone="up"] {
+    color: @success-text;
+    background-color: rgba(@success-rgb, 0.16);
+}
+
+QLabel#statsTrend[tone="down"] {
+    color: @warning-text;
+    background-color: rgba(@warning-rgb, 0.16);
+}
+
+QLabel#statsInsight {
+    color: @slate-text-2;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+}
 /* personalize:S9 end */
 
 /* automation:G begin */

@@ -7,7 +7,11 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+- **A Stats button in the main window** — next to Settings and Quit, opening the same Stats window as **View → Stats** and the tray menu. Compact mode leaves it out to fit; the tray menu still has Stats.
+
 ### Changed
+- **Stats, redesigned** — switch between the last 7 days, the last 30 days and all time. A banner shows your words for the span, how they compare with the span before, the time you saved over typing at 40 wpm, and your progress to the next word milestone. Cards show speaking pace (and how much faster than typing it is), dictations with their average length and commands, words AI cleanup changed, and your day streak with your best. New sections chart words per day or per month with an average line, when you dictate by hour and weekday, top apps with their share of your words, and a year of activity as a square per day. The window updates while open as dictations are saved, and every chart has hover details and text for screen readers.
 - **Bars is the default recording overlay** — new installs start with the scrolling level meter instead of Ribbon. A look you already picked in **Settings → Appearance** stays.
 - **Cleaning up shows text being tidied** — the recording overlay's Cleaning up and Rewriting stages draw three lines of scribbled words that a purple caret straightens, line by line, until the text lands. After Transcribing, your look's finish fades under the lines and the label rises in, instead of cutting to static sparkles.
 - **The overlay preview in Settings gives Processing and Transcribing time to read** — each stage now lasts 1.8 s, and the preview pauses for a second before it starts again, so Transcribing no longer flashes past.
