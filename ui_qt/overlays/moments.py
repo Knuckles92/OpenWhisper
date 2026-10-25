@@ -40,14 +40,13 @@ GLINT_DELAY_S = 0.25
 GLINT_S = 0.8
 FADE_S = 0.3
 
-# The cleaning and rewriting sparkles: (x_frac, y_frac, base_size,
-# twinkle_phase). Phases are staggered so they shimmer in sequence.
+# The sparkles a finished rewrite gathers in: (x_frac, y_frac, base_size).
 SPARKLES = (
-    (0.50, 0.42, 11.0, 0.0),
-    (0.37, 0.28, 6.0, 1.3),
-    (0.64, 0.30, 7.5, 2.6),
-    (0.41, 0.58, 5.0, 3.9),
-    (0.61, 0.55, 6.5, 5.2),
+    (0.50, 0.42, 11.0),
+    (0.37, 0.28, 6.0),
+    (0.64, 0.30, 7.5),
+    (0.41, 0.58, 5.0),
+    (0.61, 0.55, 6.5),
 )
 #: Small sparkles left twinkling beside an AI edit's check: (dx, dy, size, phase).
 _AFTERGLOW = ((23.0, -11.0, 4.5, 0.0), (-22.0, -8.0, 3.5, 2.1), (19.0, 11.0, 3.0, 4.2))
@@ -154,7 +153,7 @@ def draw_gathering_sparkles(painter: QPainter, rect: QRectF, center: QPointF,
     if gather >= 1.0:
         return
     pull = gather * gather
-    for x_frac, y_frac, size, _offset in SPARKLES:
+    for x_frac, y_frac, size in SPARKLES:
         sx, sy = x_frac * rect.width(), y_frac * rect.height() - 4
         draw_sparkle(
             painter,

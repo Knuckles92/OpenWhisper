@@ -24,7 +24,7 @@ from ui_qt.utils.overlay_position import (
     max_height_for_anchor,
     preferred_overlay_position,
 )
-from ui_qt.overlays import live_recording, moments, recording_looks
+from ui_qt.overlays import live_recording, moments, recording_looks, tidy_lines
 from ui_qt.snap import macos
 from ui_qt.utils.palette import token_color
 from ui_qt.waveform_styles import Particle, ParticleStyle, round_pen
@@ -51,6 +51,8 @@ _WORK_EASE_S = 0.3
 _LABEL_CROSSFADE_S = 0.28
 _FADE_OUT_S = 0.25
 _WORK_LABELS = {"processing": "Processing...", "transcribing": "Transcribing..."}
+#: How long the look's finish takes to give way to Cleaning up's lines.
+_HANDOFF_S = 0.45
 
 
 def _platform_takes_overlay_clicks() -> bool:
@@ -581,30 +583,27 @@ class WaveformOverlay(QWidget):
             painter.drawPath(ring)
 
     def _draw_cleaning_state(self, painter: QPainter, text: str = "Cleaning up..."):
-        rect = self.rect()
-        w, h = rect.width(), rect.height()
-        purple = token_color("purple")
+        """Cleaning up or Rewriting: see ``tidy_lines``.
 
-        for x_frac, y_frac, base_size, phase in moments.SPARKLES:
-            twinkle = 0.5 + 0.5 * math.sin(self.animation_time * 3.0 + phase)
-            color = QColor(purple)
-            color.setAlpha(int(80 + 175 * twinkle))
-            moments.draw_sparkle(
-                painter,
-                x_frac * w,
-                y_frac * h - 4,
-                base_size * (0.55 + 0.45 * twinkle),
-                color,
-            )
-
-        if not self._caption:
-            painter.setPen(QPen(purple))
-            painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-            painter.drawText(
-                rect.adjusted(0, h - 25, 0, 0),
-                Qt.AlignmentFlag.AlignCenter,
-                text,
-            )
+        Straight after Transcribing, the look's finish keeps turning as it
+        fades under the lines, and the stage label lifts away as this one
+        rises in.
+        """
+        t = self.animation_time
+        if self._label_from and self._visual is not None:
+            gone = recording_looks.smooth(t / _HANDOFF_S)
+            if gone < 1.0:
+                painter.save()
+                painter.setOpacity(painter.opacity() * (1.0 - gone))
+                self._visual.draw_work(painter, 1.0, self._work_clock + t * self._work_rate)
+                painter.restore()
+        tidy_lines.draw(painter, self.width() / 2, recording_looks.CENTER_Y, t)
+        if self._caption:
+            return
+        lifted = recording_looks.smooth(t / _LABEL_CROSSFADE_S)
+        if self._label_from and lifted < 1.0:
+            self._draw_label_at(painter, self._label_from, 1.0 - lifted, -6.0 * lifted)
+        moments.draw_label(painter, QRectF(self._status_rect().adjusted(12, 0, -12, 0)), text, t, 0.05, "purple")
 
     def _moment(self) -> Optional[moments.Moment]:
         """How the current state plays, if it is a one-shot moment."""
@@ -1152,6 +1151,9 @@ class WaveformOverlay(QWidget):
         was_listening = self.current_state in self.LISTENING_STATES
         if state in self._WORK_STATES:
             self._begin_work_stage()
+        elif state in self._FADING_STATES:
+            # Cleaning up hands off from the work stage, if it follows one.
+            self._label_from = _WORK_LABELS.get(self.current_state, "")
         self.current_state = state
         keeps_destination = (state in self.LISTENING_STATES | self._FADING_STATES
                              and state != self.STATE_COMMAND_LISTENING)

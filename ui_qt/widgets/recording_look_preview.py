@@ -24,9 +24,12 @@ from ui_qt.widgets.wrapped_label import WrappedLabel
 
 _TICK_MS = 33
 #: One loop of the sample: the recording, then the finish, then a breath.
-#: Each entry is when that stage starts, in seconds.
-STAGES = (("recording", 0.0), ("processing", 4.8), ("transcribing", 6.2), ("done", 7.0))
-LOOP_S = 7.6
+#: Each entry is when that stage starts, in seconds. Each finish stage gets
+#: long enough to read after its entry (the half-second morph out of the
+#: voice, the label crossfade), and the empty breath after the fade out is
+#: long enough that the next loop reads as a new take, not a flicker.
+STAGES = (("recording", 0.0), ("processing", 4.8), ("transcribing", 6.6), ("done", 8.4))
+LOOP_S = 9.4
 _PREVIEW_PATH = os.path.join(tempfile.gettempdir(), "openwhisper_overlay_preview.wav")
 
 

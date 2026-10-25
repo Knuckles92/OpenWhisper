@@ -346,10 +346,9 @@ class AppConfig:
     # Streaming text overlay settings
     STREAMING_OVERLAY_FONT_SIZE: int = 16
 
-    # The recording overlay's look: "ribbon", "bars", "wave", "orb", "aurora",
-    # "bubbles", or "legacy" (Classic, the original particles).
-    # Settings → Appearance → Overlay.
-    RECORDING_OVERLAY_LOOK: str = "ribbon"
+    # The recording overlay's look, one of RecordingOverlayLook.ALL in
+    # services/settings.py. Settings → Appearance → Overlay.
+    RECORDING_OVERLAY_LOOK: str = "bars"
 
     # Application UI type size as a percent of the designed 14px theme.
     # Settings → Appearance → Font size. 100 is the shipped default.

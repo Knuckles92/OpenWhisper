@@ -32,6 +32,7 @@ from PyQt6.QtGui import (
     QPen,
 )
 
+from config import config
 from ui_qt.overlays import live_recording, moments
 from ui_qt.utils.palette import current_palette
 
@@ -48,7 +49,7 @@ FIZZ: Final[str] = "fizz"
 LEGACY: Final[str] = "legacy"
 
 LOOKS: Final[tuple] = (RIBBON, BARS, WAVE, AURORA, PULSE, DOTS, BAIT_BALL, FISH, GLOW, FIZZ, LEGACY)
-DEFAULT: Final[str] = RIBBON
+DEFAULT: Final[str] = config.RECORDING_OVERLAY_LOOK
 #: What a stored value from an earlier build means now.
 _ALIASES: Final[dict] = {"live": RIBBON, "orb": PULSE, "bubbles": BAIT_BALL}
 

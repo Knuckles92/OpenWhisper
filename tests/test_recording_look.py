@@ -20,7 +20,7 @@ from services.settings import (
     resolve_recording_overlay_look,
     resolve_recording_overlay_text,
 )
-from ui_qt.overlays import live_recording, recording_looks, waveform_overlay
+from ui_qt.overlays import live_recording, recording_looks, tidy_lines, waveform_overlay
 from ui_qt.overlays.waveform_overlay import WaveformOverlay
 from ui_qt.utils.loudness import level_to_height
 from ui_qt.utils.palette import (
@@ -74,13 +74,13 @@ def _run(overlay, seconds, level):
 # --- the setting -----------------------------------------------------------------
 
 
-def test_the_live_look_is_the_default_and_unknown_values_fall_back_to_it():
-    assert resolve_recording_overlay_look({}) == RecordingOverlayLook.RIBBON
-    assert resolve_recording_overlay_look({SettingsKey.RECORDING_OVERLAY_LOOK: "sparkly"}) == "ribbon"
+def test_bars_is_the_default_and_unknown_values_fall_back_to_it():
+    assert resolve_recording_overlay_look({}) == RecordingOverlayLook.BARS
+    assert resolve_recording_overlay_look({SettingsKey.RECORDING_OVERLAY_LOOK: "sparkly"}) == "bars"
     assert resolve_recording_overlay_look({SettingsKey.RECORDING_OVERLAY_LOOK: "legacy"}) == "legacy"
     # Saved before the looks split.
     assert resolve_recording_overlay_look({SettingsKey.RECORDING_OVERLAY_LOOK: "live"}) == "ribbon"
-    assert recording_looks.normalize_look(None) == recording_looks.RIBBON
+    assert recording_looks.normalize_look(None) == recording_looks.BARS
     assert recording_looks.normalize_look("live") == recording_looks.RIBBON
     # Orb and Bubble lift were replaced; a saved choice lands on the successor.
     assert resolve_recording_overlay_look({SettingsKey.RECORDING_OVERLAY_LOOK: "orb"}) == "pulse"
@@ -489,6 +489,26 @@ def test_the_stage_label_crossfades(overlay):
     overlay.set_state(overlay.STATE_TRANSCRIBING)
     assert overlay._label_from == "Processing..."
     assert time.monotonic() - overlay._label_changed < 0.1
+
+
+@pytest.mark.parametrize("look", recording_looks.LOOKS)
+def test_cleaning_up_takes_over_from_every_looks_finish(overlay, theme, look):
+    _finish(overlay, look)
+    overlay.set_state(overlay.STATE_TRANSCRIBING)
+    _run(overlay, 0.3, 0.0)
+    overlay.set_state(overlay.STATE_CLEANING)
+    assert overlay._label_from == "Transcribing...", "the finish and its label hand off"
+    _run(overlay, tidy_lines.PERIOD_S, 0.0)  # a whole pass of the caret
+    overlay.hide()
+    _run(overlay, 0.1, 0.0)
+
+
+def test_rewriting_after_a_command_has_nothing_to_hand_off(overlay):
+    overlay.set_recording_look(recording_looks.BARS)
+    overlay.show_at_cursor(overlay.STATE_COMMAND_LISTENING)
+    overlay.set_state(overlay.STATE_REWRITING)
+    assert overlay._label_from == ""
+    _run(overlay, 0.5, 0.0)
 
 
 def test_a_finished_result_fades_out_then_hides(overlay):

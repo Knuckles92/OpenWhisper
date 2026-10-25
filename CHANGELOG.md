@@ -7,6 +7,11 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Changed
+- **Bars is the default recording overlay** — new installs start with the scrolling level meter instead of Ribbon. A look you already picked in **Settings → Appearance** stays.
+- **Cleaning up shows text being tidied** — the recording overlay's Cleaning up and Rewriting stages draw three lines of scribbled words that a purple caret straightens, line by line, until the text lands. After Transcribing, your look's finish fades under the lines and the label rises in, instead of cutting to static sparkles.
+- **The overlay preview in Settings gives Processing and Transcribing time to read** — each stage now lasts 1.8 s, and the preview pauses for a second before it starts again, so Transcribing no longer flashes past.
+
 ### Fixed
 - **Quick Record no longer cuts off its controls** — the walkthrough buttons made the tab taller than the window's default and minimum heights, clipping the Command Mode and Walkthrough settings links. The window now opens taller, and a saved shorter size grows to fit.
 - **Settings opens quickly again with an installed agent for AI cleanup** — OpenWhisper checks the agent in the background and remembers it, instead of starting it twice on every check while the window waits. Reopening Settings takes under 0.1 s instead of over a second, the first open about 1 s instead of 3 s, and switching back to the main window or starting a transform no longer pauses.
