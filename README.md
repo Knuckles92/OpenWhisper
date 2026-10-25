@@ -29,10 +29,10 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 - **AI cleanup:** Choose Light, Medium, or High cleanup, which handles spoken corrections and lists, then apply spelling and style rules or reusable [cleanup profiles](docs/cleanup-profiles.md), with separate text-model choices for dictation and meetings.
 - **Personalize:** A [dictionary](docs/personalize.md#dictionary) that steers recognition and learns from your corrections, spoken [snippets](docs/personalize.md#snippets), a tone for each kind of app, and [Command Mode](docs/personalize.md#command-mode-and-transforms) to rewrite selected text by voice or with saved transforms.
 - **Extras:** Hands-free recording by double-tapping the record key, mouse side buttons as shortcuts, ranked microphones with automatic fallback, an overlay language switcher, a floating Scratchpad, and dictation Stats.
-- **Settings:** Use Basic for everyday Dictation, Meetings, and App controls; switch to Advanced for full model configuration, downloads, and Ctrl+K search. Both views edit the same settings and remember your last selected view.
+- **Settings:** Opens on **Home**, with where your words go, the everyday controls, and what's downloaded. Everything else is in six sidebar sections (Dictation, Personalize, Automate, Meeting Mode, Models & storage, App), and the header search (Ctrl+K) finds any setting. New installs get an optional guided setup, which **File → Guided setup…** reopens.
 - **History:** Search, play back, retranscribe, and export transcripts as Markdown, plain text, or JSON, and switch an entry between its original and AI-cleaned versions. See [export format support](docs/export-support.md) for what each format includes.
 - **Agent history API (preview):** Search saved transcripts and meeting notes through an opt-in, authenticated local API. See [API setup](docs/agent-api.md).
-- **MCP:** Enable **Settings → API & MCP** to connect an agent to history, transcripts, and meeting insights. Optionally allow retitling and choose which settings agents may change. See [MCP setup](docs/mcp.md).
+- **MCP:** Enable **Settings → Automate → API & MCP** to connect an agent to history, transcripts, and meeting insights. Optionally allow retitling and choose which settings agents may change. See [MCP setup](docs/mcp.md).
 - **Actions and automation:** Send what you say to a new Claude or ChatGPT chat, your coding agent, a running Claude Code session, a webhook or a program, with a shortcut or by naming it ("Claude, …"). Follow live events, run actions and change dictated text from your own tools over a local API, webhooks and MCP. See [Actions, live events and hooks](docs/automation.md).
 
 The app also includes microphone selection, a system tray where available, and dark, light, or system-matched themes.
@@ -63,7 +63,7 @@ Downloads include `SHA256SUMS.txt` for verification. Compare your file's hash us
 
 In **System Settings → Privacy & Security**, allow **Microphone** for recording, **Screen & System Audio Recording** for meeting audio, and **Accessibility** for auto-paste. You can copy transcripts without Accessibility.
 
-**Settings → General → Set up auto-paste** shows which app to allow. If permission breaks after an update, remove its old entry, add the app again, and restart.
+**Settings → App → General → Set up auto-paste…** shows which app to allow. If permission breaks after an update, remove its old entry, add the app again, and restart.
 
 ## Run from source
 
@@ -127,7 +127,7 @@ Contributors can use `uv sync` and `uv run python main.py`. See [development wit
 
 ## GPU acceleration
 
-For Local Whisper on Windows or Linux x86_64, install **GPU Acceleration** from **Downloads → Components**, or choose **Use this GPU** when prompted. Requires an NVIDIA driver providing CUDA 12 (525+); the CUDA Toolkit is not needed. macOS uses CPU.
+For Local Whisper on Windows or Linux x86_64, install **GPU Acceleration** from **Settings → Models & storage → Downloads → Components**, or choose **Use this GPU** when prompted. Requires an NVIDIA driver providing CUDA 12 (525+); the CUDA Toolkit is not needed. macOS uses CPU.
 
 Source installs can use `python -m pip install -r requirements-gpu.txt` in the activated virtual environment. **Auto** selects a compatible compute type; **Downloads** shows GPU memory estimates.
 
@@ -135,18 +135,20 @@ Other speech engines use their own runtimes from Downloads. On Apple Silicon Mac
 
 ## Updates
 
-On macOS, use **OpenWhisper → Check for Updates**. On Windows and Linux, use **Help → Check for Updates**. Configure automatic checks and notifications in **Settings → General**.
+OpenWhisper asks GitHub for the latest release when it starts and every 4 hours while it runs, sending only the app version. A newer release shows as an **Update to x.y.z** button in the title bar and the tray menu until you update. To check yourself, use **OpenWhisper → Check for Updates** on macOS or **Help → Check for Updates** on Windows and Linux. Turn automatic checks off in **Settings → App → General → Updates**. Git checkouts don't check on their own.
 
 - **Windows:** Apply the in-app update or follow the setup prompt.
 - **macOS:** The verified update installs and restarts the app, restoring the previous version if startup fails. If the app cannot replace itself, it opens the verified DMG for replacement in Applications.
 - **Linux:** Install the new package with the same command used for installation.
 - **From source:** Run `git pull --ff-only` and reinstall requirements if dependencies changed.
 
+When a package upgrade or pull replaces the app while it runs, OpenWhisper offers **Restart now** once nothing is recording or transcribing.
+
 ## Get started
 
-1. Open **Settings → Voice model** and choose a speech backend. New Windows x64 and Linux x86_64 installs default to Parakeet, and Apple Silicon Macs on macOS 14 or later to Parakeet MLX; other platforms default to Local Whisper. Existing installs keep the engine they use.
-2. Download the model and runtime through **Settings → Downloads**, or add an OpenAI key in **Settings → App → API keys** for cloud transcription.
-3. Choose your microphone in **Settings → Recording**. On macOS, grant the [required permissions](#macos-permissions).
+1. Open **Settings → Dictation → Voice model** and choose a speech backend. New Windows x64 and Linux x86_64 installs default to Parakeet, and Apple Silicon Macs on macOS 14 or later to Parakeet MLX; other platforms default to Local Whisper. Existing installs keep the engine they use.
+2. Download the model and runtime through **Settings → Models & storage → Downloads**, or add an OpenAI key in **Settings → App → API keys** for cloud transcription.
+3. Choose your microphone in **Settings → Dictation → Recording**. On macOS, grant the [required permissions](#macos-permissions).
 4. Use **Quick Record** or the recording hotkey. Stop recording to transcribe; dictation follows your clipboard and auto-paste settings. **Upload File** results stay in the app and have Copy buttons.
 
 For meetings, open **Meeting Mode**. Add an optional brief to guide AI notes and the live copilot; you can edit it during the meeting. After transcription, **Continue in the background** lets you start another meeting while reports finish. Find results in **Past Meetings**.
@@ -155,7 +157,7 @@ Optional [insight review](docs/meeting-insight-review.md) helps clarify uncertai
 
 ### Hotkeys
 
-Change shortcuts and choose **Toggle** or **Push and hold** in **Settings → Hotkeys**. Toggle starts and stops recording with successive presses; push-and-hold records until you release the shortcut.
+Change shortcuts and choose **Toggle** or **Push and hold** in **Settings → App → Hotkeys**. Toggle starts and stops recording with successive presses; push-and-hold records until you release the shortcut.
 
 | Action | Windows / Linux | macOS |
 | --- | --- | --- |
@@ -172,7 +174,7 @@ On X11 Linux, hotkeys also reach the focused app. Omarchy supports desktop short
 
 OpenWhisper adapts to Omarchy 3 and 4 with a compact interface and desktop colors. Hyprland manages window placement and sizing; Omarchy mode supports desktop shortcuts and auto-paste on Hyprland 0.55+.
 
-Choose **Settings → Appearance → Theme → Omarchy desktop** to follow your desktop palette. An optional [Omarchy 4 bar widget](integrations/omarchy) provides recording controls, status, and live text.
+Choose **Settings → App → Appearance → Theme → Omarchy desktop** to follow your desktop palette. An optional [Omarchy 4 bar widget](integrations/omarchy) provides recording controls, status, and live text.
 
 ## Speech models
 
@@ -187,7 +189,7 @@ Choose **Settings → Appearance → Theme → Omarchy desktop** to follow your 
 | API | OpenAI: GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027. Groq: Whisper Large v3 / Turbo. Your own server: whatever it serves | OpenAI or Groq in the cloud (API key required), or an OpenAI-compatible speech server you run: Speaches, LocalAI, vLLM, whisper.cpp, or custom | Dictation, uploads |
 | Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads, meetings with a supported host model |
 
-- **Downloads:** Install both the model and its required runtime in **Settings → Downloads**. Each entry shows its size, publisher, license, and download checks.
+- **Downloads:** Install both the model and its required runtime in **Settings → Models & storage → Downloads**. Each entry shows its size, publisher, license, and download checks.
 - **Languages:** Choose a supported language or **Auto** for detection. Coverage varies by engine; Moonshine is English-only. Language selection controls transcription, not translation.
 - **Apple Silicon:** Choose **Auto** to use the Apple GPU where supported. See [GPU acceleration](#gpu-acceleration) for engine-specific support.
 
@@ -195,7 +197,7 @@ See [speech model details](docs/speech-models.md) for language coverage, platfor
 
 ### Custom Whisper models
 
-Choose **Add custom models…** in **Settings → Downloads**, **Dictation → Voice model**, or **Meeting Mode → Voice & speakers**.
+Choose **Add custom models…** in **Settings → Models & storage → Downloads**, **Dictation → Voice model**, or **Meeting Mode → Voice & speakers**.
 
 - **Local files:** Choose a model folder or a parent folder containing several models. OpenWhisper lists complete model folders for you to select.
 - **Hugging Face:** Enter an `owner/model` repository and, optionally, a subfolder such as `ct2_int8_float16`. **Find on Hugging Face** lists compatible model folders without downloading weights. You can also discover models already in the local Hugging Face cache.
@@ -209,9 +211,11 @@ Click **Add selected**, then choose a model in **Voice model** or **Voice & spea
 
 Use another computer's OpenWhisper engine for dictation, uploads, or meetings:
 
-1. On the computer with the engine, open **Settings → Dictation → Remote engine**, turn on **Share this computer's engine**, and click **Pair a device**. Allow OpenWhisper through the firewall if Windows asks.
-2. On the other computer, open the same page, enter the host's address (shown under the switch) and the six-digit code, and click **Pair**. Check that both screens show the same identity code.
+1. On the computer with the engine, open **Settings → Dictation → Remote engine**, choose **Share this computer**, and turn on **Share this computer's engine**. Allow OpenWhisper through the firewall if Windows asks.
+2. On the other computer, open the same page, choose **Use another computer**, find the host on your network or tailnet, and click **Connect**. Compare the six-digit number on both screens, then click **Allow** on the host only if they match. If the host isn't listed, use **Enter an address** on the client and **Show a pairing code** on the host.
 3. Click **Use for dictation**, or choose **Remote computer** as the recording engine.
+
+**View → Host Mode** turns a computer that mostly serves others into a host dashboard: sharing status and address, the engine served, who's connected and what they asked for.
 
 The host's selected engine handles transcription. Traffic is encrypted and limited to paired computers; remove access under **Paired computers**.
 
@@ -226,16 +230,16 @@ If macOS Keychain refuses to save the connection key, click **Retry Keychain acc
 
 Use AI cleanup to polish dictation and meeting intelligence to generate notes and insights. Each has its own text-model settings.
 
-- **Dictation:** Enable **Settings → AI cleanup**, choose a cleanup level, and choose a text model. Add words to the **Dictionary**, pick a tone per kind of app in **Styles**, teach other behaviour in **Learned rules**, or use [Profiles](docs/cleanup-profiles.md) for reusable formats. See [Personalize dictation](docs/personalize.md).
+- **Dictation:** Enable **Settings → Dictation → AI cleanup**, choose a cleanup level, and choose who runs it: an installed Claude Code, Codex, or OpenCode with its own sign-in, or a text model below. The **Thinking level** lists only the levels the chosen model accepts. Add words to the **Dictionary**, pick a tone per kind of app in **Styles**, teach other behaviour in **Learned rules**, or use [Profiles](docs/cleanup-profiles.md) for reusable formats. See [Personalize dictation](docs/personalize.md).
 - **Providers:** OpenAI, OpenRouter, Ollama, LM Studio, vLLM, llama.cpp, LocalAI, Groq, OpenCode Go/Zen, and custom OpenAI-compatible endpoints. Add keys in **Settings → App → API keys**; the local servers are preconfigured with their standard local addresses and need no key — just run the server. **Edit** changes its address or sets an optional API key variable. The picker marks local servers that are running, reads each model's context and thinking support from the server, and lists only models that generate text.
 - **OpenAI cleanup:** The suggested model is `gpt-6-luna`. Saved OpenAI cleanup assignments using the old `gpt-4o-mini` default resolve to Luna; other models, providers, and saved meeting assignments are kept. Thinking **Off** explicitly requests `reasoning.effort: none` through the Responses API. Cleanup remains off by default, and fresh text-model assignments still use OpenRouter Free.
 - **Meetings:** Choose an engine in **Settings → Meeting Mode → Intelligence** using the options below.
 
 | Meeting engine | Setup |
 | --- | --- |
-| Pi (default) | Uses your selected text endpoint and API key. Install from **Downloads → Components** where available. |
+| Pi (default) | Uses your selected text endpoint and API key. Install from **Models & storage → Downloads → Components** where available. |
 | Claude Code, Codex, or OpenCode | Select an installed agent's tile to use its sign-in, providers, and models. Install, update, and sign in to the agent yourself. |
-| OpenCode SDK | Install from **Downloads → Components** where available, then select it under **Agent core**. |
+| OpenCode SDK | Install from **Models & storage → Downloads → Components** where available, then select it under **Agent core**. |
 
 Meeting passes count toward the installed agent's account or API usage. These agents refresh live insights less often. If an engine is unavailable, select another or continue recording without AI insights.
 
@@ -245,13 +249,13 @@ See [AI and meeting setup](docs/meeting-intelligence.md) for custom endpoints, e
 
 Downloaded speech models load from the local cache without network metadata checks. Install any required runtime before going offline.
 
-Choose whether to ask, allow, or block missing-model downloads in **Settings → Downloads → When a model is missing from this computer**. Set `HF_HUB_OFFLINE=1` before launch to block model downloads entirely. Cloud transcription and remote text providers still need a network connection; speech and text servers on this computer do not. See [Network and privacy](docs/network-and-privacy.md) for every connection the app can make. Only the daily update check is on by default, and there is no telemetry.
+Choose whether to ask, allow, or block missing-model downloads in **Settings → Models & storage → Downloads → When a model is missing from this computer**. Set `HF_HUB_OFFLINE=1` before launch to block model downloads entirely. Cloud transcription and remote text providers still need a network connection; speech and text servers on this computer do not. See [Network and privacy](docs/network-and-privacy.md) for every connection the app can make. Only the update check (at launch and every 4 hours) is on by default, and there is no telemetry.
 
 <details>
 <summary>More screenshots</summary>
 
 <p align="center">
-  <img width="880" alt="Settings Overview: models in use, what stays local, and storage" src="docs/screenshots/01-settings-overview.png" />
+  <img width="880" alt="Settings Home: where your words go, everyday controls, and the six sidebar sections" src="docs/screenshots/01-settings-home.png" />
 </p>
 
 <p align="center">
@@ -259,15 +263,11 @@ Choose whether to ask, allow, or block missing-model downloads in **Settings →
 </p>
 
 <p align="center">
-  <img width="880" alt="Settings → AI cleanup: cleanup model, endpoint, and thinking level" src="docs/screenshots/03-settings-ai-cleanup.png" />
+  <img width="880" alt="Settings → Dictation → AI cleanup: cleanup level, who runs cleanup, and the cleanup model" src="docs/screenshots/03-settings-ai-cleanup.png" />
 </p>
 
 <p align="center">
-  <img width="880" alt="Settings → Downloads: model catalog and technical details" src="docs/screenshots/06-downloads-model-profile.png" />
-</p>
-
-<p align="center">
-  <img width="880" alt="General settings" src="docs/screenshots/01-general.png" />
+  <img width="880" alt="Settings → Models & storage → Downloads: speech model catalog" src="docs/screenshots/06-downloads.png" />
 </p>
 
 </details>
