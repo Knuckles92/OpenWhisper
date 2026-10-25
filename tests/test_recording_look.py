@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import QApplication
 from services.settings import (
     RecordingOverlayLook,
     SettingsKey,
+    StreamingOverlayLayout,
     SettingsManager,
     resolve_recording_overlay_clock,
     resolve_recording_overlay_dot,
@@ -142,9 +143,11 @@ def test_live_particles_leave_from_the_ribbon(overlay):
     assert overlay.style.emitter(overlay.width() - 20) < baseline - 5
 
 
+@pytest.mark.parametrize("layout", StreamingOverlayLayout.ALL)
 @pytest.mark.parametrize("look", recording_looks.LOOKS)
 @pytest.mark.parametrize("state", ["recording", "streaming", "command_listening"])
-def test_every_listening_state_paints_in_both_looks(overlay, theme, look, state):
+def test_every_listening_state_paints_in_both_looks(overlay, theme, look, state, layout):
+    overlay._streaming_layout = layout
     overlay.set_recording_look(look)
     overlay.show_at_cursor(state)
     _run(overlay, 0.6, SPEECH)
@@ -359,6 +362,21 @@ def test_settings_loads_saves_and_pushes_the_look(make_dialog):
     assert store.get(SettingsKey.RECORDING_OVERLAY_DOT) is False
     assert dialog.recording_look_preview.overlay.label_parts == (False, True, True)
     assert dialog.on_recording_look_changed.call_count == 2
+
+
+def test_settings_loads_saves_and_pushes_the_preview_layout(make_dialog):
+    dialog, store = make_dialog({SettingsKey.STREAMING_OVERLAY_LAYOUT: StreamingOverlayLayout.FOOTER})
+    dialog.on_streaming_layout_changed = MagicMock()
+    _open_appearance(dialog)
+    footer = StreamingOverlayLayout.ALL.index(StreamingOverlayLayout.FOOTER)
+    assert dialog.streaming_layout_bar.currentIndex() == footer
+    assert dialog.streaming_layout_tile.isVisible()
+    dialog.on_streaming_layout_changed.assert_not_called()
+
+    header = StreamingOverlayLayout.ALL.index(StreamingOverlayLayout.HEADER)
+    QTest.mouseClick(dialog.streaming_layout_bar.buttons[header], recording_look_preview.Qt.MouseButton.LeftButton)
+    assert store.get(SettingsKey.STREAMING_OVERLAY_LAYOUT) == StreamingOverlayLayout.HEADER
+    dialog.on_streaming_layout_changed.assert_called_once_with()
 
 
 def test_settings_loads_the_label_switches(make_dialog):

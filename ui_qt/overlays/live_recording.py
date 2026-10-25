@@ -45,6 +45,9 @@ EDGE: Final[float] = 14.0
 #: legacy look uses the particle config's own value.
 AUDIO_RESPONSE: Final[float] = 2.6
 _PULSE_S: Final[float] = 1.4
+#: The live label's dot, and the gap between its parts.
+_DOT_D: Final[float] = 8.0
+_GAP: Final[float] = 7.0
 
 
 class VoiceRibbon:
@@ -142,6 +145,16 @@ def format_clock(seconds: float) -> str:
     return f"{whole // 60}:{whole % 60:02d}"
 
 
+def wordless_label_width(elapsed: float, *, dot: bool = True, clock: bool = True) -> float:
+    """How wide ``draw_live_label`` draws ``● 0:04`` with ``text=False``."""
+    parts = []
+    if dot:
+        parts.append(_DOT_D)
+    if clock:
+        parts.append(QFontMetrics(QFont("Segoe UI", 10)).horizontalAdvance(format_clock(elapsed)))
+    return sum(parts) + _GAP * max(0, len(parts) - 1)
+
+
 def draw_live_label(painter: QPainter, rect: QRectF, label: str, elapsed: float,
                     dot_tone: str, text_tone: str = "overlay-text", *,
                     dot: bool = True, text: bool = True, clock: bool = True) -> None:
@@ -152,7 +165,7 @@ def draw_live_label(painter: QPainter, rect: QRectF, label: str, elapsed: float,
     font = QFont("Segoe UI", 10, QFont.Weight.Bold)
     clock_font = QFont("Segoe UI", 10)
     metrics, clock_metrics = QFontMetrics(font), QFontMetrics(clock_font)
-    dot_d, gap = 8.0, 7.0
+    dot_d, gap = _DOT_D, _GAP
     clock_text = format_clock(elapsed) if clock else ""
     clock_w = clock_metrics.horizontalAdvance(clock_text) if clock else 0.0
     # (kind, width) for each part shown, with the gaps between them.

@@ -345,6 +345,9 @@ class AppConfig:
 
     # Streaming text overlay settings
     STREAMING_OVERLAY_FONT_SIZE: int = 16
+    # Where the look goes once preview words arrive, one of
+    # StreamingOverlayLayout.ALL in services/settings.py: "header" or "footer".
+    STREAMING_OVERLAY_LAYOUT: str = "header"
 
     # The recording overlay's look, one of RecordingOverlayLook.ALL in
     # services/settings.py. Settings → Appearance → Overlay.

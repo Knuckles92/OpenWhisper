@@ -58,6 +58,13 @@ EDGE: Final[float] = live_recording.EDGE
 CENTER_Y: Final[float] = 29.0
 #: How long a look takes to morph from the recording into its work.
 MORPH_S: Final[float] = 0.5
+#: How a look draws small, in the live preview's header: SQUASH keeps its
+#: lines and bars full size across the room and flattens them; SHRINK scales
+#: it evenly and draws it as wide as the room; FIT scales the whole overlay's
+#: drawing evenly into it, for looks whose motion is worked out at full width.
+SQUASH: Final[str] = "squash"
+SHRINK: Final[str] = "shrink"
+FIT: Final[str] = "fit"
 
 
 def normalize_look(value) -> str:
@@ -92,6 +99,11 @@ class Visual:
     particles: bool = True
     #: Particles emitted a second at rest, or None for the style's own rate.
     emission_rate: Optional[float] = None
+    #: How wide to draw when not across the whole overlay, as in the
+    #: live preview's header; None is the overlay's width.
+    band_width: Optional[float] = None
+    #: How it draws small: SQUASH, SHRINK or FIT.
+    small: str = SHRINK
 
     def __init__(self, overlay) -> None:
         self.overlay = overlay
@@ -135,6 +147,8 @@ class Visual:
 
     @property
     def width(self) -> float:
+        if self.band_width is not None:
+            return self.band_width
         return float(self.overlay.width())
 
     def hue(self) -> float:
@@ -154,6 +168,8 @@ class Ribbon(Visual):
 
     Finish: the ribbon rolls itself up into a spinning loop.
     """
+
+    small = SQUASH
 
     def _baseline(self) -> float:
         return self.overlay._base_height - live_recording.BASELINE_FROM_BOTTOM
@@ -197,6 +213,7 @@ class Bars(Visual):
     """
 
     particles = False
+    small = SQUASH
     PITCH = 5.0
     BAR = 3.0
     HALF = 18.0
@@ -250,6 +267,7 @@ class MirrorWave(Visual):
     Finish: the outline gathers into a short glowing capsule that pulses.
     """
 
+    small = SQUASH
     AMPLITUDE = 18.0
 
     def emitter(self):
@@ -320,6 +338,7 @@ class Aurora(Visual):
     """
 
     particles = False
+    small = SQUASH
     WAVES = ((2.2, 0.0, 2.2), (3.1, 1.9, 1.6), (1.6, 3.7, 1.2))
 
     def reset(self):

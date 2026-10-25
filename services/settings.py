@@ -114,6 +114,9 @@ class SettingsKey:
     STREAMING_ENABLED: Final[str] = "streaming_enabled"
     STREAMING_CHUNK_DURATION: Final[str] = "streaming_chunk_duration"
     STREAMING_OVERLAY_FONT_SIZE: Final[str] = "streaming_overlay_font_size"
+    # Where the overlay puts its look once preview words arrive; see
+    # StreamingOverlayLayout.
+    STREAMING_OVERLAY_LAYOUT: Final[str] = "streaming_overlay_layout"
     # The recording overlay's look; see RecordingOverlayLook. "legacy" is Classic.
     RECORDING_OVERLAY_LOOK: Final[str] = "recording_overlay_look"
     # Parts of a live look's label: the pulsing dot, "Recording", the clock.
@@ -480,6 +483,21 @@ class RecordingOverlayLook:
     ALIASES: Final[Dict[str, str]] = {"live": RIBBON, "orb": PULSE, "bubbles": BAIT_BALL}
 
 
+class StreamingOverlayLayout:
+    """Values for ``SettingsKey.STREAMING_OVERLAY_LAYOUT``: the overlay with preview words."""
+    #: A slim row over the words: the live dot, the clock and a small copy of the look.
+    HEADER: Final[str] = "header"
+    #: The words on top and the full-size look under them, as before any words.
+    FOOTER: Final[str] = "footer"
+
+    ALL: Final[Tuple[str, ...]] = (HEADER, FOOTER)
+    LABELS: Final[Dict[str, str]] = {HEADER: "Header", FOOTER: "Footer"}
+    DETAILS: Final[Dict[str, str]] = {
+        HEADER: "Clock and a small meter above the words",
+        FOOTER: "The full look under the words",
+    }
+
+
 class TranscriptCleanupProvider:
     """Built-in values for ``SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER``.
 
@@ -701,6 +719,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.STREAMING_ENABLED: config.STREAMING_ENABLED,
     SettingsKey.STREAMING_CHUNK_DURATION: config.STREAMING_CHUNK_DURATION_SEC,
     SettingsKey.STREAMING_OVERLAY_FONT_SIZE: config.STREAMING_OVERLAY_FONT_SIZE,
+    SettingsKey.STREAMING_OVERLAY_LAYOUT: config.STREAMING_OVERLAY_LAYOUT,
     SettingsKey.RECORDING_OVERLAY_LOOK: config.RECORDING_OVERLAY_LOOK,
     SettingsKey.RECORDING_OVERLAY_DOT: True,
     SettingsKey.RECORDING_OVERLAY_TEXT: True,
@@ -1244,6 +1263,8 @@ resolve_recording_trigger_mode = _choice_resolver(
     SettingsKey.RECORDING_TRIGGER_MODE, RecordingTriggerMode.ALL)
 _resolve_recording_overlay_look = _choice_resolver(
     SettingsKey.RECORDING_OVERLAY_LOOK, RecordingOverlayLook.ALL)
+resolve_streaming_overlay_layout = _choice_resolver(
+    SettingsKey.STREAMING_OVERLAY_LAYOUT, StreamingOverlayLayout.ALL)
 
 
 def resolve_recording_overlay_look(settings: Optional[Mapping[str, Any]] = None) -> str:

@@ -65,12 +65,13 @@ def test_desktop_hooks_refresh_preview_cleanup_trigger_and_open_settings():
     QObject.__init__(ui)
     ui._settings_dialog = SimpleNamespace(refresh=Mock())
     ui._on_settings_streaming_changed = Mock()
-    ui.overlay = SimpleNamespace(refresh_streaming_font_size=Mock())
+    ui.overlay = SimpleNamespace(refresh_streaming_font_size=Mock(), refresh_streaming_layout=Mock())
     ui.refresh_cleanup_controls = Mock()
     ui._on_settings_recording_trigger_mode_changed = Mock()
     changes = {
         SettingsKey.STREAMING_ENABLED: True,
         SettingsKey.STREAMING_OVERLAY_FONT_SIZE: 24,
+        SettingsKey.STREAMING_OVERLAY_LAYOUT: "footer",
         SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: False,
         SettingsKey.RECORDING_TRIGGER_MODE: "push_hold",
     }
@@ -78,6 +79,7 @@ def test_desktop_hooks_refresh_preview_cleanup_trigger_and_open_settings():
     ui._apply_agent_changes("settings", changes)
     ui._on_settings_streaming_changed.assert_called_once_with()
     ui.overlay.refresh_streaming_font_size.assert_called_once_with()
+    ui.overlay.refresh_streaming_layout.assert_called_once_with()
     ui.refresh_cleanup_controls.assert_called_once_with()
     ui._on_settings_recording_trigger_mode_changed.assert_called_once_with("push_hold")
     ui._settings_dialog.refresh.assert_called_once_with()

@@ -65,6 +65,7 @@ from services.settings import (
     HuggingFaceAccessPolicy,
     MeetingServerBind,
     RecordingOverlayLook,
+    StreamingOverlayLayout,
     RecordingRetentionMode,
     RecordingTriggerMode,
     SettingsKey,
@@ -98,6 +99,7 @@ from services.settings import (
     resolve_recording_overlay_look,
     resolve_recording_overlay_text,
     resolve_streaming_overlay_font_size,
+    resolve_streaming_overlay_layout,
     resolve_ui_font_scale,
     resolve_ui_theme,
     resolve_transcript_cleanup_level,
@@ -568,6 +570,7 @@ class SettingsDialog(QDialog):
     on_audio_device_changed: Optional[Callable] = None
     on_streaming_settings_changed: Optional[Callable] = None
     on_streaming_font_changed: Optional[Callable] = None
+    on_streaming_layout_changed: Optional[Callable] = None
     on_recording_look_changed: Optional[Callable] = None
     on_ui_font_scale_changed: Optional[Callable[[int], None]] = None
     on_ui_theme_changed: Optional[Callable[[str], None]] = None
@@ -2041,10 +2044,26 @@ class SettingsDialog(QDialog):
             design_icon("typography-blue.svg"),
             compact=True,
         )
+        self.streaming_layout_bar = SegmentedBar(
+            [
+                (StreamingOverlayLayout.LABELS[choice], StreamingOverlayLayout.DETAILS[choice])
+                for choice in StreamingOverlayLayout.ALL
+            ],
+            compact=True,
+        )
+        self.streaming_layout_bar.setAccessibleName("Live preview layout")
+        self.streaming_layout_bar.activated.connect(self._on_streaming_layout_activated)
+        self.streaming_layout_tile = FieldTile(
+            "Live preview layout",
+            "Where the look goes once your words appear: shrunk into a header "
+            "above them, or full size under them.",
+            self.streaming_layout_bar,
+            design_icon("palette-purple.svg"),
+        )
         self._tile_group(
             layout,
             "Overlay",
-            [self.recording_look_tile, self.streaming_font_size_tile],
+            [self.recording_look_tile, self.streaming_layout_tile, self.streaming_font_size_tile],
             columns=1,
         )
 
@@ -4221,6 +4240,12 @@ class SettingsDialog(QDialog):
         if self.on_ui_theme_changed:
             self.on_ui_theme_changed(theme)
 
+    def _on_streaming_layout_activated(self, index: int) -> None:
+        if not self._persist(SettingsKey.STREAMING_OVERLAY_LAYOUT, StreamingOverlayLayout.ALL[index]):
+            return
+        if self.on_streaming_layout_changed:
+            self.on_streaming_layout_changed()
+
     def _on_streaming_font_changed(self, _value: int = 0) -> None:
         if not self._persist(
             SettingsKey.STREAMING_OVERLAY_FONT_SIZE,
@@ -5377,6 +5402,9 @@ class SettingsDialog(QDialog):
         _select_combo_data(self.ui_font_scale_combo, resolve_ui_font_scale(settings))
         _select_combo_data(self.ui_theme_combo, resolve_ui_theme(settings))
         self.streaming_font_size_spinbox.setValue(resolve_streaming_overlay_font_size(settings))
+        self.streaming_layout_bar.setCurrentIndex(
+            StreamingOverlayLayout.ALL.index(resolve_streaming_overlay_layout(settings))
+        )
         look = resolve_recording_overlay_look(settings)
         self.recording_look_bar.setCurrentIndex(RecordingOverlayLook.ALL.index(look))
         self.recording_look_preview.set_look(look)

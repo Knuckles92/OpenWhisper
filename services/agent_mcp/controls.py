@@ -22,6 +22,7 @@ from services.settings import (
     TranscriptCleanupReasoning,
     UiFontScale,
     RecordingOverlayLook,
+    StreamingOverlayLayout,
     UiTheme,
     resolve_mcp_events_enabled,
     resolve_ui_theme,
@@ -132,6 +133,15 @@ SETTING_CONTROLS = (
         "integer",
         minimum=10,
         maximum=48,
+        effect=LIVE,
+    ),
+    SettingControl(
+        SettingsKey.STREAMING_OVERLAY_LAYOUT,
+        "Preview layout",
+        "Appearance",
+        "string",
+        StreamingOverlayLayout.ALL,
+        max_length=10,
         effect=LIVE,
     ),
     SettingControl(

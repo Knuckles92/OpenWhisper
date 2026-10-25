@@ -194,9 +194,11 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     dialog.ui_theme_tile,
                     dialog.ui_font_scale_tile,
                     dialog.recording_look_tile,
+                    dialog.streaming_layout_tile,
                     dialog.streaming_font_size_tile,
                 },
             )
+            self.assertIs(dialog.streaming_layout_tile.control, dialog.streaming_layout_bar)
             self.assertIs(
                 dialog.ui_font_scale_tile.control, dialog.ui_font_scale_combo
             )

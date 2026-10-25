@@ -26,7 +26,7 @@ import random
 from PyQt6.QtCore import QPointF, QRectF, Qt
 from PyQt6.QtGui import QColor, QLinearGradient, QPainterPath, QPen
 
-from ui_qt.overlays.recording_looks import EDGE, MORPH_S, Visual, hue_color, smooth
+from ui_qt.overlays.recording_looks import EDGE, FIT, MORPH_S, Visual, hue_color, smooth
 from ui_qt.utils.palette import current_palette
 
 
@@ -34,6 +34,7 @@ class _School(Visual):
     """A flocking school of balls pushing up stacked swell layers."""
 
     particles = False
+    small = FIT
     FISH = 56
     BASE = 50.0
     TOP = 6.0
@@ -530,6 +531,7 @@ class Fizz(Visual):
     """
 
     particles = False
+    small = FIT
     LANES = 9
     BASE = 50.0
     TOP = 8.0

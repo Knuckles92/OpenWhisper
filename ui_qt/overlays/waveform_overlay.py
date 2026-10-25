@@ -16,7 +16,9 @@ from services.settings import (
     resolve_recording_overlay_look,
     resolve_recording_overlay_text,
     resolve_streaming_overlay_font_size,
+    resolve_streaming_overlay_layout,
     settings_manager,
+    StreamingOverlayLayout,
 )
 from ui_qt.utils.drag_move import DragToMove
 from ui_qt.utils.overlay_position import (
@@ -53,6 +55,15 @@ _FADE_OUT_S = 0.25
 _WORK_LABELS = {"processing": "Processing...", "transcribing": "Transcribing..."}
 #: How long the look's finish takes to give way to Cleaning up's lines.
 _HANDOFF_S = 0.45
+#: How tall a look draws in the compact overlay, above its label row.
+_LOOK_HEIGHT = 56.0
+#: The live preview's header row, and the small copy of the look in it.
+_HEADER_HEIGHT = 36
+_HEADER_LOOK_HEIGHT = 24.0
+#: The narrowest room the header gives its look; less shows only the clock.
+_HEADER_LOOK_MIN_WIDTH = 40.0
+#: The preview words' side margins.
+_TEXT_MARGIN = 12
 
 
 def _platform_takes_overlay_clicks() -> bool:
@@ -173,6 +184,10 @@ class WaveformOverlay(QWidget):
         self.stt_particles: List[Particle] = []
         self._streaming_preview_text: str = ""
         self._streaming_font_size = resolve_streaming_overlay_font_size()
+        self._streaming_layout = resolve_streaming_overlay_layout()
+        # The header's room between the live label and the chips, where its
+        # small look goes and a caption takes over.
+        self._header_room = QRectF()
         # Cursor anchor used to keep the overlay on-screen as it grows.
         self._anchor_pos: Optional[QPoint] = None
         # Where it was before a snap parked it in the corner (park/unpark).
@@ -302,57 +317,166 @@ class WaveformOverlay(QWidget):
                               status: str = "Listening...", status_token: str = "overlay-text"):
         """Draw recording particles plus live preview text near the cursor.
 
+        Once words arrive, the layout setting puts the look in a slim header
+        over them or keeps it full size under them.
+
         Args:
             painter: Active painter for this frame.
             rect: Full overlay bounds.
-            status: Shown in the band until preview text arrives.
+            status: Shown in the band beside the look.
             status_token: Palette role for the status.
         """
-        particle_height = min(self._base_height, rect.height())
-        particle_rect = QRect(0, 0, rect.width(), particle_height)
-        # Keep particle physics in the compact recording band even when the
-        # overlay grows to fit preview text.
-        if self._visual is not None:
-            self._draw_live_listening(painter, status.rstrip("."), status_token,
-                                      show_label=not self._streaming_preview_text)
+        if not self._streaming_preview_text:
+            self._draw_listening_band(painter, status, status_token)
+            return
+        above, below = self._preview_text_margins()
+        if self._streaming_layout == StreamingOverlayLayout.FOOTER:
+            band_top = rect.height() - self._base_height
+            self._draw_divider(painter, band_top)
+            self._draw_listening_band(painter, status, status_token, band_top)
         else:
-            previous_height = self.style.height
-            self.style.height = self._base_height
-            try:
-                self.style.draw_recording_state(painter, particle_rect, "")
-            finally:
-                self.style.height = previous_height
-            if not self._streaming_preview_text and not self._caption:
-                self._draw_status(painter, status, token_color(status_token))
+            self._draw_preview_header(painter, status_token)
+            self._draw_divider(painter, _HEADER_HEIGHT)
+        self._draw_streaming_preview_text(
+            painter,
+            QRect(_TEXT_MARGIN, above, rect.width() - 2 * _TEXT_MARGIN, max(20, rect.height() - above - below)),
+        )
 
-        if self._streaming_preview_text:
-            self._draw_streaming_preview_text(painter, rect)
+    def _draw_listening_band(self, painter: QPainter, status: str, status_token: str,
+                             top: float = 0.0) -> None:
+        """The compact overlay's look and label, ``top`` pixels down."""
+        if self._visual is not None:
+            self._draw_live_listening(painter, status.rstrip("."), status_token, top=top)
+            return
+        self._draw_particles(painter, top)
+        if not self._caption:
+            self._draw_status(painter, status, token_color(status_token))
+
+    def _draw_particles(self, painter: QPainter, top: float = 0.0) -> None:
+        """The recording particles, which stay in the compact band however tall the overlay grows."""
+        painter.save()
+        if top:
+            # Under preview words: nothing rises out of the band into them.
+            painter.setClipRect(QRectF(0, top, self.width(), self._base_height))
+            painter.translate(0, top)
+        previous_height = self.style.height
+        self.style.height = self._base_height
+        try:
+            self.style.draw_recording_state(painter, QRect(0, 0, self.width(), self._base_height), "")
+        finally:
+            self.style.height = previous_height
+            painter.restore()
+
+    def _live_tone(self) -> str:
+        """The live dot's colour: accent for a command or a destination, else recording red."""
+        command = self.current_state == self.STATE_COMMAND_LISTENING
+        return "accent" if command or self._recording_destination else "danger"
 
     def _draw_live_listening(self, painter: QPainter, label: str, text_tone: str = "overlay-text",
-                             *, show_label: bool = True) -> None:
+                             *, top: float = 0.0) -> None:
         """A live look: its voice drawing, the particles if it has them, the live label."""
         elapsed = time.monotonic() - self._listen_started
-        command = self.current_state == self.STATE_COMMAND_LISTENING
-        tone = "accent" if command or self._recording_destination else "danger"
-        if not self._embedded and not command:
+        tone = self._live_tone()
+        if not self._embedded and self.current_state != self.STATE_COMMAND_LISTENING:
             moments.draw_edge_flash(painter, QRectF(self.rect()), elapsed, 0.0, tone)
         grow = moments.ease_out_cubic(moments.phase(elapsed, 0.05, 0.4))
+        painter.save()
+        if top:
+            painter.setClipRect(QRectF(0, top, self.width(), self._base_height))
+            painter.translate(0, top)
         self._visual.draw(painter, grow)
+        painter.restore()
         if self._visual.particles:
-            # Particle physics stay in the compact band even when preview
-            # text grows the overlay.
-            previous_height = self.style.height
-            self.style.height = self._base_height
-            try:
-                self.style.draw_recording_state(painter, QRect(0, 0, self.width(), self._base_height), "")
-            finally:
-                self.style.height = previous_height
+            self._draw_particles(painter, top)
         dot, words, clock = self._label_parts
-        if show_label and not self._caption and (dot or words or clock):
+        if not self._caption and (dot or words or clock):
             live_recording.draw_live_label(
                 painter, QRectF(self._status_rect().adjusted(12, 0, -12, 0)), label, elapsed, tone, text_tone,
                 dot=dot, text=words, clock=clock,
             )
+
+    def _draw_preview_header(self, painter: QPainter, text_tone: str) -> None:
+        """``● 0:04`` and a small copy of the look, between the badge and the chips.
+
+        The badge and chips are placed after the state is drawn, so this
+        leaves room for where they were last frame; they sit still while
+        listening.
+        """
+        center_y = _BADGE_MARGIN + _BADGE_HEIGHT / 2
+        left = _TEXT_MARGIN if self._badge_rect.isEmpty() else self._badge_rect.right() + 8
+        rights = [r.left() for r in (self._chip_rect, *self._control_rects.values()) if not r.isEmpty()]
+        right = (min(rights) if rights else self.width() - 4) - 8
+        dot, _words, clock = self._label_parts
+        elapsed = time.monotonic() - self._listen_started
+        width = live_recording.wordless_label_width(elapsed, dot=dot, clock=clock)
+        if clock and width > right - left:
+            # Snap and Done crowd the row: the dot alone still says it is live.
+            clock = False
+            width = live_recording.wordless_label_width(elapsed, dot=dot, clock=False)
+        if self._visual is not None and (dot or clock) and width <= right - left:
+            live_recording.draw_live_label(
+                painter, QRectF(left, center_y - 10, width, 20), "", elapsed, self._live_tone(), text_tone,
+                dot=dot, text=False, clock=clock,
+            )
+            left += width + 10
+        self._header_room = QRectF(left, center_y - _HEADER_LOOK_HEIGHT / 2,
+                                   max(0.0, right - left), _HEADER_LOOK_HEIGHT)
+        if self._caption or self._header_room.width() < _HEADER_LOOK_MIN_WIDTH:
+            return
+        self._draw_small_look(painter, self._header_room)
+
+    def _draw_small_look(self, painter: QPainter, area: QRectF) -> None:
+        """The look drawn small into ``area`` the way it asks (Visual.small).
+
+        A live look leaves its particles out at this size; Classic, which is
+        only particles, shrinks the whole band to fit.
+        """
+        visual = self._visual
+        small = visual.small if visual is not None else recording_looks.FIT
+        scale = area.height() / _LOOK_HEIGHT
+        painter.save()
+        painter.setClipRect(area)
+        painter.translate(area.left(), area.top())
+        if small == recording_looks.FIT:
+            scale = min(scale, area.width() / self.width())
+            painter.translate((area.width() - self.width() * scale) / 2, (area.height() - _LOOK_HEIGHT * scale) / 2)
+            painter.scale(scale, scale)
+        elif small == recording_looks.SQUASH:
+            painter.scale(1.0, scale)
+        else:
+            painter.scale(scale, scale)
+        if visual is None:
+            self._draw_particles(painter)
+            painter.restore()
+            return
+        if small != recording_looks.FIT:
+            visual.band_width = area.width() / (1.0 if small == recording_looks.SQUASH else scale)
+        grow = moments.ease_out_cubic(moments.phase(time.monotonic() - self._listen_started, 0.05, 0.4))
+        try:
+            visual.draw(painter, grow)
+        finally:
+            visual.band_width = None
+            painter.restore()
+
+    def _draw_divider(self, painter: QPainter, y: float) -> None:
+        """A hairline between the preview words and the look."""
+        painter.setPen(QPen(token_color("overlay-border"), 1))
+        painter.drawLine(QPointF(_TEXT_MARGIN, y + 0.5), QPointF(self.width() - _TEXT_MARGIN, y + 0.5))
+
+    def _top_row_in_use(self) -> bool:
+        """Whether a badge, the language chip or Snap and Done sit along the top while listening."""
+        latched = self._hands_free or self.current_state == self.STATE_COMMAND_LISTENING
+        return (
+            bool(self._recording_destination) or latched
+            or self._chip_visible() or self._controls_clickable()
+        )
+
+    def _preview_text_margins(self) -> tuple[int, int]:
+        """The room (above, below) the preview words in the current layout."""
+        if self._streaming_layout == StreamingOverlayLayout.FOOTER:
+            above = _BADGE_MARGIN + _BADGE_HEIGHT + 8 if self._top_row_in_use() else 10
+            return above, self._base_height + 4
+        return _HEADER_HEIGHT + 6, 12
 
     def _draw_work(self, painter: QPainter, rect: QRect) -> None:
         """Processing or Transcribing: the look's own finish, or Classic's vortex."""
@@ -381,6 +505,14 @@ class WaveformOverlay(QWidget):
         painter.drawText(QRectF(self._status_rect()).translated(0, dy), Qt.AlignmentFlag.AlignCenter, text)
 
     def _status_rect(self) -> QRect:
+        """The label row: under the look, wherever the preview layout put it.
+
+        With the header, a caption takes the room its small look had.
+        """
+        if self._streaming_preview_text:
+            if self._streaming_layout == StreamingOverlayLayout.FOOTER:
+                return QRect(0, self.height() - 25, self.width(), 20)
+            return self._header_room.adjusted(-12, 0, 12, 0).toRect()
         return QRect(0, self._base_height - 25, self.width(), 20)
 
     def _draw_status(self, painter: QPainter, text: str, color: QColor) -> None:
@@ -403,14 +535,22 @@ class WaveformOverlay(QWidget):
             self._apply_streaming_height()
             self.update()
 
-    def _draw_streaming_preview_text(self, painter: QPainter, rect: QRect):
-        """Draw wrapped streaming preview text under the particle band.
+    def refresh_streaming_layout(self):
+        """Reload the preview layout from settings and reflow if needed."""
+        layout = resolve_streaming_overlay_layout()
+        if layout == self._streaming_layout:
+            return
+        self._streaming_layout = layout
+        if self._streaming_preview_text:
+            self._apply_streaming_height()
+            self.update()
+
+    def _draw_streaming_preview_text(self, painter: QPainter, text_rect: QRect):
+        """Draw wrapped streaming preview text in ``text_rect``.
 
         Aligns to the bottom so the newest words stay visible when the text is
         taller than the overlay's height cap.
         """
-        top = self._base_height - 8
-        text_rect = QRect(10, top, rect.width() - 20, max(20, rect.height() - top - 8))
         painter.setPen(QPen(token_color("overlay-text")))
         painter.setFont(self._streaming_preview_font())
         if self._embedded:
@@ -542,17 +682,17 @@ class WaveformOverlay(QWidget):
         else:
             effective_max = self._effective_streaming_max_height()
             font = self._streaming_preview_font()
-            metrics_rect = QRect(0, 0, self.overlay_width - 20, effective_max)
+            metrics_rect = QRect(0, 0, self.overlay_width - 2 * _TEXT_MARGIN, effective_max)
             fm = QFontMetrics(font)
             bounded = fm.boundingRect(
                 metrics_rect,
                 int(Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap),
                 self._streaming_preview_text,
             )
-            text_height = bounded.height() + 16
+            above, below = self._preview_text_margins()
             target_height = min(
                 effective_max,
-                max(self._base_height, self._base_height - 8 + text_height),
+                max(self._base_height, above + bounded.height() + below),
             )
 
         if target_height != self.overlay_height:
