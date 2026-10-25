@@ -65,6 +65,8 @@ In **System Settings → Privacy & Security**, allow **Microphone** for recordin
 
 **Settings → App → General → Set up auto-paste…** shows which app to allow. If permission breaks after an update, remove its old entry, add the app again, and restart.
 
+When macOS asks whether OpenWhisper may use your **login** Keychain (to read saved API keys, the MCP token, or a remote engine's connection key), enter your Mac password and choose **Always Allow**. **Allow** works for that one read only, so macOS asks again at every launch. Builds that aren't notarized may ask once more after an update.
+
 ## Run from source
 
 You'll need **Git** and **Python 3.11 or 3.12**. Source installs support Windows, macOS (including Intel Macs), and Linux distributions without native packages.

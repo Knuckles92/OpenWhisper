@@ -212,6 +212,12 @@ class TestApiKeysSettingsPage(unittest.TestCase):
         finally:
             credentials.set_store(previous)
 
+    def test_store_caption_tells_mac_users_to_always_allow(self):
+        with patch.object(settings_dialog_module.sys, "platform", "darwin"):
+            self.assertIn("Always Allow", SettingsDialog._api_key_store_copy())
+        with patch.object(settings_dialog_module.sys, "platform", "win32"):
+            self.assertNotIn("Always Allow", SettingsDialog._api_key_store_copy())
+
     def test_test_button_reports_verdict_without_echoing_key(self):
         self._select("OPENAI_API_KEY")
         self.dialog.api_key_edit.setText(SECRET)

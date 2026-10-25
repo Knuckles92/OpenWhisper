@@ -2892,11 +2892,18 @@ class SettingsDialog(QDialog):
                 "variable in your environment or a .env file instead; "
                 "OpenWhisper never falls back to an unprotected file."
             )
-        return (
+        copy = (
             f"Encrypted by {status.backend_name} for your account. "
             "Saved keys override environment variables and .env, and never "
             "enter settings or logs."
         )
+        if sys.platform == "darwin":
+            # "Allow" lasts one read, so macOS asks again every launch.
+            copy += (
+                " When macOS asks to use your Keychain, choose Always Allow so "
+                "it doesn't ask every launch."
+            )
+        return copy
 
     @staticmethod
     def _api_key_entries(settings: dict) -> list:
