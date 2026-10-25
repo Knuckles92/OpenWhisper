@@ -10,6 +10,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Changed
 - **Bars is the default recording overlay** — new installs start with the scrolling level meter instead of Ribbon. A look you already picked in **Settings → Appearance** stays.
 - **Cleaning up shows text being tidied** — the recording overlay's Cleaning up and Rewriting stages draw three lines of scribbled words that a purple caret straightens, line by line, until the text lands. After Transcribing, your look's finish fades under the lines and the label rises in, instead of cutting to static sparkles.
+- **Keychain prompts explain Always Allow on macOS** — the API keys page and the README's macOS permissions section now say to choose **Always Allow** when macOS asks to use your Keychain. **Allow** covers one read, so macOS asked again at every launch.
 - **The overlay preview in Settings gives Processing and Transcribing time to read** — each stage now lasts 1.8 s, and the preview pauses for a second before it starts again, so Transcribing no longer flashes past.
 
 ### Fixed
