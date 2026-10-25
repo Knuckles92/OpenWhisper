@@ -158,6 +158,93 @@ def test_scan_is_cached_until_refresh(monkeypatch):
     assert ia.cached_scan() == {agent_id: None for agent_id in ia.AGENT_ORDER}
 
 
+def test_resolve_keeps_a_usable_lookup_until_the_next_scan(monkeypatch, tmp_path):
+    program = tmp_path / "claude.exe"
+    program.write_bytes(b"")
+    calls = []
+    signed_in = {"value": False}
+
+    def find(agent_id):
+        calls.append(agent_id)
+        return ia.InstalledAgent(agent_id, str(program), "2.1.0")
+
+    monkeypatch.setattr(ia, "_scan_result", None)
+    monkeypatch.setattr(ia, "_looked_up", {})
+    monkeypatch.setattr(ia, "find_agent", find)
+    monkeypatch.setattr(ia, "with_sign_in", lambda agent: ia.InstalledAgent(
+        agent.id, agent.path, agent.version, signed_in=signed_in["value"]))
+    assert not ia.resolve_agent(ia.CLAUDE_CODE).usable
+    assert not ia.resolve_agent(ia.CLAUDE_CODE).usable
+    assert len(calls) == 2  # signed out: asked again each time
+    signed_in["value"] = True
+    assert ia.resolve_agent(ia.CLAUDE_CODE).usable
+    assert ia.resolve_agent(ia.CLAUDE_CODE).usable
+    assert len(calls) == 3
+    program.unlink()
+    ia.resolve_agent(ia.CLAUDE_CODE)
+    assert len(calls) == 4
+    monkeypatch.setattr(ia, "find_agent", lambda agent_id: None)
+    ia.scan_agents(refresh=True)
+    assert ia._looked_up == {}
+
+
+def test_known_agent_never_blocks_and_looks_up_once(monkeypatch, tmp_path):
+    import threading
+
+    program = tmp_path / "claude.exe"
+    program.write_bytes(b"")
+    release = threading.Event()
+    calls, heard = [], []
+
+    def find(agent_id):
+        calls.append(agent_id)
+        release.wait(5)
+        return ia.InstalledAgent(agent_id, str(program), "2.1.0")
+
+    monkeypatch.setattr(ia, "_scan_result", None)
+    monkeypatch.setattr(ia, "_looked_up", {})
+    monkeypatch.setattr(ia, "_looking_up", set())
+    monkeypatch.setattr(ia, "_listeners", [])
+    monkeypatch.setattr(ia, "find_agent", find)
+    monkeypatch.setattr(ia, "with_sign_in", lambda agent: ia.InstalledAgent(
+        agent.id, agent.path, agent.version, signed_in=True))
+    ia.add_lookup_listener(heard.append)
+
+    assert ia.known_agent(ia.CLAUDE_CODE) == (False, None)
+    assert ia.known_agent(ia.CLAUDE_CODE) == (False, None)
+    release.set()
+    for thread in threading.enumerate():
+        if thread.name == f"agent-lookup-{ia.CLAUDE_CODE}":
+            thread.join(5)
+    known, agent = ia.known_agent(ia.CLAUDE_CODE)
+    assert known and agent.usable
+    assert calls == [ia.CLAUDE_CODE] and heard == [ia.CLAUDE_CODE]
+
+
+def test_known_agent_rechecks_an_unusable_answer_in_the_background(monkeypatch, tmp_path):
+    import threading
+
+    program = tmp_path / "claude.exe"
+    program.write_bytes(b"")
+    signed_out = ia.InstalledAgent(ia.CLAUDE_CODE, str(program), "2.1.0", signed_in=False)
+    heard = []
+    monkeypatch.setattr(ia, "_scan_result", None)
+    monkeypatch.setattr(ia, "_looked_up", {ia.CLAUDE_CODE: signed_out})
+    monkeypatch.setattr(ia, "_looking_up", set())
+    monkeypatch.setattr(ia, "_listeners", [])
+    monkeypatch.setattr(ia, "find_agent", lambda agent_id: signed_out)
+    monkeypatch.setattr(ia, "with_sign_in", lambda agent: ia.InstalledAgent(
+        agent.id, agent.path, agent.version, signed_in=True))
+    ia.add_lookup_listener(heard.append)
+
+    assert ia.known_agent(ia.CLAUDE_CODE) == (True, signed_out)
+    for thread in threading.enumerate():
+        if thread.name == f"agent-lookup-{ia.CLAUDE_CODE}":
+            thread.join(5)
+    assert heard == [ia.CLAUDE_CODE]
+    assert ia.known_agent(ia.CLAUDE_CODE)[1].usable
+
+
 def test_candidate_paths_find_a_desktop_bundle(tmp_path, monkeypatch):
     if os.name != "nt":
         pytest.skip("the versioned bundle folder is the Windows Codex app's layout")

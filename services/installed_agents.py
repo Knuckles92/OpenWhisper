@@ -22,7 +22,7 @@ import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from services.settings import MeetingAgentCore
 from services.agent_process import kill_agent_process, run_agent_probe
@@ -464,6 +464,30 @@ def sign_in_hint(agent_id: str) -> str:
 
 _scan_lock = threading.Lock()
 _scan_result: Optional[Dict[str, Optional[InstalledAgent]]] = None
+#: What :func:`resolve_agent` found on its own before any scan, None for
+#: missing. A lookup starts the agent twice (``--version``, then its
+#: sign-in), about 0.3 s, so the UI reads this through :func:`known_agent`
+#: and never looks up on the Qt thread.
+_looked_up: Dict[str, Optional[InstalledAgent]] = {}
+_looking_up: set = set()
+_listeners: List[Callable[[str], None]] = []
+
+
+def add_lookup_listener(listener: Callable[[str], None]) -> None:
+    """Call ``listener(agent_id)``, on any thread, when what is known changes."""
+    with _scan_lock:
+        _listeners.append(listener)
+
+
+def _notify(agent_ids: Iterable[str]) -> None:
+    with _scan_lock:
+        listeners = list(_listeners)
+    for agent_id in agent_ids:
+        for listener in listeners:
+            try:
+                listener(agent_id)
+            except Exception:
+                logger.debug("Agent lookup listener failed", exc_info=True)
 
 
 def scan_agents(refresh: bool = False) -> Dict[str, Optional[InstalledAgent]]:
@@ -493,6 +517,8 @@ def scan_agents(refresh: bool = False) -> Dict[str, Optional[InstalledAgent]]:
         found = dict(zip(AGENT_ORDER, pool.map(scan_one, AGENT_ORDER)))
     with _scan_lock:
         _scan_result = found
+        _looked_up.clear()
+    _notify(AGENT_ORDER)
     logger.info(
         "Installed agents: %s",
         ", ".join(f"{a}={found[a].version if found[a] else '-'}" for a in AGENT_ORDER),
@@ -506,15 +532,56 @@ def cached_scan() -> Optional[Dict[str, Optional[InstalledAgent]]]:
         return dict(_scan_result) if _scan_result is not None else None
 
 
+def known_agent(agent_id: str) -> Tuple[bool, Optional[InstalledAgent]]:
+    """``(known, agent)`` from the last scan or lookup. Never blocks.
+
+    When nothing is known yet, or the agent wasn't usable (the user may have
+    installed it or signed in since), one lookup starts in the background
+    and the lookup listeners hear if the answer changes.
+    """
+    with _scan_lock:
+        # Cleared by each scan, so a lookup here is the newer answer.
+        if agent_id in _looked_up:
+            known, agent = True, _looked_up[agent_id]
+        elif _scan_result is not None and agent_id in _scan_result:
+            known, agent = True, _scan_result[agent_id]
+        else:
+            known, agent = False, None
+        if (known and agent is not None and agent.usable) or agent_id in _looking_up:
+            return known, agent
+        _looking_up.add(agent_id)
+
+    def look_up() -> None:
+        try:
+            resolve_agent(agent_id)
+        except Exception:
+            logger.warning("Looking up %s failed", agent_id, exc_info=True)
+        finally:
+            with _scan_lock:
+                _looking_up.discard(agent_id)
+
+    threading.Thread(target=look_up, name=f"agent-lookup-{agent_id}", daemon=True).start()
+    return known, agent
+
+
 def resolve_agent(agent_id: str) -> Optional[InstalledAgent]:
-    """The agent a meeting will run, from the cached scan or a fresh lookup."""
-    cached = cached_scan()
-    if cached is not None and cached.get(agent_id) is not None:
-        agent = cached[agent_id]
-        if agent is not None and os.path.isfile(agent.path):
-            return agent
+    """The agent a meeting will run, from the cached scan or a fresh lookup.
+
+    Blocking when it has to look. A usable agent is kept until the next
+    scan; one that is missing or signed out is looked up again next time.
+    """
+    with _scan_lock:
+        agent = _looked_up.get(agent_id) or (_scan_result or {}).get(agent_id)
+    if agent is not None and agent.usable and os.path.isfile(agent.path):
+        return agent
     agent = find_agent(agent_id)
-    return with_sign_in(agent) if agent is not None else None
+    agent = with_sign_in(agent) if agent is not None else None
+    with _scan_lock:
+        changed = _looked_up.get(agent_id, False) != agent
+        _looked_up[agent_id] = agent
+    if changed:
+        _notify([agent_id])
+    return agent
 
 
 # ---- the agents' own configuration ----

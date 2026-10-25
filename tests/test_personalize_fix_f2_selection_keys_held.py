@@ -40,6 +40,7 @@ def h(monkeypatch, _session_qt_application):
     })
     monkeypatch.setattr(command, "settings_manager", settings)
     monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: True)
+    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: True)
     monkeypatch.setattr(synthetic_keys, "wait_for_modifiers_released", lambda timeout_s=0.8: False)
     service = FakeService(FocusSnapshot(NOTEPAD, None))
     focus_context.set_service(service)

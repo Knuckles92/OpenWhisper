@@ -21,7 +21,7 @@ from tests.test_personalize_s1_settings_page import (  # noqa: F401  (fixtures)
 @pytest.fixture
 def ready(monkeypatch):
     state = {"ready": True}
-    monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: state["ready"])
+    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: state["ready"])
     return state
 
 
@@ -86,3 +86,14 @@ def test_basic_says_command_mode_needs_an_ai_model(make_dialog, ready):  # noqa:
     _page, text = _basic_detail(dialog)
     assert "AI cleanup" not in text
     assert text.startswith("Select text, then say how to change it.")
+
+
+def test_quick_record_reads_again_when_an_agent_lookup_lands(ready):
+    from ui_qt.utils.agent_lookup import lookup_relay
+
+    ready["ready"] = False
+    tab = _tab("ctrl+alt+k")
+    assert not tab.command_hint.isVisibleTo(tab)
+    ready["ready"] = True
+    lookup_relay().looked_up.emit("claude_code")
+    assert tab.command_hint.isVisibleTo(tab)

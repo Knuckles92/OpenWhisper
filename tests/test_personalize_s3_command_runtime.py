@@ -141,6 +141,7 @@ def h(monkeypatch):
     })
     monkeypatch.setattr(command, "settings_manager", settings)
     monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: True)
+    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: True)
     released = []
     monkeypatch.setattr(
         synthetic_keys, "wait_for_modifiers_released",
@@ -233,6 +234,7 @@ def test_toggle_mode_presses_start_and_stop_and_ignores_releases(h):
 
 def test_without_a_provider_it_says_so_and_never_records(h, monkeypatch):
     monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: False)
+    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: False)
 
     h.commands.key_pressed(1.0)
     h.commands.key_released(2.0)
@@ -507,7 +509,7 @@ def test_a_refused_claim_reads_nothing(h):
 
 def test_unknown_transforms_and_missing_providers_say_so(h, monkeypatch):
     h.commands.run_transform("missing")
-    monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: False)
+    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: False)
     h.commands.run_transform("polish")
 
     assert _statuses(h) == [

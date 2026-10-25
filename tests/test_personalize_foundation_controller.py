@@ -81,6 +81,7 @@ def test_command_keys_and_transforms_reach_the_command_runtime(controller):
 def test_commands_and_transforms_without_a_provider_say_how_to_start(controller, monkeypatch):
     command_module = sys.modules[type(controller.command_runtime).__module__]
     monkeypatch.setattr(command_module.text_rewrite, "provider_ready", lambda _settings: False)
+    monkeypatch.setattr(command_module.text_rewrite, "provider_readiness", lambda _settings: False)
 
     controller.transform_requested.emit("polish")
     controller.command_key_pressed(1.0)

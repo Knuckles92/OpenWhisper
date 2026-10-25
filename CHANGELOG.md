@@ -7,6 +7,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Fixed
+- **Settings opens quickly again with an installed agent for AI cleanup** — OpenWhisper checks the agent in the background and remembers it, instead of starting it twice on every check while the window waits. Reopening Settings takes under 0.1 s instead of over a second, the first open about 1 s instead of 3 s, and switching back to the main window or starting a transform no longer pauses.
+
 ## [2.8.0] - 2026-10-24
 
 ### Added

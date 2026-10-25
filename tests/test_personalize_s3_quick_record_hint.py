@@ -23,7 +23,7 @@ def _qapp():
 
 @pytest.fixture(autouse=True)
 def _provider_ready(monkeypatch):
-    monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: True)
+    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: True)
 
 
 def _set_command_key(hotkey):

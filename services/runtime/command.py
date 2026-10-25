@@ -337,7 +337,8 @@ class CommandRuntime:
         if transform is None:
             self._refuse("That transform no longer exists")
             return
-        if not text_rewrite.provider_ready(settings):
+        # Qt thread: the job checks again with a lookup if this can't tell.
+        if text_rewrite.provider_readiness(settings) is False:
             self._refuse("Set up AI cleanup to use transforms")
             return
         focus = self._request_focus()

@@ -172,13 +172,13 @@ def _show_state(dialog, settings: dict) -> None:
     from PyQt6.QtCore import QSignalBlocker
 
     from services.settings import resolve_command_mode_insert_without_selection
-    from services.text_rewrite import provider_ready
+    from services.text_rewrite import provider_readiness
     from ui_qt.utils.restyle import set_style_property
     from ui_qt.widgets.command_settings import command_mode_hint
 
     if "commands_tile" not in dialog.__dict__:
         return
-    dialog.commands_gate_tile.setVisible(not provider_ready(settings))
+    dialog.commands_gate_tile.setVisible(provider_readiness(settings) is False)
     dialog.commands_shortcut.sync()
     dialog.commands_mode_hint.setText(command_mode_hint(settings))
     insert = resolve_command_mode_insert_without_selection(settings)
@@ -235,7 +235,7 @@ def home_rows(page, group) -> None:
 
     def refresh_row(settings: dict) -> None:
         field.sync()
-        if not text_rewrite.provider_ready(settings):
+        if text_rewrite.provider_readiness(settings) is False:
             detail.setText("Needs an AI cleanup model, even while cleanup is off.")
             return
         detail.setText(

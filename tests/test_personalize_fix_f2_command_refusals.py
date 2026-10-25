@@ -52,6 +52,7 @@ def h(monkeypatch, tmp_path):
     monkeypatch.setattr(transcription, "send_paste", paste)
     monkeypatch.setattr(transcription, "is_accessibility_trusted", lambda: True)
     monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: True)
+    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: True)
     monkeypatch.setattr(synthetic_keys, "wait_for_modifiers_released", lambda timeout_s=0.8: True)
     wav = tmp_path / "recorded.wav"
     wav.write_bytes(b"RIFF" + bytes(400))

@@ -222,6 +222,7 @@ def test_a_transform_with_nothing_selected_says_so(h, notices):  # noqa: F811
 
 def test_transforms_and_command_mode_without_a_provider_say_so(h, notices, monkeypatch):  # noqa: F811
     monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: False)
+    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: False)
     h.controller.command_runtime.run_transform("polish")
     h.controller.command_runtime.run_transform("no-such-transform")
     h.controller.command_runtime.key_pressed(time.monotonic())

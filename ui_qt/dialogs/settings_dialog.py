@@ -185,6 +185,7 @@ from ui_qt.dialogs.settings_search import (
     keyword_entries,
     shortcut_text,
 )
+from ui_qt.utils.agent_lookup import lookup_relay
 from ui_qt.utils.app_icon import app_icon
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
@@ -692,6 +693,7 @@ class SettingsDialog(QDialog):
         relay.rule_dictation_level.connect(self._on_rule_dictation_level)
         relay.api_key_verified.connect(self._on_api_key_verified)
         relay.typesafe_route_verified.connect(self._on_typesafe_route_verified)
+        lookup_relay().looked_up.connect(self._on_agent_looked_up)
         self.finished.connect(self._release_rule_recorder)
         self.models.assignments_changed.connect(self._refresh_rail_values)
         self.models.downloads_requested.connect(self.show_downloads)
@@ -3917,6 +3919,13 @@ class SettingsDialog(QDialog):
             self.rail.set_value(key, value)
         if self.rail.current_key() == OVERVIEW:
             self._refresh_home()
+
+    def _on_agent_looked_up(self, _agent_id: str) -> None:
+        # Home and Commands read the agent's readiness without waiting for it.
+        from ui_qt.dialogs import settings_commands
+
+        settings_commands.refresh(self)
+        self._refresh_rail_values()
 
     def _refresh_home(self) -> None:
         """Re-read Home's rows, and its where strip and Storage card from

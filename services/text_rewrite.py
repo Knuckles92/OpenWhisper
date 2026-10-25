@@ -163,7 +163,23 @@ def rewrite_with(
 
 
 def provider_ready(settings: Mapping) -> bool:
-    """Whether a cleanup model and its credential are set up, without connecting."""
+    """Whether a cleanup model and its credential are set up, without connecting.
+
+    An installed agent may have to be started to tell (about 0.3 s), so the
+    Qt thread asks :func:`provider_readiness` instead.
+    """
+    return _provider_ready(settings, wait=True)
+
+
+def provider_readiness(settings: Mapping) -> Optional[bool]:
+    """:func:`provider_ready` without blocking: None while an agent is looked up.
+
+    ``installed_agents.add_lookup_listener`` hears when the answer lands.
+    """
+    return _provider_ready(settings, wait=False)
+
+
+def _provider_ready(settings: Mapping, *, wait: bool) -> Optional[bool]:
     from services.settings import (
         resolve_transcript_cleanup_model,
         resolve_transcript_cleanup_provider,
@@ -176,9 +192,14 @@ def provider_ready(settings: Mapping) -> bool:
         model = resolve_transcript_cleanup_model(settings)
         from services.settings import TranscriptCleanupProvider
         if provider in TranscriptCleanupProvider.INSTALLED:
-            from services.installed_agents import resolve_agent
+            from services import installed_agents
 
-            agent = resolve_agent(provider)
+            if wait:
+                agent = installed_agents.resolve_agent(provider)
+            else:
+                known, agent = installed_agents.known_agent(provider)
+                if not known:
+                    return None
             return agent is not None and agent.usable
         profile = get_profile(provider, settings)
         if profile is None or not model:

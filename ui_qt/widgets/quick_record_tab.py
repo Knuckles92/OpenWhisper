@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFra
 from PyQt6.QtCore import QEvent, Qt, QSize, QTimer, pyqtSignal
 
 from ui_qt.dialogs.settings_destinations import COMMANDS, WALKTHROUGHS
+from ui_qt.utils.agent_lookup import lookup_relay
 from ui_qt.utils.icons import tabler_icon
 from ui_qt.widgets.cards import ControlPanel
 from ui_qt.widgets.buttons import Button, PrimaryButton, SuccessButton, DangerButton, WarningButton
@@ -164,6 +165,7 @@ class QuickRecordTab(TranscriptionTabBase):
         command.addWidget(self.walkthrough_settings_link)
         layout.addWidget(self.command_row)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
+        lookup_relay().looked_up.connect(self._on_agent_looked_up)
         self.refresh_cleanup_profiles()
 
     def selected_cleanup_profile_id(self) -> str:
@@ -223,7 +225,8 @@ class QuickRecordTab(TranscriptionTabBase):
         command_key = format_hotkey_display(
             hotkeys.get("command_mode", "") if isinstance(hotkeys, dict) else ""
         )
-        ready = text_rewrite.provider_ready(settings)
+        # Until an agent's lookup lands, assume the provider still works.
+        ready = text_rewrite.provider_readiness(settings) is not False
         self.command_hint.setText(
             f"Command Mode · {command_key} · Select text, then say how to change it."
         )
@@ -236,6 +239,9 @@ class QuickRecordTab(TranscriptionTabBase):
             else "Command Mode needs an AI cleanup model, even while cleanup is off"
         )
         self.command_link.setVisible(not (command_key and ready))
+
+    def _on_agent_looked_up(self, _agent_id: str) -> None:
+        self._refresh_command_hint()
 
     def event(self, event):
         # The AI model is set up in Settings, a separate window; coming back

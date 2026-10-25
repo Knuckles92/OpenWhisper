@@ -94,6 +94,7 @@ def h(monkeypatch):
             controller.persistence_executor = harness.FakeExecutor()
             command = sys.modules[type(controller.command_runtime).__module__]
             monkeypatch.setattr(command.text_rewrite, "provider_ready", lambda _settings: True)
+            monkeypatch.setattr(command.text_rewrite, "provider_readiness", lambda _settings: True)
             monkeypatch.setattr(command, "settings_manager", settings)
             from services import focus_context
 

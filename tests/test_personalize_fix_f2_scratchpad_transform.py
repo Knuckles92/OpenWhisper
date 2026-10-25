@@ -40,6 +40,7 @@ class FakeCleaner:
 @pytest.fixture
 def pad(monkeypatch):
     monkeypatch.setattr(text_rewrite, "provider_ready", lambda settings: True)
+    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda settings: True)
     monkeypatch.setattr("services.transcript_cleanup.TranscriptCleanup", FakeCleaner)
     ui = SimpleNamespace(copy_to_clipboard=MagicMock(return_value=True))
     scratchpad.toggle(ui)
@@ -80,6 +81,7 @@ def test_a_provider_error_is_shown_and_the_text_kept(pad, monkeypatch):
 
 def test_without_a_provider_it_says_how_to_set_one_up(pad, monkeypatch):
     monkeypatch.setattr(text_rewrite, "provider_ready", lambda settings: False)
+    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda settings: False)
     pad.editor.setPlainText("rough words here")
 
     pad.apply_transform(POLISH)

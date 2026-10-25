@@ -56,7 +56,7 @@ def _restore_metadata():
 @pytest.fixture
 def provider(monkeypatch):
     state = {"ready": True}
-    monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: state["ready"])
+    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: state["ready"])
     return state
 
 

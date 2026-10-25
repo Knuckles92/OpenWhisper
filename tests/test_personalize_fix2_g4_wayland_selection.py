@@ -315,6 +315,7 @@ def h(monkeypatch):
     })
     monkeypatch.setattr(command, "settings_manager", settings)
     monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: True)
+    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: True)
     monkeypatch.setattr(synthetic_keys, "wait_for_modifiers_released", lambda timeout_s=0.8: True)
     focus_context.set_service(FakeService(FocusSnapshot(NOTEPAD, None)))
     recorder = SimpleNamespace(is_recording=False)
