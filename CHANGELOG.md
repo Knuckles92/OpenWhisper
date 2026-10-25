@@ -8,6 +8,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ## [Unreleased]
 
 ### Fixed
+- **Quick Record no longer cuts off its controls** — the walkthrough buttons made the tab taller than the window's default and minimum heights, clipping the Command Mode and Walkthrough settings links. The window now opens taller, and a saved shorter size grows to fit.
 - **Settings opens quickly again with an installed agent for AI cleanup** — OpenWhisper checks the agent in the background and remembers it, instead of starting it twice on every check while the window waits. Reopening Settings takes under 0.1 s instead of over a second, the first open about 1 s instead of 3 s, and switching back to the main window or starting a transform no longer pauses.
 - **Settings opens in about 0.6 s** — installed runtimes are measured in the background at launch rather than when Settings first opens, the speech model catalog is read once, icons are drawn once, and unchanged controls are no longer restyled.
 - **Downloads no longer redraw all of Settings at every percent** — a running download updates only its progress caption.

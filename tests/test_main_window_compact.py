@@ -283,6 +283,30 @@ class TestMainWindowCompactMode:
         for left, right in zip(buttons, buttons[1:]):
             assert left.geometry().right() < right.geometry().left()
 
+    def test_quick_record_controls_fit_at_minimum_height(self):
+        """The walkthrough row fits unscrolled at the window's floor height."""
+        tab = self.window.quick_record_tab
+        # Tallest resting layout: AI cleanup shows the profile card, and the
+        # Command Mode link row sits between the cards and the buttons.
+        tab.cleanup_check.setChecked(True)
+        tab.profile_card.setVisible(True)
+        tab.command_link.setVisible(True)
+        tab.command_hint.setVisible(False)
+
+        self.window.resize(
+            config.MAIN_WINDOW_DEFAULT_WIDTH,
+            config.MAIN_WINDOW_MIN_HEIGHT,
+        )
+        self.window.show()
+        self.app.processEvents()
+
+        scroll_bar = tab.scroll_area.verticalScrollBar()
+        assert scroll_bar.maximum() == 0
+        viewport = tab.scroll_area.viewport()
+        for button in (tab.walkthrough_button, tab.saved_walkthroughs_button):
+            bottom = button.mapTo(viewport, button.rect().bottomLeft()).y()
+            assert 0 <= bottom < viewport.height()
+
     def test_clamp_keeps_footer_on_short_screen(self):
         """1280x800 available geometry must not grow the window to 840px."""
         from PyQt6.QtCore import QRect

@@ -313,13 +313,15 @@ class AppConfig:
     # layout so labels and footer controls cannot collide or clip.
     MAIN_WINDOW_MIN_WIDTH: int = 650
     # Leave enough headroom for the always-visible engine fields under Windows
-    # font metrics and display scaling. Saved/manual geometry is clamped to this
-    # floor so the front-page scroller never appears in the normal full UI.
-    MAIN_WINDOW_MIN_HEIGHT: int = 580
+    # font metrics and display scaling, including Quick Record's walkthrough
+    # button row under the recording controls. Saved/manual geometry is
+    # clamped to this floor so the front-page scroller never appears in the
+    # normal full UI.
+    MAIN_WINDOW_MIN_HEIGHT: int = 660
     MAIN_WINDOW_DEFAULT_WIDTH: int = 680
     # Sized so neither transcription tab needs a scrollbar at rest while still
     # keeping the collapsed workspace compact.
-    MAIN_WINDOW_DEFAULT_HEIGHT: int = 600
+    MAIN_WINDOW_DEFAULT_HEIGHT: int = 680
     MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT: int = 840
     MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH: int = 380
     MAIN_WINDOW_HISTORY_EDGE_TAB_WIDTH: int = 24
