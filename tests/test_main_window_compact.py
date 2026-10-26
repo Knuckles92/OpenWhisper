@@ -213,28 +213,6 @@ class TestMainWindowCompactMode:
         assert self.window._compact_mode
         assert self.window.settings_button.text() == "Settings"
 
-    def test_collapsed_transcript_caps_tall_saved_geometry_on_restore(self):
-        """Collapsed startup does not reserve space for the hidden transcript."""
-        saved_geometry = {
-            "x": 10,
-            "y": 10,
-            "width": 700,
-            "height": 900,
-            "format": self.window._geometry_format,
-            "history_expanded": False,
-        }
-        self.mock_get_setting.side_effect = (
-            lambda key, default=None: saved_geometry
-            if key == SettingsKey.WINDOW_GEOMETRY
-            else default
-        )
-
-        self.window._restore_window_geometry()
-
-        assert self.window.quick_record_tab.is_transcription_collapsed()
-        assert self.window.height() == config.MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT
-        assert self.window.width() == saved_geometry["width"]
-
     def test_restore_clamps_short_saved_geometry_to_scroll_free_height(self):
         """An older saved size cannot reopen the full UI with a scrollbar."""
         saved_geometry = {

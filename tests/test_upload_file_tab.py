@@ -1623,6 +1623,7 @@ class TestMainWindowUploadTabIntegration:
     )
     @patch.object(TranscriptionTabBase, "load_cleanup_setting")
     def test_transcription_tabs_do_not_scroll_at_minimum_height(self, _mock_setting):
+        from PyQt6.QtTest import QTest
         from ui_qt.main_window import MainWindow
         from ui_qt.widgets.tabbed_content import TabbedContentWidget
         from config import config
@@ -1651,7 +1652,10 @@ class TestMainWindowUploadTabIntegration:
                 (TabbedContentWidget.TAB_UPLOAD_FILE, window.upload_file_tab),
             ):
                 window.tabbed_content.set_current_index(index)
+                # The window grows into each page; its scrollbar stays off meanwhile.
                 QApplication.processEvents()
+                assert not tab.scroll_area.verticalScrollBar().isVisible()
+                QTest.qWait(400)
                 assert tab.isVisibleTo(window)
                 assert tab.scroll_area.verticalScrollBar().maximum() == 0
 
