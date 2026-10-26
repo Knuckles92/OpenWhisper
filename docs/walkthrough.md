@@ -34,11 +34,22 @@ the same settings as **Settings → Dictation → Walkthroughs**:
   below).
 - **AI write-up**: a switch, and one card each for Claude Code, Codex and
   OpenCode saying whether the last scan of this computer found it. Picking an
-  agent turns the write-up on. **Follow notes I leave for the agent** sits
-  under them.
-- **Recent**: your last eight walkthroughs and interrupted drafts, newest
-  first. Clicking one opens it in Saved Walkthroughs; **Open all…** opens the
-  library.
+  agent turns the write-up on.
+- **Prompt**, under the agents while the write-up is on: the words the agent
+  is given, which you can edit in place, and **Start from**, a menu of
+  presets that fill them in: **Walkthrough** (the default), **Step-by-step
+  guide**, **Bug report**, **Design feedback** and **Task for an agent**.
+  Once you have changed the words it says **Your own**, and choosing that
+  again brings your words back after trying a preset. **Follow notes I leave
+  for the agent** sits under the prompt.
+
+While the tab is open, the side panel on the right lists **Walkthroughs**
+instead of History, the way Meeting Mode lists Past Meetings there: one card
+per walkthrough, newest first, with its title (the write-up's heading, or
+its first words), its first screenshot, its length and an **AI write-up** or
+**Interrupted** label. The search box matches titles and everything said.
+Clicking a card opens it in Saved Walkthroughs; **Open library** opens the
+newest. The panel shows the newest 60; the library has them all.
 
 - **Walkthrough** starts recording. Talk as you would to a colleague looking
   over your shoulder. The recording overlay says **Walkthrough**, then how
@@ -140,8 +151,8 @@ folder**, and the PDF as a chip you can drag into any app. Dragging works
 even where pasting a file doesn't. **Review / Retry write-up** opens the saved
 document; **Copy for agent** copies only the Markdown with local image paths,
 and **Copy PDF** copies only the file. These actions are also available later
-from the **Walkthrough** tab's **Recent** list and **Open all…**, after the
-card disappears or the clipboard has been overwritten.
+from the **Walkthroughs** side panel next to the **Walkthrough** tab, after
+the card disappears or the clipboard has been overwritten.
 
 ## Review, recovery, and storage
 
@@ -204,8 +215,9 @@ and the status say **Write-up copied**.
   your words and screenshots into a simple but good-looking walkthrough
   document with a short title, tidy the wording, and put each screenshot
   where it helps most. It chooses the layout: steps, sections or short
-  paragraphs. **Instructions** in Settings replaces that; leave it empty for
-  the default.
+  paragraphs. The tab's **Prompt** (also **Instructions** in Settings)
+  replaces that, from a preset or in your own words; leave it empty for the
+  default.
 - **Claude Code reads only that walkthrough's folder.** It reads
   `walkthrough.pdf` (and the screenshots beside it, if it wants a closer
   look) with its Read tool alone, fenced to the folder (`--restricted

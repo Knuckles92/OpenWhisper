@@ -111,9 +111,15 @@ class SettingsBinder:
         """Save the trimmed text once the editor loses focus; load ``resolve``.
 
         Text that only repeats the placeholder, which shows the default,
-        saves as "", so the default stays current when it changes.
+        saves as "", so the default stays current when it changes. Only an
+        edit saves: passing focus through would put back what the editor
+        showed when it loaded, over a change made elsewhere since.
         """
         def save() -> None:
+            document = edit.document()
+            if not document.isModified():
+                return
+            document.setModified(False)
             text = edit.toPlainText().strip()
             self._persist(key, "" if text == edit.placeholderText().strip() else text)
 

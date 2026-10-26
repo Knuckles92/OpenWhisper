@@ -413,6 +413,8 @@ def _pill(text: str, tone: str = "") -> QLabel:
 
 class WalkthroughLibraryDialog(QDialog):
     _finished = pyqtSignal(object, str)
+    #: A walkthrough was saved, written up again, recovered or deleted.
+    changed = pyqtSignal()
 
     def __init__(self, parent=None, *, root=None, copy_files=None, recover=None,
                  acquire=None, release=None, submit=None, today=date.today):
@@ -885,6 +887,7 @@ class WalkthroughLibraryDialog(QDialog):
         else:
             self._set_dirty(False)
             self.refresh(folder)
+            self.changed.emit()
         self.notice.setText(f"Couldn't finish: {error}" if error else "Saved. Copy it again whenever you're ready.")
 
     def _cancel_operation(self):

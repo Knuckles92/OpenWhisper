@@ -1181,6 +1181,8 @@ class UIController(QObject):
                 acquire=self.acquire_walkthrough_library,
                 release=self.release_walkthrough_library,
                 submit=self.submit_walkthrough_library)
+            # The side panel lists walkthroughs while their tab is open.
+            self._walkthrough_library.changed.connect(self.main_window.refresh_history)
         dialog = self._walkthrough_library
         if not dialog._busy and not dialog._dirty:
             dialog.refresh(folder)

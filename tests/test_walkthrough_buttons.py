@@ -1,7 +1,5 @@
 """The walkthrough's buttons: its tab in the main window, Snap and Done on the overlay."""
 
-import json
-from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -17,16 +15,16 @@ from services.settings import (
     WalkthroughCopyFormat,
     settings_manager,
 )
-from services.walkthrough import library
+from services.walkthrough import write_up
 from ui_qt.overlays import waveform_overlay
 from ui_qt.overlays.waveform_overlay import WaveformOverlay
 from ui_qt.ui_controller import UIController
-from ui_qt.widgets.walkthrough_tab import COPY_CHOICES, WalkthroughTab
+from ui_qt.widgets.walkthrough_tab import COPY_CHOICES, OWN_PROMPT, WalkthroughTab
 
 
 @pytest.fixture
-def tab(tmp_path):
-    widget = WalkthroughTab(root=tmp_path / "captures", today=lambda: date(2026, 10, 25))
+def tab():
+    widget = WalkthroughTab()
     yield widget
     widget.close()
 
@@ -58,14 +56,6 @@ def _center(overlay, key) -> QPoint:
 
 
 # --- the Walkthrough tab -------------------------------------------------
-
-
-def _draft(root, name):
-    folder = root / name
-    folder.mkdir(parents=True)
-    started = datetime.strptime(name, "%Y-%m-%d_%H-%M-%S").isoformat()
-    (folder / library.DRAFT_NAME).write_text(json.dumps({"started_at": started}))
-    return folder
 
 
 def test_the_button_asks_for_a_walkthrough(tab):
@@ -155,14 +145,14 @@ def test_clicking_the_badge_never_starts_a_walkthrough(tab):
     assert len(spy) == 0
 
 
-def test_the_badge_says_new_until_the_first_walkthrough(tab, tmp_path):
+def test_the_badge_says_new_until_the_first_walkthrough(tab):
     assert tab.walkthrough_badge.text() == "New"
 
     tab.set_recording_state(True, True)
 
     assert tab.walkthrough_badge.text() == "?"
     assert settings_manager.load_all_settings()[SettingsKey.WALKTHROUGH_INTRO_SEEN] is True
-    again = WalkthroughTab(root=tmp_path / "captures")
+    again = WalkthroughTab()
     try:
         assert again.walkthrough_badge.text() == "?"
     finally:
@@ -172,7 +162,7 @@ def test_the_badge_says_new_until_the_first_walkthrough(tab, tmp_path):
 def test_picking_an_agent_turns_the_write_up_on_with_it(tab):
     assert not tab.write_up_switch.isChecked()
     assert not any(choice.isChecked() for choice in tab.agent_choices.values())
-    assert not tab.notes_switch.isEnabled()
+    assert not tab.prompt_area.isVisibleTo(tab)
 
     tab.agent_choices[MeetingAgentCore.CODEX].click()
 
@@ -180,7 +170,7 @@ def test_picking_an_agent_turns_the_write_up_on_with_it(tab):
     assert settings[SettingsKey.WALKTHROUGH_WRITE_UP] is True
     assert settings[SettingsKey.WALKTHROUGH_WRITE_UP_AGENT] == MeetingAgentCore.CODEX
     assert [a for a, c in tab.agent_choices.items() if c.isChecked()] == [MeetingAgentCore.CODEX]
-    assert tab.notes_switch.isEnabled()
+    assert tab.prompt_area.isVisibleTo(tab)
     assert "Codex" in tab.write_up_text.text()
 
 
@@ -193,21 +183,24 @@ def test_switching_the_write_up_off_keeps_the_agent_for_next_time(tab):
     assert settings[SettingsKey.WALKTHROUGH_WRITE_UP] is False
     assert settings[SettingsKey.WALKTHROUGH_WRITE_UP_AGENT] == MeetingAgentCore.CODEX
     assert not any(choice.isChecked() for choice in tab.agent_choices.values())
-    assert not tab.notes_switch.isEnabled()
+    assert not tab.prompt_area.isVisibleTo(tab)
 
 
-def test_the_tab_opens_on_the_saved_choices(tmp_path):
+def test_the_tab_opens_on_the_saved_choices():
     settings_manager.update_settings({
         SettingsKey.WALKTHROUGH_WRITE_UP: True,
         SettingsKey.WALKTHROUGH_WRITE_UP_AGENT: MeetingAgentCore.OPENCODE_CLI,
         SettingsKey.WALKTHROUGH_WRITE_UP_NOTES: True,
         SettingsKey.WALKTHROUGH_COPY_FORMAT: WalkthroughCopyFormat.PDF,
+        SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS: write_up.PRESETS[2][1],
     })
-    tab = WalkthroughTab(root=tmp_path)
+    tab = WalkthroughTab()
     try:
         assert tab.agent_choices[MeetingAgentCore.OPENCODE_CLI].isChecked()
         assert tab.notes_switch.isChecked()
         assert COPY_CHOICES[tab.copy_bar.currentIndex()][0] == WalkthroughCopyFormat.PDF
+        assert tab.prompt_edit.toPlainText() == write_up.PRESETS[2][1]
+        assert tab.preset_combo.currentText() == write_up.PRESETS[2][0]
     finally:
         tab.close()
 
@@ -227,40 +220,64 @@ def test_each_agent_says_whether_the_last_scan_found_it(tab):
     assert tab.agent_choices[MeetingAgentCore.CLAUDE_CODE].status_label.text() == "Not installed"
 
 
-def test_recent_walkthroughs_open_in_the_library(tmp_path):
-    root = tmp_path / "captures"
-    older = _draft(root, "2026-10-24_09-00-00")
-    newer = _draft(root, "2026-10-25_10-30-00")
-    tab = WalkthroughTab(root=root, today=lambda: date(2026, 10, 25))
-    try:
-        assert tab.recent_list.count() == 2
-        assert not tab.empty_label.isVisibleTo(tab)
-        first = tab.recent_list.item(0)
-        assert first.data(Qt.ItemDataRole.UserRole) == str(newer)
-        assert "Today" in first.data(Qt.ItemDataRole.AccessibleTextRole)
-
-        spy = QSignalSpy(tab.library_requested)
-        tab.recent_list.itemClicked.emit(tab.recent_list.item(1))
-        tab.open_all.click()
-        assert [args[0] for args in spy] == [older, None]
-    finally:
-        tab.close()
+def _saved_prompt():
+    return settings_manager.load_all_settings()[SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS]
 
 
-def test_without_walkthroughs_the_tab_says_so(tab):
-    assert tab.recent_list.count() == 0
-    assert tab.empty_label.isVisibleTo(tab)
-    assert not tab.open_all.isVisibleTo(tab)
+def test_the_prompt_shows_the_default_words_and_saves_them_as_default(tab):
+    assert tab.prompt_edit.toPlainText() == write_up.DEFAULT_INSTRUCTIONS
+    assert tab.preset_combo.currentText() == "Walkthrough"
+
+    tab._save_prompt()
+
+    assert _saved_prompt() == ""
 
 
-def test_finishing_a_walkthrough_lists_it(tab):
-    _draft(tab.root, "2026-10-25_10-30-00")
-    tab.set_recording_state(True, True)
-    assert tab.recent_list.count() == 0
+def test_a_preset_fills_the_prompt_and_is_saved_at_once(tab):
+    name, words = write_up.PRESETS[3]
 
-    tab.set_recording_state(False, False)
+    tab.preset_combo.setCurrentIndex(3)
+    tab.preset_combo.activated.emit(3)
 
-    assert tab.recent_list.count() == 1
+    assert tab.prompt_edit.toPlainText() == words
+    assert _saved_prompt() == words
+    assert not tab._prompt_timer.isActive()
+    assert tab.preset_combo.currentText() == name
+
+
+def test_typing_your_own_prompt_saves_it_and_a_preset_can_be_tried_and_undone(tab):
+    tab.prompt_edit.setPlainText("Make it a checklist.")
+
+    assert tab.preset_combo.currentText() == OWN_PROMPT
+    assert tab._prompt_timer.isActive()  # saved once typing pauses
+    tab._prompt_timer.timeout.emit()
+    assert _saved_prompt() == "Make it a checklist."
+
+    tab.preset_combo.activated.emit(1)
+    assert _saved_prompt() == write_up.PRESETS[1][1]
+    own = tab.preset_combo.findText(OWN_PROMPT)
+    tab.preset_combo.activated.emit(own)
+    assert tab.prompt_edit.toPlainText() == "Make it a checklist."
+    assert _saved_prompt() == "Make it a checklist."
+
+
+def test_a_prompt_changed_in_settings_shows_when_the_window_is_back(tab):
+    settings_manager.save_setting(SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS, "From Settings.")
+
+    tab.load_settings()
+
+    assert tab.prompt_edit.toPlainText() == "From Settings."
+    assert tab.preset_combo.currentText() == OWN_PROMPT
+
+
+def test_typing_not_yet_saved_wins_over_reloading(tab):
+    settings_manager.save_setting(SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS, "Older.")
+    tab.prompt_edit.setPlainText("Newer, still being typed.")
+
+    tab.load_settings()
+
+    assert tab.prompt_edit.toPlainText() == "Newer, still being typed."
+    assert _saved_prompt() == "Newer, still being typed."
 
 
 # --- Snap and Done on the overlay -------------------------------------------

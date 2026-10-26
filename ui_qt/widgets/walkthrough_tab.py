@@ -1,23 +1,20 @@
-"""The Walkthrough tab: start one, choose what happens to it, find the last few.
+"""The Walkthrough tab: start one, and choose what happens to it.
 
 Everything a walkthrough uses that people change between walkthroughs sits
-here: whether an agent writes it up and which one, whether it follows notes
-spoken to it, and what lands on the clipboard. The rest (shortcuts, how the
-document looks, the write-up instructions) stays in Settings → Walkthroughs,
-one link away. See docs/walkthrough.md.
+here: whether an agent writes it up, which one, what it is asked for, whether
+it follows notes spoken to it, and what lands on the clipboard. The rest
+(shortcuts, how the document looks) stays in Settings → Walkthroughs, one
+link away. Past walkthroughs are in the side panel, which lists them while
+this tab is open. See docs/walkthrough.md.
 """
 from __future__ import annotations
 
-from datetime import date
-from pathlib import Path
-
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -33,23 +30,29 @@ from services.settings import (
     resolve_walkthrough_intro_seen,
     resolve_walkthrough_write_up,
     resolve_walkthrough_write_up_agent,
+    resolve_walkthrough_write_up_instructions,
     resolve_walkthrough_write_up_notes,
     settings_manager,
 )
-from services.walkthrough import library
-from services.walkthrough.storage import captures_root
-from services.walkthrough.write_up import AGENTS
-from ui_qt.dialogs import walkthrough_library
+from services.walkthrough.write_up import (
+    AGENTS,
+    DEFAULT_INSTRUCTIONS,
+    PRESETS,
+    preset_name,
+)
 from ui_qt.dialogs.settings_destinations import WALKTHROUGHS
 from ui_qt.widgets.agent_picker import FOUND, AgentMark, describe_agent
 from ui_qt.widgets.buttons import PrimaryButton, WarningButton
 from ui_qt.widgets.feature_badge import FeatureBadge
+from ui_qt.widgets.no_wheel import NoWheelComboBox
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
-#: How many walkthroughs the tab lists; the library holds the rest.
-RECENT_COUNT = 8
+#: The preset menu's last item while the prompt is the user's own words.
+OWN_PROMPT = "Your own"
+#: How long typing in the prompt pauses before it is saved.
+PROMPT_SAVE_DELAY_MS = 400
 
 #: Copy choices in the order the bar shows them, short enough that the three
 #: share one row at the window's minimum width.
@@ -59,7 +62,7 @@ COPY_CHOICES = (
     (WalkthroughCopyFormat.PDF, "PDF"),
 )
 
-_STYLE = walkthrough_library._STYLE + """
+_STYLE = """
     QFrame#walkthroughHero {
         background-color: @surface;
         border: 1px solid @border;
@@ -128,11 +131,35 @@ _STYLE = walkthrough_library._STYLE + """
     QLabel#walkthroughAgentStatus[tone="warning"] {
         color: @warning-text;
     }
-    QListWidget#wlList {
-        background-color: @surface;
-        border: 1px solid @border;
-        border-radius: 12px;
-        padding: 4px;
+    QWidget#walkthroughPromptArea {
+        background: transparent;
+    }
+    QFrame#walkthroughPromptRule {
+        background-color: @border;
+        border: none;
+        max-height: 1px;
+    }
+    QLabel#walkthroughPromptTitle {
+        color: @text;
+        font-size: 13px;
+        font-weight: 700;
+        background: transparent;
+    }
+    QComboBox#walkthroughPreset {
+        padding: 4px 10px;
+        font-size: 12px;
+        min-width: 150px;
+    }
+    QPlainTextEdit#walkthroughPrompt {
+        color: @text;
+        background-color: @slate-field;
+        border: 1px solid @slate-border;
+        border-radius: 10px;
+        padding: 6px 8px;
+        font-size: 13px;
+    }
+    QPlainTextEdit#walkthroughPrompt:focus {
+        border-color: @accent;
     }
 """
 
@@ -188,25 +215,27 @@ class AgentChoice(QPushButton):
 
 
 class WalkthroughTab(QWidget):
-    """Start or finish a walkthrough, set up what follows it, and reopen recent ones."""
+    """Start or finish a walkthrough, and set up what follows it."""
 
     #: Start a walkthrough, or finish the one recording.
     walkthrough_requested = pyqtSignal()
     #: Throw the recording walkthrough away.
     cancel_requested = pyqtSignal()
-    #: Open the library: a capture folder to select, or None for the newest.
-    library_requested = pyqtSignal(object)
     settings_requested = pyqtSignal(str)
 
-    def __init__(self, parent=None, *, root: Path | None = None, today=date.today):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("walkthroughTab")
         self.setStyleSheet(_STYLE)
-        self.root = Path(root) if root is not None else captures_root()
-        self._today = today
         self.is_recording = False
         self.walkthrough_active = False
         self._scan_token = 0
+        #: The user's own prompt, kept while a preset is tried in its place.
+        self._own_prompt = ""
+        self._prompt_timer = QTimer(self)
+        self._prompt_timer.setSingleShot(True)
+        self._prompt_timer.setInterval(PROMPT_SAVE_DELAY_MS)
+        self._prompt_timer.timeout.connect(self._save_prompt)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -224,23 +253,9 @@ class WalkthroughTab(QWidget):
         column.setSpacing(12)
         column.addWidget(self._hero())
         column.addWidget(self._write_up_card())
-        column.addLayout(self._recent_header())
-        self.recent_list = QListWidget()
-        self.recent_list.setObjectName("wlList")
-        self.recent_list.setAccessibleName("Recent walkthroughs")
-        self.recent_list.setMinimumHeight(110)
-        self.recent_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
-        self.recent_list.itemActivated.connect(self._open_item)
-        self.recent_list.itemClicked.connect(self._open_item)
-        column.addWidget(self.recent_list, 1)
-        self.empty_label = WrappedLabel(
-            "Nothing yet. Your walkthroughs show up here, newest first.")
-        self.empty_label.setObjectName("infoLabel")
-        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        column.addWidget(self.empty_label, 1)
+        column.addStretch(1)
 
         self.load_settings()
-        self.refresh_recent()
         self._show_agents()
 
     # ---- building ----
@@ -340,6 +355,52 @@ class WalkthroughTab(QWidget):
             agents.addWidget(choice)
             self.agent_choices[agent] = choice
         body.addLayout(agents)
+        body.addWidget(self._prompt_area())
+        return card
+
+    def _prompt_area(self) -> QWidget:
+        """What the agent is asked for, and whether it listens to spoken notes.
+
+        Shown only while the write-up is on: with it off there is no agent to ask.
+        """
+        self.prompt_area = QWidget()
+        self.prompt_area.setObjectName("walkthroughPromptArea")
+        area = QVBoxLayout(self.prompt_area)
+        area.setContentsMargins(0, 2, 0, 0)
+        area.setSpacing(8)
+        rule = QFrame()
+        rule.setObjectName("walkthroughPromptRule")
+        rule.setFixedHeight(1)
+        area.addWidget(rule)
+
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        title = QLabel("Prompt")
+        title.setObjectName("walkthroughPromptTitle")
+        head.addWidget(title)
+        head.addStretch(1)
+        start = QLabel("Start from")
+        start.setObjectName("walkthroughKeyName")
+        head.addWidget(start)
+        self.preset_combo = NoWheelComboBox()
+        self.preset_combo.setObjectName("walkthroughPreset")
+        self.preset_combo.setAccessibleName("Prompt preset")
+        for name, _words in PRESETS:
+            self.preset_combo.addItem(name)
+        self.preset_combo.activated.connect(self._on_preset_chosen)
+        head.addWidget(self.preset_combo)
+        area.addLayout(head)
+
+        self.prompt_edit = QPlainTextEdit()
+        self.prompt_edit.setObjectName("walkthroughPrompt")
+        self.prompt_edit.setAccessibleName("Write-up prompt")
+        self.prompt_edit.setPlaceholderText(DEFAULT_INSTRUCTIONS)
+        self.prompt_edit.setTabChangesFocus(True)
+        self.prompt_edit.setMinimumHeight(96)
+        self.prompt_edit.setMaximumHeight(190)
+        self.prompt_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.prompt_edit.textChanged.connect(self._on_prompt_edited)
+        area.addWidget(self.prompt_edit)
 
         options = QHBoxLayout()
         options.setSpacing(8)
@@ -355,37 +416,30 @@ class WalkthroughTab(QWidget):
             "agent follows it instead of writing it into the document.")
         options.addWidget(self.notes_label)
         options.addStretch(1)
-        body.addLayout(options)
-        return card
-
-    def _recent_header(self) -> QHBoxLayout:
-        head = QHBoxLayout()
-        head.setContentsMargins(2, 4, 2, 0)
-        title = QLabel("Recent")
-        title.setObjectName("walkthroughSectionTitle")
-        head.addWidget(title)
-        self.count_label = QLabel("")
-        self.count_label.setObjectName("walkthroughKeyName")
-        head.addWidget(self.count_label)
-        head.addStretch(1)
-        self.open_all = QPushButton("Open all…")
-        self.open_all.setObjectName("walkthroughSettingsLink")
-        self.open_all.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.open_all.clicked.connect(lambda: self.library_requested.emit(None))
-        head.addWidget(self.open_all)
-        return head
+        area.addLayout(options)
+        return self.prompt_area
 
     # ---- state ----
 
     def load_settings(self) -> None:
-        """Show the saved write-up and copy choices without saving them back."""
+        """Show the saved write-up and copy choices without saving them back.
+
+        Typing not yet saved is saved first: it is newer than anything here.
+        """
+        if self._prompt_timer.isActive():
+            self._save_prompt()
         settings = settings_manager.load_all_settings()
-        for widget in (self.write_up_switch, self.notes_switch):
+        for widget in (self.write_up_switch, self.notes_switch, self.prompt_edit):
             widget.blockSignals(True)
         self.write_up_switch.setChecked(resolve_walkthrough_write_up(settings))
         self.notes_switch.setChecked(resolve_walkthrough_write_up_notes(settings))
-        for widget in (self.write_up_switch, self.notes_switch):
+        prompt = resolve_walkthrough_write_up_instructions(settings) or DEFAULT_INSTRUCTIONS
+        if self.prompt_edit.toPlainText().strip() != prompt:
+            # Only when it differs: setting it moves the cursor to the start.
+            self.prompt_edit.setPlainText(prompt)
+        for widget in (self.write_up_switch, self.notes_switch, self.prompt_edit):
             widget.blockSignals(False)
+        self._show_preset()
         self._agent = resolve_walkthrough_write_up_agent(settings)
         copy = resolve_walkthrough_copy_format(settings)
         self.copy_bar.setCurrentIndex(
@@ -415,8 +469,46 @@ class WalkthroughTab(QWidget):
             if on else "Off: you get it as spoken. Pick an agent to turn it on.")
         for agent, choice in self.agent_choices.items():
             choice.setChecked(on and agent == self._agent)
-        self.notes_switch.setEnabled(on)
-        self.notes_label.setEnabled(on)
+        self.prompt_area.setVisible(on)
+
+    # ---- the prompt ----
+
+    def _on_prompt_edited(self) -> None:
+        self._prompt_timer.start()
+        self._show_preset()
+
+    def _save_prompt(self) -> None:
+        """Save the prompt; the default's own words save as "", like an empty box."""
+        self._prompt_timer.stop()
+        text = self.prompt_edit.toPlainText().strip()
+        settings_manager.save_setting(
+            SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS,
+            "" if text == DEFAULT_INSTRUCTIONS else text)
+
+    def _show_preset(self) -> None:
+        """Point the menu at the preset the prompt is, or at the user's own words."""
+        text = self.prompt_edit.toPlainText().strip()
+        name = preset_name(text)
+        if not name:
+            self._own_prompt = text
+        own = self.preset_combo.findText(OWN_PROMPT)
+        if self._own_prompt and own < 0:
+            self.preset_combo.addItem(OWN_PROMPT)
+            own = self.preset_combo.count() - 1
+        self.preset_combo.setCurrentIndex(self.preset_combo.findText(name) if name else own)
+
+    def _on_preset_chosen(self, index: int) -> None:
+        # The last item, past the presets, brings back the user's own words.
+        words = PRESETS[index][1] if index < len(PRESETS) else self._own_prompt
+        if words != self.prompt_edit.toPlainText().strip():
+            self.prompt_edit.setPlainText(words)
+        self._save_prompt()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        # Settings → Walkthroughs edits the same choices; show them on return.
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self.load_settings()
 
     def _show_agents(self) -> None:
         """Label each agent with the last scan; scan once if none has run."""
@@ -435,30 +527,6 @@ class WalkthroughTab(QWidget):
     def _on_scan_done(self, token: int) -> None:
         if token == self._scan_token:
             self._show_agents()
-
-    def refresh_recent(self) -> None:
-        """List the newest walkthroughs, interrupted drafts included."""
-        self.recent_list.clear()
-        try:
-            folders = library.entries(self.root)
-        except OSError:
-            folders = []
-        today = self._today()
-        for folder in folders[:RECENT_COUNT]:
-            entry = walkthrough_library._Entry(folder, today)
-            item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole, str(folder))
-            item.setData(Qt.ItemDataRole.AccessibleTextRole, entry.summary)
-            item.setSizeHint(QSize(0, entry.sizeHint().height()))
-            self.recent_list.addItem(item)
-            self.recent_list.setItemWidget(item, entry)
-        self.count_label.setText(f"· {len(folders)}" if folders else "")
-        self.recent_list.setVisible(bool(folders))
-        self.empty_label.setVisible(not folders)
-        self.open_all.setVisible(bool(folders))
-
-    def _open_item(self, item: QListWidgetItem) -> None:
-        self.library_requested.emit(Path(item.data(Qt.ItemDataRole.UserRole)))
 
     def set_hotkeys(self, walkthrough_key: str, screenshot_key: str) -> None:
         for chip, key in ((self.start_key, walkthrough_key), (self.snap_key, screenshot_key)):
@@ -479,5 +547,3 @@ class WalkthroughTab(QWidget):
             "Finish Walkthrough" if walkthrough_active else "Start Walkthrough")
         self.walkthrough_button.set_active(walkthrough_active or not is_recording)
         self.cancel_button.setVisible(walkthrough_active)
-        if not is_recording:
-            self.refresh_recent()

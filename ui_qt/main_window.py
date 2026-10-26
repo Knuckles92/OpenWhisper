@@ -542,6 +542,7 @@ class MainWindow(QMainWindow):
             self.past_meetings_clear_requested.emit
         )
         self.history_sidebar.calendar_requested.connect(self.open_history_calendar)
+        self.history_sidebar.walkthrough_selected.connect(self.walkthrough_library_requested)
         self.history_sidebar.width_animated.connect(self._on_sidebar_width_animated)
         self.history_sidebar.animation.finished.connect(
             self._on_sidebar_animation_finished
@@ -643,7 +644,6 @@ class MainWindow(QMainWindow):
             elif key == "walkthrough":
                 widget.walkthrough_requested.connect(self.walkthrough_requested)
                 widget.cancel_requested.connect(self._on_quick_record_canceled)
-                widget.library_requested.connect(self.walkthrough_library_requested)
                 widget.settings_requested.connect(self.settings_destination_requested)
             else:
                 widget.content_height_changed.connect(self._schedule_meeting_mode_height_sync)
@@ -940,8 +940,13 @@ class MainWindow(QMainWindow):
         self._current_tab_index = index
 
         meeting_mode = index == TabbedContentWidget.TAB_MEETING_MODE
-        self.history_sidebar.set_meeting_mode(meeting_mode)
-        panel_name = "Past Meetings" if meeting_mode else "History"
+        sidebar = self.history_sidebar
+        # Meeting Mode and the Walkthrough tab list their own past items there.
+        page, panel_name = {
+            TabbedContentWidget.TAB_MEETING_MODE: (sidebar.MEETINGS, "Past Meetings"),
+            TabbedContentWidget.TAB_WALKTHROUGH: (sidebar.WALKTHROUGHS, "Walkthroughs"),
+        }.get(index, (sidebar.HISTORY, "History"))
+        sidebar.set_page(page)
         self.history_edge_tab.set_panel_name(panel_name)
         if hasattr(self, "sidebar_action"):
             self.sidebar_action.setText(panel_name)

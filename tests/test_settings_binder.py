@@ -182,13 +182,34 @@ def test_plain_text_saves_on_focus_out_and_keeps_the_default_unsaved(app):
     def leave():
         QApplication.sendEvent(edit, QFocusEvent(QEvent.Type.FocusOut))
 
-    edit.setPlainText("  Mine  ")
+    def type_(text):
+        edit.setPlainText(text)
+        edit.document().setModified(True)
+
+    type_("  Mine  ")
     assert persist.saved == []  # not while typing
     leave()
-    edit.setPlainText("The default.")
+    leave()  # nothing new to save
+    type_("The default.")
     leave()
     assert persist.saved == [("notes", "Mine"), ("notes", "")]
 
     persist.loading = True
     binder.load({"notes": "Saved"})
     assert edit.toPlainText() == "Saved"
+
+
+def test_plain_text_passing_focus_through_keeps_a_change_made_elsewhere(app):
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtGui import QFocusEvent
+    from PyQt6.QtWidgets import QPlainTextEdit
+
+    persist = _Recorder()
+    binder = SettingsBinder(persist)
+    edit = QPlainTextEdit()
+    binder.plain_text(edit, "notes", lambda settings: settings.get("notes", ""))
+    binder.load({"notes": "Loaded before the tab changed it"})
+
+    QApplication.sendEvent(edit, QFocusEvent(QEvent.Type.FocusOut))
+
+    assert persist.saved == []

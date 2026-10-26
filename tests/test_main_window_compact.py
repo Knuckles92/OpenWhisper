@@ -366,12 +366,25 @@ class TestMainWindowCompactMode:
         destination = QSignalSpy(self.window.settings_destination_requested)
 
         tab.walkthrough_button.click()
-        tab.open_all.click()
+        self.window.history_sidebar.walkthrough_selected.emit(None)
         tab.settings_link.click()
 
         assert len(started) == 1
         assert [args[0] for args in library] == [None]
         assert [args[0] for args in destination] == ["walkthroughs"]
+
+    def test_the_walkthrough_tab_lists_walkthroughs_in_the_side_panel(self):
+        from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+        tabs, sidebar = self.window.tabbed_content, self.window.history_sidebar
+
+        tabs.set_current_index(TabbedContentWidget.TAB_WALKTHROUGH)
+        assert sidebar.page == sidebar.WALKTHROUGHS
+        assert "Walkthroughs" in self.window.history_edge_tab.toolTip()
+
+        tabs.set_current_index(TabbedContentWidget.TAB_QUICK_RECORD)
+        assert sidebar.page == sidebar.HISTORY
+        assert "History" in self.window.history_edge_tab.toolTip()
 
     def test_walkthrough_tab_fits_at_minimum_size(self):
         """At the window's floor the controls show unscrolled; the list takes what's left."""

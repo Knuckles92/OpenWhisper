@@ -749,6 +749,11 @@ class HistoryItemWidget(QFrame):
 
 
 class HistorySidebar(QWidget):
+    #: The pages it shows: History, or the open tab's own past items.
+    HISTORY = "history"
+    MEETINGS = "meetings"
+    WALKTHROUGHS = "walkthroughs"
+
     entry_selected = pyqtSignal(str)
     entry_copied = pyqtSignal(str)
     entry_deleted = pyqtSignal(str)
@@ -757,6 +762,8 @@ class HistorySidebar(QWidget):
     past_meeting_copy_requested = pyqtSignal(str)
     past_meeting_delete_requested = pyqtSignal(str, bool)
     past_meetings_clear_requested = pyqtSignal(bool)
+    #: Open Saved Walkthroughs: a capture folder to select, or None for the newest.
+    walkthrough_selected = pyqtSignal(object)
     #: The calendar button in either page's header was clicked.
     calendar_requested = pyqtSignal()
     # Emits the sidebar width every animation frame so the owning window can
@@ -776,7 +783,9 @@ class HistorySidebar(QWidget):
         self._is_expanded = False
         self._current_width = self.COLLAPSED_WIDTH
         self._refresh_pending = True
-        self._meeting_mode = False
+        self._page = self.HISTORY
+        #: The Walkthroughs page, made the first time it shows.
+        self.walkthroughs_content_widget = None
         self._history_load_generation = 0
         self._history_cards = {}
         self._history_cancel = threading.Event()
@@ -920,6 +929,8 @@ class HistorySidebar(QWidget):
         self.content_widget.setGeometry(*geometry)
         if hasattr(self, "meetings_content_widget"):
             self.meetings_content_widget.setGeometry(*geometry)
+        if self.walkthroughs_content_widget is not None:
+            self.walkthroughs_content_widget.setGeometry(*geometry)
 
     def _get_sidebar_width(self):
         return self._current_width
@@ -1058,18 +1069,34 @@ class HistorySidebar(QWidget):
         else:
             self.expand()
 
-    def set_meeting_mode(self, enabled: bool) -> None:
-        enabled = bool(enabled)
-        if enabled == self._meeting_mode:
+    @property
+    def page(self) -> str:
+        return self._page
+
+    def set_page(self, page: str) -> None:
+        """Show History, Past Meetings or Walkthroughs."""
+        if page == self._page:
             return
-        self._meeting_mode = enabled
-        if enabled:
+        self._page = page
+        if page != self.HISTORY:
             history_playback.stop_all()
-        self.content_widget.setVisible(not enabled)
-        self.meetings_content_widget.setVisible(enabled)
+        if page == self.WALKTHROUGHS and self.walkthroughs_content_widget is None:
+            self._setup_walkthroughs_ui()
+        self.content_widget.setVisible(page == self.HISTORY)
+        self.meetings_content_widget.setVisible(page == self.MEETINGS)
+        if self.walkthroughs_content_widget is not None:
+            self.walkthroughs_content_widget.setVisible(page == self.WALKTHROUGHS)
         self._refresh_pending = True
         if self._is_expanded:
             self.refresh()
+
+    def _setup_walkthroughs_ui(self) -> None:
+        from ui_qt.widgets.past_walkthroughs import PastWalkthroughsPanel
+
+        panel = self.walkthroughs_content_widget = PastWalkthroughsPanel(self)
+        panel.setFixedWidth(self.EXPANDED_WIDTH)
+        panel.setGeometry(0, 0, self.EXPANDED_WIDTH, self.height())
+        panel.walkthrough_selected.connect(self.walkthrough_selected)
 
     @property
     def is_expanded(self) -> bool:
@@ -1082,8 +1109,10 @@ class HistorySidebar(QWidget):
             return
 
         self._refresh_pending = False
-        if self._meeting_mode:
+        if self._page == self.MEETINGS:
             self.meetings_content_widget.refresh()
+        elif self._page == self.WALKTHROUGHS:
+            self.walkthroughs_content_widget.refresh()
         else:
             self._load_history()
 
