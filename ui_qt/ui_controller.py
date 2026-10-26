@@ -54,6 +54,7 @@ from services.settings import (
     SettingsKey,
     resolve_ui_theme,
     resolve_update_restart_prompt_enabled,
+    resolve_walkthrough_minimize_to_tray,
     settings_manager,
 )
 
@@ -1092,6 +1093,12 @@ class UIController(QObject):
         self.main_window.set_walkthrough_active(active)
         self.overlay.set_walkthrough_controls(active)
         self._show_walkthrough_panel(active)
+        if (
+            active
+            and self.main_window.isVisible()
+            and resolve_walkthrough_minimize_to_tray(settings_manager.load_all_settings())
+        ):
+            self.main_window.minimize_to_tray()
 
     def _show_walkthrough_panel(self, recording: bool) -> None:
         """Open the column that writes the walkthrough, or let it finish writing."""

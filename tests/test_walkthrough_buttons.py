@@ -193,9 +193,11 @@ def test_the_tab_opens_on_the_saved_choices():
         SettingsKey.WALKTHROUGH_WRITE_UP_NOTES: True,
         SettingsKey.WALKTHROUGH_COPY_FORMAT: WalkthroughCopyFormat.BOTH,
         SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS: write_up.PRESETS[2][1],
+        SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY: True,
     })
     tab = WalkthroughTab()
     try:
+        assert tab.minimize_check.isChecked()
         assert tab.agent_choices[MeetingAgentCore.OPENCODE_CLI].isChecked()
         assert tab.notes_switch.isChecked()
         assert COPY_CHOICES[tab.copy_bar.currentIndex()][0] == WalkthroughCopyFormat.BOTH
@@ -213,6 +215,14 @@ def test_the_copy_choice_is_saved(tab):
 
     assert (settings_manager.load_all_settings()[SettingsKey.WALKTHROUGH_COPY_FORMAT]
             == WalkthroughCopyFormat.AGENT)
+
+
+def test_minimizing_to_tray_on_start_is_off_until_ticked_and_then_saved(tab):
+    assert not tab.minimize_check.isChecked()
+
+    tab.minimize_check.click()
+
+    assert settings_manager.load_all_settings()[SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY] is True
 
 
 def test_each_agent_says_whether_the_last_scan_found_it(tab):
@@ -439,6 +449,33 @@ def test_the_controller_shows_the_walkthrough_everywhere():
     ui.main_window.set_walkthrough_active.assert_called_once_with(True)
     ui.overlay.set_walkthrough_controls.assert_called_once_with(True)
     ui._show_walkthrough_panel.assert_called_once_with(True)
+
+
+@pytest.mark.parametrize(
+    "ticked, visible, active, minimized",
+    [
+        (True, True, True, True),
+        (False, True, True, False),
+        # Already in the tray: nothing to minimize.
+        (True, False, True, False),
+        # Finishing leaves the window where the user put it.
+        (True, True, False, False),
+    ],
+)
+def test_a_walkthrough_starting_minimizes_the_window_to_the_tray_when_ticked(
+    ticked, visible, active, minimized
+):
+    settings_manager.update_settings({SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY: ticked})
+    ui = SimpleNamespace(
+        tray_manager=Mock(),
+        main_window=Mock(**{"isVisible.return_value": visible}),
+        overlay=Mock(),
+        _show_walkthrough_panel=Mock(),
+    )
+
+    UIController.set_walkthrough_active(ui, active)
+
+    assert ui.main_window.minimize_to_tray.called is minimized
 
 
 def test_snaps_keep_the_walkthrough_column_out_while_it_shows(monkeypatch):
