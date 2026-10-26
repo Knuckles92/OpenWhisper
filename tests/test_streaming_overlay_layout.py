@@ -1,6 +1,5 @@
 """Where the recording overlay puts its look once live preview words arrive."""
 import os
-import time
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
