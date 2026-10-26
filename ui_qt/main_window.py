@@ -283,6 +283,8 @@ class MainWindow(QMainWindow):
     record_toggled = pyqtSignal(bool)
     record_canceled = pyqtSignal()
     walkthrough_requested = pyqtSignal()
+    #: Open the walkthrough library at a capture folder, or None for the newest.
+    walkthrough_library_requested = pyqtSignal(object)
     model_changed = pyqtSignal(str)
     whisper_engine_changed = pyqtSignal()  # Local engine (model/device/quant) changed
     # The Remote backend's Model field chose one of the paired computer's
@@ -348,6 +350,8 @@ class MainWindow(QMainWindow):
             self.setMaximumSize(UNLIMITED_HEIGHT, UNLIMITED_HEIGHT)
 
         self.is_recording = False
+        # The recording in progress is a walkthrough, which its own tab finishes.
+        self.walkthrough_active = False
         self.current_model = config.MODEL_CHOICES[0]
         self._force_quit = False
         # Updated by UIController after QSystemTrayIcon probes the desktop.
@@ -356,7 +360,7 @@ class MainWindow(QMainWindow):
         self._tray_available = True
         self._initial_show_complete = False
         self._screen_widgets = {}
-        self._screen_updates = {"upload": {}, "meeting": {}, "host": {}}
+        self._screen_updates = {"upload": {}, "walkthrough": {}, "meeting": {}, "host": {}}
         self._shared_tab_updates = {}
         self._host_service = None
         self._compact_mode = False
@@ -474,7 +478,11 @@ class MainWindow(QMainWindow):
         self.tabbed_content.add_tab(self.quick_record_tab, "Quick Record")
 
         self._screen_placeholders = {}
-        for key, label in (("upload", "Upload File"), ("meeting", "Meeting Mode")):
+        for key, label in (
+            ("upload", "Upload File"),
+            ("walkthrough", "Walkthrough"),
+            ("meeting", "Meeting Mode"),
+        ):
             placeholder = QWidget()
             self._screen_placeholders[key] = placeholder
             self.tabbed_content.add_tab(placeholder, label)
@@ -501,7 +509,6 @@ class MainWindow(QMainWindow):
 
         self.quick_record_tab.record_toggled.connect(self._on_quick_record_toggled)
         self.quick_record_tab.record_canceled.connect(self._on_quick_record_canceled)
-        self.quick_record_tab.walkthrough_requested.connect(self.walkthrough_requested)
         self.quick_record_tab.copy_requested.connect(self.quick_record_copy_requested)
 
         main_area_layout.addWidget(self.tabbed_content)
@@ -576,6 +583,10 @@ class MainWindow(QMainWindow):
         return self._ensure_screen("upload")
 
     @property
+    def walkthrough_tab(self):
+        return self._ensure_screen("walkthrough")
+
+    @property
     def meeting_mode_tab(self):
         return self._ensure_screen("meeting")
 
@@ -590,6 +601,10 @@ class MainWindow(QMainWindow):
             from ui_qt.widgets.upload_file_tab import UploadFileTab
 
             widget = UploadFileTab()
+        elif key == "walkthrough":
+            from ui_qt.widgets.walkthrough_tab import WalkthroughTab
+
+            widget = WalkthroughTab()
         elif key == "meeting":
             from ui_qt.widgets.meeting_mode_tab import MeetingModeTab
 
@@ -625,6 +640,11 @@ class MainWindow(QMainWindow):
                 self._apply_local_engine_visibility(self.current_model)
                 for method, (args, kwargs) in self._shared_tab_updates.items():
                     getattr(widget, method)(*args, **kwargs)
+            elif key == "walkthrough":
+                widget.walkthrough_requested.connect(self.walkthrough_requested)
+                widget.cancel_requested.connect(self._on_quick_record_canceled)
+                widget.library_requested.connect(self.walkthrough_library_requested)
+                widget.settings_requested.connect(self.settings_destination_requested)
             else:
                 widget.content_height_changed.connect(self._schedule_meeting_mode_height_sync)
         for method, (args, kwargs) in self._screen_updates[key].items():
@@ -906,6 +926,8 @@ class MainWindow(QMainWindow):
         logger.debug(f"Tab changed to index {index}")
         if index == TabbedContentWidget.TAB_UPLOAD_FILE:
             self._ensure_screen("upload")
+        elif index == TabbedContentWidget.TAB_WALKTHROUGH:
+            self._ensure_screen("walkthrough")
         elif index == TabbedContentWidget.TAB_MEETING_MODE:
             self._ensure_screen("meeting")
 
@@ -1067,10 +1089,31 @@ class MainWindow(QMainWindow):
             "Recording in progress..." if self.is_recording else "Ready to record"
         )
 
+        self.update_screen(
+            "walkthrough", "set_recording_state", self.is_recording, self.walkthrough_active
+        )
         if self.is_recording:
-            self.tabbed_content.set_recording_state(True, TabbedContentWidget.TAB_QUICK_RECORD)
+            self.tabbed_content.set_recording_state(True, self._recording_tab())
         elif not self.meeting_is_active():
             self.tabbed_content.set_recording_state(False, -1)
+
+    def _recording_tab(self) -> int:
+        """The tab that finishes the recording in progress.
+
+        Compact mode stays on Quick Record: opening another tab leaves it.
+        """
+        if self.walkthrough_active and not self._compact_mode:
+            return TabbedContentWidget.TAB_WALKTHROUGH
+        return TabbedContentWidget.TAB_QUICK_RECORD
+
+    def set_walkthrough_active(self, active: bool) -> None:
+        """Whether the recording in progress is a walkthrough; its tab then finishes it."""
+        self.walkthrough_active = bool(active)
+        self.update_screen(
+            "walkthrough", "set_recording_state", self.is_recording, self.walkthrough_active
+        )
+        if self.is_recording:
+            self.tabbed_content.set_recording_state(True, self._recording_tab())
 
     def set_status(self, status_text: str):
         self.quick_record_tab.set_status(status_text)
@@ -1866,6 +1909,7 @@ class MainWindow(QMainWindow):
         enable_disable_key: str = "",
         minimize_key: str = "",
         walkthrough_key: str = "",
+        screenshot_key: str = "",
     ):
         """
         Update the hotkey display on buttons.
@@ -1876,10 +1920,10 @@ class MainWindow(QMainWindow):
             enable_disable_key: The key for enabling/disabling STT
             minimize_key: The key for minimizing to the system tray
             walkthrough_key: The key that starts and finishes a walkthrough
+            screenshot_key: The key that takes a screenshot
         """
-        self.quick_record_tab.update_hotkeys(
-            record_key, cancel_key, enable_disable_key, walkthrough_key
-        )
+        self.quick_record_tab.update_hotkeys(record_key, cancel_key, enable_disable_key)
+        self.update_screen("walkthrough", "set_hotkeys", walkthrough_key, screenshot_key)
         self.compact_controller.update_hotkeys(record_key, cancel_key)
         self.tray_button.set_hotkey(minimize_key)
 

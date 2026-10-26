@@ -116,7 +116,9 @@ class TestMeetingIntroAppearsOnFirstVisit(unittest.TestCase):
             patch.object(
                 settings_manager,
                 "load_all_settings",
-                return_value={SettingsKey.LAST_TAB_INDEX: last_tab},
+                return_value={
+                    SettingsKey.LAST_TAB_INDEX: TabbedContentWidget.SAVED_TAB_IDS[last_tab],
+                },
             ),
             patch.object(
                 settings_manager,

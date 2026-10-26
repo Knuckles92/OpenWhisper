@@ -485,8 +485,7 @@ class UIController(QObject):
         self.overlay.walkthrough_snap_requested.connect(self._on_overlay_snap)
         self.overlay.walkthrough_finish_requested.connect(self._on_overlay_finish)
         self.main_window.walkthrough_requested.connect(self._on_window_walkthrough)
-        self.main_window.quick_record_tab.saved_walkthroughs_requested.connect(
-            self.show_walkthrough_library)
+        self.main_window.walkthrough_library_requested.connect(self.show_walkthrough_library)
 
         self.record_started.connect(self._show_recording_overlay)
         self.record_stopped.connect(self._show_processing_overlay)
@@ -1090,7 +1089,7 @@ class UIController(QObject):
         """Whether a walkthrough records: the window's button and the tray then
         finish it, and the recording overlay offers Snap and Done."""
         self.tray_manager.set_walkthrough_active(active)
-        self.main_window.quick_record_tab.set_walkthrough_active(active)
+        self.main_window.set_walkthrough_active(active)
         self.overlay.set_walkthrough_controls(active)
         self._show_walkthrough_panel(active)
 
@@ -2258,12 +2257,12 @@ class UIController(QObject):
             hotkeys.get('minimize_tray', config.DEFAULT_HOTKEYS['minimize_tray'])
         )
         walkthrough_key = format_hotkey_display(hotkeys.get('walkthrough') or "")
+        screenshot_key = format_hotkey_display(hotkeys.get('screenshot') or "")
         self.main_window.update_hotkeys(
-            record_key, cancel_key, enable_disable_key, minimize_key, walkthrough_key
+            record_key, cancel_key, enable_disable_key, minimize_key, walkthrough_key,
+            screenshot_key,
         )
-        self.overlay.set_control_hotkeys(
-            format_hotkey_display(hotkeys.get('screenshot') or ""), walkthrough_key
-        )
+        self.overlay.set_control_hotkeys(screenshot_key, walkthrough_key)
 
     def _on_check_for_updates_requested(self) -> None:
         """Manual update checks always hit GitHub."""

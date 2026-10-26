@@ -3,11 +3,11 @@ import logging
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QLabel
 from PyQt6.QtCore import QEvent, Qt, QSize, QTimer, pyqtSignal
 
-from ui_qt.dialogs.settings_destinations import COMMANDS, WALKTHROUGHS
+from ui_qt.dialogs.settings_destinations import COMMANDS
 from ui_qt.utils.agent_lookup import lookup_relay
 from ui_qt.utils.icons import tabler_icon
 from ui_qt.widgets.cards import ControlPanel
-from ui_qt.widgets.buttons import Button, PrimaryButton, SuccessButton, DangerButton, WarningButton
+from ui_qt.widgets.buttons import SuccessButton, DangerButton, WarningButton
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.engine_field import engine_combo
@@ -16,11 +16,9 @@ from services.cleanup_profiles import load_cleanup_profiles
 from services.hotkey_manager import format_hotkey_display
 from services.settings import (
     SettingsKey,
-    resolve_walkthrough_intro_seen,
     setting_value,
     settings_manager,
 )
-from ui_qt.widgets.feature_badge import FeatureBadge
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +26,6 @@ logger = logging.getLogger(__name__)
 class QuickRecordTab(TranscriptionTabBase):
     record_toggled = pyqtSignal(bool)
     record_canceled = pyqtSignal()
-    #: Start a walkthrough, or finish the one recording (docs/walkthrough.md).
-    walkthrough_requested = pyqtSignal()
-    saved_walkthroughs_requested = pyqtSignal()
     copy_requested = pyqtSignal(str)
     profiles_requested = pyqtSignal()
     settings_requested = pyqtSignal(str)
@@ -48,8 +43,6 @@ class QuickRecordTab(TranscriptionTabBase):
         # State (safe to set after the base constructor: _setup_ui never
         # reads it, and no signals can fire during init)
         self.is_recording = False
-        # The recording in progress is a walkthrough.
-        self.walkthrough_active = False
 
         self._partial_buffer = []
 
@@ -155,14 +148,6 @@ class QuickRecordTab(TranscriptionTabBase):
         self.command_link.clicked.connect(lambda: self.settings_requested.emit(COMMANDS))
         command.addWidget(self.command_link, alignment=Qt.AlignmentFlag.AlignLeft)
         command.addStretch()
-        self.walkthrough_settings_link = QPushButton("Walkthrough settings")
-        self.walkthrough_settings_link.setObjectName("walkthroughSettingsLink")
-        self.walkthrough_settings_link.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.walkthrough_settings_link.setToolTip("Open Walkthrough settings")
-        self.walkthrough_settings_link.clicked.connect(
-            lambda: self.settings_requested.emit(WALKTHROUGHS)
-        )
-        command.addWidget(self.walkthrough_settings_link)
         layout.addWidget(self.command_row)
         self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
         lookup_relay().looked_up.connect(self._on_agent_looked_up)
@@ -272,20 +257,6 @@ class QuickRecordTab(TranscriptionTabBase):
         self.cancel_button.set_active(False)
         self.stop_button = DangerButton("Stop")
         self.stop_button.set_active(False)
-        self.walkthrough_button = PrimaryButton("Start Walkthrough")
-        self.walkthrough_button.setProperty("buttonId", "walkthrough")
-        # Hovering the button shows its shortcut, like the buttons above it;
-        # the badge in its corner says what it does.
-        self.walkthrough_badge = FeatureBadge(
-            self.walkthrough_button,
-            "Talk while you take screenshots, then get one document with your "
-            "words and pictures in order, copied to paste into an agent or chat.",
-        )
-        self.walkthrough_badge.set_new(
-            not resolve_walkthrough_intro_seen(settings_manager.load_all_settings())
-        )
-        # It shares its row: keep the badge clear of the label.
-        self.walkthrough_button.reserve_beside_label(FeatureBadge.room_beside_label())
 
         buttons_widget = QWidget()
         buttons_layout = QVBoxLayout(buttons_widget)
@@ -301,18 +272,8 @@ class QuickRecordTab(TranscriptionTabBase):
         bottom_row.addWidget(self.stop_button, stretch=1)
         bottom_row.addWidget(self.cancel_button, stretch=1)
 
-        self.saved_walkthroughs_button = Button("Saved Walkthroughs…")
-        self.saved_walkthroughs_button.set_base_minimum_size(140, 48)
-        self.saved_walkthroughs_button.clicked.connect(self.saved_walkthroughs_requested)
-        # One row, so the tab still fits the minimum window height unscrolled.
-        walkthrough_row = QHBoxLayout()
-        walkthrough_row.setSpacing(12)
-        walkthrough_row.addWidget(self.walkthrough_button, stretch=1)
-        walkthrough_row.addWidget(self.saved_walkthroughs_button, stretch=1)
-
         buttons_layout.addLayout(top_row)
         buttons_layout.addLayout(bottom_row)
-        buttons_layout.addLayout(walkthrough_row)
         buttons_widget.setMaximumWidth(420)
 
         control_panel.layout.addStretch()
@@ -327,7 +288,6 @@ class QuickRecordTab(TranscriptionTabBase):
         self.record_button.clicked.connect(self._on_record_clicked)
         self.stop_button.clicked.connect(self._on_stop_clicked)
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
-        self.walkthrough_button.clicked.connect(self.walkthrough_requested)
 
     def _on_record_clicked(self):
         """Request a start; Recording chrome waits for a successful stream."""
@@ -366,22 +326,6 @@ class QuickRecordTab(TranscriptionTabBase):
             self.local_engine.set_busy(False)
             self.set_live_preview_locked(False)
             self.set_status("Ready to record")
-        self._refresh_walkthrough_button()
-
-    def set_walkthrough_active(self, active: bool) -> None:
-        """Whether the recording in progress is a walkthrough, which the button finishes."""
-        self.walkthrough_active = bool(active)
-        if self.walkthrough_active and self.walkthrough_badge.text() == FeatureBadge.NEW:
-            settings_manager.save_setting(SettingsKey.WALKTHROUGH_INTRO_SEEN, True)
-            self.walkthrough_badge.set_new(False)
-        self._refresh_walkthrough_button()
-
-    def _refresh_walkthrough_button(self) -> None:
-        """Start a walkthrough, finish the one recording, or wait out a dictation."""
-        self.walkthrough_button.setText(
-            "Finish Walkthrough" if self.walkthrough_active else "Start Walkthrough"
-        )
-        self.walkthrough_button.set_active(self.walkthrough_active or not self.is_recording)
 
     def append_transcription(self, text: str):
         self.set_transcript(self.shown_transcript() + text)
@@ -410,9 +354,7 @@ class QuickRecordTab(TranscriptionTabBase):
     def clear_partial_transcription(self):
         self._partial_buffer.clear()
 
-    def update_hotkeys(self, record_key: str, cancel_key: str, enable_disable_key: str = "",
-                       walkthrough_key: str = ""):
+    def update_hotkeys(self, record_key: str, cancel_key: str, enable_disable_key: str = ""):
         self._standard_record_key = record_key
         self._refresh_profile_hint()
         self.cancel_button.set_hotkey(cancel_key)
-        self.walkthrough_button.set_hotkey(walkthrough_key)

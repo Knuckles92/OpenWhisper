@@ -6,9 +6,10 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 from services.settings import SettingsKey, settings_manager
 from ui_qt.main_window import MainWindow
+from ui_qt.widgets.tabbed_content import TabbedContentWidget
 
 
-@pytest.mark.parametrize("last_tab", [0, 1, 2])
+@pytest.mark.parametrize("last_tab", list(TabbedContentWidget.SAVED_TAB_IDS))
 @pytest.mark.parametrize("insights_enabled", [False, True])
 @pytest.mark.parametrize("platform_warning", [False, True])
 def test_startup_only_shows_the_requested_main_window(
@@ -16,7 +17,7 @@ def test_startup_only_shows_the_requested_main_window(
 ):
     settings_manager.update_settings(
         {
-            SettingsKey.LAST_TAB_INDEX: last_tab,
+            SettingsKey.LAST_TAB_INDEX: TabbedContentWidget.SAVED_TAB_IDS[last_tab],
             SettingsKey.MEETING_CLOUD_LAST_ENABLED: insights_enabled,
             SettingsKey.MEETING_MODE_INTRO_SEEN: True,
         }

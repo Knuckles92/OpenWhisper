@@ -13,15 +13,32 @@ Code: `services/runtime/walkthrough.py` (what each shortcut press does),
 
 ## Using it
 
-Quick Record has a **Start Walkthrough** button (it reads **Finish
-Walkthrough** while one records), and while a walkthrough records the
-recording overlay offers **Snap** and **Done**, so it works without any
-shortcut. Those two take clicks on Windows and X11, where clicking the
-overlay leaves the app you are explaining in front. Both shortcuts start
-unassigned: set them under **Settings → Dictation → Walkthroughs**. The tray
-menu has **Start Walkthrough** and **Take Screenshot** too. Hovering the
-button shows its shortcut, like the buttons above it; the badge at its
-right end (**New** until your first walkthrough, then **?**) says what it does.
+The main window's **Walkthrough** tab (between Upload File and Meeting Mode)
+has a **Start Walkthrough** button. While one records it reads **Finish
+Walkthrough**, a **Cancel** button joins it, and the window keeps the
+Walkthrough tab in front; a walkthrough started in compact mode stays there.
+While a walkthrough records the recording overlay offers **Snap** and
+**Done**, so it works without any shortcut. Those two take clicks on Windows
+and X11, where clicking the overlay leaves the app you are explaining in
+front. Both shortcuts start unassigned: the tab shows them (or **Not set**)
+above the button, and **Walkthrough settings** opens **Settings → Dictation →
+Walkthroughs** to set them. The tray menu has **Start Walkthrough** and
+**Take Screenshot** too. Hovering the button shows its shortcut; the badge at
+its right end (**New** until your first walkthrough, then **?**) says what it
+does.
+
+The tab also holds the choices people change between walkthroughs, saved to
+the same settings as **Settings → Dictation → Walkthroughs**:
+
+- **Copy when it finishes**: **PDF + agent**, **Agent copy** or **PDF** (see
+  below).
+- **AI write-up**: a switch, and one card each for Claude Code, Codex and
+  OpenCode saying whether the last scan of this computer found it. Picking an
+  agent turns the write-up on. **Follow notes I leave for the agent** sits
+  under them.
+- **Recent**: your last eight walkthroughs and interrupted drafts, newest
+  first. Clicking one opens it in Saved Walkthroughs; **Open all…** opens the
+  library.
 
 - **Walkthrough** starts recording. Talk as you would to a colleague looking
   over your shoulder. The recording overlay says **Walkthrough**, then how
@@ -123,8 +140,8 @@ folder**, and the PDF as a chip you can drag into any app. Dragging works
 even where pasting a file doesn't. **Review / Retry write-up** opens the saved
 document; **Copy for agent** copies only the Markdown with local image paths,
 and **Copy PDF** copies only the file. These actions are also available later
-under **Quick Record → Saved Walkthroughs…**, after the card disappears or
-the clipboard has been overwritten.
+from the **Walkthrough** tab's **Recent** list and **Open all…**, after the
+card disappears or the clipboard has been overwritten.
 
 ## Review, recovery, and storage
 

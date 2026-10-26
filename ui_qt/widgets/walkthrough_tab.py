@@ -1,0 +1,483 @@
+"""The Walkthrough tab: start one, choose what happens to it, find the last few.
+
+Everything a walkthrough uses that people change between walkthroughs sits
+here: whether an agent writes it up and which one, whether it follows notes
+spoken to it, and what lands on the clipboard. The rest (shortcuts, how the
+document looks, the write-up instructions) stays in Settings → Walkthroughs,
+one link away. See docs/walkthrough.md.
+"""
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
+from services.installed_agents import AGENT_SPECS
+from services.settings import (
+    SettingsKey,
+    WalkthroughCopyFormat,
+    resolve_walkthrough_copy_format,
+    resolve_walkthrough_intro_seen,
+    resolve_walkthrough_write_up,
+    resolve_walkthrough_write_up_agent,
+    resolve_walkthrough_write_up_notes,
+    settings_manager,
+)
+from services.walkthrough import library
+from services.walkthrough.storage import captures_root
+from services.walkthrough.write_up import AGENTS
+from ui_qt.dialogs import walkthrough_library
+from ui_qt.dialogs.settings_destinations import WALKTHROUGHS
+from ui_qt.widgets.agent_picker import FOUND, AgentMark, describe_agent
+from ui_qt.widgets.buttons import PrimaryButton, WarningButton
+from ui_qt.widgets.feature_badge import FeatureBadge
+from ui_qt.widgets.segmented_bar import SegmentedBar
+from ui_qt.widgets.settings_switch import SettingsSwitch
+from ui_qt.widgets.wrapped_label import WrappedLabel
+
+#: How many walkthroughs the tab lists; the library holds the rest.
+RECENT_COUNT = 8
+
+#: Copy choices in the order the bar shows them, short enough that the three
+#: share one row at the window's minimum width.
+COPY_CHOICES = (
+    (WalkthroughCopyFormat.BOTH, "PDF + agent"),
+    (WalkthroughCopyFormat.AGENT, "Agent copy"),
+    (WalkthroughCopyFormat.PDF, "PDF"),
+)
+
+_STYLE = walkthrough_library._STYLE + """
+    QFrame#walkthroughHero {
+        background-color: @surface;
+        border: 1px solid @border;
+        border-radius: 14px;
+    }
+    QLabel#walkthroughKeyName {
+        color: @text-secondary;
+        font-size: 12px;
+        background: transparent;
+    }
+    QLabel#walkthroughKey {
+        color: @text;
+        background-color: @slate-field;
+        border: 1px solid @slate-border;
+        border-bottom-width: 2px;
+        border-radius: 6px;
+        padding: 1px 7px;
+        font-size: 12px;
+        font-weight: 600;
+    }
+    QLabel#walkthroughKey[unset="true"] {
+        color: @text-muted;
+        font-weight: 400;
+    }
+    QLabel#walkthroughSectionTitle {
+        color: @text;
+        font-size: 14px;
+        font-weight: 700;
+        background: transparent;
+    }
+    QPushButton#walkthroughAgent {
+        background-color: @slate-raised;
+        border: 1px solid @slate-border;
+        border-radius: 12px;
+        padding: 0;
+        text-align: left;
+    }
+    QPushButton#walkthroughAgent:hover {
+        border-color: @slate-border-hover;
+    }
+    QPushButton#walkthroughAgent:checked {
+        background-color: @accent-tint;
+        border: 2px solid @accent;
+    }
+    QPushButton#walkthroughAgent:focus {
+        border-color: @accent;
+    }
+    QPushButton#walkthroughAgent:disabled {
+        background-color: @slate-field;
+        border-color: @slate-border-subtle;
+    }
+    QLabel#walkthroughAgentName {
+        color: @text;
+        font-size: 13px;
+        font-weight: 700;
+        background: transparent;
+    }
+    QLabel#walkthroughAgentStatus {
+        color: @text-muted;
+        font-size: 11px;
+        background: transparent;
+    }
+    QLabel#walkthroughAgentStatus[tone="found"] {
+        color: @success-text;
+    }
+    QLabel#walkthroughAgentStatus[tone="warning"] {
+        color: @warning-text;
+    }
+    QListWidget#wlList {
+        background-color: @surface;
+        border: 1px solid @border;
+        border-radius: 12px;
+        padding: 4px;
+    }
+"""
+
+
+def _key_chip(text: str) -> QLabel:
+    chip = QLabel(text)
+    chip.setObjectName("walkthroughKey")
+    return chip
+
+
+class AgentChoice(QPushButton):
+    """One agent that can write a walkthrough up: its mark, name and whether it's here."""
+
+    def __init__(self, agent: str, parent=None):
+        super().__init__(parent)
+        spec = AGENT_SPECS[agent]
+        self.agent = agent
+        self.setObjectName("walkthroughAgent")
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAccessibleName(f"Write up with {spec.name}")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(12, 10, 12, 10)
+        row.setSpacing(10)
+        self.mark = AgentMark(spec.monogram, spec.accent, parent=self)
+        row.addWidget(self.mark, alignment=Qt.AlignmentFlag.AlignVCenter)
+        text = QVBoxLayout()
+        text.setSpacing(1)
+        self.name_label = QLabel(spec.name)
+        self.name_label.setObjectName("walkthroughAgentName")
+        text.addWidget(self.name_label)
+        self.status_label = QLabel("Checking…")
+        self.status_label.setObjectName("walkthroughAgentStatus")
+        text.addWidget(self.status_label)
+        row.addLayout(text, 1)
+        for child in (self.mark, self.name_label, self.status_label):
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def sizeHint(self) -> QSize:
+        return QSize(150, self.layout().sizeHint().height())
+
+    def show_found(self, agent) -> None:
+        """Paint what the last scan said about this agent (None: not installed)."""
+        state = describe_agent(self.agent, agent)
+        self.status_label.setText(state.pill)
+        self.status_label.setProperty("tone", state.tone)
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
+        self.mark.set_warmth(1.0 if state.tone == FOUND else 0.35)
+        self.mark.set_missing(0.0 if agent is not None else 1.0)
+        self.setToolTip(state.detail or state.pill)
+
+
+class WalkthroughTab(QWidget):
+    """Start or finish a walkthrough, set up what follows it, and reopen recent ones."""
+
+    #: Start a walkthrough, or finish the one recording.
+    walkthrough_requested = pyqtSignal()
+    #: Throw the recording walkthrough away.
+    cancel_requested = pyqtSignal()
+    #: Open the library: a capture folder to select, or None for the newest.
+    library_requested = pyqtSignal(object)
+    settings_requested = pyqtSignal(str)
+
+    def __init__(self, parent=None, *, root: Path | None = None, today=date.today):
+        super().__init__(parent)
+        self.setObjectName("walkthroughTab")
+        self.setStyleSheet(_STYLE)
+        self.root = Path(root) if root is not None else captures_root()
+        self._today = today
+        self.is_recording = False
+        self.walkthrough_active = False
+        self._scan_token = 0
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("transcriptionTabScrollArea")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(self.scroll_area)
+        content = QWidget()
+        content.setObjectName("walkthroughTabContent")
+        self.scroll_area.setWidget(content)
+        column = QVBoxLayout(content)
+        column.setContentsMargins(24, 6, 24, 16)
+        column.setSpacing(12)
+        column.addWidget(self._hero())
+        column.addWidget(self._write_up_card())
+        column.addLayout(self._recent_header())
+        self.recent_list = QListWidget()
+        self.recent_list.setObjectName("wlList")
+        self.recent_list.setAccessibleName("Recent walkthroughs")
+        self.recent_list.setMinimumHeight(110)
+        self.recent_list.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.recent_list.itemActivated.connect(self._open_item)
+        self.recent_list.itemClicked.connect(self._open_item)
+        column.addWidget(self.recent_list, 1)
+        self.empty_label = WrappedLabel(
+            "Nothing yet. Your walkthroughs show up here, newest first.")
+        self.empty_label.setObjectName("infoLabel")
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        column.addWidget(self.empty_label, 1)
+
+        self.load_settings()
+        self.refresh_recent()
+        self._show_agents()
+
+    # ---- building ----
+
+    def _hero(self) -> QFrame:
+        hero = QFrame()
+        hero.setObjectName("walkthroughHero")
+        body = QVBoxLayout(hero)
+        body.setContentsMargins(16, 12, 16, 14)
+        body.setSpacing(10)
+
+        keys = QHBoxLayout()
+        keys.setSpacing(6)
+        self.start_key = _key_chip("")
+        self.snap_key = _key_chip("")
+        for name, chip in (("Start / finish", self.start_key), ("Screenshot", self.snap_key)):
+            label = QLabel(name)
+            label.setObjectName("walkthroughKeyName")
+            keys.addWidget(label)
+            keys.addWidget(chip)
+            keys.addSpacing(10)
+        keys.addStretch(1)
+        self.settings_link = QPushButton("Walkthrough settings  →")
+        self.settings_link.setObjectName("walkthroughSettingsLink")
+        self.settings_link.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_link.clicked.connect(lambda: self.settings_requested.emit(WALKTHROUGHS))
+        keys.addWidget(self.settings_link)
+        body.addLayout(keys)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(12)
+        self.walkthrough_button = PrimaryButton("Start Walkthrough")
+        self.walkthrough_button.setProperty("buttonId", "walkthrough")
+        self.walkthrough_button.clicked.connect(self.walkthrough_requested)
+        self.walkthrough_badge = FeatureBadge(
+            self.walkthrough_button,
+            "Talk while you take screenshots, then get one document with your "
+            "words and pictures in order, copied to paste into an agent or chat.",
+        )
+        self.walkthrough_badge.set_new(
+            not resolve_walkthrough_intro_seen(settings_manager.load_all_settings()))
+        self.walkthrough_button.reserve_beside_label(FeatureBadge.room_beside_label())
+        buttons.addWidget(self.walkthrough_button, 1)
+        self.cancel_button = WarningButton("Cancel")
+        self.cancel_button.clicked.connect(self.cancel_requested)
+        self.cancel_button.hide()
+        buttons.addWidget(self.cancel_button, 1)
+        body.addLayout(buttons)
+
+        # With or without a write-up, this is what lands on the clipboard.
+        copy = QHBoxLayout()
+        copy.setSpacing(10)
+        copy_label = QLabel("Copy when it finishes")
+        copy_label.setObjectName("walkthroughKeyName")
+        copy.addWidget(copy_label)
+        self.copy_bar = SegmentedBar([(label, "") for _value, label in COPY_CHOICES], compact=True)
+        self.copy_bar.setAccessibleName("What's copied when a walkthrough finishes")
+        self.copy_bar.setToolTip(
+            "Agent copy is Markdown with each screenshot's path, for pasting into a "
+            "terminal agent. PDF + agent copies both at once.")
+        self.copy_bar.activated.connect(self._on_copy_chosen)
+        copy.addWidget(self.copy_bar, 1)
+        body.addLayout(copy)
+        self.set_hotkeys("", "")
+        return hero
+
+    def _write_up_card(self) -> QFrame:
+        card = QFrame()
+        card.setObjectName("engineCard")
+        body = QVBoxLayout(card)
+        body.setContentsMargins(16, 12, 16, 14)
+        body.setSpacing(10)
+
+        head = QHBoxLayout()
+        head.setSpacing(10)
+        titles = QVBoxLayout()
+        titles.setSpacing(1)
+        title = QLabel("AI write-up")
+        title.setObjectName("walkthroughSectionTitle")
+        titles.addWidget(title)
+        self.write_up_text = WrappedLabel("")
+        self.write_up_text.setObjectName("infoLabel")
+        titles.addWidget(self.write_up_text)
+        head.addLayout(titles, 1)
+        self.write_up_switch = SettingsSwitch()
+        self.write_up_switch.setAccessibleName("Write walkthroughs up with an AI agent")
+        self.write_up_switch.toggled.connect(self._on_write_up_toggled)
+        head.addWidget(self.write_up_switch, alignment=Qt.AlignmentFlag.AlignTop)
+        body.addLayout(head)
+
+        agents = QHBoxLayout()
+        agents.setSpacing(10)
+        self.agent_choices = {}
+        for agent in AGENTS:
+            choice = AgentChoice(agent)
+            choice.clicked.connect(lambda _checked=False, a=agent: self._choose_agent(a))
+            agents.addWidget(choice)
+            self.agent_choices[agent] = choice
+        body.addLayout(agents)
+
+        options = QHBoxLayout()
+        options.setSpacing(8)
+        self.notes_switch = SettingsSwitch()
+        self.notes_switch.setAccessibleName("Follow notes left for the agent")
+        self.notes_switch.toggled.connect(
+            lambda on: settings_manager.save_setting(SettingsKey.WALKTHROUGH_WRITE_UP_NOTES, on))
+        options.addWidget(self.notes_switch)
+        self.notes_label = QLabel("Follow notes I leave for the agent")
+        self.notes_label.setObjectName("walkthroughKeyName")
+        self.notes_label.setToolTip(
+            "Say \"note for the agent: skip the setup part\" while you talk, and the "
+            "agent follows it instead of writing it into the document.")
+        options.addWidget(self.notes_label)
+        options.addStretch(1)
+        body.addLayout(options)
+        return card
+
+    def _recent_header(self) -> QHBoxLayout:
+        head = QHBoxLayout()
+        head.setContentsMargins(2, 4, 2, 0)
+        title = QLabel("Recent")
+        title.setObjectName("walkthroughSectionTitle")
+        head.addWidget(title)
+        self.count_label = QLabel("")
+        self.count_label.setObjectName("walkthroughKeyName")
+        head.addWidget(self.count_label)
+        head.addStretch(1)
+        self.open_all = QPushButton("Open all…")
+        self.open_all.setObjectName("walkthroughSettingsLink")
+        self.open_all.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.open_all.clicked.connect(lambda: self.library_requested.emit(None))
+        head.addWidget(self.open_all)
+        return head
+
+    # ---- state ----
+
+    def load_settings(self) -> None:
+        """Show the saved write-up and copy choices without saving them back."""
+        settings = settings_manager.load_all_settings()
+        for widget in (self.write_up_switch, self.notes_switch):
+            widget.blockSignals(True)
+        self.write_up_switch.setChecked(resolve_walkthrough_write_up(settings))
+        self.notes_switch.setChecked(resolve_walkthrough_write_up_notes(settings))
+        for widget in (self.write_up_switch, self.notes_switch):
+            widget.blockSignals(False)
+        self._agent = resolve_walkthrough_write_up_agent(settings)
+        copy = resolve_walkthrough_copy_format(settings)
+        self.copy_bar.setCurrentIndex(
+            next(i for i, (value, _label) in enumerate(COPY_CHOICES) if value == copy))
+        self._sync_write_up()
+
+    def _on_write_up_toggled(self, on: bool) -> None:
+        settings_manager.save_setting(SettingsKey.WALKTHROUGH_WRITE_UP, on)
+        self._sync_write_up()
+
+    def _choose_agent(self, agent: str) -> None:
+        self._agent = agent
+        settings_manager.save_setting(SettingsKey.WALKTHROUGH_WRITE_UP_AGENT, agent)
+        if not self.write_up_switch.isChecked():
+            # Picking an agent is asking for a write-up.
+            self.write_up_switch.setChecked(True)
+        self._sync_write_up()
+
+    def _on_copy_chosen(self, index: int) -> None:
+        settings_manager.save_setting(SettingsKey.WALKTHROUGH_COPY_FORMAT, COPY_CHOICES[index][0])
+
+    def _sync_write_up(self) -> None:
+        on = self.write_up_switch.isChecked()
+        name = AGENT_SPECS[self._agent].name
+        self.write_up_text.setText(
+            f"{name} lays out a clean document from it. The as-spoken PDF is kept too."
+            if on else "Off: you get it as spoken. Pick an agent to turn it on.")
+        for agent, choice in self.agent_choices.items():
+            choice.setChecked(on and agent == self._agent)
+        self.notes_switch.setEnabled(on)
+        self.notes_label.setEnabled(on)
+
+    def _show_agents(self) -> None:
+        """Label each agent with the last scan; scan once if none has run."""
+        from ui_qt.widgets import action_relay, agent_picker
+
+        found = agent_picker.cached_agents()
+        if found is None:
+            if not self._scan_token:
+                action_relay.relay().scan_done.connect(self._on_scan_done)
+                self._scan_token = token = action_relay.next_token()
+                action_relay.start_agent_scan(token)
+            return
+        for agent, choice in self.agent_choices.items():
+            choice.show_found(found.get(agent))
+
+    def _on_scan_done(self, token: int) -> None:
+        if token == self._scan_token:
+            self._show_agents()
+
+    def refresh_recent(self) -> None:
+        """List the newest walkthroughs, interrupted drafts included."""
+        self.recent_list.clear()
+        try:
+            folders = library.entries(self.root)
+        except OSError:
+            folders = []
+        today = self._today()
+        for folder in folders[:RECENT_COUNT]:
+            entry = walkthrough_library._Entry(folder, today)
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, str(folder))
+            item.setData(Qt.ItemDataRole.AccessibleTextRole, entry.summary)
+            item.setSizeHint(QSize(0, entry.sizeHint().height()))
+            self.recent_list.addItem(item)
+            self.recent_list.setItemWidget(item, entry)
+        self.count_label.setText(f"· {len(folders)}" if folders else "")
+        self.recent_list.setVisible(bool(folders))
+        self.empty_label.setVisible(not folders)
+        self.open_all.setVisible(bool(folders))
+
+    def _open_item(self, item: QListWidgetItem) -> None:
+        self.library_requested.emit(Path(item.data(Qt.ItemDataRole.UserRole)))
+
+    def set_hotkeys(self, walkthrough_key: str, screenshot_key: str) -> None:
+        for chip, key in ((self.start_key, walkthrough_key), (self.snap_key, screenshot_key)):
+            chip.setText(key or "Not set")
+            chip.setProperty("unset", not key)
+            chip.style().unpolish(chip)
+            chip.style().polish(chip)
+        self.walkthrough_button.set_hotkey(walkthrough_key)
+
+    def set_recording_state(self, is_recording: bool, walkthrough_active: bool) -> None:
+        """A walkthrough records: Finish and Cancel. A dictation records: wait for it."""
+        self.is_recording = is_recording
+        self.walkthrough_active = walkthrough_active
+        if walkthrough_active and self.walkthrough_badge.text() == FeatureBadge.NEW:
+            settings_manager.save_setting(SettingsKey.WALKTHROUGH_INTRO_SEEN, True)
+            self.walkthrough_badge.set_new(False)
+        self.walkthrough_button.setText(
+            "Finish Walkthrough" if walkthrough_active else "Start Walkthrough")
+        self.walkthrough_button.set_active(walkthrough_active or not is_recording)
+        self.cancel_button.setVisible(walkthrough_active)
+        if not is_recording:
+            self.refresh_recent()

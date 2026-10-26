@@ -7,6 +7,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+- **A Walkthrough tab in the main window** — between Upload File and Meeting Mode. It starts and finishes walkthroughs (with Cancel while one records), shows the Walkthrough and Screenshot shortcuts, and chooses what's copied when one finishes. The AI write-up has a switch and a card each for Claude Code, Codex and OpenCode that says whether it's installed; picking one turns the write-up on. Your last eight walkthroughs are listed underneath and open in Saved Walkthroughs. A walkthrough brings the tab to the front while it records. Quick Record is back to Start Recording, Stop and Cancel. The tab you last had open still opens at launch.
+
 ### Fixed
 - **The walkthrough overlay keeps its look clear of Snap and Done** — while a walkthrough records, the look now sits in its own band under the Walkthrough badge, Snap and Done instead of behind them, and Transcribing and Cleaning up stay clear of the badge too. With live preview words, the dot, clock and small look get a line of their own under the buttons, where before only the clock fit. The Hands-free badge and language chip get the same clear row.
 

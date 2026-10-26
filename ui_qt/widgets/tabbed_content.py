@@ -30,7 +30,18 @@ class TabbedContentWidget(QWidget):
 
     TAB_QUICK_RECORD = 0
     TAB_UPLOAD_FILE = 1
-    TAB_MEETING_MODE = 2
+    TAB_WALKTHROUGH = 2
+    # Last, so the theme's ::tab:last rules grey it on unsupported platforms.
+    TAB_MEETING_MODE = 3
+
+    #: What ``LAST_TAB_INDEX`` stores for each tab: the positions the tabs
+    #: had before Walkthrough joined, so a saved tab still opens the same one.
+    SAVED_TAB_IDS = {
+        TAB_QUICK_RECORD: 0,
+        TAB_UPLOAD_FILE: 1,
+        TAB_MEETING_MODE: 2,
+        TAB_WALKTHROUGH: 3,
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -64,6 +75,7 @@ class TabbedContentWidget(QWidget):
 
         self.tab_bar.addTab("Quick Record")
         self.tab_bar.addTab("Upload File")
+        self.tab_bar.addTab("Walkthrough")
         self.tab_bar.addTab("Meeting Mode")
 
         tab_container = QWidget()
@@ -90,10 +102,11 @@ class TabbedContentWidget(QWidget):
                 background-color: transparent;
                 color: @text-secondary;
                 border: none;
-                padding: 12px 14px;
+                padding: 12px 12px;
                 font-size: 14px;
                 font-weight: 600;
-                min-width: 120px;
+                /* Four tabs fit the minimum window width; wider, they stretch. */
+                min-width: 104px;
             }
             QTabBar::tab:selected {
                 color: @accent;
@@ -219,7 +232,11 @@ class TabbedContentWidget(QWidget):
     def _restore_last_tab(self):
         try:
             settings = settings_manager.load_all_settings()
-            last_tab = settings.get(SettingsKey.LAST_TAB_INDEX, self.TAB_QUICK_RECORD)
+            saved = settings.get(SettingsKey.LAST_TAB_INDEX)
+            last_tab = next(
+                (tab for tab, saved_id in self.SAVED_TAB_IDS.items() if saved_id == saved),
+                self.TAB_QUICK_RECORD,
+            )
             if last_tab == self.TAB_MEETING_MODE and self.meeting_tab_is_locked():
                 last_tab = self.TAB_QUICK_RECORD
             if 0 <= last_tab < self.tab_bar.count():
@@ -276,7 +293,7 @@ class TabbedContentWidget(QWidget):
         self._pending_tab_index = None
 
         try:
-            settings_manager.save_setting(SettingsKey.LAST_TAB_INDEX, index)
+            settings_manager.save_setting(SettingsKey.LAST_TAB_INDEX, self.SAVED_TAB_IDS[index])
             self._last_saved_tab_index = index
         except Exception as e:
             logger.warning(f"Failed to save tab selection: {e}")

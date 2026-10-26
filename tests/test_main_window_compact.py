@@ -54,14 +54,15 @@ class TestMainWindowCompactMode:
         self.get_setting.stop()
         self.load_settings.stop()
 
-    @pytest.mark.parametrize("last_tab", [0, 1, 2])
+    @pytest.mark.parametrize("last_tab", [0, 1, 2, 3])
     def test_launch_restores_last_tab_and_reshow_keeps_current_tab(self, last_tab):
         from ui_qt.widgets.tabbed_content import TabbedContentWidget
 
+        saved = TabbedContentWidget.SAVED_TAB_IDS[last_tab]
         with patch.object(
             settings_manager,
             "load_all_settings",
-            return_value={SettingsKey.LAST_TAB_INDEX: last_tab},
+            return_value={SettingsKey.LAST_TAB_INDEX: saved},
         ), patch(
             "ui_qt.widgets.tabbed_content.meeting_mode_supported",
             return_value=True,
@@ -296,7 +297,7 @@ class TestMainWindowCompactMode:
             assert left.geometry().right() < right.geometry().left()
 
     def test_quick_record_controls_fit_at_minimum_height(self):
-        """The walkthrough row fits unscrolled at the window's floor height."""
+        """Record, Stop and Cancel fit unscrolled at the window's floor height."""
         tab = self.window.quick_record_tab
         # Tallest resting layout: AI cleanup shows the profile card, and the
         # Command Mode link row sits between the cards and the buttons.
@@ -315,9 +316,79 @@ class TestMainWindowCompactMode:
         scroll_bar = tab.scroll_area.verticalScrollBar()
         assert scroll_bar.maximum() == 0
         viewport = tab.scroll_area.viewport()
-        for button in (tab.walkthrough_button, tab.saved_walkthroughs_button):
+        for button in (tab.record_button, tab.stop_button, tab.cancel_button):
             bottom = button.mapTo(viewport, button.rect().bottomLeft()).y()
             assert 0 <= bottom < viewport.height()
+
+    def test_a_walkthrough_records_from_its_own_tab(self):
+        from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+        tabs = self.window.tabbed_content
+        self.window.show()
+        self.window.is_recording = True
+        self.window._update_recording_state()
+        assert tabs.current_index() == TabbedContentWidget.TAB_QUICK_RECORD
+
+        self.window.set_walkthrough_active(True)
+
+        assert tabs.current_index() == TabbedContentWidget.TAB_WALKTHROUGH
+        assert [tabs.tab_bar.isTabEnabled(i) for i in range(tabs.tab_bar.count())] == [
+            i == TabbedContentWidget.TAB_WALKTHROUGH for i in range(tabs.tab_bar.count())
+        ]
+        tab = self.window.walkthrough_tab
+        assert tab.walkthrough_button.text() == "Finish Walkthrough"
+
+        self.window.set_walkthrough_active(False)
+        self.window.is_recording = False
+        self.window._update_recording_state()
+        assert all(tabs.tab_bar.isTabEnabled(i) for i in range(tabs.tab_bar.count()))
+        assert tab.walkthrough_button.text() == "Start Walkthrough"
+
+    def test_compact_mode_keeps_a_walkthrough_on_quick_record(self):
+        from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+        self.window.show()
+        self.window.set_compact_mode(True)
+        self.window.is_recording = True
+        self.window.set_walkthrough_active(True)
+        self.window._update_recording_state()
+
+        assert self.window._compact_mode
+        assert (self.window.tabbed_content.current_index()
+                == TabbedContentWidget.TAB_QUICK_RECORD)
+
+    def test_the_walkthrough_tab_reaches_the_window(self):
+        from PyQt6.QtTest import QSignalSpy
+
+        tab = self.window.walkthrough_tab
+        started = QSignalSpy(self.window.walkthrough_requested)
+        library = QSignalSpy(self.window.walkthrough_library_requested)
+        destination = QSignalSpy(self.window.settings_destination_requested)
+
+        tab.walkthrough_button.click()
+        tab.open_all.click()
+        tab.settings_link.click()
+
+        assert len(started) == 1
+        assert [args[0] for args in library] == [None]
+        assert [args[0] for args in destination] == ["walkthroughs"]
+
+    def test_walkthrough_tab_fits_at_minimum_size(self):
+        """At the window's floor the controls show unscrolled; the list takes what's left."""
+        from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+        self.window.resize(config.MAIN_WINDOW_MIN_WIDTH, config.MAIN_WINDOW_MIN_HEIGHT)
+        self.window.show()
+        self.window.tabbed_content.set_current_index(TabbedContentWidget.TAB_WALKTHROUGH)
+        self.app.processEvents()
+
+        tab = self.window.walkthrough_tab
+        assert tab.scroll_area.horizontalScrollBar().maximum() == 0
+        viewport = tab.scroll_area.viewport()
+        for widget in (tab.walkthrough_button, tab.copy_bar, *tab.agent_choices.values()):
+            box = widget.rect().translated(widget.mapTo(viewport, widget.rect().topLeft()))
+            assert viewport.rect().contains(box), widget
+        assert tab.copy_bar.buttons[-1].y() == tab.copy_bar.buttons[0].y()
 
     def test_clamp_keeps_footer_on_short_screen(self):
         """1280x800 available geometry must not grow the window to 840px."""

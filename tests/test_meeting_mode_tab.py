@@ -60,9 +60,9 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
         self.load_settings.stop()
         self.intro.stop()
 
-    def test_meeting_mode_is_third_tab(self):
-        self.assertEqual(TabbedContentWidget.TAB_MEETING_MODE, 2)
-        self.assertEqual(self.window.tabbed_content.tab_bar.count(), 3)
+    def test_meeting_mode_is_the_last_tab(self):
+        self.assertEqual(TabbedContentWidget.TAB_MEETING_MODE, 3)
+        self.assertEqual(self.window.tabbed_content.tab_bar.count(), 4)
         self.assertEqual(
             self.window.tabbed_content.tab_bar.tabText(
                 TabbedContentWidget.TAB_MEETING_MODE
