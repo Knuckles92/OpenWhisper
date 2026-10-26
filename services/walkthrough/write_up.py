@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 MARKDOWN_NAME = "write-up.md"
 PDF_NAME = "write-up.pdf"
+DOCX_NAME = "write-up.docx"
 #: The agents that can write one up, in the order Settings lists them.
 AGENTS = MeetingAgentCore.INSTALLED
 
@@ -319,6 +320,7 @@ def _write(result: WalkthroughResult, text: str, look: "Look") -> WalkthroughRes
     from services.walkthrough.document import TITLE, _image_target, write_markdown_pdf
     from services.walkthrough.finish import document_settings
     from services.walkthrough.library import publish_files
+    from services.walkthrough.word import write_markdown_docx
 
     folder = result.folder
     markdown_path = folder / MARKDOWN_NAME
@@ -332,9 +334,11 @@ def _write(result: WalkthroughResult, text: str, look: "Look") -> WalkthroughRes
             (stage / MARKDOWN_NAME).write_text(text + "\n", encoding="utf-8", newline="\n")
             write_markdown_pdf(text, stage / PDF_NAME, folder=folder, title=title,
                                page_size=page_size, look=look)
-            publish_files(stage, folder, (PDF_NAME, MARKDOWN_NAME))
+            write_markdown_docx(text, stage / DOCX_NAME, folder=folder, title=title,
+                                page_size=page_size, look=look)
+            publish_files(stage, folder, (PDF_NAME, DOCX_NAME, MARKDOWN_NAME))
     except OSError as exc:
-        raise WriteUpFailed(f"could not write {PDF_NAME}: {exc}") from exc
+        raise WriteUpFailed(f"could not write its documents: {exc}") from exc
     clipboard_text = _IMAGE.sub(
         lambda match: f"![{match[1]}]({_image_target(folder / match[2], folder, True)})", text,
     )

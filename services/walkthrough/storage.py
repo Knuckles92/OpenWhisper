@@ -21,6 +21,8 @@ SCREENSHOTS_FOLDER = "screenshots"
 #: The finished document in a capture folder (written by ``document``).
 MARKDOWN_NAME = "walkthrough.md"
 PDF_NAME = "walkthrough.pdf"
+#: The same document for Word (written by ``word``).
+DOCX_NAME = "walkthrough.docx"
 MANIFEST_NAME = "walkthrough.json"
 
 

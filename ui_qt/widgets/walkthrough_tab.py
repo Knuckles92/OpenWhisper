@@ -54,12 +54,13 @@ OWN_PROMPT = "Your own"
 #: How long typing in the prompt pauses before it is saved.
 PROMPT_SAVE_DELAY_MS = 400
 
-#: Copy choices in the order the bar shows them, short enough that the three
+#: Copy choices in the order the bar shows them, short enough that the four
 #: share one row at the window's minimum width.
 COPY_CHOICES = (
     (WalkthroughCopyFormat.PDF, "PDF"),
     (WalkthroughCopyFormat.BOTH, "PDF + Markdown"),
     (WalkthroughCopyFormat.AGENT, "Markdown"),
+    (WalkthroughCopyFormat.WORD, "Word"),
 )
 
 _STYLE = """
@@ -305,9 +306,10 @@ class WalkthroughTab(QWidget):
         buttons.addWidget(self.cancel_button, 1)
         body.addLayout(buttons)
 
-        # With or without a write-up, this is what lands on the clipboard.
-        copy = QHBoxLayout()
-        copy.setSpacing(10)
+        # With or without a write-up, this is what lands on the clipboard. The
+        # label sits above so the four choices keep one row at the minimum width.
+        copy = QVBoxLayout()
+        copy.setSpacing(6)
         copy_label = QLabel("Copy when it finishes")
         copy_label.setObjectName("walkthroughKeyName")
         copy.addWidget(copy_label)
@@ -315,9 +317,10 @@ class WalkthroughTab(QWidget):
         self.copy_bar.setAccessibleName("What's copied when a walkthrough finishes")
         self.copy_bar.setToolTip(
             "Markdown is text with a file link to each screenshot, for pasting into a "
-            "terminal agent. PDF + Markdown copies both at once.")
+            "terminal agent. PDF + Markdown copies both at once. Word copies a .docx "
+            "you can edit.")
         self.copy_bar.activated.connect(self._on_copy_chosen)
-        copy.addWidget(self.copy_bar, 1)
+        copy.addWidget(self.copy_bar)
         body.addLayout(copy)
         self.set_hotkeys("", "")
         return hero

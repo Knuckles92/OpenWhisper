@@ -69,6 +69,26 @@ class WalkthroughResult:
         """What the status and the card call the document."""
         return "Write-up" if self.written_up else "Walkthrough"
 
+    @property
+    def docx(self) -> Path:
+        """The same document for Word, beside ``pdf``."""
+        return self.pdf.with_suffix(".docx")
+
+    def clipboard(self, copy_format: str) -> tuple[list[Path], str]:
+        """The files and the text a copy in ``copy_format`` puts on the clipboard.
+
+        ``copy_format`` is a ``WalkthroughCopyFormat`` value.
+        """
+        from services.settings import WalkthroughCopyFormat
+
+        files = {
+            WalkthroughCopyFormat.PDF: [self.pdf],
+            WalkthroughCopyFormat.BOTH: [self.pdf],
+            WalkthroughCopyFormat.WORD: [self.docx],
+        }.get(copy_format, [])
+        texts = (WalkthroughCopyFormat.BOTH, WalkthroughCopyFormat.AGENT)
+        return files, self.clipboard_text if copy_format in texts else ""
+
 
 def _default_folder(started_at: datetime) -> Path:
     from services.walkthrough.storage import new_capture_folder

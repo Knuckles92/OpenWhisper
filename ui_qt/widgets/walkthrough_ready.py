@@ -46,6 +46,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from services.settings import WalkthroughCopyFormat
 from services.walkthrough.document import clock
 from ui_qt.utils.desktop import compositor_managed
 from ui_qt.utils.file_reveal import reveal_in_file_manager
@@ -156,7 +157,8 @@ class WalkthroughReadyCard(QWidget):
     """A corner card for the newest walkthrough; reused for the next one."""
 
     review_requested = pyqtSignal(object)
-    copy_requested = pyqtSignal(object, bool)
+    #: The result and the ``WalkthroughCopyFormat`` to copy it in.
+    copy_requested = pyqtSignal(object, str)
 
     def __init__(self):
         super().__init__(None)
@@ -241,10 +243,15 @@ class WalkthroughReadyCard(QWidget):
         self.menu = context_menu(self)
         self.menu.setToolTipsVisible(True)
         self.open_action = self._menu_action("Open PDF", self._open)
+        self.open_word_action = self._menu_action("Open Word document", self._open_word)
         self.folder_action = self._menu_action("Show in folder", self._reveal)
         self.menu.addSeparator()
-        self.copy_pdf_action = self._menu_action("Copy PDF", lambda: self._copy(True))
-        self.copy_markdown_action = self._menu_action("Copy Markdown", lambda: self._copy(False))
+        self.copy_pdf_action = self._menu_action(
+            "Copy PDF", lambda: self._copy(WalkthroughCopyFormat.PDF))
+        self.copy_word_action = self._menu_action(
+            "Copy Word document", lambda: self._copy(WalkthroughCopyFormat.WORD))
+        self.copy_markdown_action = self._menu_action(
+            "Copy Markdown", lambda: self._copy(WalkthroughCopyFormat.AGENT))
         self.copy_markdown_action.setToolTip("Markdown text with a file link to each screenshot")
         # The pointer leaves the card for the menu; don't let the card fade under it.
         self.menu.aboutToShow.connect(self._timer.stop)
@@ -285,6 +292,9 @@ class WalkthroughReadyCard(QWidget):
         if thumb is not None:
             self.thumb.setPixmap(thumb)
         self.chip.set_path(result.pdf)
+        has_word = result.docx.is_file()
+        self.open_word_action.setEnabled(has_word)
+        self.copy_word_action.setEnabled(has_word)
         self.adjustSize()
         self._place()
         self.show()
@@ -318,14 +328,19 @@ class WalkthroughReadyCard(QWidget):
             self.review_requested.emit(self._result.folder)
             self.hide()
 
-    def _copy(self, pdf_only: bool) -> None:
+    def _copy(self, copy_format: str) -> None:
         if self._result is not None:
-            self.copy_requested.emit(self._result, pdf_only)
+            self.copy_requested.emit(self._result, copy_format)
             self._timer.start(SHOW_MS)
 
     def _open(self) -> None:
         if self._result is not None:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._result.pdf)))
+        self.hide()
+
+    def _open_word(self) -> None:
+        if self._result is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._result.docx)))
         self.hide()
 
     def _reveal(self) -> None:

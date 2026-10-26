@@ -1154,14 +1154,13 @@ class UIController(QObject):
         if dialog is not None and dialog.isVisible() and not dialog._busy and not dialog._dirty:
             dialog.refresh(result.folder)
 
-    def _copy_walkthrough_again(self, result, pdf_only: bool) -> None:
+    def _copy_walkthrough_again(self, result, copy_format: str) -> None:
         from services.walkthrough.library import load_result
 
         try:
             result = load_result(result.folder)
-            copied = self.copy_files_to_clipboard(
-                [result.pdf] if pdf_only else [],
-                text="" if pdf_only else result.clipboard_text)
+            files, text = result.clipboard(copy_format)
+            copied = self.copy_files_to_clipboard(files, text=text)
             self.set_status("Walkthrough copied" if copied else "Couldn't copy the walkthrough")
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.set_status(f"Couldn't open the walkthrough: {exc}")
