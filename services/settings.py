@@ -418,12 +418,14 @@ class WalkthroughCopyFormat:
     BOTH: Final[str] = "both"
     AGENT: Final[str] = "agent"
     PDF: Final[str] = "pdf"
+    WORD: Final[str] = "word"
 
-    ALL: Final[tuple[str, ...]] = (PDF, BOTH, AGENT)
+    ALL: Final[tuple[str, ...]] = (PDF, BOTH, AGENT, WORD)
     LABELS: Final[dict[str, str]] = {
         PDF: "PDF copy",
         BOTH: "PDF and Markdown copy",
         AGENT: "Markdown copy",
+        WORD: "Word document copy",
     }
 
 

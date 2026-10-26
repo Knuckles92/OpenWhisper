@@ -68,7 +68,7 @@ def build_documents(
     *,
     duration_s: float,
 ) -> WalkthroughResult:
-    """Write the walkthrough's Markdown, PDF and manifest into its folder."""
+    """Write the walkthrough's Markdown, PDF, Word document and manifest into its folder."""
     from services.walkthrough.document import (
         Section,
         Walkthrough,
@@ -77,6 +77,7 @@ def build_documents(
         write_markdown,
         write_pdf,
     )
+    from services.walkthrough.word import write_docx
 
     sections = [
         Section(text=texts[index], shot=shot.path, kept_at_s=shot.kept_at_s)
@@ -90,6 +91,7 @@ def build_documents(
     document_format, page_size = document_settings()
     markdown_path = write_markdown(walkthrough, folder, document_format=document_format)
     pdf = write_pdf(walkthrough, folder, page_size=page_size, document_format=document_format)
+    write_docx(walkthrough, folder, page_size=page_size, document_format=document_format)
     write_manifest(walkthrough, folder)
     (folder / "draft.json").unlink(missing_ok=True)
     text = marked_text(texts, len(shots))

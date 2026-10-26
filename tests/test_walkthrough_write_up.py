@@ -146,6 +146,10 @@ def test_the_write_up_becomes_the_document_and_the_as_spoken_one_stays(walkthrou
     assert done.markdown.read_bytes() == REPLY.encode("utf-8")
     text = _text(done.pdf)
     assert "Changing the backend" in text and "Then the model" in text
+    from docx import Document
+    assert done.docx == folder / "write-up.docx"
+    words = [paragraph.text for paragraph in Document(str(done.docx)).paragraphs]
+    assert "Changing the backend" in words
     # The terminal gets full paths; History keeps the words as spoken.
     assert f"![The backend menu](<{os.path.abspath(folder / 'shot-1.png')}>)" in done.clipboard_text
     assert done.history_text == "words [Screenshot 1]"

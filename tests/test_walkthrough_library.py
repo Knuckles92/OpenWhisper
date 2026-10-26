@@ -129,11 +129,18 @@ def test_failed_publication_rolls_back_documents_and_write_up(capture, monkeypat
 
 
 def test_review_invalidates_a_previous_write_up(capture):
+    from docx import Document
+
     (capture.folder / "write-up.md").write_text("old write-up")
     (capture.folder / "write-up.pdf").write_bytes(b"old PDF")
+    (capture.folder / "write-up.docx").write_bytes(b"old Word document")
     result = library.save_review(capture.folder, ["new", "next", "last"], [True] * 3)
     assert not result.written_up
     assert not (capture.folder / "write-up.pdf").exists()
+    assert not (capture.folder / "write-up.docx").exists()
+    assert result.docx == capture.folder / "walkthrough.docx"
+    assert "new" in [paragraph.text for paragraph in Document(str(result.docx)).paragraphs]
+    assert library.word_document(capture.folder) == result.docx
 
 
 def test_review_rejects_stale_editor_shape(capture):

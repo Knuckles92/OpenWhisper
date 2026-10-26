@@ -30,8 +30,8 @@ does.
 The tab also holds the choices people change between walkthroughs, saved to
 the same settings as **Settings → Dictation → Walkthroughs**:
 
-- **Copy when it finishes**: **PDF**, **PDF + Markdown** or **Markdown** (see
-  below).
+- **Copy when it finishes**: **PDF**, **PDF + Markdown**, **Markdown** or
+  **Word** (see below).
 - **AI write-up**: a switch, and one card each for Claude Code, Codex and
   OpenCode saying whether the last scan of this computer found it. Picking an
   agent turns the write-up on.
@@ -119,22 +119,24 @@ folder (next to `meetings`):
 | --- | --- |
 | `walkthrough.pdf` | The document as pages: title, date and length, then each section's words, its screenshot and a caption with when it was taken. Text is selectable; screenshots are embedded at full resolution. |
 | `walkthrough.md` | The same as Markdown, linking `shot-1.png` and so on. |
+| `walkthrough.docx` | The same as the PDF, for Word: same words, screenshots, fonts and colours, laid out on the same paper. Word does the page breaks, keeping each screenshot with its words and caption. |
 | `walkthrough.json` | The sections, screenshot names and times, for tools (and a later AI write-up) to read. |
 | `shot-N.png` | Each annotated screenshot, full resolution. |
-| `write-up.pdf`, `write-up.md` | Your agent's write-up, when it is turned on (see below). |
+| `write-up.pdf`, `write-up.md`, `write-up.docx` | Your agent's write-up, when it is turned on (see below). |
 
 **Settings → Dictation → Walkthroughs** holds everything about walkthroughs:
-its two shortcuts, and under **Document** how the PDF and Markdown look:
+its two shortcuts, and under **Document** how the PDF, Word document and Markdown look:
 the title (empty for none), the line with the date, length and screenshot
 count, the note on how to read the document, the screenshot captions, and
-the PDF's paper size (Letter or A4 by your region unless you choose).
+the paper size of the PDF and Word document (Letter or A4 by your region unless you choose).
 Your words and screenshots are always in, and `walkthrough.json` always
 keeps everything. Changes apply to the next walkthrough.
 
 Under **Copy**, the **Default copy** dropdown chooses what goes on the
 clipboard when a walkthrough finishes: **PDF copy** (the default),
-**PDF and Markdown copy**, or **Markdown copy**. Both documents are always saved,
-and the ready card and library still let you copy either format separately.
+**PDF and Markdown copy**, **Markdown copy**, or **Word document copy**. Every
+document is always saved, and the ready card and library still let you copy
+each format separately.
 
 With **PDF and Markdown copy**, the clipboard gets two things at once:
 
@@ -149,8 +151,10 @@ With **PDF and Markdown copy**, the clipboard gets two things at once:
 A card in the corner of the screen says it's ready, with **Open**, **Show in
 folder**, and the PDF as a chip you can drag into any app. Dragging works
 even where pasting a file doesn't. **Review / Retry write-up** opens the saved
-document; **Copy PDF** copies only the file, and **Copy Markdown** copies only
-the Markdown with a file link to each screenshot. These actions are also available later
+document; **Copy PDF** copies only the file, **Copy Word document** copies the
+`.docx` file to paste into an email or a folder, and **Copy Markdown** copies only
+the Markdown with a file link to each screenshot. **Open Word document** opens it
+in Word, or whatever opens `.docx` files, to edit. These actions are also available later
 from the **Walkthroughs** side panel next to the **Walkthrough** tab, after
 the card disappears or the clipboard has been overwritten.
 
@@ -158,7 +162,7 @@ the card disappears or the clipboard has been overwritten.
 
 **Saved Walkthroughs…** lists completed documents and interrupted drafts.
 Edit each section's transcript, uncheck an accidental screenshot, then choose
-**Save review** to regenerate the PDF, Markdown, and manifest. An unchecked
+**Save review** to regenerate the PDF, Word document, Markdown, and manifest. An unchecked
 screenshot stays listed, faded, so a later review can include it again. Nothing is
 shared by opening or saving the review; use a copy button when ready. The
 original PNGs remain, and the first revision's manifest is kept as
@@ -208,7 +212,7 @@ walkthrough up for you: Claude Code, Codex or OpenCode, whichever you choose
 under **Agent**, if you have it installed and signed in. It is off by
 default. Once the as-spoken documents are written, the agent replies with a
 document in Markdown. OpenWhisper lays that out in the same style as
-`write-up.pdf` and `write-up.md`, and those are what get copied. The card
+`write-up.pdf`, `write-up.docx` and `write-up.md`, and those are what get copied. The card
 and the status say **Write-up copied**.
 
 - **The instructions are yours.** By default the agent is asked to organize
@@ -240,7 +244,7 @@ and the status say **Write-up copied**.
 - **Colours and a font.** Markdown has neither, so when a note or your
   instructions ask for them, the agent starts its reply with a small block
   (`text color`, `heading color`, `font`). OpenWhisper applies it to
-  `write-up.pdf` and keeps it out of `write-up.md`. Colours are CSS names or
+  `write-up.pdf` and `write-up.docx` and keeps it out of `write-up.md`. Colours are CSS names or
   `#rrggbb`. A colour Qt can't read is ignored, and a font you don't have
   falls back to the usual one. Links keep their own colour.
 - **It uses your own plan** and usually takes 10 to 60 seconds. Dictation

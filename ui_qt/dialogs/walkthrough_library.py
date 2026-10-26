@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from services.settings import WalkthroughCopyFormat
 from services.walkthrough import library
 from services.walkthrough.document import clock
 from services.walkthrough.storage import captures_root
@@ -43,6 +44,11 @@ PREVIEW_SIZE = QSize(600, 340)
 #: Retention choices; another saved value is offered as itself.
 KEEP_CHOICES = ((0, "Forever"), (7, "1 week"), (30, "30 days"), (90, "90 days"), (365, "1 year"))
 HINT = "Fix any words, switch off screenshots to leave out, then save. Original screenshots are kept."
+_COPIED = {
+    WalkthroughCopyFormat.PDF: "PDF copied.",
+    WalkthroughCopyFormat.AGENT: "Markdown copied.",
+    WalkthroughCopyFormat.WORD: "Word document copied.",
+}
 
 _STYLE = """
     QDialog#walkthroughLibraryDialog {
@@ -449,8 +455,9 @@ class WalkthroughLibraryDialog(QDialog):
         layout.addWidget(self._sidebar())
         layout.addLayout(self._detail(), 1)
         self.actions = [self.save_button, self.discard_button, self.pdf_button, self.open_button,
-                        self.markdown_button, self.folder_button, self.retry_button,
-                        self.delete_button, self.recover_button]
+                        self.markdown_button, self.copy_word_button, self.open_word_button,
+                        self.folder_button, self.retry_button, self.delete_button,
+                        self.recover_button]
         self.refresh()
 
     # ---- building ----
@@ -527,9 +534,11 @@ class WalkthroughLibraryDialog(QDialog):
         meta.addStretch(1)
         titles.addLayout(meta)
         head.addLayout(titles, 1)
-        self.pdf_button = self._button("Copy PDF", "wlPrimary", lambda: self._copy(True))
+        self.pdf_button = self._button(
+            "Copy PDF", "wlPrimary", lambda: self._copy(WalkthroughCopyFormat.PDF))
         self.pdf_button.setToolTip("The PDF file, to paste or attach anywhere, agents included")
-        self.markdown_button = self._button("Copy Markdown", "wlSecondary", lambda: self._copy(False))
+        self.markdown_button = self._button(
+            "Copy Markdown", "wlSecondary", lambda: self._copy(WalkthroughCopyFormat.AGENT))
         self.markdown_button.setIcon(design_icon("copy-gray.svg"))
         self.markdown_button.setToolTip("The document as Markdown text, with a file link to each "
                                         "screenshot, for pasting into a terminal agent")
@@ -538,6 +547,10 @@ class WalkthroughLibraryDialog(QDialog):
         self.more_button = self._icon_button("dots-gray.svg", "More")
         self.more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu = context_menu(self)
+        self.copy_word_button = self._menu_action(
+            "Copy Word document", lambda: self._copy(WalkthroughCopyFormat.WORD))
+        self.open_word_button = self._menu_action("Open Word document", self._open_word)
+        self.menu.addSeparator()
         self.folder_button = self._menu_action("Show in folder", self._reveal)
         self.menu.addSeparator()
         self.retry_button = self._menu_action("Redo AI write-up", self._retry)
@@ -698,6 +711,10 @@ class WalkthroughLibraryDialog(QDialog):
         for button in (self.save_button, self.discard_button, self.pdf_button, self.markdown_button,
                        self.retry_button, self.open_button):
             button.setEnabled(ready)
+        # Walkthroughs from before Word documents have none until Review saves them.
+        word = ready and library.word_document(self._folder).is_file()
+        for button in (self.copy_word_button, self.open_word_button):
+            button.setEnabled(word)
         self.recover_button.setEnabled(bool(draft and self._recover and self._folder
                                            and (self._folder / library.AUDIO_NAME).is_file()))
         self.folder_button.setEnabled(self._folder is not None)
@@ -905,7 +922,7 @@ class WalkthroughLibraryDialog(QDialog):
             keep = [check.isChecked() for check in self._checks]
             self._run(lambda: library.save_review(folder, texts, keep))
 
-    def _copy(self, pdf_only):
+    def _copy(self, copy_format):
         if self._busy or not self._folder or not self._copy_files:
             return
         if self._dirty:
@@ -913,10 +930,10 @@ class WalkthroughLibraryDialog(QDialog):
             return
         try:
             result = library.load_result(self._folder)
-            ok = self._copy_files([result.pdf] if pdf_only else [],
-                                  text="" if pdf_only else result.clipboard_text)
+            files, text = result.clipboard(copy_format)
+            ok = self._copy_files(files, text=text)
             if ok:
-                self.notice.setText("PDF copied." if pdf_only else "Markdown copied.")
+                self.notice.setText(_COPIED[copy_format])
             else:
                 self.notice.setText("Copying failed. Show it in its folder and drag the PDF instead.")
         except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -941,6 +958,10 @@ class WalkthroughLibraryDialog(QDialog):
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(result.pdf)))
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 self.notice.setText(str(exc))
+
+    def _open_word(self):
+        if self._folder:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(library.word_document(self._folder))))
 
     def _reveal(self):
         if self._folder:

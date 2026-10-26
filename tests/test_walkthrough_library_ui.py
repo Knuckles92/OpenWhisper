@@ -4,6 +4,7 @@ from unittest.mock import Mock
 import pytest
 from PyQt6.QtTest import QSignalSpy, QTest
 
+from services.settings import WalkthroughCopyFormat
 from services.walkthrough import library
 from tests.test_walkthrough_library import capture as capture_fixture
 from ui_qt.dialogs.walkthrough_library import WalkthroughLibraryDialog
@@ -124,15 +125,20 @@ def test_render_failure_preserves_unsaved_editors_and_button_states(dialog, monk
     assert "full disk" in dialog.notice.text()
 
 
-def test_ready_card_exposes_review_and_both_copy_formats(capture):
+def test_ready_card_exposes_review_and_every_copy_format(capture):
     card = WalkthroughReadyCard()
     review = QSignalSpy(card.review_requested)
     copied = QSignalSpy(card.copy_requested)
     card.present(capture.result, copied=True)
+    assert card.copy_word_action.isEnabled()
     card.copy_pdf_action.trigger()
+    card.copy_word_action.trigger()
     card.copy_markdown_action.trigger()
-    assert copied[0] == [capture.result, True]
-    assert copied[1] == [capture.result, False]
+    assert [list(args) for args in copied] == [
+        [capture.result, WalkthroughCopyFormat.PDF],
+        [capture.result, WalkthroughCopyFormat.WORD],
+        [capture.result, WalkthroughCopyFormat.AGENT],
+    ]
     card.review_button.click()
     assert review[0] == [capture.folder]
     card.close()

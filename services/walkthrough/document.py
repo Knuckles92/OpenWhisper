@@ -7,7 +7,8 @@ last screenshot is a trailing section without one.
 
 walkthrough.md is for terminal agents and editors, walkthrough.pdf for chat
 apps and people, and walkthrough.json keeps the sections as data for a later
-write-up. Everything here may run on a worker thread: the PDF is made with
+write-up. walkthrough.docx, for Word, is laid out here too and written by
+``word``. Everything here may run on a worker thread: the PDF is made with
 QImage, QPainter, QTextDocument and QPdfWriter only, never QPixmap or a
 widget, and needs only that the QGuiApplication exists, for its fonts.
 """
@@ -417,7 +418,7 @@ def write_pdf(
     writer.setTitle(f"{document_format.title or TITLE} · {_when(walkthrough.started_at)}")
     writer.setCreator("OpenWhisper")
     dpi = _layout_dpi()
-    composer = _Composer(_text_area(writer, dpi), dpi, document_format)
+    composer = _Composer(_text_area(writer.pageLayout(), dpi), dpi, document_format)
     doc, frames = composer.compose(walkthrough)
     _paint_pages(doc, frames, writer, dpi, path)
     return path
@@ -448,9 +449,15 @@ def write_markdown_pdf(
     writer.setTitle(title)
     writer.setCreator("OpenWhisper")
     dpi = _layout_dpi()
-    doc, frames = _MarkdownComposer(_text_area(writer, dpi), dpi, folder, look).compose(text)
+    doc, frames = _MarkdownComposer(_text_area(writer.pageLayout(), dpi), dpi, folder, look).compose(text)
     _paint_pages(doc, frames, writer, dpi, path)
     return path
+
+
+def page_layout(page_size: QPageSize | None = None) -> QPageLayout:
+    """The documents' page: ``page_size``, else the locale's, inside the margins."""
+    return QPageLayout(page_size or _local_page_size(), QPageLayout.Orientation.Portrait,
+                       _MARGINS_IN, QPageLayout.Unit.Inch)
 
 
 def _local_page_size() -> QPageSize:
@@ -471,13 +478,13 @@ def _layout_dpi() -> int:
     return QImage(1, 1, QImage.Format.Format_RGB32).logicalDpiY()
 
 
-def _text_area(writer: QPdfWriter, dpi: int) -> QSizeF:
+def _text_area(layout: QPageLayout, dpi: int) -> QSizeF:
     """The page inside its margins, in whole layout units.
 
     Whole units put page edges exactly where the layout's fixed-point
     arithmetic does, so a line moved to the next page measures as on it.
     """
-    paint = writer.pageLayout().paintRect(QPageLayout.Unit.Inch)
+    paint = layout.paintRect(QPageLayout.Unit.Inch)
     return QSizeF(math.floor(paint.width() * dpi), math.floor(paint.height() * dpi))
 
 
@@ -690,8 +697,14 @@ class _Composer:
         self.empty = True
 
     def compose(self, walkthrough: Walkthrough) -> tuple[QTextDocument, list[QRectF]]:
-        """Lay out the walkthrough; returns the document and where its
-        screenshots ended up."""
+        """Lay out the walkthrough on pages; returns the document and where
+        its screenshots ended up."""
+        doc, groups = self.layout(walkthrough)
+        return doc, _paginate(doc, groups)
+
+    def layout(self, walkthrough: Walkthrough) -> tuple[QTextDocument, list[_Group]]:
+        """The walkthrough's blocks, not yet fitted to pages, and its
+        screenshot sections."""
         parts = _parts(walkthrough)
         shots = _shot_count(parts)
         if self.format.title:
@@ -701,9 +714,7 @@ class _Composer:
             self.header_end = self._paragraph(line, style)
         for part in parts:
             self._section(part)
-        pages = _Pages(self.doc)
-        pages.paginate(self.groups)
-        return self.doc, pages.frames(self.groups)
+        return self.doc, self.groups
 
     def _section(self, part: _Part) -> None:
         # The section right under the header keeps the title company, so
@@ -778,6 +789,13 @@ class _Composer:
         if style.centered:
             block_format.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         return block_format
+
+
+def _paginate(doc: QTextDocument, groups: list[_Group]) -> list[QRectF]:
+    """Fit ``doc`` to its pages; returns where its screenshots ended up."""
+    pages = _Pages(doc)
+    pages.paginate(groups)
+    return pages.frames(groups)
 
 
 class _Pages:
@@ -1018,11 +1036,19 @@ class _MarkdownComposer:
         self.doc.setPageSize(page)
 
     def compose(self, text: str) -> tuple[QTextDocument, list[QRectF]]:
-        """Lay out ``text``; returns the document and where its screenshots ended up."""
+        """Lay out ``text`` on pages; returns the document and where its
+        screenshots ended up."""
+        doc, groups = self.layout(text)
+        return doc, _paginate(doc, groups)
+
+    def layout(self, text: str) -> tuple[QTextDocument, list[_Group]]:
+        """``text``'s blocks, not yet fitted to pages, and its screenshots
+        with the words that lead into them."""
         features = QTextDocument.MarkdownFeature
         self.doc.setMarkdown(
             text, features(features.MarkdownDialectGitHub.value | features.MarkdownNoHTML.value)
         )
+        self._drop_blank_cell_lines()
         self._write_list_markers()
         groups = []
         block = self.doc.begin()
@@ -1031,9 +1057,27 @@ class _MarkdownComposer:
                 number = block.blockNumber()
                 groups.append(_Group(self._lead_in(number), number, number))
             block = block.next()
-        pages = _Pages(self.doc)
-        pages.paginate(groups)
-        return self.doc, pages.frames(groups)
+        return self.doc, groups
+
+    def _drop_blank_cell_lines(self) -> None:
+        """Remove the empty line Qt puts atop a table's first cell.
+
+        Qt's Markdown reader leaves one there when a code block or quote
+        comes right before the table, pushing that cell's words a line
+        below the rest of its row.
+        """
+        for frame in self.doc.rootFrame().childFrames():
+            if not isinstance(frame, QTextTable):
+                continue
+            for row in range(frame.rows()):
+                for column in range(frame.columns()):
+                    cell = frame.cellAt(row, column)
+                    first = cell.firstCursorPosition().block()
+                    if first != cell.lastCursorPosition().block() and not first.length() - 1:
+                        cursor = QTextCursor(first)
+                        cursor.movePosition(QTextCursor.MoveOperation.NextBlock,
+                                            QTextCursor.MoveMode.KeepAnchor)
+                        cursor.removeSelectedText()
 
     def _write_list_markers(self) -> None:
         """Write each list item's number or bullet into its text.
