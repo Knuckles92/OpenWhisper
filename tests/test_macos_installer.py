@@ -24,9 +24,7 @@ CONSTRAINTS = ROOT / "requirements-release-constraints.txt"
 ENTRYPOINT = ROOT / "main.py"
 
 
-def test_macos_build_script_is_executable_and_valid_bash():
-    assert BUILD_SCRIPT.is_file()
-    assert os.access(BUILD_SCRIPT, os.X_OK)
+def _bash() -> str:
     bash = shutil.which("bash")
     if os.name == "nt":
         # Prefer Git Bash over an inaccessible WindowsApps/WSL launcher alias.
@@ -37,14 +35,55 @@ def test_macos_build_script_is_executable_and_valid_bash():
         bash = next((str(path) for path in candidates if path.is_file()), bash)
     if not bash:
         pytest.skip("Bash is unavailable; native macOS CI validates shell syntax")
+    return bash
+
+
+def test_macos_build_script_is_executable_and_valid_bash():
+    assert BUILD_SCRIPT.is_file()
+    assert os.access(BUILD_SCRIPT, os.X_OK)
     completed = subprocess.run(
-        [bash, "-n"],
+        [_bash(), "-n"],
         input=BUILD_SCRIPT.read_bytes().replace(b"\r\n", b"\n"),
         capture_output=True,
         check=False,
         timeout=10,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+@pytest.mark.parametrize(
+    ("errors", "succeeds", "calls", "sleeps"),
+    [
+        (["Resource busy", "Resource busy"], True, 3, "10 20 "),
+        (["Resource busy"] * 3, False, 3, "10 20 "),
+        (["No space left on device"], False, 1, ""),
+    ],
+    ids=["busy-then-created", "busy-every-time", "other-error-not-retried"],
+)
+def test_create_dmg_retries_only_a_busy_volume(errors, succeeds, calls, sleeps):
+    script = BUILD_SCRIPT.read_text(encoding="utf-8").replace("\r\n", "\n")
+    function = re.search(r"^create_dmg\(\) \{\n.*?^\}\n", script, re.S | re.M).group(0)
+    # Stub the commands it calls: hdiutil fails with each queued error in turn.
+    # It runs in a $(...) subshell, so its call count lives in a file.
+    harness = "\n".join([
+        "set -Eeuo pipefail",
+        "APP_NAME=OpenWhisper STAGE_DIR=stage DMG_ARTIFACT=out.dmg",
+        "errors=(" + " ".join(f'"hdiutil: create failed - {e}"' for e in errors) + ")",
+        'log="$(mktemp)" slept=""',
+        'hdiutil() { local n; n=$(wc -l < "$log"); echo >> "$log";'
+        ' local e="${errors[$n]:-}"; [[ -z "$e" ]] || { echo "$e" >&2; return 1; }; }',
+        'sleep() { slept+="$1 "; }',
+        'report() { echo "calls=$(wc -l < "$log" | tr -d " ") slept=$slept"; rm -f "$log"; }',
+        'fail() { report; exit 1; }',
+        function,
+        "create_dmg",
+        "report",
+    ])
+    completed = subprocess.run(
+        [_bash(), "-c", harness], capture_output=True, text=True, check=False, timeout=10
+    )
+    assert (completed.returncode == 0) is succeeds, completed.stderr
+    assert completed.stdout.rstrip("\n") == f"calls={calls} slept={sleeps}"
 
 
 def test_spec_builds_macos_app_bundle_with_stable_identity():

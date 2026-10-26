@@ -364,13 +364,30 @@ rm -f -- "$DMG_ARTIFACT"
 step "Creating compressed DMG"
 # UDZO is the standard downloadable disk image format. No internet-enable /
 # Gatekeeper bypass tricks: users approve via Privacy & Security → Open Anyway.
-hdiutil create \
-    -volname "$APP_NAME" \
-    -srcfolder "$STAGE_DIR" \
-    -ov \
-    -format UDZO \
-    -imagekey zlib-level=9 \
-    "$DMG_ARTIFACT" >/dev/null
+# hdiutil copies -srcfolder through a scratch volume it mounts and detaches;
+# on CI runners a background daemon sometimes still holds that volume
+# ("Resource busy", v2.8.01). Only that error is retried.
+create_dmg() {
+    local attempt output
+    for attempt in 1 2 3; do
+        if output="$(hdiutil create \
+            -volname "$APP_NAME" \
+            -srcfolder "$STAGE_DIR" \
+            -ov \
+            -format UDZO \
+            -imagekey zlib-level=9 \
+            "$DMG_ARTIFACT" 2>&1 >/dev/null)"; then
+            return 0
+        fi
+        echo "$output" >&2
+        [[ "$output" == *"Resource busy"* ]] || fail "hdiutil create failed"
+        (( attempt < 3 )) || break
+        echo "    volume busy; retrying in $(( attempt * 10 )) s" >&2
+        sleep $(( attempt * 10 ))
+    done
+    fail "hdiutil create stayed busy after 3 attempts"
+}
+create_dmg
 
 [[ -f "$DMG_ARTIFACT" ]] || fail "DMG was not created: $DMG_ARTIFACT"
 
