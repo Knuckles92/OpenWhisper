@@ -349,9 +349,9 @@ class TestMarks:
 
         steps = [item for item in overlay.annotations.items if isinstance(item, Step)]
         assert [step.number for step in steps] == [1, 2]
-        assert steps[0].center == QPointF(50, 50)
+        assert steps[0].center == QPointF(150, 100)
 
-    def test_box_marks_are_relative_to_the_selection(self, make_overlay):
+    def test_box_marks_are_pinned_to_the_screen(self, make_overlay):
         overlay = make_overlay()
         _drag(overlay, (100, 50), (500, 300))
         overlay.set_tool(Tool.BOX)
@@ -360,7 +360,84 @@ class TestMarks:
 
         (box,) = overlay.annotations.items
         assert isinstance(box, Box)
-        assert box.rect() == QRectF(20, 20, 100, 100)
+        assert box.rect() == QRectF(120, 70, 100, 100)
+
+
+class TestAdjusting:
+    def test_dragging_a_corner_resizes_against_the_opposite_one(self, make_overlay):
+        overlay = make_overlay()
+        _drag(overlay, (100, 50), (300, 150))
+
+        _drag(overlay, (300, 150), (400, 250))
+
+        assert overlay.selection == QRect(100, 50, 300, 200)
+        assert overlay.phase is Phase.ANNOTATE
+        assert not overlay.toolbar.isHidden()
+        assert overlay.toolbar.geometry().top() > overlay.selection.bottom()
+
+    def test_the_top_left_corner_is_grabbed_from_just_outside(self, make_overlay):
+        overlay = make_overlay()
+        _drag(overlay, (100, 50), (300, 150))
+
+        _drag(overlay, (94, 44), (60, 20))
+
+        assert overlay.selection == QRect(66, 26, 234, 124)
+
+    def test_an_edge_moves_only_its_own_side(self, make_overlay):
+        overlay = make_overlay()
+        _drag(overlay, (100, 50), (300, 150))
+
+        _drag(overlay, (200, 52), (200, 10))
+
+        assert overlay.selection == QRect(100, 8, 200, 142)
+
+    def test_marks_stay_put_and_the_kept_crop_follows(self, make_overlay):
+        overlay = make_overlay()
+        kept = Spy(overlay.kept)
+        _drag(overlay, (100, 50), (300, 150))
+        overlay.set_tool(Tool.BOX)
+        _drag(overlay, (150, 80), (250, 120))
+        (box,) = overlay.annotations.items
+        before = box.rect()
+
+        _drag(overlay, (100, 50), (50, 30))
+        overlay.keep()
+
+        assert overlay.selection == QRect(50, 30, 250, 120)
+        assert box.rect() == before
+        image = kept.calls[0][0]
+        # The box's left edge is screen x = 150: x = 100 in the grown crop.
+        edge = image.pixelColor(100, 70)
+        assert edge.red() > 200 and edge.green() < 140
+
+    def test_shrinking_below_the_minimum_stops_at_the_last_size(self, make_overlay):
+        overlay = make_overlay()
+        _drag(overlay, (100, 50), (300, 150))
+
+        _drag(overlay, (300, 150), (102, 52))
+
+        selection = overlay.selection
+        assert selection.width() >= overlay_module.MIN_SELECTION
+        assert selection.height() >= overlay_module.MIN_SELECTION
+
+    def test_hovering_an_edge_shows_a_resize_cursor(self, make_overlay):
+        overlay = make_overlay()
+        _drag(overlay, (100, 50), (300, 150))
+
+        shapes = []
+        for x, y in ((300, 150), (100, 150), (200, 50), (300, 100), (200, 100)):
+            _mouse(
+                overlay, QEvent.Type.MouseMove, x, y, buttons=Qt.MouseButton.NoButton
+            )
+            shapes.append(overlay.cursor().shape())
+
+        assert shapes == [
+            Qt.CursorShape.SizeFDiagCursor,
+            Qt.CursorShape.SizeBDiagCursor,
+            Qt.CursorShape.SizeVerCursor,
+            Qt.CursorShape.SizeHorCursor,
+            Qt.CursorShape.CrossCursor,
+        ]
 
 
 class TestLabels:

@@ -48,12 +48,11 @@ def _paint_items(
     try:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-        # Device pixels of the whole screen, then logical pixels, then the
-        # selection's own coordinates: the same space the overlay drew in.
+        # Device pixels of the whole screen, then logical pixels: the same
+        # space the overlay drew the marks in.
         painter.translate(-crop.x(), -crop.y())
         painter.scale(dpr, dpr)
-        painter.translate(selection.x(), selection.y())
-        painter.setClipRect(QRectF(0, 0, selection.width(), selection.height()))
+        painter.setClipRect(QRectF(selection))
         for item in items:
             item.paint(painter)
     finally:

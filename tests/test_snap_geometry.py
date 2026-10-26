@@ -6,7 +6,14 @@ from PyQt6.QtGui import QColor, QImage
 
 from ui_qt.snap import export
 from ui_qt.snap.annotations import SWATCHES, Box, Stroke
-from ui_qt.snap.geometry import badge_rect, device_rect, place_toolbar, span
+from ui_qt.snap.geometry import (
+    badge_rect,
+    device_rect,
+    grab_at,
+    place_toolbar,
+    resized,
+    span,
+)
 
 CORAL = QColor(SWATCHES[0].color)
 WHITE = QColor("#ffffff")
@@ -98,6 +105,50 @@ class TestToolbarPlacement:
         assert inside.top() > 2
 
 
+class TestGrabbing:
+    SELECTION = QRect(100, 100, 200, 100)
+
+    @pytest.mark.parametrize(
+        ("point", "grab"),
+        [
+            ((100, 100), (-1, -1)),
+            ((92, 92), (-1, -1)),
+            ((300, 200), (1, 1)),
+            ((310, 95), (1, -1)),
+            # Along an edge near its end still takes the corner.
+            ((100, 112), (-1, -1)),
+            ((200, 98), (0, -1)),
+            ((303, 150), (1, 0)),
+            ((200, 200), (0, 1)),
+        ],
+    )
+    def test_corners_and_edges(self, point, grab):
+        assert grab_at(self.SELECTION, QPoint(*point)) == grab
+
+    @pytest.mark.parametrize("point", [(200, 150), (106, 150), (80, 80), (200, 220)])
+    def test_inside_and_far_away_grab_nothing(self, point):
+        assert grab_at(self.SELECTION, QPoint(*point)) is None
+
+    def test_a_thin_selection_grabs_the_nearer_edge(self):
+        thin = QRect(100, 100, 200, 6)
+
+        assert grab_at(thin, QPoint(200, 101)) == (0, -1)
+        assert grab_at(thin, QPoint(200, 105)) == (0, 1)
+
+    def test_resizing_moves_only_the_grabbed_edges(self):
+        assert resized(self.SELECTION, (1, 0), QPoint(400, 0)) == QRect(
+            100, 100, 300, 100
+        )
+        assert resized(self.SELECTION, (-1, -1), QPoint(50, 60)) == QRect(
+            50, 60, 250, 140
+        )
+
+    def test_dragging_past_the_far_side_flips(self):
+        assert resized(self.SELECTION, (-1, 0), QPoint(350, 0)) == QRect(
+            300, 100, 50, 100
+        )
+
+
 @pytest.mark.parametrize("dpr", [1.0, 1.5, 2.0])
 class TestExport:
     SELECTION = QRect(20, 10, 100, 60)
@@ -113,18 +164,18 @@ class TestExport:
         assert image.pixelColor(0, 0) == QColor("#123456")
 
     def test_a_box_stroke_lands_on_its_device_pixels(self, dpr):
-        box = Box(QPointF(10, 10), QPointF(60, 40), CORAL)
+        box = Box(QPointF(30, 20), QPointF(80, 50), CORAL)
 
         image = export.render(_frozen(dpr), self.SELECTION, [box])
 
-        # The left edge runs down local x = 10, which is device x = 10 * dpr.
+        # The left edge runs down screen x = 30, crop x = 10: device x = 10 * dpr.
         assert _is_coral(image.pixelColor(round(10 * dpr), round(25 * dpr)))
         assert _is_coral(image.pixelColor(round(60 * dpr), round(25 * dpr)))
         # Outside the box the screenshot is untouched.
         assert image.pixelColor(round(85 * dpr), round(50 * dpr)) == WHITE
 
     def test_a_pen_line_is_drawn_at_device_scale(self, dpr):
-        line = Stroke([QPointF(10, 30), QPointF(50, 30), QPointF(90, 30)], CORAL)
+        line = Stroke([QPointF(30, 40), QPointF(70, 40), QPointF(110, 40)], CORAL)
 
         image = export.render(_frozen(dpr), self.SELECTION, [line])
 
@@ -133,7 +184,7 @@ class TestExport:
         assert image.pixelColor(round(50 * dpr), round(30 * dpr - 4 * dpr)) == WHITE
 
     def test_marks_outside_the_selection_are_clipped(self, dpr):
-        outside = Box(QPointF(-80, -50), QPointF(-20, -10), CORAL)
+        outside = Box(QPointF(150, 100), QPointF(250, 200), CORAL)
 
         image = export.render(_frozen(dpr), self.SELECTION, [outside])
 

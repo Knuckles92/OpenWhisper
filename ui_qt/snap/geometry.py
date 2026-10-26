@@ -15,7 +15,16 @@ from PyQt6.QtCore import QPoint, QRect, QSize
 TOOLBAR_GAP = 10
 #: Floating chrome never comes closer than this to a screen edge.
 EDGE_MARGIN = 8
+#: A selection edge catches the pointer this far outside it, and this far in:
+#: little inside, so marks can still start right by the frame.
+GRAB_OUTSIDE = 10
+GRAB_INSIDE = 4
+#: Along an edge, this close to the end grabs the corner (the drawn corner mark).
+GRAB_CORNER = 16
 _EPSILON = 1e-6
+
+#: Which edges a grab moves: x is -1 (left), 1 (right) or 0; y likewise.
+Grab = tuple[int, int]
 
 
 def span(a: QPoint, b: QPoint) -> QRect:
@@ -23,6 +32,50 @@ def span(a: QPoint, b: QPoint) -> QRect:
     return QRect(
         min(a.x(), b.x()), min(a.y(), b.y()), abs(b.x() - a.x()), abs(b.y() - a.y())
     )
+
+
+def _side(value: int, low: int, high: int, reach: int) -> int:
+    """-1 near ``low``, 1 near ``high``, else 0; the nearer wins on a thin range."""
+    near_low = low - GRAB_OUTSIDE <= value <= low + reach
+    near_high = high - reach <= value <= high + GRAB_OUTSIDE
+    if near_low and near_high:
+        return -1 if value - low < high - value else 1
+    return -1 if near_low else 1 if near_high else 0
+
+
+def grab_at(selection: QRect, point: QPoint) -> Grab | None:
+    """The corner or edge of ``selection`` under ``point``, if any."""
+    left, top = selection.left(), selection.top()
+    right, bottom = selection.right() + 1, selection.bottom() + 1
+    x, y = point.x(), point.y()
+    if not (
+        left - GRAB_OUTSIDE <= x <= right + GRAB_OUTSIDE
+        and top - GRAB_OUTSIDE <= y <= bottom + GRAB_OUTSIDE
+    ):
+        return None
+    gx = _side(x, left, right, GRAB_INSIDE)
+    gy = _side(y, top, bottom, GRAB_INSIDE)
+    if gx and not gy:
+        gy = _side(y, top, bottom, GRAB_CORNER)
+    elif gy and not gx:
+        gx = _side(x, left, right, GRAB_CORNER)
+    return (gx, gy) if gx or gy else None
+
+
+def resized(selection: QRect, grab: Grab, point: QPoint) -> QRect:
+    """``selection`` with the grabbed edges moved to ``point``; it flips past the far side."""
+    left, top = selection.left(), selection.top()
+    right, bottom = selection.right() + 1, selection.bottom() + 1
+    gx, gy = grab
+    if gx < 0:
+        left = point.x()
+    elif gx > 0:
+        right = point.x()
+    if gy < 0:
+        top = point.y()
+    elif gy > 0:
+        bottom = point.y()
+    return span(QPoint(left, top), QPoint(right, bottom))
 
 
 def device_rect(selection: QRect, dpr: float, image_rect: QRect) -> QRect:

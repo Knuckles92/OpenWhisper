@@ -2,9 +2,11 @@
 
 It shows the frozen screen under a smoked layer. The user drags out a
 region, which shows through clear with its size beside it, then marks it up
-with the toolbar that appears under it. Enter keeps, Esc drops. The overlay
-emits ``kept`` (the annotated crop, device pixels) or ``dropped`` exactly
-once; whoever opened it closes and deletes it.
+with the toolbar that appears under it; its corners and edges drag to adjust
+it. Marks are pinned to the screen, not to the region, so moving an edge
+never moves them: the region only decides what is kept. Enter keeps, Esc
+drops. The overlay emits ``kept`` (the annotated crop, device pixels) or
+``dropped`` exactly once; whoever opened it closes and deletes it.
 """
 
 from __future__ import annotations
@@ -41,7 +43,15 @@ from ui_qt.snap.annotations import (
     ink_for,
     new_draft,
 )
-from ui_qt.snap.geometry import badge_rect, device_rect, place_toolbar, span
+from ui_qt.snap.geometry import (
+    Grab,
+    badge_rect,
+    device_rect,
+    grab_at,
+    place_toolbar,
+    resized,
+    span,
+)
 from ui_qt.snap.toolbar import SnapToolbar
 from ui_qt.utils.desktop import is_wayland
 from ui_qt.utils.palette import current_palette
@@ -72,6 +82,16 @@ _TOOL_KEYS = {
 _COLOR_KEYS = {Qt.Key.Key_1: 0, Qt.Key.Key_2: 1, Qt.Key.Key_3: 2, Qt.Key.Key_4: 3}
 _KEEP_KEYS = (Qt.Key.Key_Return, Qt.Key.Key_Enter)
 _TAB_KEYS = (Qt.Key.Key_Tab, Qt.Key.Key_Backtab)
+_RESIZE_CURSORS = {
+    (-1, -1): Qt.CursorShape.SizeFDiagCursor,
+    (1, 1): Qt.CursorShape.SizeFDiagCursor,
+    (1, -1): Qt.CursorShape.SizeBDiagCursor,
+    (-1, 1): Qt.CursorShape.SizeBDiagCursor,
+    (-1, 0): Qt.CursorShape.SizeHorCursor,
+    (1, 0): Qt.CursorShape.SizeHorCursor,
+    (0, -1): Qt.CursorShape.SizeVerCursor,
+    (0, 1): Qt.CursorShape.SizeVerCursor,
+}
 
 
 class Phase(Enum):
@@ -209,6 +229,9 @@ class SnapOverlay(QWidget):
         self._phase = Phase.SELECT
         self._selection: QRect | None = None
         self._origin: QPoint | None = None
+        self._grab: Grab | None = None
+        self._grabbed_from = QRect()
+        self._grab_shift = QPoint()
         self._stack = AnnotationStack()
         self._draft: Annotation | None = None
         self._tool = Tool.ARROW
@@ -370,7 +393,7 @@ class SnapOverlay(QWidget):
     def _after_history(self, item: Annotation | None) -> None:
         if item is not None:
             self._sync_toolbar()
-            self._update_local(item.bounds())
+            self._update_marks(item.bounds())
 
     def _sync_toolbar(self) -> None:
         self._toolbar.set_state(
@@ -416,7 +439,10 @@ class SnapOverlay(QWidget):
             self._commit_label()
             return
         point = event.position()
-        if self._may_select(point.toPoint()):
+        grab = self._grab_under(point.toPoint())
+        if grab is not None:
+            self._start_resize(grab, point.toPoint())
+        elif self._may_select(point.toPoint()):
             self._start_selection(point.toPoint())
         else:
             self._start_annotation(point)
@@ -425,6 +451,8 @@ class SnapOverlay(QWidget):
         point = event.position()
         if self._origin is not None:
             self._drag_selection(point.toPoint())
+        elif self._grab is not None:
+            self._drag_resize(point.toPoint())
         elif self._draft is not None:
             self._extend_draft(point)
         else:
@@ -435,6 +463,8 @@ class SnapOverlay(QWidget):
             return
         if self._origin is not None:
             self._finish_selection()
+        elif self._grab is not None:
+            self._finish_resize()
         elif self._draft is not None:
             self._finish_draft()
 
@@ -451,13 +481,19 @@ class SnapOverlay(QWidget):
         self.mousePressEvent(event)
 
     def _update_cursor(self, point: QPoint) -> None:
+        grab = self._grab_under(point)
         typing = (
             self._phase is Phase.ANNOTATE
             and self._tool is Tool.TEXT
             and self._selection is not None
             and self._selection.contains(point)
         )
-        shape = Qt.CursorShape.IBeamCursor if typing else Qt.CursorShape.CrossCursor
+        if grab is not None:
+            shape = _RESIZE_CURSORS[grab]
+        elif typing:
+            shape = Qt.CursorShape.IBeamCursor
+        else:
+            shape = Qt.CursorShape.CrossCursor
         if self.cursor().shape() != shape:
             self.setCursor(shape)
 
@@ -490,6 +526,38 @@ class SnapOverlay(QWidget):
         self._origin = None
         if self._selection is not None:
             self._enter_annotate()
+
+    # ---- adjusting the selection ----
+
+    def _grab_under(self, point: QPoint) -> Grab | None:
+        """The selection's corner or edge under ``point``, once it can be marked."""
+        if self._phase is not Phase.ANNOTATE or self._selection is None:
+            return None
+        return grab_at(self._selection, point)
+
+    def _start_resize(self, grab: Grab, point: QPoint) -> None:
+        self._grab = grab
+        self._grabbed_from = QRect(self._selection)
+        # Grabbed a few pixels off the edge: the edge keeps that distance
+        # from the pointer rather than jumping to it.
+        selection = self._selection
+        edge_x = selection.left() if grab[0] < 0 else selection.right() + 1
+        edge_y = selection.top() if grab[1] < 0 else selection.bottom() + 1
+        self._grab_shift = QPoint(
+            edge_x - point.x() if grab[0] else 0, edge_y - point.y() if grab[1] else 0
+        )
+        self._toolbar.hide()
+        self.update()
+
+    def _drag_resize(self, point: QPoint) -> None:
+        edge = self._clamp(point + self._grab_shift)
+        rect = resized(self._grabbed_from, self._grab, edge)
+        if rect.width() >= MIN_SELECTION and rect.height() >= MIN_SELECTION:
+            self._set_selection(rect)
+
+    def _finish_resize(self) -> None:
+        self._grab = None
+        self._enter_annotate()
 
     def _enter_annotate(self) -> None:
         self._phase = Phase.ANNOTATE
@@ -525,68 +593,67 @@ class SnapOverlay(QWidget):
     def _start_annotation(self, point: QPointF) -> None:
         if self._selection is None or not self._selection.contains(point.toPoint()):
             return
-        local = point - QPointF(self._selection.topLeft())
         if self._tool is Tool.TEXT:
-            self._open_label(local)
+            self._open_label(point)
         elif self._tool is Tool.STEP:
             step = Step(
-                self._inside(local),
+                self._inside(point),
                 self._stack.next_step_number(),
                 self.current_color(),
             )
             self._add(step)
         else:
-            self._draft = new_draft(self._tool, local, self.current_color())
-            self._update_local(self._draft.bounds())
+            self._draft = new_draft(self._tool, point, self.current_color())
+            self._update_marks(self._draft.bounds())
 
     def _extend_draft(self, point: QPointF) -> None:
         before = self._draft.bounds()
-        self._draft.extend(point - QPointF(self._selection.topLeft()))
-        self._update_local(before.united(self._draft.bounds()))
+        self._draft.extend(point)
+        self._update_marks(before.united(self._draft.bounds()))
 
     def _finish_draft(self) -> None:
         draft, self._draft = self._draft, None
         if draft.meaningful():
             self._add(draft)
         else:
-            self._update_local(draft.bounds())
+            self._update_marks(draft.bounds())
 
     def _add(self, item: Annotation) -> None:
         self._stack.add(item)
         self._sync_toolbar()
-        self._update_local(item.bounds())
+        self._update_marks(item.bounds())
 
-    def _inside(self, local: QPointF) -> QPointF:
+    def _inside(self, point: QPointF) -> QPointF:
+        left, top = self._selection.left(), self._selection.top()
         return QPointF(
-            min(max(local.x(), 0.0), float(self._selection.width())),
-            min(max(local.y(), 0.0), float(self._selection.height())),
+            min(max(point.x(), left), left + self._selection.width()),
+            min(max(point.y(), top), top + self._selection.height()),
         )
 
-    def _update_local(self, rect: QRectF) -> None:
-        if self._selection is not None:
-            shifted = rect.translated(QPointF(self._selection.topLeft()))
-            self.update(shifted.toAlignedRect().adjusted(-2, -2, 2, 2))
+    def _update_marks(self, rect: QRectF) -> None:
+        self.update(rect.toAlignedRect().adjusted(-2, -2, 2, 2))
 
     # ---- text labels ----
 
-    def _open_label(self, local: QPointF) -> None:
+    def _open_label(self, point: QPointF) -> None:
         editor = LabelEditor(self, self.current_color())
         editor.committed.connect(self._commit_label)
         editor.cancelled.connect(self._close_label)
-        self._editor_pos = self._label_origin(local, editor.size())
-        editor.move((QPointF(self._selection.topLeft()) + self._editor_pos).toPoint())
+        self._editor_pos = self._label_origin(point, editor.size())
+        editor.move(self._editor_pos.toPoint())
         editor.refit()
         self._editor = editor
         editor.show()
         editor.setFocus(Qt.FocusReason.MouseFocusReason)
 
-    def _label_origin(self, local: QPointF, size: QSize) -> QPointF:
+    def _label_origin(self, point: QPointF, size: QSize) -> QPointF:
         """The label's top-left: centred on the click, inside the selection."""
-        room_x = max(0.0, self._selection.width() - size.width())
-        room_y = max(0.0, self._selection.height() - size.height())
+        left, top = self._selection.left(), self._selection.top()
+        room_x = left + max(0, self._selection.width() - size.width())
+        room_y = top + max(0, self._selection.height() - size.height())
         return QPointF(
-            min(max(local.x(), 0.0), room_x),
-            min(max(local.y() - size.height() / 2, 0.0), room_y),
+            min(max(point.x(), left), room_x),
+            min(max(point.y() - size.height() / 2, top), room_y),
         )
 
     def _commit_label(self) -> None:
@@ -640,7 +707,7 @@ class SnapOverlay(QWidget):
             self._paint_annotations(painter)
         painter.restore()
         chrome.paint_frame(painter, selection)
-        if self._phase is Phase.SELECT:
+        if self._phase is Phase.SELECT or self._grab is not None:
             chrome.paint_badge(
                 painter,
                 self._badge_rect(),
@@ -652,7 +719,6 @@ class SnapOverlay(QWidget):
     def _paint_annotations(self, painter: QPainter) -> None:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-        painter.translate(QPointF(self._selection.topLeft()))
         for item in self._stack.items:
             item.paint(painter)
         if self._draft is not None:
