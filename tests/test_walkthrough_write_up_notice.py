@@ -21,7 +21,8 @@ def app():
 
 def _result(error=""):
     return SimpleNamespace(name="Walkthrough", shots=1, duration_s=11, first_shot=None,
-                           pdf=Path("/nonexistent/walkthrough.pdf"), write_up_error=error)
+                           pdf=Path("/nonexistent/walkthrough.pdf"),
+                           docx=Path("/nonexistent/walkthrough.docx"), write_up_error=error)
 
 
 def test_the_ready_card_shows_the_whole_failure_reason(app):

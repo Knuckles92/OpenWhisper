@@ -36,7 +36,6 @@ from services.batch_upload import (
 from services.settings import (
     SETTING_DEFAULTS,
     SettingsKey,
-    WalkthroughCopyFormat,
     resolve_walkthrough_copy_format,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_provider,
@@ -2208,10 +2207,8 @@ class TranscriptionRuntime:
                 dismiss()
             return
         copy_format = resolve_walkthrough_copy_format(settings_manager.load_all_settings())
-        copied = ui.copy_files_to_clipboard(
-            [] if copy_format == WalkthroughCopyFormat.AGENT else [result.pdf],
-            text="" if copy_format == WalkthroughCopyFormat.PDF else result.clipboard_text,
-        )
+        files, text = result.clipboard(copy_format)
+        copied = ui.copy_files_to_clipboard(files, text=text)
         count = f"{result.shots} screenshot{'' if result.shots == 1 else 's'}"
         if result.write_up_error:
             # Ahead of the rest, so a status line cut short still says it;
@@ -2219,10 +2216,7 @@ class TranscriptionRuntime:
             done = "copied as spoken" if copied else "saved as spoken; copying it failed"
             status = f"Write-up failed — {result.name} {done} ({count}): {result.write_up_error}"
         elif copied:
-            destination = (
-                "paste it where you need it" if copy_format == WalkthroughCopyFormat.PDF
-                else "paste it into your agent"
-            )
+            destination = "paste it into your agent" if text else "paste it where you need it"
             status = f"{result.name} copied ({count}) — {destination}"
         else:
             status = f"{result.name} saved ({count}); copying it failed — drag it from the card"

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from services.walkthrough.session import Shot, WalkthroughResult, WalkthroughSession
-from services.walkthrough.storage import MANIFEST_NAME, MARKDOWN_NAME, PDF_NAME
+from services.walkthrough.storage import DOCX_NAME, MANIFEST_NAME, MARKDOWN_NAME, PDF_NAME
 
 if TYPE_CHECKING:
     from services.walkthrough.document import Walkthrough
@@ -29,7 +29,8 @@ PREFERENCES_NAME = "retention.json"
 _FOLDER = re.compile(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:-\d+)?\Z")
 _SHOT = re.compile(r"shot-[1-9]\d*\.png\Z")
 _FIXED = {DRAFT_NAME, AUDIO_NAME, "walkthrough.json", "walkthrough.md", "walkthrough.pdf",
-          "write-up.md", "write-up.pdf", "walkthrough.original.json"}
+          "walkthrough.docx", "write-up.md", "write-up.pdf", "write-up.docx",
+          "walkthrough.original.json"}
 
 
 def atomic_json(path: Path, value) -> None:
@@ -134,13 +135,23 @@ def load_document(folder: Path) -> Walkthrough:
                                 _seconds(value["duration_s"]), tuple(sections))
 
 
+def written_up(folder: Path) -> bool:
+    """Whether ``folder``'s documents are an AI write-up, not the words as spoken."""
+    return (folder / "write-up.pdf").is_file() and (folder / "write-up.md").is_file()
+
+
+def word_document(folder: Path) -> Path:
+    """The Word document ``load_result`` would give for ``folder``."""
+    return folder / ("write-up.docx" if written_up(folder) else DOCX_NAME)
+
+
 def load_result(folder: Path, *, spoken: bool = False) -> WalkthroughResult:
     from services.walkthrough import document
     from services.walkthrough.write_up import _IMAGE
 
     walkthrough = load_document(folder)
     shots = [section.shot for section in walkthrough.sections if section.shot]
-    written = not spoken and (folder / "write-up.pdf").is_file() and (folder / "write-up.md").is_file()
+    written = not spoken and written_up(folder)
     pdf = local_file(folder, "write-up.pdf" if written else PDF_NAME)
     md = local_file(folder, "write-up.md" if written else MARKDOWN_NAME)
     # Normalize image paths from disk; never reuse another computer's paths.
@@ -175,9 +186,10 @@ def entries(root: Path) -> list[Path]:
 
 
 def save_review(folder: Path, texts: list[str], keep: list[bool]) -> WalkthroughResult:
-    """Regenerate all three documents; keep omitted images and the original manifest."""
+    """Regenerate all four documents; keep omitted images and the original manifest."""
     from services.walkthrough import document
     from services.walkthrough.finish import document_settings
+    from services.walkthrough.word import write_docx
 
     original = load_document(folder)
     if len(texts) != len(original.sections) or len(keep) != len(texts):
@@ -200,14 +212,15 @@ def save_review(folder: Path, texts: list[str], keep: list[bool]) -> Walkthrough
                 shutil.copyfile(s.shot or s.omitted, stage / (s.shot or s.omitted).name)
         document.write_markdown(staged, stage, document_format=fmt)
         document.write_pdf(staged, stage, document_format=fmt, page_size=page_size)
+        write_docx(staged, stage, document_format=fmt, page_size=page_size)
         document.write_manifest(staged, stage)
         if not (folder / "walkthrough.original.json").exists():
             atomic_json(folder / "walkthrough.original.json", read_json(folder / MANIFEST_NAME))
         # A previous write-up describes the old revision. Invalidate it in
         # the same publication, before a new source document can be copied.
         publish_files(stage, folder,
-                      (MARKDOWN_NAME, PDF_NAME, MANIFEST_NAME),
-                      remove=("write-up.md", "write-up.pdf"))
+                      (MARKDOWN_NAME, PDF_NAME, DOCX_NAME, MANIFEST_NAME),
+                      remove=("write-up.md", "write-up.pdf", "write-up.docx"))
     return load_result(folder, spoken=True)
 
 
