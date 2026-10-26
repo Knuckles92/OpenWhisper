@@ -2007,20 +2007,30 @@ class SettingsDialog(QDialog):
             self.recording_look_bar,
             design_icon("palette-purple.svg"),
         )
+        # The label switches sit beside the preview they change, in a narrow
+        # column, so each caption stays next to its switch.
         parts = QWidget()
         parts.setObjectName("recordingLookParts")
         parts_layout = QVBoxLayout(parts)
-        parts_layout.setContentsMargins(0, 4, 0, 0)
-        parts_layout.setSpacing(2)
+        parts_layout.setContentsMargins(0, 6, 0, 0)
+        parts_layout.setSpacing(6)
+        parts_title = QLabel("Show on the overlay")
+        parts_title.setObjectName("settingsTileFieldLabel")
+        parts_layout.addWidget(parts_title)
         self.recording_dot_switch = self._overlay_part_switch(
             parts_layout, "Live dot", SettingsKey.RECORDING_OVERLAY_DOT)
         self.recording_text_switch = self._overlay_part_switch(
             parts_layout, "\u201cRecording\u201d label", SettingsKey.RECORDING_OVERLAY_TEXT)
         self.recording_clock_switch = self._overlay_part_switch(
             parts_layout, "Elapsed time", SettingsKey.RECORDING_OVERLAY_CLOCK)
+        parts_layout.addStretch(1)
         self.recording_parts = parts
-        self.recording_look_tile.add_body(parts)
-        self.recording_look_tile.add_body(self.recording_look_preview)
+        look_row = QHBoxLayout()
+        look_row.setContentsMargins(0, 4, 0, 0)
+        look_row.setSpacing(24)
+        look_row.addWidget(self.recording_look_preview, 1)
+        look_row.addWidget(parts, 0)
+        self.recording_look_tile.add_body_layout(look_row)
 
         self.streaming_font_size_spinbox = NoWheelSpinBox()
         self.streaming_font_size_spinbox.setAccessibleName("Live preview text size")
@@ -2071,6 +2081,7 @@ class SettingsDialog(QDialog):
         """A labelled switch for one part of the live recording label."""
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(16)
         label = QLabel(text)
         row.addWidget(label, 1)
         switch = SettingsSwitch()
