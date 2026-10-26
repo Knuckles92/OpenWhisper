@@ -5,6 +5,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PyQt6.QtCore import QRectF
 from PyQt6.QtWidgets import QApplication
 
 from services.settings import (
@@ -89,16 +90,77 @@ def test_a_caption_takes_the_headers_look_room(overlay):
     assert status == overlay._header_room.toRect()
 
 
-def test_crowded_header_drops_the_clock_before_overlapping_snap_and_done(overlay):
+@pytest.fixture
+def walkthrough(overlay):
+    """The overlay with a walkthrough's badge, Snap and Done."""
     with patch.object(waveform_overlay, "_platform_takes_overlay_clicks", return_value=True):
         overlay._takes_clicks_quietly = True
+        overlay.set_recording_destination("Walkthrough")
         overlay.set_walkthrough_controls(True)
-        _listen(overlay, HEADER, latched=True)
-        snap = overlay._control_rects["snap"]
-        with patch.object(waveform_overlay.live_recording, "draw_live_label") as label:
-            overlay.grab()
-    for call in label.call_args_list:
-        assert call.args[1].right() <= snap.left() - 8, "the live label keeps its gap before Snap"
+        yield overlay
+
+
+# Spies record plain values: a QPainter kept past its paint (as a Mock's
+# call_args would) crashes the worker when it is garbage-collected later.
+
+def test_snap_and_done_give_the_headers_clock_and_look_a_line_of_their_own(walkthrough, monkeypatch):
+    _listen(walkthrough, HEADER, latched=True)
+    snap = walkthrough._control_rects["snap"]
+    labels = []
+    monkeypatch.setattr(waveform_overlay.live_recording, "draw_live_label",
+                        lambda painter, rect, *args, clock, **kwargs: labels.append((QRectF(rect), clock)))
+    walkthrough.grab()
+    rect, clock = labels[-1]
+    assert clock, "the clock keeps its place"
+    assert rect.top() > snap.bottom()
+    room = walkthrough._header_room
+    assert room.top() > snap.bottom()
+    assert room.width() >= waveform_overlay._HEADER_LOOK_MIN_WIDTH
+    above, _ = walkthrough._preview_text_margins()
+    assert room.bottom() < above, "the words start under the header"
+
+
+def test_the_compact_look_sits_under_snap_and_done(walkthrough, monkeypatch):
+    walkthrough.set_recording_look(recording_looks.BARS)
+    walkthrough.set_state(walkthrough.STATE_RECORDING)
+    walkthrough.timer.stop()
+    tops = []
+    draw_band = walkthrough._draw_listening_band
+
+    def spy(painter, status, tone, top=0.0):
+        tops.append(top)
+        draw_band(painter, status, tone, top)
+
+    monkeypatch.setattr(walkthrough, "_draw_listening_band", spy)
+    walkthrough.grab()
+    top = tops[-1]
+    assert top >= walkthrough._control_rects["snap"].bottom()
+    assert walkthrough.height() == walkthrough._base_height + top
+    assert walkthrough._status_rect().bottom() < walkthrough.height()
+
+
+def test_the_work_stages_stay_under_the_walkthrough_badge(walkthrough, monkeypatch):
+    walkthrough.set_recording_look(recording_looks.BARS)
+    walkthrough.set_state(walkthrough.STATE_RECORDING)
+    walkthrough.set_state(walkthrough.STATE_TRANSCRIBING)
+    walkthrough.timer.stop()
+    walkthrough.set_walkthrough_controls(False)
+    shifts = []
+    monkeypatch.setattr(walkthrough._visual, "draw_work",
+                        lambda painter, *_: shifts.append(painter.transform().dy()))
+    walkthrough.grab()
+    assert shifts == [waveform_overlay._TOP_ROW]
+    assert walkthrough.height() == walkthrough._base_height + waveform_overlay._TOP_ROW
+
+
+def test_the_overlay_drops_back_to_compact_once_the_badge_row_empties(walkthrough):
+    walkthrough.set_state(walkthrough.STATE_RECORDING)
+    walkthrough.timer.stop()
+    assert walkthrough.height() > walkthrough._base_height
+    walkthrough.set_walkthrough_controls(False)
+    walkthrough.set_state(walkthrough.STATE_COPIED)
+    walkthrough.timer.stop()
+    assert walkthrough.height() == walkthrough._base_height
 
 
 def test_changing_the_layout_reflows_the_preview(overlay):

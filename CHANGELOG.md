@@ -7,6 +7,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Fixed
+- **The walkthrough overlay keeps its look clear of Snap and Done** — while a walkthrough records, the look now sits in its own band under the Walkthrough badge, Snap and Done instead of behind them, and Transcribing and Cleaning up stay clear of the badge too. With live preview words, the dot, clock and small look get a line of their own under the buttons, where before only the clock fit. The Hands-free badge and language chip get the same clear row.
+
 ## [2.8.01] - 2026-10-25
 
 ### Added

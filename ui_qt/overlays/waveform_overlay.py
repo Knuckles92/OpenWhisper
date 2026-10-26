@@ -64,6 +64,11 @@ _HEADER_LOOK_HEIGHT = 24.0
 _HEADER_LOOK_MIN_WIDTH = 40.0
 #: The preview words' side margins.
 _TEXT_MARGIN = 12
+#: The badge row, which the compact look sits under whenever something is in it.
+_TOP_ROW = _BADGE_MARGIN + _BADGE_HEIGHT
+#: The header's line of its own for the live label and small look, under a
+#: badge row with no room for them (a walkthrough's Snap and Done).
+_LIVE_ROW = 28
 
 
 def _platform_takes_overlay_clicks() -> bool:
@@ -283,21 +288,17 @@ class WaveformOverlay(QWidget):
     def _draw_state(self, painter: QPainter, rect: QRect) -> None:
         """Paint what the current state shows over the background."""
         if self.current_state in self._WORK_STATES:
-            self._draw_work(painter, rect)
+            self._draw_work(painter)
             return
         draw = self._STATE_PAINTERS.get(self.current_state)
         if draw is not None:
             draw(self, painter, rect)
 
-    def _draw_recording(self, painter: QPainter, rect: QRect) -> None:
-        if self._visual is not None:
-            self._draw_live_listening(painter, "Recording")
-        else:
-            self.style.draw_recording_state(painter, rect, "" if self._caption else "Recording...")
-
     #: How each state other than the work states paints; idle draws nothing.
     _STATE_PAINTERS = {
-        STATE_RECORDING: lambda self, painter, rect: self._draw_recording(painter, rect),
+        STATE_RECORDING: lambda self, painter, rect: self._draw_listening_band(
+            painter, "Recording...", "overlay-text", self._band_top()
+        ),
         STATE_STREAMING: lambda self, painter, rect: self._draw_streaming_state(painter, rect),
         STATE_COMMAND_LISTENING: lambda self, painter, rect: self._draw_streaming_state(
             painter, rect, "Listening for an edit...", "accent-soft"
@@ -327,7 +328,7 @@ class WaveformOverlay(QWidget):
             status_token: Palette role for the status.
         """
         if not self._streaming_preview_text:
-            self._draw_listening_band(painter, status, status_token)
+            self._draw_listening_band(painter, status, status_token, self._band_top())
             return
         above, below = self._preview_text_margins()
         if self._streaming_layout == StreamingOverlayLayout.FOOTER:
@@ -336,7 +337,7 @@ class WaveformOverlay(QWidget):
             self._draw_listening_band(painter, status, status_token, band_top)
         else:
             self._draw_preview_header(painter, status_token)
-            self._draw_divider(painter, _HEADER_HEIGHT)
+            self._draw_divider(painter, self._header_height())
         self._draw_streaming_preview_text(
             painter,
             QRect(_TEXT_MARGIN, above, rect.width() - 2 * _TEXT_MARGIN, max(20, rect.height() - above - below)),
@@ -398,14 +399,15 @@ class WaveformOverlay(QWidget):
     def _draw_preview_header(self, painter: QPainter, text_tone: str) -> None:
         """``● 0:04`` and a small copy of the look, between the badge and the chips.
 
-        The badge and chips are placed after the state is drawn, so this
-        leaves room for where they were last frame; they sit still while
-        listening.
+        When the badge row has no room for them, as with a walkthrough's
+        Snap and Done, they take a line of their own under it.
         """
         center_y = _BADGE_MARGIN + _BADGE_HEIGHT / 2
-        left = _TEXT_MARGIN if self._badge_rect.isEmpty() else self._badge_rect.right() + 8
-        rights = [r.left() for r in (self._chip_rect, *self._control_rects.values()) if not r.isEmpty()]
-        right = (min(rights) if rights else self.width() - 4) - 8
+        if self._live_shares_top_row():
+            left, right = self._top_row_span()
+        else:
+            center_y += _LIVE_ROW
+            left, right = _TEXT_MARGIN, self.width() - _TEXT_MARGIN
         dot, _words, clock = self._label_parts
         elapsed = time.monotonic() - self._listen_started
         width = live_recording.wordless_label_width(elapsed, dot=dot, clock=clock)
@@ -463,30 +465,63 @@ class WaveformOverlay(QWidget):
         painter.setPen(QPen(token_color("overlay-border"), 1))
         painter.drawLine(QPointF(_TEXT_MARGIN, y + 0.5), QPointF(self.width() - _TEXT_MARGIN, y + 0.5))
 
-    def _top_row_in_use(self) -> bool:
-        """Whether a badge, the language chip or Snap and Done sit along the top while listening."""
+    def _badge_shown(self) -> bool:
+        """Whether the destination, Hands-free or Command Mode badge is up."""
         latched = self._hands_free or self.current_state == self.STATE_COMMAND_LISTENING
-        return (
-            bool(self._recording_destination) or latched
-            or self._chip_visible() or self._controls_clickable()
-        )
+        return bool(self._recording_destination) or (self.current_state in self.LISTENING_STATES and latched)
+
+    def _top_row_in_use(self) -> bool:
+        """Whether a badge, the language chip or Snap and Done sit along the top."""
+        listening = self.current_state in self.LISTENING_STATES
+        return self._badge_shown() or (listening and self._chip_visible()) or self._controls_clickable()
+
+    def _band_top(self) -> int:
+        """Where the compact look's band starts: under the badge row whenever something is in it."""
+        return _TOP_ROW if self._top_row_in_use() else 0
+
+    def _top_row_span(self) -> tuple[float, float]:
+        """The badge row's free (left, right), between the badge and the chip or Snap and Done."""
+        left = _BADGE_MARGIN + self._badge_width() + 8 if self._badge_shown() else _TEXT_MARGIN
+        right = self.width() - 4
+        if self.current_state in self.LISTENING_STATES and self._chip_visible():
+            right = self.width() - _BADGE_MARGIN - self._chip_width()
+        if self._controls_clickable():
+            right = min(rect.left() for rect, _label in self._layout_controls().values())
+        return left, right - 8
+
+    def _live_shares_top_row(self) -> bool:
+        """Whether the header's ``● 0:04`` and small look fit in the badge row."""
+        left, right = self._top_row_span()
+        dot, _words, clock = self._label_parts
+        label = 0.0
+        if self._visual is not None and (dot or clock):
+            label = live_recording.wordless_label_width(0.0, dot=dot, clock=clock) + 10
+        return right - left >= label + _HEADER_LOOK_MIN_WIDTH
+
+    def _header_height(self) -> int:
+        """The live preview's header: the badge row, and the live label's own line if it needs one."""
+        return _HEADER_HEIGHT if self._live_shares_top_row() else _HEADER_HEIGHT + _LIVE_ROW
 
     def _preview_text_margins(self) -> tuple[int, int]:
         """The room (above, below) the preview words in the current layout."""
         if self._streaming_layout == StreamingOverlayLayout.FOOTER:
             above = _BADGE_MARGIN + _BADGE_HEIGHT + 8 if self._top_row_in_use() else 10
             return above, self._base_height + 4
-        return _HEADER_HEIGHT + 6, 12
+        return self._header_height() + 6, 12
 
-    def _draw_work(self, painter: QPainter, rect: QRect) -> None:
+    def _draw_work(self, painter: QPainter) -> None:
         """Processing or Transcribing: the look's own finish, or Classic's vortex."""
+        band = QRect(0, 0, self.width(), self._base_height)
+        painter.save()
+        painter.translate(0, self._band_top())
         if self._visual is not None:
             morph = recording_looks.smooth((time.monotonic() - self._work_started) / recording_looks.MORPH_S)
             self._visual.draw_work(painter, morph, self._work_clock)
         elif self.current_state == self.STATE_PROCESSING:
-            self.style.draw_processing_state(painter, rect, "")
+            self.style.draw_processing_state(painter, band, "")
         else:
-            self.style.draw_transcribing_state(painter, rect, "")
+            self.style.draw_transcribing_state(painter, band, "")
+        painter.restore()
         if not self._caption:
             self._draw_work_label(painter)
 
@@ -513,7 +548,7 @@ class WaveformOverlay(QWidget):
             if self._streaming_layout == StreamingOverlayLayout.FOOTER:
                 return QRect(0, self.height() - 25, self.width(), 20)
             return self._header_room.adjusted(-12, 0, 12, 0).toRect()
-        return QRect(0, self._base_height - 25, self.width(), 20)
+        return QRect(0, self._band_top() + self._base_height - 25, self.width(), 20)
 
     def _draw_status(self, painter: QPainter, text: str, color: QColor) -> None:
         painter.setPen(QPen(color))
@@ -532,7 +567,7 @@ class WaveformOverlay(QWidget):
             return
         self._streaming_font_size = new_size
         if self._streaming_preview_text:
-            self._apply_streaming_height()
+            self._apply_height()
             self.update()
 
     def refresh_streaming_layout(self):
@@ -542,7 +577,7 @@ class WaveformOverlay(QWidget):
             return
         self._streaming_layout = layout
         if self._streaming_preview_text:
-            self._apply_streaming_height()
+            self._apply_height()
             self.update()
 
     def _draw_streaming_preview_text(self, painter: QPainter, text_rect: QRect):
@@ -590,7 +625,7 @@ class WaveformOverlay(QWidget):
 
     def clear_streaming_text(self):
         self._streaming_preview_text = ""
-        self._apply_streaming_height()
+        self._apply_height()
 
     def update_streaming_text(self, text: str, is_final: bool = True):
         """Update live preview text shown during streaming recording.
@@ -600,7 +635,7 @@ class WaveformOverlay(QWidget):
             is_final: Unused; kept for API compatibility with prior overlay.
         """
         self._streaming_preview_text = (text or "").strip()
-        self._apply_streaming_height()
+        self._apply_height()
         self.update()
 
     def _available_geometry_for_anchor(self) -> Optional[QRect]:
@@ -668,17 +703,10 @@ class WaveformOverlay(QWidget):
             self._streaming_max_height,
         )
 
-    def _apply_streaming_height(self):
-        """Grow or shrink the overlay to fit preview text while streaming."""
-        if self.current_state not in self._PREVIEW_STATES and not self._streaming_preview_text:
-            if self.height() != self._base_height:
-                self.overlay_height = self._base_height
-                self.setFixedSize(self.overlay_width, self.overlay_height)
-                self._reposition_near_anchor()
-            return
-
+    def _apply_height(self):
+        """Grow or shrink the overlay to fit its preview words, or its look under the badge row."""
         if not self._streaming_preview_text:
-            target_height = self._base_height
+            target_height = self._base_height + self._band_top()
         else:
             effective_max = self._effective_streaming_max_height()
             font = self._streaming_preview_font()
@@ -730,6 +758,8 @@ class WaveformOverlay(QWidget):
         rises in.
         """
         t = self.animation_time
+        painter.save()
+        painter.translate(0, self._band_top())
         if self._label_from and self._visual is not None:
             gone = recording_looks.smooth(t / _HANDOFF_S)
             if gone < 1.0:
@@ -738,6 +768,7 @@ class WaveformOverlay(QWidget):
                 self._visual.draw_work(painter, 1.0, self._work_clock + t * self._work_rate)
                 painter.restore()
         tidy_lines.draw(painter, self.width() / 2, recording_looks.CENTER_Y, t)
+        painter.restore()
         if self._caption:
             return
         lifted = recording_looks.smooth(t / _LABEL_CROSSFADE_S)
@@ -819,7 +850,7 @@ class WaveformOverlay(QWidget):
 
     def _draw_listening_extras(self, painter: QPainter) -> None:
         self._badge_rect = QRectF()
-        if self._recording_destination:
+        if self._badge_shown():
             self._draw_mode_badge(painter)
         if self.current_state not in self.LISTENING_STATES:
             self._chip_rect = QRectF()
@@ -827,9 +858,6 @@ class WaveformOverlay(QWidget):
             if self._caption:
                 self._draw_caption(painter)
             return
-        latched = self._hands_free or self.current_state == self.STATE_COMMAND_LISTENING
-        if not self._recording_destination and latched:
-            self._draw_mode_badge(painter)
         self._chip_rect = self._draw_language_chip(painter) if self._chip_visible() else QRectF()
         self._control_rects = (
             self._draw_walkthrough_controls(painter) if self._controls_clickable() else {}
@@ -837,13 +865,20 @@ class WaveformOverlay(QWidget):
         if self._caption:
             self._draw_caption(painter)
 
-    def _draw_mode_badge(self, painter: QPainter) -> None:
+    def _badge_text(self) -> str:
         command = self.current_state == self.STATE_COMMAND_LISTENING
-        text = "Command Mode" if command else self._recording_destination or "Hands-free"
+        return "Command Mode" if command else self._recording_destination or "Hands-free"
+
+    def _badge_width(self) -> float:
+        font = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+        lock = 8 + 5 if self._hands_free else 0
+        return QFontMetrics(font).horizontalAdvance(self._badge_text()) + 18 + lock
+
+    def _draw_mode_badge(self, painter: QPainter) -> None:
+        text = self._badge_text()
         font = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
         lock_width = 8 if self._hands_free else 0
-        width = QFontMetrics(font).horizontalAdvance(text) + 18 + (lock_width + 5 if lock_width else 0)
-        rect = QRectF(_BADGE_MARGIN, _BADGE_MARGIN, width, _BADGE_HEIGHT)
+        rect = QRectF(_BADGE_MARGIN, _BADGE_MARGIN, self._badge_width(), _BADGE_HEIGHT)
         self._badge_rect = rect
         radius = self._badge_radius()
         ink = token_color("accent-soft")
@@ -891,10 +926,13 @@ class WaveformOverlay(QWidget):
             return 0.0
         return max(0.0, 1.0 - (time.monotonic() - self._language_changed_at) / _LANGUAGE_FLASH_S)
 
+    def _chip_width(self) -> float:
+        return max(30, QFontMetrics(QFont("Segoe UI", 8, QFont.Weight.Bold)).horizontalAdvance(self._language_text()) + 18)
+
     def _draw_language_chip(self, painter: QPainter) -> QRectF:
         font = QFont("Segoe UI", 8, QFont.Weight.Bold)
         text = self._language_text()
-        width = max(30, QFontMetrics(font).horizontalAdvance(text) + 18)
+        width = self._chip_width()
         rect = QRectF(self.width() - _BADGE_MARGIN - width, _BADGE_MARGIN, width, _BADGE_HEIGHT)
         radius = self._badge_radius()
         flash = self._language_flash()
@@ -1003,6 +1041,7 @@ class WaveformOverlay(QWidget):
             self._control_rects = {}
             if self._hover in _CONTROL_LABELS:
                 self._set_hover("")
+        self._apply_height()
         self.update()
 
     def set_control_hotkeys(self, snap: str, finish: str) -> None:
@@ -1018,27 +1057,33 @@ class WaveformOverlay(QWidget):
             and self.current_state in self.LISTENING_STATES
         )
 
-    def _draw_walkthrough_controls(self, painter: QPainter) -> dict[str, QRectF]:
-        """Snap and Done, right to left before the language chip.
+    def _layout_controls(self) -> dict[str, tuple[QRectF, str]]:
+        """Where Snap and Done go, right to left before the language chip, and their words.
 
         They drop their words for icons when the destination badge needs
         the room.
         """
         font = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
-        right = (
-            self.width() - _BADGE_MARGIN if self._chip_rect.isEmpty()
-            else self._chip_rect.left() - _CONTROL_GAP
-        )
-        left = _BADGE_MARGIN if self._badge_rect.isEmpty() else self._badge_rect.right() + _CONTROL_GAP
+        right = self.width() - _BADGE_MARGIN
+        if self._chip_visible():
+            right -= self._chip_width() + _CONTROL_GAP
+        left = _BADGE_MARGIN + (self._badge_width() + _CONTROL_GAP if self._badge_shown() else 0)
         labelled = self._controls_width(font, labelled=True) <= right - left
-        rects = {}
+        placed = {}
         for key in reversed(tuple(_CONTROL_LABELS)):
             label = _CONTROL_LABELS[key] if labelled else ""
             width = self._control_width(font, label)
-            rect = QRectF(right - width, _BADGE_MARGIN, width, _BADGE_HEIGHT)
+            placed[key] = (QRectF(right - width, _BADGE_MARGIN, width, _BADGE_HEIGHT), label)
+            right -= width + _CONTROL_GAP
+        return placed
+
+    def _draw_walkthrough_controls(self, painter: QPainter) -> dict[str, QRectF]:
+        """Snap and Done; see ``_layout_controls``."""
+        font = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+        rects = {}
+        for key, (rect, label) in self._layout_controls().items():
             self._draw_control(painter, key, rect, label, font)
             rects[key] = rect
-            right = rect.left() - _CONTROL_GAP
         return rects
 
     @staticmethod
@@ -1302,9 +1347,10 @@ class WaveformOverlay(QWidget):
         self._restart_animation(state)
 
         if state not in self._PREVIEW_STATES:
-            self._clear_streaming_preview()
+            self._streaming_preview_text = ""
 
         self._follow_listening(state, was_listening)
+        self._apply_height()
 
         self.state_changed.emit(state)
         logger.debug(f"Overlay state changed to: {state}")
@@ -1346,12 +1392,6 @@ class WaveformOverlay(QWidget):
             self.timer.stop()
         else:
             self.timer.start(1000 // self.frame_rate)
-
-    def _clear_streaming_preview(self) -> None:
-        self._streaming_preview_text = ""
-        if self.overlay_height != self._base_height:
-            self.overlay_height = self._base_height
-            self.setFixedSize(self.overlay_width, self.overlay_height)
 
     def _follow_listening(self, state: str, was_listening: bool) -> None:
         if state not in self.LISTENING_STATES:
@@ -1421,6 +1461,7 @@ class WaveformOverlay(QWidget):
         """
         if bool(on) != self._hands_free:
             self._hands_free = bool(on)
+            self._apply_height()
             self.update()
 
     @property
@@ -1430,6 +1471,7 @@ class WaveformOverlay(QWidget):
     def set_recording_destination(self, destination: str) -> None:
         """Keep the capture's destination visible through its transcription and cleanup."""
         self._recording_destination = destination
+        self._apply_height()
         self.update()
 
     def set_language(self, code: str, choices) -> None:
@@ -1439,6 +1481,7 @@ class WaveformOverlay(QWidget):
             self._language_changed_at = time.monotonic()
         self._language = code
         self._language_choices = tuple(choices or ())
+        self._apply_height()
         self.update()
 
     def show_language_notice(self) -> None:
@@ -1640,7 +1683,7 @@ class WaveformOverlay(QWidget):
 
         if self._embedded and obj is self.parentWidget():
             if event.type() == QEvent.Type.Resize:
-                self._apply_streaming_height()
+                self._apply_height()
                 self._reposition_near_anchor()
             elif event.type() == QEvent.Type.Hide:
                 self.hide()
