@@ -323,10 +323,11 @@ def test_each_section_is_transcribed_and_the_document_copied(h):
     assert [shot.kept_at_s for shot in built.shots] == [2.0, 4.2]
     assert built.duration_s == 6.0
     folder = h.session.folder()
-    assert h.ui.copied_files == [([folder / "walkthrough.pdf"], "# Walkthrough (markdown)")]
+    # The default copy is the PDF alone.
+    assert h.ui.copied_files == [([folder / "walkthrough.pdf"], "")]
     (result, copied), = h.ui.ready
     assert copied and result.shots == 2
-    assert "Walkthrough copied (2 screenshots) — paste it into your agent" in h.ui.statuses
+    assert "Walkthrough copied (2 screenshots) — paste it where you need it" in h.ui.statuses
     (entry,) = h.history.entries
     assert entry["text"] == (
         "first part\n\n[Screenshot 1]\n\nsecond part\n\n[Screenshot 2]\n\nlast part"
@@ -342,7 +343,7 @@ def test_each_section_is_transcribed_and_the_document_copied(h):
     ("both", True, True),
     ("agent", False, True),
     ("pdf", True, False),
-    ("unknown", True, True),
+    ("unknown", True, False),
 ])
 def test_finished_walkthrough_uses_preferred_copy(h, copy_format, pdf, markdown):
     h.settings.values[SettingsKey.WALKTHROUGH_COPY_FORMAT] = copy_format
@@ -356,7 +357,7 @@ def test_finished_walkthrough_uses_preferred_copy(h, copy_format, pdf, markdown)
         "# Walkthrough (markdown)" if markdown else "",
     )]
     assert h.ui.ready[0][1] is True
-    if copy_format == "pdf":
+    if not markdown:
         assert any("paste it where you need it" in status for status in h.ui.statuses)
 
 
@@ -512,6 +513,7 @@ def test_a_walkthrough_written_up_is_what_gets_copied(h, monkeypatch):
 
     h.settings.values[SettingsKey.WALKTHROUGH_WRITE_UP_AGENT] = "codex"
     h.settings.values[SettingsKey.WALKTHROUGH_WRITE_UP_NOTES] = True
+    h.settings.values[SettingsKey.WALKTHROUGH_COPY_FORMAT] = "both"
     _write_up_on(h, monkeypatch, write_up)
 
     h.runtime.transcribe_audio_file(str(h.audio))
@@ -532,6 +534,7 @@ def test_a_failed_write_up_copies_the_walkthrough_as_spoken(h, monkeypatch):
     def write_up(result, shots, **kwargs):
         raise WriteUpFailed("Claude Code is not signed in.")
 
+    h.settings.values[SettingsKey.WALKTHROUGH_COPY_FORMAT] = "both"
     _write_up_on(h, monkeypatch, write_up)
 
     h.runtime.transcribe_audio_file(str(h.audio))

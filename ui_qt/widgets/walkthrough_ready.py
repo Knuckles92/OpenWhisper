@@ -239,11 +239,13 @@ class WalkthroughReadyCard(QWidget):
     def _more_button(self) -> QToolButton:
         """``⋯``: what a moment after finishing rarely needs."""
         self.menu = context_menu(self)
+        self.menu.setToolTipsVisible(True)
         self.open_action = self._menu_action("Open PDF", self._open)
         self.folder_action = self._menu_action("Show in folder", self._reveal)
         self.menu.addSeparator()
-        self.copy_action = self._menu_action("Copy again for agent", lambda: self._copy(False))
-        self.copy_pdf_action = self._menu_action("Copy PDF only", lambda: self._copy(True))
+        self.copy_pdf_action = self._menu_action("Copy PDF", lambda: self._copy(True))
+        self.copy_markdown_action = self._menu_action("Copy Markdown", lambda: self._copy(False))
+        self.copy_markdown_action.setToolTip("Markdown text with a file link to each screenshot")
         # The pointer leaves the card for the menu; don't let the card fade under it.
         self.menu.aboutToShow.connect(self._timer.stop)
         self.menu.aboutToHide.connect(self._linger)

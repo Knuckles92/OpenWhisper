@@ -30,7 +30,7 @@ does.
 The tab also holds the choices people change between walkthroughs, saved to
 the same settings as **Settings → Dictation → Walkthroughs**:
 
-- **Copy when it finishes**: **PDF + agent**, **Agent copy** or **PDF** (see
+- **Copy when it finishes**: **PDF**, **PDF + Markdown** or **Markdown** (see
   below).
 - **AI write-up**: a switch, and one card each for Claude Code, Codex and
   OpenCode saying whether the last scan of this computer found it. Picking an
@@ -132,11 +132,11 @@ Your words and screenshots are always in, and `walkthrough.json` always
 keeps everything. Changes apply to the next walkthrough.
 
 Under **Copy**, the **Default copy** dropdown chooses what goes on the
-clipboard when a walkthrough finishes: **PDF copy**, **Agent copy (Markdown)**,
-or **PDF and agent copy** (the default). Both documents are always saved,
+clipboard when a walkthrough finishes: **PDF copy** (the default),
+**PDF and Markdown copy**, or **Markdown copy**. Both documents are always saved,
 and the ready card and library still let you copy either format separately.
 
-With **PDF and agent copy**, the clipboard gets two things at once:
+With **PDF and Markdown copy**, the clipboard gets two things at once:
 
 - **The PDF as a file.** Apps that take files on paste attach it, and so
   does a folder. Claude reads both the words and the pictures in a PDF of up
@@ -149,8 +149,8 @@ With **PDF and agent copy**, the clipboard gets two things at once:
 A card in the corner of the screen says it's ready, with **Open**, **Show in
 folder**, and the PDF as a chip you can drag into any app. Dragging works
 even where pasting a file doesn't. **Review / Retry write-up** opens the saved
-document; **Copy for agent** copies only the Markdown with local image paths,
-and **Copy PDF** copies only the file. These actions are also available later
+document; **Copy PDF** copies only the file, and **Copy Markdown** copies only
+the Markdown with a file link to each screenshot. These actions are also available later
 from the **Walkthroughs** side panel next to the **Walkthrough** tab, after
 the card disappears or the clipboard has been overwritten.
 

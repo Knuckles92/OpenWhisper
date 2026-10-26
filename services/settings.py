@@ -416,11 +416,11 @@ class WalkthroughCopyFormat:
     AGENT: Final[str] = "agent"
     PDF: Final[str] = "pdf"
 
-    ALL: Final[tuple[str, ...]] = (BOTH, AGENT, PDF)
+    ALL: Final[tuple[str, ...]] = (PDF, BOTH, AGENT)
     LABELS: Final[dict[str, str]] = {
-        BOTH: "PDF and agent copy",
-        AGENT: "Agent copy (Markdown)",
         PDF: "PDF copy",
+        BOTH: "PDF and Markdown copy",
+        AGENT: "Markdown copy",
     }
 
 
@@ -838,7 +838,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.WALKTHROUGH_SHOW_ABOUT: True,
     SettingsKey.WALKTHROUGH_SHOW_CAPTIONS: True,
     SettingsKey.WALKTHROUGH_PAGE_SIZE: WalkthroughPageSize.AUTO,
-    SettingsKey.WALKTHROUGH_COPY_FORMAT: WalkthroughCopyFormat.BOTH,
+    SettingsKey.WALKTHROUGH_COPY_FORMAT: WalkthroughCopyFormat.PDF,
     SettingsKey.WALKTHROUGH_INTRO_SEEN: False,
     SettingsKey.WALKTHROUGH_WRITE_UP: False,
     SettingsKey.WALKTHROUGH_WRITE_UP_AGENT: MeetingAgentCore.CLAUDE_CODE,

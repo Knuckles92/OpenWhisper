@@ -57,9 +57,9 @@ PROMPT_SAVE_DELAY_MS = 400
 #: Copy choices in the order the bar shows them, short enough that the three
 #: share one row at the window's minimum width.
 COPY_CHOICES = (
-    (WalkthroughCopyFormat.BOTH, "PDF + agent"),
-    (WalkthroughCopyFormat.AGENT, "Agent copy"),
     (WalkthroughCopyFormat.PDF, "PDF"),
+    (WalkthroughCopyFormat.BOTH, "PDF + Markdown"),
+    (WalkthroughCopyFormat.AGENT, "Markdown"),
 )
 
 _STYLE = """
@@ -314,8 +314,8 @@ class WalkthroughTab(QWidget):
         self.copy_bar = SegmentedBar([(label, "") for _value, label in COPY_CHOICES], compact=True)
         self.copy_bar.setAccessibleName("What's copied when a walkthrough finishes")
         self.copy_bar.setToolTip(
-            "Agent copy is Markdown with each screenshot's path, for pasting into a "
-            "terminal agent. PDF + agent copies both at once.")
+            "Markdown is text with a file link to each screenshot, for pasting into a "
+            "terminal agent. PDF + Markdown copies both at once.")
         self.copy_bar.activated.connect(self._on_copy_chosen)
         copy.addWidget(self.copy_bar, 1)
         body.addLayout(copy)

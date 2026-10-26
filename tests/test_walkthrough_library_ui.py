@@ -38,7 +38,7 @@ def test_review_loads_section_editors_and_screenshot_choices(dialog):
 
 
 def test_copy_buttons_send_explicit_clipboard_formats(dialog, capture):
-    dialog.copy_button.click()
+    dialog.markdown_button.click()
     args, kwargs = dialog._copy_files.call_args
     assert args == ([],)
     assert "first" in kwargs["text"]
@@ -50,7 +50,7 @@ def test_copy_buttons_send_explicit_clipboard_formats(dialog, capture):
 
 def test_unsaved_edits_cannot_be_shared_or_written_up(dialog):
     dialog._editors[0].setPlainText("corrected")
-    dialog.copy_button.click()
+    dialog.markdown_button.click()
     dialog._copy_files.assert_not_called()
     assert "Save" in dialog.notice.text()
     dialog.retry_button.trigger()
@@ -63,7 +63,7 @@ def test_save_regenerates_and_releases_the_app_gate(dialog, capture):
     dialog._editors[0].setPlainText("corrected")
     dialog._checks[0].setChecked(False)
     dialog.save_button.click()
-    assert not dialog.copy_button.isEnabled()
+    assert not dialog.markdown_button.isEnabled()
     _wait(dialog)
     dialog._acquire.assert_called_once()
     dialog._release.assert_called_once()
@@ -129,10 +129,10 @@ def test_ready_card_exposes_review_and_both_copy_formats(capture):
     review = QSignalSpy(card.review_requested)
     copied = QSignalSpy(card.copy_requested)
     card.present(capture.result, copied=True)
-    card.copy_action.trigger()
     card.copy_pdf_action.trigger()
-    assert copied[0] == [capture.result, False]
-    assert copied[1] == [capture.result, True]
+    card.copy_markdown_action.trigger()
+    assert copied[0] == [capture.result, True]
+    assert copied[1] == [capture.result, False]
     card.review_button.click()
     assert review[0] == [capture.folder]
     card.close()

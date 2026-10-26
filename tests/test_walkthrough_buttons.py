@@ -191,14 +191,14 @@ def test_the_tab_opens_on_the_saved_choices():
         SettingsKey.WALKTHROUGH_WRITE_UP: True,
         SettingsKey.WALKTHROUGH_WRITE_UP_AGENT: MeetingAgentCore.OPENCODE_CLI,
         SettingsKey.WALKTHROUGH_WRITE_UP_NOTES: True,
-        SettingsKey.WALKTHROUGH_COPY_FORMAT: WalkthroughCopyFormat.PDF,
+        SettingsKey.WALKTHROUGH_COPY_FORMAT: WalkthroughCopyFormat.BOTH,
         SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS: write_up.PRESETS[2][1],
     })
     tab = WalkthroughTab()
     try:
         assert tab.agent_choices[MeetingAgentCore.OPENCODE_CLI].isChecked()
         assert tab.notes_switch.isChecked()
-        assert COPY_CHOICES[tab.copy_bar.currentIndex()][0] == WalkthroughCopyFormat.PDF
+        assert COPY_CHOICES[tab.copy_bar.currentIndex()][0] == WalkthroughCopyFormat.BOTH
         assert tab.prompt_edit.toPlainText() == write_up.PRESETS[2][1]
         assert tab.preset_combo.currentText() == write_up.PRESETS[2][0]
     finally:

@@ -2,7 +2,7 @@
 
 The left column lists every walkthrough, newest first; the right shows the
 selected one as the document reads: each section's words, then the
-screenshot it led to. Copy for agent, Copy PDF and Open PDF stay in reach; the rest
+screenshot it led to. Copy PDF, Copy Markdown and Open PDF stay in reach; the rest
 waits behind ``⋯``. Edits only offer Save once there is something to save.
 """
 from __future__ import annotations
@@ -448,8 +448,8 @@ class WalkthroughLibraryDialog(QDialog):
         layout.setSpacing(0)
         layout.addWidget(self._sidebar())
         layout.addLayout(self._detail(), 1)
-        self.actions = [self.save_button, self.discard_button, self.copy_button, self.open_button,
-                        self.pdf_button, self.folder_button, self.retry_button,
+        self.actions = [self.save_button, self.discard_button, self.pdf_button, self.open_button,
+                        self.markdown_button, self.folder_button, self.retry_button,
                         self.delete_button, self.recover_button]
         self.refresh()
 
@@ -527,11 +527,12 @@ class WalkthroughLibraryDialog(QDialog):
         meta.addStretch(1)
         titles.addLayout(meta)
         head.addLayout(titles, 1)
-        self.copy_button = self._button("Copy for agent", "wlPrimary", lambda: self._copy(False))
-        self.copy_button.setToolTip("The document's Markdown, with each screenshot's path")
-        self.pdf_button = self._button("Copy PDF", "wlSecondary", lambda: self._copy(True))
-        self.pdf_button.setIcon(design_icon("copy-gray.svg"))
-        self.pdf_button.setToolTip("The PDF file, to paste or attach anywhere")
+        self.pdf_button = self._button("Copy PDF", "wlPrimary", lambda: self._copy(True))
+        self.pdf_button.setToolTip("The PDF file, to paste or attach anywhere, agents included")
+        self.markdown_button = self._button("Copy Markdown", "wlSecondary", lambda: self._copy(False))
+        self.markdown_button.setIcon(design_icon("copy-gray.svg"))
+        self.markdown_button.setToolTip("The document as Markdown text, with a file link to each "
+                                        "screenshot, for pasting into a terminal agent")
         self.open_button = self._button("Open PDF", "wlSecondary", self._open)
         self.open_button.setIcon(design_icon("external-link-gray.svg"))
         self.more_button = self._icon_button("dots-gray.svg", "More")
@@ -543,7 +544,7 @@ class WalkthroughLibraryDialog(QDialog):
         self.menu.addSeparator()
         self.delete_button = self._menu_action("Delete…", self._delete)
         self.more_button.setMenu(self.menu)
-        for widget in (self.copy_button, self.pdf_button, self.open_button, self.more_button):
+        for widget in (self.pdf_button, self.markdown_button, self.open_button, self.more_button):
             head.addWidget(widget, 0, Qt.AlignmentFlag.AlignTop)
         column.addLayout(head)
         status = QHBoxLayout()
@@ -694,7 +695,7 @@ class WalkthroughLibraryDialog(QDialog):
         if old is not None:
             old.deleteLater()
         self.scroll.setWidget(body)
-        for button in (self.save_button, self.discard_button, self.copy_button, self.pdf_button,
+        for button in (self.save_button, self.discard_button, self.pdf_button, self.markdown_button,
                        self.retry_button, self.open_button):
             button.setEnabled(ready)
         self.recover_button.setEnabled(bool(draft and self._recover and self._folder
@@ -724,7 +725,7 @@ class WalkthroughLibraryDialog(QDialog):
         self.title.setVisible(has)
         self.more_button.setVisible(has)
         # A draft has no document yet: nothing to copy, open or edit.
-        for widget in (self.copy_button, self.pdf_button, self.open_button, self.notice):
+        for widget in (self.pdf_button, self.markdown_button, self.open_button, self.notice):
             widget.setVisible(walkthrough is not None)
         if not self._busy:
             self.notice.setText(HINT)
@@ -915,7 +916,7 @@ class WalkthroughLibraryDialog(QDialog):
             ok = self._copy_files([result.pdf] if pdf_only else [],
                                   text="" if pdf_only else result.clipboard_text)
             if ok:
-                self.notice.setText("PDF copied." if pdf_only else "Copied. Paste it into your agent.")
+                self.notice.setText("PDF copied." if pdf_only else "Markdown copied.")
             else:
                 self.notice.setText("Copying failed. Show it in its folder and drag the PDF instead.")
         except (OSError, ValueError, KeyError, TypeError) as exc:
