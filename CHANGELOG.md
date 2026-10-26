@@ -7,8 +7,11 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.01] - 2026-10-25
+
 ### Added
 - **A Stats button in the main window** — next to Settings and Quit, opening the same Stats window as **View → Stats** and the tray menu. Compact mode leaves it out to fit; the tray menu still has Stats.
+- **A Live preview layout setting** — **Settings → Appearance → Overlay** chooses where the recording overlay's look goes once live preview words appear. **Header**, the default, shrinks it into a slim row above the words with the live dot, the clock and a small copy of the look between the Hands-free badge and the language chip. **Footer** keeps it full size under the words. Before, the look stayed in the top band, where the badge and chip covered it and the dot and clock disappeared.
 
 ### Changed
 - **Stats, redesigned** — switch between the last 7 days, the last 30 days and all time. A banner shows your words for the span, how they compare with the span before, the time you saved over typing at 40 wpm, and your progress to the next word milestone. Cards show speaking pace (and how much faster than typing it is), dictations with their average length and commands, words AI cleanup changed, and your day streak with your best. New sections chart words per day or per month with an average line, when you dictate by hour and weekday, top apps with their share of your words, and a year of activity as a square per day. The window updates while open as dictations are saved, and every chart has hover details and text for screen readers.
