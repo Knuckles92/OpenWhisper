@@ -162,6 +162,14 @@
 .pf-check-state.pf-ready { color: var(--success); }
 .pf-check-state.pf-warn { color: var(--warning); }
 
+.pf-check-note {
+  grid-column: 2 / -1;
+  margin-top: -6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--soft);
+}
+
 .pf-audio-checks {
   display: flex;
   flex-direction: column;

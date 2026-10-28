@@ -216,6 +216,8 @@ export interface MeetingStateDoc {
   cloud_enabled: boolean;
   intelligence_online: boolean;
   diarization_available: boolean;
+  /** Why speaker separation is unavailable; empty while it starts or works. */
+  diarization_reason?: string;
   speech?: { source: 'remote'; host: string; model: string; connected: boolean; message: string };
   title: string;
   /** The host's standing brief. Legacy snapshots omit it. */
@@ -499,6 +501,7 @@ export interface StatusMsg {
   status?: string;
   intelligence_online?: boolean;
   diarization_available?: boolean;
+  diarization_reason?: string;
   speech?: MeetingStateDoc['speech'];
   capture?: MeetingStateDoc['capture'];
   finalization?: FinalizationState | null;

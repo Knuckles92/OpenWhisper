@@ -1744,6 +1744,38 @@ class TestDiarizationDegradation:
         )
         return chunk_id
 
+    def test_failed_model_download_reason_reaches_the_dashboard(
+            self, make_engine, fakes):
+        reason = "Could not reach Hugging Face to download the speaker model (network error)."
+
+        def resolve():
+            raise RuntimeError(reason)
+
+        engine = make_engine(cloud_enabled=False, diarization_model_resolver=resolve)
+        engine.start()
+        assert engine.wait_for_processing(5)
+        snapshot = engine.store.snapshot()
+        assert snapshot["diarization_available"] is False
+        assert snapshot["diarization_reason"] == reason
+        assert engine._diarizer is None
+        statuses = [m for m in fakes.servers[0].messages if m.get("type") == "status"]
+        assert statuses[-1]["diarization_reason"] == reason
+
+    @pytest.mark.parametrize("backend, expected", [
+        ("off", "DIARIZATION_OFF"),
+        ("local", None),
+    ])
+    def test_diarization_reason_follows_the_outcome(
+            self, make_engine, backend, expected):
+        import meeting.engine as engine_module
+
+        engine = make_engine(cloud_enabled=False, speaker_id_backend=backend)
+        engine.start()
+        assert engine.wait_for_processing(5)
+        assert engine.store.snapshot()["diarization_reason"] == (
+            getattr(engine_module, expected) if expected else ""
+        )
+
     def test_none_assignment_while_available_keeps_diarization_on(
             self, make_engine, fakes, repo):
         engine = make_engine(cloud_enabled=False)
@@ -1781,6 +1813,9 @@ class TestDiarizationDegradation:
         ])
 
         assert engine.store.with_state(lambda s: s.diarization_available) is False
+        assert engine.store.with_state(lambda s: s.diarization_reason) == (
+            "Speaker separation stopped working during the meeting."
+        )
         assert engine._degraded_diarization is True
 
         notices = [

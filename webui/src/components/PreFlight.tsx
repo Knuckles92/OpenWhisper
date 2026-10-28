@@ -77,7 +77,12 @@ export default function PreFlight({
     : state.intelligence_online ? ['ready', 'Online'] : ['warn', 'Offline'];
   const micWaiting = capture?.mic_available && capture.mic_receiving === false;
   const loopbackWaiting = capture?.loopback_available && capture.loopback_receiving === false;
-  const rows: Array<{ label: string; state: Readiness; detail: string }> = [
+  const speakers: [Readiness, string, string] = state.diarization_available
+    ? ['ready', 'Available', '']
+    : state.diarization_reason
+      ? ['off', 'Me / Others only', state.diarization_reason]
+      : ['warn', 'Getting ready…', ''];
+  const rows: Array<{ label: string; state: Readiness; detail: string; note?: string }> = [
     { label: 'Microphone', state: micWaiting ? 'warn' : capture?.mic_available ? 'ready' : 'warn',
       detail: micWaiting ? 'Connected · waiting for audio blocks' : capture?.mic_available ? 'Detected' : 'Not detected' },
     { label: 'System audio', state: loopbackWaiting ? 'warn' : capture?.loopback_available ? 'ready' : 'off',
@@ -87,7 +92,7 @@ export default function PreFlight({
       detail: state.speech.connected ? state.speech.host : 'Reconnecting · audio saved here',
     }] : []),
     { label: 'AI insights', state: cloud[0], detail: cloud[1] },
-    { label: 'Speaker separation', state: state.diarization_available ? 'ready' : 'off', detail: state.diarization_available ? 'Available' : 'Me / Others only' },
+    { label: 'Speaker separation', state: speakers[0], detail: speakers[1], note: speakers[2] },
   ];
 
   return (
@@ -124,6 +129,7 @@ export default function PreFlight({
                 <Glyph kind={row.state} />
                 <span className="pf-check-label">{row.label}</span>
                 <span className={`pf-check-state pf-${row.state}`}>{row.detail}</span>
+                {row.note && <span className="pf-check-note">{row.note}</span>}
               </li>
             ))}
             {isHost && (

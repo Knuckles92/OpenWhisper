@@ -891,7 +891,24 @@ def speaker_model_path() -> Optional[str]:
     )
 
 
-def _speaker_model_download_allowed() -> bool:
+_SPEAKER_MODEL_ENV_BLOCKED: Final[str] = (
+    "Hugging Face downloads are disabled by HF_HUB_OFFLINE, so the speaker "
+    "model can't download."
+)
+_SPEAKER_MODEL_POLICY_BLOCKED: Final[str] = (
+    "Hugging Face access is set to Never connect, so the speaker model can't "
+    "download."
+)
+
+#: One speaker-model download at a time, so a meeting start and Settings'
+#: Download now never fetch it twice.
+_speaker_model_lock = threading.Lock()
+#: Why this session's last speaker-model download failed; "" once one works.
+_speaker_model_error = ""
+
+
+def speaker_model_download_blocked() -> str:
+    """Why the speaker model may not download right now, or "" when it may."""
     try:
         from services.settings import (
             HuggingFaceAccessPolicy,
@@ -899,12 +916,55 @@ def _speaker_model_download_allowed() -> bool:
             settings_manager,
         )
     except Exception:
-        return os.environ.get("HF_HUB_OFFLINE", "").strip().lower() not in (
+        offline = os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in (
             "1", "true", "yes", "on",
         )
+        return _SPEAKER_MODEL_ENV_BLOCKED if offline else ""
     if is_hf_hub_offline_env_set():
-        return False
-    return settings_manager.load_hf_access_policy() != HuggingFaceAccessPolicy.NEVER
+        return _SPEAKER_MODEL_ENV_BLOCKED
+    if settings_manager.load_hf_access_policy() == HuggingFaceAccessPolicy.NEVER:
+        return _SPEAKER_MODEL_POLICY_BLOCKED
+    return ""
+
+
+def speaker_model_error() -> str:
+    """Why this session's last speaker-model download failed, or ""."""
+    return _speaker_model_error
+
+
+def _exception_chain(exc: BaseException):
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        yield exc
+        exc = exc.__cause__ or exc.__context__
+
+
+def _describe_speaker_download_error(exc: BaseException) -> str:
+    """Turn a Hugging Face download failure into one sentence for the user.
+
+    huggingface_hub wraps the transport error, so the useful part is found
+    by walking the exception chain.
+    """
+    import httpx
+
+    chain = list(_exception_chain(exc))
+    if any(isinstance(err, httpx.TimeoutException) for err in chain):
+        return ("Hugging Face did not respond in time, so the speaker model "
+                "did not download.")
+    if any(isinstance(err, httpx.TransportError) for err in chain):
+        return ("Could not reach Hugging Face to download the speaker model "
+                "(network error).")
+    for err in chain:
+        status = getattr(getattr(err, "response", None), "status_code", None)
+        if isinstance(status, int):
+            return (f"Hugging Face refused the speaker model download "
+                    f"(HTTP {status}).")
+    for err in chain:
+        if isinstance(err, OSError) and err.strerror:
+            return f"Could not save the speaker model: {err.strerror}."
+    detail = (str(exc).splitlines() or [""])[0][:160]
+    return f"Could not download the speaker model: {detail or type(exc).__name__}."
 
 
 def _verify_speaker_model(path: str) -> None:
@@ -942,9 +1002,7 @@ def _download_speaker_model() -> str:
             local_dir=cache_dir,
         )
     except Exception as exc:
-        raise ComponentError(
-            f"Could not download the speaker embedding model: {exc}"
-        ) from exc
+        raise ComponentError(_describe_speaker_download_error(exc)) from exc
 
     resolved = os.path.abspath(path)
     _verify_speaker_model(resolved)
@@ -952,30 +1010,39 @@ def _download_speaker_model() -> str:
     return resolved
 
 
-def ensure_speaker_model() -> Optional[str]:
+def ensure_speaker_model() -> str:
     """Return a local speaker-embedding model, downloading it when allowed.
 
-    Safe to call from a worker thread (meeting start). Never raises: a
-    failed or blocked download returns None so the meeting continues with
-    Me/Others channel labels.
+    Safe to call from a worker thread (meeting start, Settings). A caller
+    that arrives during another's download waits and reuses its file.
 
     Returns:
-        Absolute path to an ONNX model, or None when none is available.
+        Absolute path to an ONNX model.
+
+    Raises:
+        ComponentError: With a sentence for the user when downloads are
+            blocked or the download failed. A failure is also kept for
+            :func:`speaker_model_error` until a later download works.
     """
-    existing = speaker_model_path()
-    if existing:
-        return existing
-    if not _speaker_model_download_allowed():
-        logger.info(
-            "Speaker embedding model is not installed and downloads are "
-            "disabled; Meeting Mode will use Me/Others channel labels"
-        )
-        return None
-    try:
-        return _download_speaker_model()
-    except Exception:
-        logger.exception("Failed to download the speaker embedding model")
-        return None
+    global _speaker_model_error
+    with _speaker_model_lock:
+        existing = speaker_model_path()
+        if existing:
+            return existing
+        blocked = speaker_model_download_blocked()
+        if blocked:
+            raise ComponentError(blocked)
+        try:
+            path = _download_speaker_model()
+        except Exception as exc:
+            logger.warning("Speaker embedding model download failed",
+                           exc_info=True)
+            reason = (str(exc) if isinstance(exc, ComponentError)
+                      else _describe_speaker_download_error(exc))
+            _speaker_model_error = reason
+            raise ComponentError(reason) from exc
+        _speaker_model_error = ""
+        return path
 
 
 def read_manifest(component_id: str) -> Optional[dict]:

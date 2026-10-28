@@ -686,18 +686,72 @@ def test_ensure_speaker_model_downloads_when_missing(component_root, tmp_path):
         return str(dest)
 
     with patch.object(components, "_source_speaker_model_path", return_value=None), \
-            patch.object(components, "_speaker_model_download_allowed", return_value=True), \
+            patch.object(components, "speaker_model_download_blocked", return_value=""), \
             patch.object(components, "_download_speaker_model", side_effect=_fake_download):
         assert components.ensure_speaker_model() == str(dest)
 
 
 def test_ensure_speaker_model_skips_download_when_blocked(component_root):
     """HF_HUB_OFFLINE / policy=never must not start a speaker-model download."""
+    reason = "Hugging Face access is set to Never connect, so the speaker model can't download."
     with patch.object(components, "_source_speaker_model_path", return_value=None), \
-            patch.object(components, "_speaker_model_download_allowed", return_value=False), \
+            patch.object(components, "speaker_model_download_blocked", return_value=reason), \
             patch.object(components, "_download_speaker_model") as download:
-        assert components.ensure_speaker_model() is None
+        with pytest.raises(components.ComponentError, match="Never connect"):
+            components.ensure_speaker_model()
         download.assert_not_called()
+    assert components.speaker_model_error() == ""
+
+
+def test_speaker_model_failure_is_kept_until_a_download_works(
+        component_root, tmp_path, monkeypatch):
+    """Settings reads the last failure; the next successful download clears it."""
+    monkeypatch.setattr(components, "_speaker_model_error", "")
+    dest = tmp_path / "speaker-models" / "voxceleb_resnet34_LM.onnx"
+    failure = components.ComponentError("Could not reach Hugging Face (network error).")
+
+    def _fake_download():
+        dest.write_bytes(b"onnx")
+        return str(dest)
+
+    with patch.object(components, "_source_speaker_model_path", return_value=None), \
+            patch.object(components, "speaker_model_download_blocked", return_value=""):
+        with patch.object(components, "_download_speaker_model", side_effect=failure):
+            with pytest.raises(components.ComponentError, match="network error"):
+                components.ensure_speaker_model()
+        assert components.speaker_model_error() == str(failure)
+        with patch.object(components, "_download_speaker_model", side_effect=_fake_download):
+            assert components.ensure_speaker_model() == str(dest)
+    assert components.speaker_model_error() == ""
+
+
+def _hf_wrapped(inner: BaseException) -> BaseException:
+    """Raise ``inner`` inside a wrapper, the way hf_hub_download reports it."""
+    try:
+        try:
+            raise inner
+        except BaseException as exc:
+            raise FileNotFoundError("cannot find the requested files") from exc
+    except FileNotFoundError as outer:
+        return outer
+
+
+def test_speaker_download_errors_read_as_one_sentence():
+    import httpx
+
+    request = httpx.Request("HEAD", "https://huggingface.co/x")
+    response = httpx.Response(403, request=request)
+    describe = components._describe_speaker_download_error
+    assert "network error" in describe(
+        _hf_wrapped(httpx.ConnectError("refused", request=request)))
+    assert "did not respond in time" in describe(
+        _hf_wrapped(httpx.ReadTimeout("slow", request=request)))
+    assert "(HTTP 403)" in describe(_hf_wrapped(
+        httpx.HTTPStatusError("forbidden", request=request, response=response)))
+    assert describe(OSError(28, "No space left on device")) == (
+        "Could not save the speaker model: No space left on device.")
+    assert describe(RuntimeError("boom\ntraceback")) == (
+        "Could not download the speaker model: boom.")
 
 
 def test_gpu_runtime_probes_shared_objects_on_linux():

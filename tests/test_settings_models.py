@@ -910,12 +910,16 @@ class TestMeetingDestinations(_DialogTestCase):
     def test_speaker_id_status_explains_first_meeting_download(self):
         """No Downloads row exists: the first meeting fetches the model."""
         dialog, _values = self._make_meeting_dialog()
-        with patch.object(dialog_module, "speaker_model_path", return_value=None):
+        with patch.object(dialog_module, "speaker_model_path", return_value=None), \
+                patch.object(dialog_module, "speaker_model_download_blocked", return_value=""), \
+                patch.object(dialog_module, "speaker_model_error", return_value=""):
             dialog.refresh_component_state()
         status = dialog.speaker_id_status.text()
         assert "Hugging Face" in status
         assert "next meeting" in status
         assert "Downloads" not in status
+        assert "system audio only" in status
+        assert not dialog.speaker_model_download.isHidden()
 
     def test_speaker_id_status_reports_a_cached_model(self):
         dialog, _values = self._make_meeting_dialog()
@@ -924,6 +928,54 @@ class TestMeetingDestinations(_DialogTestCase):
         ):
             dialog.refresh_component_state()
         assert "is ready" in dialog.speaker_id_status.text()
+        assert dialog.speaker_model_download.isHidden()
+
+    def test_speaker_id_status_shows_the_last_failure_with_a_retry(self):
+        dialog, _values = self._make_meeting_dialog()
+        error = "Could not reach Hugging Face to download the speaker model (network error)."
+        with patch.object(dialog_module, "speaker_model_path", return_value=None), \
+                patch.object(dialog_module, "speaker_model_download_blocked", return_value=""), \
+                patch.object(dialog_module, "speaker_model_error", return_value=error):
+            dialog.refresh_component_state()
+        assert f"The last download failed. {error}" in dialog.speaker_id_status.text()
+        assert not dialog.speaker_model_download.isHidden()
+
+    def test_speaker_id_status_explains_a_blocked_download_without_a_retry(self):
+        dialog, _values = self._make_meeting_dialog()
+        blocked = "Hugging Face access is set to Never connect, so the speaker model can't download."
+        with patch.object(dialog_module, "speaker_model_path", return_value=None), \
+                patch.object(dialog_module, "speaker_model_download_blocked", return_value=blocked):
+            dialog.refresh_component_state()
+        assert blocked in dialog.speaker_id_status.text()
+        assert dialog.speaker_model_download.isHidden()
+
+    def test_download_now_fetches_the_speaker_model_off_the_qt_thread(self):
+        dialog, _values = self._make_meeting_dialog()
+        threads, statuses = [], []
+
+        class _Thread:
+            def __init__(self, target, name, daemon):
+                threads.append(name)
+                self._target = target
+
+            def start(self):
+                statuses.append(dialog.speaker_id_status.text())
+                self._target()
+
+        installed = []
+        with patch.object(dialog_module.threading, "Thread", _Thread), \
+                patch("services.components.ensure_speaker_model",
+                      side_effect=lambda: installed.append(True)), \
+                patch.object(dialog_module, "speaker_model_path",
+                             side_effect=lambda: "C:/m.onnx" if installed else None), \
+                patch.object(dialog_module, "speaker_model_download_blocked", return_value=""), \
+                patch.object(dialog_module, "speaker_model_error", return_value=""):
+            dialog.refresh_component_state()
+            dialog.speaker_model_download.click()
+        assert threads == ["speaker-model-download"]
+        assert statuses[0].startswith("Downloading")
+        assert "is ready" in dialog.speaker_id_status.text()
+        assert dialog.speaker_model_download.isHidden()
 
     def test_refresh_component_state_enables_pi_after_install(self):
         with patch.object(

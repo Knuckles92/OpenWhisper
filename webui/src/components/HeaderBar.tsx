@@ -256,8 +256,10 @@ export default function HeaderBar({
   const showFinalizationWarning =
     (finalizationStatus === 'unavailable' || finalizationStatus === 'failed') &&
     !showOfflineBanner;
-  const showDiarizationBanner =
-    !state.diarization_available && (meetingLive || meetingEnding);
+  // No reason yet means speaker separation is still starting (the model may
+  // be downloading), which is not worth a banner.
+  const diarizationReason = state.diarization_available ? '' : state.diarization_reason || '';
+  const showDiarizationBanner = Boolean(diarizationReason) && (meetingLive || meetingEnding);
   const meetingTitle = state.title || meeting?.title || 'Meeting';
   const brief = (state.intent?.text || '').trim();
   const reportsReady =
@@ -583,7 +585,7 @@ export default function HeaderBar({
 
       {!showHistory && showDiarizationBanner && (
         <div className="banner info" role="status">
-          Speaker diarization unavailable — using Me / Others channels.
+          {diarizationReason} Using Me / Others channels.
         </div>
       )}
 

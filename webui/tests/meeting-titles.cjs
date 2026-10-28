@@ -98,3 +98,20 @@ for (const surface of ['header', 'history']) {
     assert.deepEqual(sent, valid.map(value => value.trim()));
   });
 }
+
+test('the speaker banner waits for a reason, then says why it fell back', async () => {
+  const live = {...state, status: 'active', capture: {mic_available: true, loopback_available: true, message: ''}};
+  const props = {
+    token: 'test', isHost: true, meeting: null, guestUrl: null, socketStatus: 'open',
+    meetingEnded: false, lastError: null, showHistory: false, showActivity: false,
+    transcriptLoadError: null, onRetryTranscript() {}, onClearError() {}, onToggleHistory() {},
+    onToggleActivity() {}, onClientError() {}, onSendOp: async () => true,
+  };
+  await mount(HeaderBar, {...props, state: live});
+  assert.doesNotMatch(container.textContent, /Me \/ Others channels/, 'no banner while it starts');
+  const reason = 'Hugging Face refused the speaker model download (HTTP 403).';
+  await act(async () => root.render(React.createElement(HeaderBar, {...props, state: {...live, diarization_reason: reason}})));
+  assert.match(container.querySelector('.banner.info').textContent, /HTTP 403\)\. Using Me \/ Others channels\./);
+  await act(async () => root.render(React.createElement(HeaderBar, {...props, state: {...live, diarization_available: true, diarization_reason: reason}})));
+  assert.doesNotMatch(container.textContent, /Me \/ Others channels/);
+});

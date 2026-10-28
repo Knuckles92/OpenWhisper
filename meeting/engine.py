@@ -74,6 +74,13 @@ CAPTURE_RETRY_INTERVAL_S = 3.0
 CAPTURE_RECOVERY_BUDGET_S = 12.0
 #: Microphones one open tries before waiting for the next watchdog pass.
 MIC_OPEN_ATTEMPTS = 4
+#: Why speaker separation is unavailable, shown in the meeting banner and
+#: Getting started. A failed or blocked model download supplies its own.
+DIARIZATION_OFF = "Speaker identification is off in Settings."
+DIARIZATION_NO_MODEL = "No speaker model is installed."
+DIARIZATION_LOAD_FAILED = "The speaker model could not load on this computer."
+DIARIZATION_DEGRADED = "Speaker separation stopped working during the meeting."
+DIARIZATION_DEMO = "The demo meeting uses channel labels."
 
 #: Engine listener: ``cb(kind, payload)`` with kinds ``status``, ``segments``,
 #: ``server_started``, ``error``, ``ended``, ``intelligence``.
@@ -104,6 +111,7 @@ class MeetingEngineOptions:
     sidecar_payload_dir: Optional[str] = None
     diarization_model_path: Optional[str] = None
     #: Resolve/download a missing embedding model on the processing worker.
+    #: It raises with a sentence for the user when no model can be had.
     diarization_model_resolver: Optional[Callable[[], Optional[str]]] = None
     speaker_id_backend: str = 'local'  # 'off' | 'local' | 'openai'
     speaker_id_audio_consent: bool = False
@@ -416,16 +424,19 @@ class MeetingEngine:
         if self.store is None:
             return
         self._refresh_live_highlights_status()
-        status, intel, diar, capture, finalization, highlights = self.store.with_state(
+        (status, intel, diar, diar_reason, capture, finalization,
+         highlights) = self.store.with_state(
             lambda s: (
                 s.status, s.intelligence_online, s.diarization_available,
-                dict(s.capture), s.finalization.to_dict(), s.live_highlights_status,
+                s.diarization_reason, dict(s.capture), s.finalization.to_dict(),
+                s.live_highlights_status,
             )
         )
         payload = {
             "status": status,
             "intelligence_online": intel,
             "diarization_available": diar,
+            "diarization_reason": diar_reason,
             "capture": capture,
             "finalization": dict(finalization),
             "live_highlights_status": highlights,
@@ -581,16 +592,17 @@ class MeetingEngine:
                 if hasattr(finalization, "to_dict")
                 else dict(finalization)
             )
-            status, intel, diar, capture = self.store.with_state(
+            status, intel, diar, diar_reason, capture = self.store.with_state(
                 lambda s: (
                     s.status, s.intelligence_online, s.diarization_available,
-                    dict(s.capture),
+                    s.diarization_reason, dict(s.capture),
                 )
             )
             payload = {
                 "status": status,
                 "intelligence_online": intel,
                 "diarization_available": diar,
+                "diarization_reason": diar_reason,
                 "capture": capture,
                 "finalization": dict(payload_fin),
             }
@@ -801,6 +813,7 @@ class MeetingEngine:
                 "message": DEMO_NOTE,
             },
             diarization_available=False,
+            diarization_reason=DIARIZATION_DEMO,
         )
         seed_demo_meeting(
             meeting_id=self.meeting_id,
@@ -2594,20 +2607,21 @@ class MeetingEngine:
             self._disable_diarizer()
             return
         self._degraded_diarization = False
-        diarizer = None
         try:
-            if not self._resolve_diarization_model():
-                return
-            from meeting.diarize.clustering import create_diarizer
-            diarizer = create_diarizer(
-                self.options.diarization_model_path, self.store,
-                self.repository, self.meeting_id,
-            )
-        except Exception:
-            logger.exception("Diarizer unavailable")
+            self._resolve_diarization_model()
+        except Exception as exc:
+            logger.warning("Speaker model unavailable: %s", exc)
+            reason = str(exc) or DIARIZATION_NO_MODEL
+        else:
+            reason = ""
         if self._processing_stop.is_set():
             return
+        diarizer = None if reason else self._create_diarizer()
         available = self._prepare_diarizer(diarizer)
+        if not available and not reason:
+            reason = (DIARIZATION_LOAD_FAILED
+                      if self.options.diarization_model_path
+                      else DIARIZATION_NO_MODEL)
         # Availability probes and callback registration can block. End may
         # have claimed the meeting while either ran; adoption and its status
         # write must be one guarded transition after those calls finish.
@@ -2618,7 +2632,20 @@ class MeetingEngine:
             if not available:
                 logger.info("Diarization disabled; loopback stays channel-labeled")
             if self.store is not None:
-                self.store.update_runtime_fields(diarization_available=available)
+                self.store.update_runtime_fields(
+                    diarization_available=available, diarization_reason=reason,
+                )
+
+    def _create_diarizer(self) -> Any:
+        try:
+            from meeting.diarize.clustering import create_diarizer
+            return create_diarizer(
+                self.options.diarization_model_path, self.store,
+                self.repository, self.meeting_id,
+            )
+        except Exception:
+            logger.exception("Diarizer unavailable")
+            return None
 
     def _disable_diarizer(self) -> None:
         with self._lifecycle_lock:
@@ -2627,21 +2654,22 @@ class MeetingEngine:
             self._degraded_diarization = False
             self._diarizer = None
             if self.store is not None:
-                self.store.update_runtime_fields(diarization_available=False)
+                self.store.update_runtime_fields(
+                    diarization_available=False,
+                    diarization_reason=DIARIZATION_OFF,
+                )
         logger.info(
             "Speaker identification off; loopback stays channel-labeled"
         )
 
-    def _resolve_diarization_model(self) -> bool:
-        """Fill in the speaker model path if needed; False when processing stopped."""
+    def _resolve_diarization_model(self) -> None:
+        """Fill in the speaker model path if needed; raises when none can be had."""
         if (self.options.diarization_model_path
                 or self.options.diarization_model_resolver is None):
-            return True
+            return
         path = self.options.diarization_model_resolver()
-        if self._processing_stop.is_set():
-            return False
-        self.options.diarization_model_path = path
-        return True
+        if not self._processing_stop.is_set():
+            self.options.diarization_model_path = path
 
     def _prepare_diarizer(self, diarizer: Any) -> bool:
         """Probe availability and hook relabeling; True when it can be used."""
@@ -2677,7 +2705,10 @@ class MeetingEngine:
             logger.exception("Diarizer availability probe failed")
         self._degraded_diarization = True
         if self.store is not None:
-            self.store.update_runtime_fields(diarization_available=False)
+            self.store.update_runtime_fields(
+                diarization_available=False,
+                diarization_reason=DIARIZATION_DEGRADED,
+            )
         logger.warning("Diarization degraded mid-meeting; loopback segments "
                        "fall back to channel-level labels")
         self._emit_status()

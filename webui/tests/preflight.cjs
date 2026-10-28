@@ -51,9 +51,18 @@ test('readiness reflects real capture state and asks for a brief when none is se
   assert.ok(checks.some((t) => /Microphone.*Detected/.test(t)));
   assert.ok(checks.some((t) => /System audio.*Not captured/.test(t)));
   assert.ok(checks.some((t) => /AI insights.*Online/.test(t)));
-  assert.ok(checks.some((t) => /Speaker separation.*Me \/ Others only/.test(t)));
+  assert.ok(checks.some((t) => /Speaker separation.*Getting ready/.test(t)));
   assert.match(container.textContent, /Share the guest link to invite others/);
   assert.match(container.textContent, /Waiting for the first words/);
+});
+
+test('speaker separation says why it fell back to Me / Others', async () => {
+  const reason = 'Could not reach Hugging Face to download the speaker model (network error).';
+  const container = await mount({state: state({diarization_reason: reason}), isHost: true, onSendOp: async () => true});
+  const row = [...container.querySelectorAll('.pf-check')].find((item) => item.textContent.includes('Speaker separation'));
+  assert.match(row.querySelector('.pf-check-state').textContent, /Me \/ Others only/);
+  assert.equal(row.querySelector('.pf-check-note').textContent, reason);
+  assert.ok(row.querySelector('.pf-glyph.pf-off'));
 });
 
 test('an open stream without callbacks does not claim audio is being captured', async () => {

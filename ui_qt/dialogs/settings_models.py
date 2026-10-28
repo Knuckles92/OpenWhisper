@@ -34,6 +34,8 @@ from services.components import (
     current_platform_tag,
     meeting_agent_needs_update,
     meeting_agent_payload_dir,
+    speaker_model_download_blocked,
+    speaker_model_error,
     speaker_model_path,
 )
 from services import installed_agents, openai_retirement
@@ -210,6 +212,7 @@ class _WorkerRelay(QObject):
     engine_runtime_checked = pyqtSignal(object, str, int)
     meeting_remote_checked = pyqtSignal(int, str)
     local_servers_detected = pyqtSignal(int, object)
+    speaker_model_downloaded = pyqtSignal(int)
 
 
 _relay: Optional[_WorkerRelay] = None
@@ -284,6 +287,8 @@ class ModelAssignments(QObject):
         self._cache_scan_generation = 0
         self._meeting_remote_token = 0
         self._local_servers_token = 0
+        #: Token of the speaker-model download under way, or 0.
+        self._speaker_download_token = 0
         #: Engine runtime checks under way, each with its request's token.
         self._engine_runtime_pending: Dict[tuple[str, str], int] = {}
         self._engine_runtime_labels: Dict[tuple[str, str], str] = {}
@@ -308,6 +313,7 @@ class ModelAssignments(QObject):
         relay.engine_runtime_checked.connect(self._on_engine_runtime_checked)
         relay.meeting_remote_checked.connect(self._on_meeting_remote_checked)
         relay.local_servers_detected.connect(self._on_local_servers_detected)
+        relay.speaker_model_downloaded.connect(self._on_speaker_model_downloaded)
 
     def __getattr__(self, name):
         destination = MODEL_CONTROL_DESTINATIONS.get(name)
@@ -563,6 +569,13 @@ class ModelAssignments(QObject):
         )
         self.speaker_id_status = self._caption("")
         card.addWidget(self.speaker_id_status)
+        self.speaker_model_download = Button("Download now")
+        self.speaker_model_download.setObjectName("speakerModelDownloadButton")
+        self.speaker_model_download.clicked.connect(self._download_speaker_model)
+        download_row = QHBoxLayout()
+        download_row.addWidget(self.speaker_model_download)
+        download_row.addStretch()
+        card.addLayout(download_row)
         self._built.add(MEETING_VOICE)
 
     def build_meeting_model_section(self, layout: QVBoxLayout) -> InfoTile:
@@ -1819,6 +1832,8 @@ class ModelAssignments(QObject):
         if MEETING_VOICE not in self._built:
             return
         backend = self.meeting_speaker_id_combo.currentData()
+        if backend != MeetingSpeakerIdBackend.LOCAL:
+            self.speaker_model_download.setVisible(False)
         if backend == MeetingSpeakerIdBackend.OFF:
             self.speaker_id_status.setText(
                 "Channel labels only: microphone is Me, system audio is "
@@ -1834,20 +1849,57 @@ class ModelAssignments(QObject):
                 "February 26, 2027; after that, on-device labels are used."
             )
             return
+        status, offer_download = self._local_speaker_model_status()
+        self.speaker_id_status.setText(
+            f"{status} Speakers are told apart on system audio only, so "
+            "everyone sharing your microphone is Me."
+        )
+        self.speaker_model_download.setVisible(offer_download)
+
+    def _local_speaker_model_status(self) -> tuple[str, bool]:
+        """Where the on-device model stands, and whether to offer Download now."""
         # The model is not a Downloads component: the first meeting that
         # needs it fetches it into a per-user cache (ensure_speaker_model).
+        if self._speaker_download_token:
+            return ("Downloading on-device WeSpeaker (voxceleb_resnet34_LM.onnx, "
+                    "about 26 MB) from Hugging Face…"), False
         if speaker_model_path():
-            self.speaker_id_status.setText(
-                "On-device WeSpeaker (voxceleb_resnet34_LM.onnx) is ready on "
-                "this computer."
-            )
-        else:
-            self.speaker_id_status.setText(
-                "On-device WeSpeaker (voxceleb_resnet34_LM.onnx, about 26 MB) "
-                "downloads from Hugging Face when your next meeting starts. "
-                "If Hugging Face access is set to Never connect, meetings use "
-                "Me/Others channel labels instead."
-            )
+            return ("On-device WeSpeaker (voxceleb_resnet34_LM.onnx) is ready on "
+                    "this computer."), False
+        blocked = speaker_model_download_blocked()
+        if blocked:
+            return f"{blocked} Meetings use Me/Others channel labels.", False
+        error = speaker_model_error()
+        if error:
+            return (f"The last download failed. {error} Meetings use Me/Others "
+                    "channel labels until it downloads."), True
+        return ("On-device WeSpeaker (voxceleb_resnet34_LM.onnx, about 26 MB) "
+                "downloads from Hugging Face when your next meeting starts, or "
+                "now with Download now."), True
+
+    def _download_speaker_model(self) -> None:
+        token = self._speaker_download_token = next(_tokens)
+        downloaded = _worker_relay().speaker_model_downloaded
+        self._refresh_speaker_id_status()
+
+        def download():
+            try:
+                from services.components import ensure_speaker_model
+
+                ensure_speaker_model()
+            except Exception:
+                # ensure_speaker_model keeps the reason for the status line.
+                logger.debug("Speaker model download failed", exc_info=True)
+            downloaded.emit(token)
+
+        threading.Thread(target=download, name="speaker-model-download",
+                         daemon=True).start()
+
+    def _on_speaker_model_downloaded(self, token: int) -> None:
+        if token != self._speaker_download_token:
+            return
+        self._speaker_download_token = 0
+        self._refresh_speaker_id_status()
 
     # ---- refresh ----
 
