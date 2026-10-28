@@ -194,7 +194,7 @@ jobs:
         run: python -m pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
       - name: Install documented source dependencies without release constraints
         if: matrix.dependencies == 'source'
-        run: python -m pip install -r requirements.txt pytest
+        run: python -m pip install -r requirements.txt pytest pypdfium2
       - run: python -m pip check
       - name: Run cross-platform recording, cancellation and persistence regressions
         timeout-minutes: 10
