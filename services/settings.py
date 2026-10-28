@@ -715,7 +715,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.API_TRANSCRIPTION_ENDPOINT: "openai",
     SettingsKey.AUTO_PASTE: True,
     SettingsKey.COPY_CLIPBOARD: True,
-    SettingsKey.RESTORE_CLIPBOARD: True,
+    SettingsKey.RESTORE_CLIPBOARD: False,
     SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN: False,
     SettingsKey.COMPACT_MODE: False,
     SettingsKey.HOST_MODE: False,

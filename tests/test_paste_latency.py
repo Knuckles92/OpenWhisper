@@ -151,7 +151,11 @@ def _harness(monkeypatch, ui_factory=FakeUI):
     ui = ui_factory(events)
     history = FakeHistory(events)
     settings = InMemorySettings(
-        {SettingsKey.AUTO_PASTE: True, SettingsKey.COPY_CLIPBOARD: True}
+        {
+            SettingsKey.AUTO_PASTE: True,
+            SettingsKey.COPY_CLIPBOARD: True,
+            SettingsKey.RESTORE_CLIPBOARD: True,
+        }
     )
     paste = Mock(side_effect=lambda: events.append("paste"))
     monkeypatch.setattr(transcription, "history_manager", history)
@@ -464,6 +468,22 @@ def test_restore_off_pastes_and_leaves_the_transcript_without_copying_the_clipbo
     assert h.paste.called
     assert h.clipboard.text() == "dictated words"
     assert h.ui.statuses[-1] == "Ready (Pasted)"
+
+
+def test_restore_is_off_until_turned_on(monkeypatch, captures):
+    h = _clipboard_harness(monkeypatch)
+    del h.settings.values[SettingsKey.RESTORE_CLIPBOARD]
+    _start_from_hotkey_thread(h.runtime)
+    _pump()
+    assert captures == []
+
+    h.controller.recorder.is_recording = False
+    assert h.runtime._claim_job()
+    h.runtime.on_transcription_complete("dictated words")
+    _pump()
+
+    assert h.paste.called
+    assert h.clipboard.text() == "dictated words"
 
 
 def test_copy_made_during_dictation_is_what_gets_restored(monkeypatch, captures):

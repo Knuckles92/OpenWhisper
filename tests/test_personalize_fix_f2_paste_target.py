@@ -45,6 +45,7 @@ def h(monkeypatch, _session_qt_application):
     settings = InMemorySettings({
         SettingsKey.AUTO_PASTE: False,
         SettingsKey.COPY_CLIPBOARD: True,
+        SettingsKey.RESTORE_CLIPBOARD: True,
         SettingsKey.APP_CONTEXT_ENABLED: False,
     })
     paste = Mock()
