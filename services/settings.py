@@ -336,6 +336,9 @@ class SettingsKey:
     # The "New" badge on Quick Record's walkthrough button gives way to a
     # "?" once a walkthrough has started.
     WALKTHROUGH_INTRO_SEEN: Final[str] = "walkthrough_intro_seen"
+    # Whether the main window goes to the tray as a walkthrough starts, out
+    # of the way of what is being shown.
+    WALKTHROUGH_MINIMIZE_TO_TRAY: Final[str] = "walkthrough_minimize_to_tray"
     # Whether an installed agent writes a finished walkthrough up, which one
     # (a MeetingAgentCore.INSTALLED id), and what it is told to make ("" for
     # the default instructions; see services/walkthrough/write_up.py).
@@ -842,6 +845,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.WALKTHROUGH_PAGE_SIZE: WalkthroughPageSize.AUTO,
     SettingsKey.WALKTHROUGH_COPY_FORMAT: WalkthroughCopyFormat.PDF,
     SettingsKey.WALKTHROUGH_INTRO_SEEN: False,
+    SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY: False,
     SettingsKey.WALKTHROUGH_WRITE_UP: False,
     SettingsKey.WALKTHROUGH_WRITE_UP_AGENT: MeetingAgentCore.CLAUDE_CODE,
     SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS: "",
@@ -1377,6 +1381,7 @@ resolve_walkthrough_page_size = _choice_resolver(
 resolve_walkthrough_copy_format = _choice_resolver(
     SettingsKey.WALKTHROUGH_COPY_FORMAT, WalkthroughCopyFormat.ALL)
 resolve_walkthrough_intro_seen = _bool_resolver(SettingsKey.WALKTHROUGH_INTRO_SEEN)
+resolve_walkthrough_minimize_to_tray = _bool_resolver(SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY)
 resolve_walkthrough_write_up = _bool_resolver(SettingsKey.WALKTHROUGH_WRITE_UP)
 resolve_walkthrough_write_up_agent = _choice_resolver(
     SettingsKey.WALKTHROUGH_WRITE_UP_AGENT, MeetingAgentCore.INSTALLED)

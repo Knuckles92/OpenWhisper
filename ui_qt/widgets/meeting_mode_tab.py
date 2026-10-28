@@ -365,9 +365,6 @@ class MeetingModeTab(QWidget):
     defer_insights_requested = pyqtSignal()
     # cloud_enabled, meeting brief
     start_new_meeting_requested = pyqtSignal(bool, str)
-    #: Emitted whenever the visible controls change, so the window can keep
-    #: enough height for the finalization checklist.
-    content_height_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1049,12 +1046,7 @@ class MeetingModeTab(QWidget):
         switch off the panel is hidden and nothing typed there is sent. The
         text stays for when the switch comes back on.
         """
-        on = self.cloud_checkbox.isChecked()
-        changed = self.brief_panel.isHidden() == on
-        self.brief_panel.setVisible(on)
-        if changed:
-            # The window fits its height to this page, so let it follow.
-            self.content_height_changed.emit()
+        self.brief_panel.setVisible(self.cloud_checkbox.isChecked())
 
     def refresh_ai_destination(self) -> None:
         """Re-read which model AI insights will use for the next meeting.
@@ -1080,7 +1072,6 @@ class MeetingModeTab(QWidget):
         self.ai_destination.setText(line)
         self.ai_compact_destination.setText(where)
         self.ai_compact_destination.setToolTip(line)
-        self.content_height_changed.emit()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -1133,27 +1124,6 @@ class MeetingModeTab(QWidget):
     def _on_retry_failed_clicked(self):
         """Retry every failed/skipped checklist step."""
         self.retry_insights_requested.emit()
-
-    def content_height(self) -> int:
-        """Return the pixel height needed to display all visible content without scrolling."""
-        if hasattr(self, "content_widget") and self.content_widget is not None:
-            from PyQt6.QtCore import QEvent
-            from PyQt6.QtWidgets import QApplication
-
-            QApplication.sendPostedEvents(self.content_widget, QEvent.Type.LayoutRequest)
-            layout = self.content_widget.layout()
-            if layout is not None:
-                w = self.content_widget.width()
-                if w <= 0:
-                    w = self.width()
-                if layout.hasHeightForWidth() and w > 0:
-                    return max(
-                        layout.minimumHeightForWidth(w),
-                        layout.heightForWidth(w),
-                        layout.sizeHint().height(),
-                    )
-                return max(layout.minimumSize().height(), layout.sizeHint().height())
-        return self.sizeHint().height()
 
     def set_developer_mode(self, enabled: bool) -> None:
         """Show or hide demo-meeting controls.
@@ -1443,8 +1413,6 @@ class MeetingModeTab(QWidget):
         self.dashboard_button.setEnabled(self._active or self._has_dashboard)
         self.finalization_report_button.setVisible(show_finalization)
         self._sync_footer_rows()
-
-        self.content_height_changed.emit()
 
     def _sync_footer_rows(self) -> None:
         """Collapse footer tiers that have no visible action left."""

@@ -312,11 +312,9 @@ class AppConfig:
     # margins and the collapsed history edge. Keep enough room for that full
     # layout so labels and footer controls cannot collide or clip.
     MAIN_WINDOW_MIN_WIDTH: int = 650
-    # Leave enough headroom for the always-visible engine fields under Windows
-    # font metrics and display scaling, including Quick Record's walkthrough
-    # button row under the recording controls. Saved/manual geometry is
-    # clamped to this floor so the front-page scroller never appears in the
-    # normal full UI.
+    # The window fits its height to each tab's page and may not be dragged
+    # shorter than the page, up to this cap, so a long page can still be
+    # shrunk to scroll. Also the floor before the first fit.
     MAIN_WINDOW_MIN_HEIGHT: int = 660
     MAIN_WINDOW_DEFAULT_WIDTH: int = 680
     # Sized so neither transcription tab needs a scrollbar at rest while still
@@ -326,9 +324,6 @@ class AppConfig:
     MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH: int = 380
     MAIN_WINDOW_HISTORY_EDGE_TAB_WIDTH: int = 24
     MAIN_WINDOW_MAX_WIDTH: int = 1280
-    # A collapsed transcript should reopen at the compact full-window height,
-    # even when the last saved geometry came from an expanded transcript.
-    MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT: int = MAIN_WINDOW_DEFAULT_HEIGHT
     MAIN_WINDOW_COMPACT_WIDTH: int = 420
     MAIN_WINDOW_COMPACT_HEIGHT: int = 250
     # Host Mode's first size; the dashboard's stat tiles sit four across at

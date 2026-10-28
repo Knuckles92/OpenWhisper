@@ -2,7 +2,8 @@
 
 Everything a walkthrough uses that people change between walkthroughs sits
 here: whether an agent writes it up, which one, what it is asked for, whether
-it follows notes spoken to it, and what lands on the clipboard. The rest
+it follows notes spoken to it, what lands on the clipboard, and whether the
+window goes to the tray as one starts. The rest
 (shortcuts, how the document looks) stays in Settings → Walkthroughs, one
 link away. Past walkthroughs are in the side panel, which lists them while
 this tab is open. See docs/walkthrough.md.
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -28,6 +30,7 @@ from services.settings import (
     WalkthroughCopyFormat,
     resolve_walkthrough_copy_format,
     resolve_walkthrough_intro_seen,
+    resolve_walkthrough_minimize_to_tray,
     resolve_walkthrough_write_up,
     resolve_walkthrough_write_up_agent,
     resolve_walkthrough_write_up_instructions,
@@ -87,6 +90,27 @@ _STYLE = """
     QLabel#walkthroughKey[unset="true"] {
         color: @text-muted;
         font-weight: 400;
+    }
+    QCheckBox#walkthroughMinimizeCheck {
+        color: @text-secondary;
+        font-size: 12px;
+        spacing: 7px;
+        background: transparent;
+    }
+    QCheckBox#walkthroughMinimizeCheck::indicator {
+        width: 15px;
+        height: 15px;
+        border-radius: 4px;
+        border: 1px solid @border-strong;
+        background-color: @bg;
+    }
+    QCheckBox#walkthroughMinimizeCheck::indicator:hover {
+        border-color: @accent;
+    }
+    QCheckBox#walkthroughMinimizeCheck::indicator:checked {
+        background-color: @accent;
+        border-color: @accent;
+        image: url(ui_qt/assets/check.svg);
     }
     QLabel#walkthroughSectionTitle {
         color: @text;
@@ -322,6 +346,15 @@ class WalkthroughTab(QWidget):
         self.copy_bar.activated.connect(self._on_copy_chosen)
         copy.addWidget(self.copy_bar)
         body.addLayout(copy)
+
+        self.minimize_check = QCheckBox("Minimize to tray when it starts")
+        self.minimize_check.setObjectName("walkthroughMinimizeCheck")
+        self.minimize_check.setToolTip(
+            "Gets this window out of the way of what you're showing. "
+            "Open it again from the tray icon.")
+        self.minimize_check.toggled.connect(
+            lambda on: settings_manager.save_setting(SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY, on))
+        body.addWidget(self.minimize_check)
         self.set_hotkeys("", "")
         return hero
 
@@ -432,15 +465,17 @@ class WalkthroughTab(QWidget):
         if self._prompt_timer.isActive():
             self._save_prompt()
         settings = settings_manager.load_all_settings()
-        for widget in (self.write_up_switch, self.notes_switch, self.prompt_edit):
+        quiet = (self.write_up_switch, self.notes_switch, self.prompt_edit, self.minimize_check)
+        for widget in quiet:
             widget.blockSignals(True)
         self.write_up_switch.setChecked(resolve_walkthrough_write_up(settings))
         self.notes_switch.setChecked(resolve_walkthrough_write_up_notes(settings))
+        self.minimize_check.setChecked(resolve_walkthrough_minimize_to_tray(settings))
         prompt = resolve_walkthrough_write_up_instructions(settings) or DEFAULT_INSTRUCTIONS
         if self.prompt_edit.toPlainText().strip() != prompt:
             # Only when it differs: setting it moves the cursor to the start.
             self.prompt_edit.setPlainText(prompt)
-        for widget in (self.write_up_switch, self.notes_switch, self.prompt_edit):
+        for widget in quiet:
             widget.blockSignals(False)
         self._show_preset()
         self._agent = resolve_walkthrough_write_up_agent(settings)

@@ -12,7 +12,6 @@ from PyQt6.QtWidgets import (
     QToolButton,
 )
 
-from config import config
 from services.settings import SettingsKey, settings_manager
 from ui_qt.main_window import MainWindow
 from ui_qt.widgets.meeting_mode_tab import (
@@ -271,40 +270,20 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
                     0,
                 )
 
-    def test_switch_tabs_static_between_record_and_upload(self):
-        """Switching between Quick Record and Upload File keeps height static."""
-        self.window.tabbed_content.set_current_index(
-            TabbedContentWidget.TAB_QUICK_RECORD
-        )
-        self._settle()
-        record_height = self.window.height()
-
-        self.window.tabbed_content.set_current_index(
-            TabbedContentWidget.TAB_UPLOAD_FILE
-        )
-        self._settle()
-        self.assertEqual(self.window.height(), record_height)
-
     def test_switch_to_and_from_meeting_mode_adjusts_height(self):
-        """Switching to Meeting Mode adjusts height and switching back restores it."""
+        """Each tab brings back its own fitted height."""
         self.window.tabbed_content.set_current_index(
             TabbedContentWidget.TAB_QUICK_RECORD
         )
-        # A collapsed transcript clamps the window to this height, so it is the
-        # only resting height the assertions below can expect.
-        resting_height = config.MAIN_WINDOW_COLLAPSED_RESTORE_MAX_HEIGHT
-        self.window.resize(config.MAIN_WINDOW_DEFAULT_WIDTH, resting_height)
         self._settle()
-        self.assertEqual(self.window.height(), resting_height)
+        resting_height = self.window.height()
 
-        # Switch to Meeting Mode
         self.window.tabbed_content.set_current_index(
             TabbedContentWidget.TAB_MEETING_MODE
         )
         self._settle()
         self.assertNotEqual(self.window.height(), resting_height)
 
-        # Switch back to Quick Record
         self.window.tabbed_content.set_current_index(
             TabbedContentWidget.TAB_QUICK_RECORD
         )
@@ -496,19 +475,15 @@ class TestMeetingModeTabState(unittest.TestCase):
     def test_brief_is_hidden_while_ai_insights_are_off(self):
         """The brief only steers AI insights, so without them it goes away."""
         received = []
-        resized = []
         self.tab.start_requested.connect(
             lambda cloud, brief: received.append((cloud, brief))
         )
-        self.tab.content_height_changed.connect(lambda: resized.append(True))
         self.tab.cloud_checkbox.setChecked(True)
         self.tab.brief_input.setPlainText("Capture every objection.")
         self.assertFalse(self.tab.brief_panel.isHidden())
 
         self.tab.cloud_checkbox.setChecked(False)
         self.assertTrue(self.tab.brief_panel.isHidden())
-        # The window re-fits its height when the panel comes or goes.
-        self.assertTrue(resized)
         # Hidden text is kept for later but never sent.
         self.assertEqual(
             self.tab.brief_input.toPlainText(), "Capture every objection."
