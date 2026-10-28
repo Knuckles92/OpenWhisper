@@ -7,6 +7,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.2] - 2026-10-28
+
 ### Added
 - **A Walkthrough tab in the main window** — between Upload File and Meeting Mode. It starts and finishes walkthroughs (with Cancel while one records), shows the Walkthrough and Screenshot shortcuts, and chooses what's copied when one finishes. The AI write-up has a switch and a card each for Claude Code, Codex and OpenCode that says whether it's installed; picking one turns the write-up on. While it's on, the card opens a **Prompt** area: the words the agent is given, editable in place, a **Start from** menu of presets (Walkthrough, Step-by-step guide, Bug report, Design feedback, Task for an agent) and **Follow notes I leave for the agent**. While the tab is open, the side panel turns from History into **Walkthroughs**: a card for each one with its title, first screenshot and length, newest first, searchable, and opening in Saved Walkthroughs. A walkthrough brings the tab to the front while it records. Quick Record is back to Start Recording, Stop and Cancel. The tab you last had open still opens at launch.
 
