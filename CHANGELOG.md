@@ -7,6 +7,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.3] - 2026-10-28
+
 ### Changed
 - **Restoring the clipboard after a paste is now off by default** — on a fresh install, the transcript stays on the clipboard after OpenWhisper pastes it, so you can paste it again. Turn on **Settings → General → Output → Restore the clipboard after pasting** to put back what you had copied instead. If you already turned it on, it stays on.
 
