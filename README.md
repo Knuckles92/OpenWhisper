@@ -23,7 +23,7 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 ## What it does
 
 - **Dictation:** Record from any app with a global hotkey, see a live preview on supported engines, and paste the result into the active window.
-- **Walkthroughs:** Talk through a task while keeping screenshots, then get a PDF and Markdown document with each screenshot after the words that describe it, ready to paste into a coding agent. Review and correct saved walkthroughs, or have your own agent write one up. Windows, macOS, and Linux (X11, Hyprland); see the [Walkthrough guide](docs/walkthrough.md).
+- **Walkthroughs:** Talk through a task while keeping screenshots, then get a PDF, Word and Markdown document with each screenshot after the words that describe it, ready to paste into a coding agent. Review and correct saved walkthroughs, or have your own agent write one up. Windows, macOS, and Linux (X11, Hyprland); see the [Walkthrough guide](docs/walkthrough.md).
 - **Audio files:** Transcribe one file or a queue, keep results separate or combine them, and copy the output when ready.
 - **Meetings:** Capture microphone and system audio, follow a live dashboard, review searchable transcripts and AI insights, play recordings, and export. Available on Windows and macOS 13+; Linux system audio is a [preview](docs/linux-system-audio.md).
 - **AI cleanup:** Choose Light, Medium, or High cleanup, which handles spoken corrections and lists, then apply spelling and style rules or reusable [cleanup profiles](docs/cleanup-profiles.md), with separate text-model choices for dictation and meetings.
