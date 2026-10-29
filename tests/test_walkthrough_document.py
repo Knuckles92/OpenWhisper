@@ -1,7 +1,7 @@
 """A walkthrough written out as Markdown, a PDF and a JSON manifest.
 
 Screenshots here are small PNGs filled with one colour; the PDF is read back
-with QtPdf, whose text runs follow the printed lines.
+with PDFium, whose text runs follow the printed lines.
 """
 
 import json
@@ -15,9 +15,8 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QLocale, QSize, QSizeF
+from PyQt6.QtCore import QLocale, QSizeF
 from PyQt6.QtGui import QColor, QImage, QPageSize
-from PyQt6.QtPdf import QPdfDocument
 
 from services.walkthrough import document
 from services.walkthrough.document import (
@@ -29,6 +28,7 @@ from services.walkthrough.document import (
     write_markdown,
     write_pdf,
 )
+from tests import pdf_reader
 
 #: A Tuesday afternoon.
 STARTED = datetime(2026, 10, 20, 14, 32, 5)
@@ -52,19 +52,9 @@ def _png(path: Path, width: int, height: int, color: str = "#3060c0") -> Path:
     return path
 
 
-def _pdf(path: Path) -> QPdfDocument:
-    pdf = QPdfDocument(None)
-    assert pdf.load(str(path)) == QPdfDocument.Error.None_
-    return pdf
-
-
 def _pages(path: Path) -> list[str]:
     """Each page's text, with the line breaks of wrapped lines as spaces."""
-    pdf = _pdf(path)
-    try:
-        return [_flat(pdf.getAllText(page).text()) for page in range(pdf.pageCount())]
-    finally:
-        pdf.close()
+    return [_flat(text) for text in pdf_reader.page_texts(path)]
 
 
 def _flat(text: str) -> str:
@@ -294,14 +284,9 @@ def test_pdf_metadata_names_the_walkthrough(tmp_path):
 
     path = write_pdf(walkthrough, tmp_path, page_size=LETTER)
 
-    pdf = _pdf(path)
-    try:
-        title = pdf.metaData(QPdfDocument.MetaDataField.Title)
-        creator = pdf.metaData(QPdfDocument.MetaDataField.Creator)
-    finally:
-        pdf.close()
-    assert title == "Walkthrough · Tue, Oct 20, 2026, 2:32 PM"
-    assert creator == "OpenWhisper"
+    info = pdf_reader.metadata(path)
+    assert info["Title"] == "Walkthrough · Tue, Oct 20, 2026, 2:32 PM"
+    assert info["Creator"] == "OpenWhisper"
 
 
 def test_a_section_that_would_split_starts_the_next_page(tmp_path):
@@ -354,12 +339,7 @@ def test_a_screenshot_without_words_is_never_shrunk(tmp_path):
 
 def _widest(path: Path, page: int, color: str) -> int:
     """The widest row of ``color`` on ``page``, in points."""
-    pdf = _pdf(path)
-    try:
-        size = pdf.pagePointSize(page)
-        image = pdf.render(page, QSize(round(size.width()), round(size.height())))
-    finally:
-        pdf.close()
+    image = pdf_reader.render(path, page)
     target = QColor(color)
     return max(
         sum(1 for x in range(image.width()) if image.pixelColor(x, y) == target)
@@ -498,12 +478,8 @@ def test_paper_follows_the_locale_unless_given(
 
     path = write_pdf(walkthrough, tmp_path, page_size=size)
 
-    pdf = _pdf(path)
-    try:
-        page = pdf.pagePointSize(0)
-    finally:
-        pdf.close()
-    assert (round(page.width()), round(page.height())) == points
+    width, height = pdf_reader.page_size(path, 0)
+    assert (round(width), round(height)) == points
 
 
 # --- Format -------------------------------------------------------------------
@@ -550,12 +526,8 @@ def test_pdf_without_a_header_or_captions_holds_only_the_words(tmp_path):
 
     (page,) = _pages(path)
     assert page == "The update card is grayed out. That's it."
-    pdf = _pdf(path)
-    try:
-        # The file keeps a name for viewers' title bars.
-        assert pdf.metaData(QPdfDocument.MetaDataField.Title).startswith("Walkthrough · ")
-    finally:
-        pdf.close()
+    # The file keeps a name for viewers' title bars.
+    assert pdf_reader.metadata(path)["Title"].startswith("Walkthrough · ")
 
 
 def test_pdf_uses_the_chosen_title(tmp_path):

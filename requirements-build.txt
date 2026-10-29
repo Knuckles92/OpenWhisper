@@ -13,3 +13,5 @@
 pyinstaller>=6.10.0
 pytest>=8.0
 pytest-xdist>=3.6
+# Reads written PDFs back in tests; QtPdf left PyQt6 in 6.12.
+pypdfium2>=5.0
