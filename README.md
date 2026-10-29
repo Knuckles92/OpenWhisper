@@ -9,7 +9,7 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 **Feedback:** If you’re unhappy with any part of the app, please [open a GitHub issue](https://github.com/Knuckles92/OpenWhisper/issues) and I’ll do my best to make it right ASAP.
 
 <p align="center">
-  <img width="680" alt="OpenWhisper Quick Record" src="docs/screenshots/01-quick-record-idle.png" />
+  <img width="724" alt="OpenWhisper Quick Record with Parakeet, AI cleanup and live preview on" src="docs/screenshots/01-quick-record-idle.png" />
 </p>
 
 <p align="center">
