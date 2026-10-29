@@ -149,7 +149,11 @@ class FakeService(ContextCaptureService):
 def h(monkeypatch, tmp_path):
     ui = FakeUI()
     history = FakeHistory()
-    settings = InMemorySettings({SettingsKey.AUTO_PASTE: True, SettingsKey.COPY_CLIPBOARD: True})
+    settings = InMemorySettings({
+        SettingsKey.AUTO_PASTE: True,
+        SettingsKey.COPY_CLIPBOARD: True,
+        SettingsKey.RESTORE_CLIPBOARD: True,
+    })
     paste = Mock()
     monkeypatch.setattr(transcription, "history_manager", history)
     monkeypatch.setattr(transcription, "settings_manager", settings)

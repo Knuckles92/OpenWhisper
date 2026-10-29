@@ -13,6 +13,7 @@ from services.settings import (
     UiFontScale,
     resolve_recording_trigger_mode,
     resolve_ui_font_scale,
+    setting_value,
 )
 from config import config
 
@@ -30,6 +31,18 @@ class TestSettingsManager:
         if os.path.exists(self.test_settings_file):
             os.remove(self.test_settings_file)
         os.rmdir(self.temp_dir)
+
+    def test_restore_clipboard_is_off_until_saved_on(self):
+        assert setting_value(
+            SettingsKey.RESTORE_CLIPBOARD, self.settings_manager.load_all_settings()
+        ) is False
+
+        # Someone who turned it on before the default changed keeps it on.
+        with open(self.test_settings_file, "w") as f:
+            json.dump({SettingsKey.RESTORE_CLIPBOARD: True}, f)
+        assert setting_value(
+            SettingsKey.RESTORE_CLIPBOARD, self.settings_manager.load_all_settings()
+        ) is True
 
     def test_load_hotkey_settings_default(self):
         hotkeys = self.settings_manager.load_hotkey_settings()

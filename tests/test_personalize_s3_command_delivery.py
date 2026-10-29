@@ -135,7 +135,11 @@ def h(monkeypatch, tmp_path):
     ui = FakeUI()
     history = FakeHistory()
     # Auto-paste off: a rewrite pastes anyway.
-    settings = InMemorySettings({SettingsKey.AUTO_PASTE: False, SettingsKey.COPY_CLIPBOARD: True})
+    settings = InMemorySettings({
+        SettingsKey.AUTO_PASTE: False,
+        SettingsKey.COPY_CLIPBOARD: True,
+        SettingsKey.RESTORE_CLIPBOARD: True,
+    })
     paste = Mock()
     for module in (transcription, command):
         monkeypatch.setattr(module, "settings_manager", settings)

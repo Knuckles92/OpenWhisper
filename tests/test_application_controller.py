@@ -1604,6 +1604,7 @@ class TestApplicationController:
         controller = self._create_controller()
         self.settings.all_settings["auto_paste"] = True
         self.settings.all_settings["copy_clipboard"] = True
+        self.settings.all_settings["restore_clipboard"] = True
 
         controller._on_transcription_complete("hello world", None)
 
@@ -1643,6 +1644,7 @@ class TestApplicationController:
     def test_auto_paste_reports_when_clipboard_snapshot_is_unavailable(self):
         controller = self._create_controller()
         self.settings.all_settings["auto_paste"] = True
+        self.settings.all_settings["restore_clipboard"] = True
         ui = controller.ui_controller
         ui.clipboard_stage_needs_restore = False
         ui.clipboard_restore_unavailable = True
