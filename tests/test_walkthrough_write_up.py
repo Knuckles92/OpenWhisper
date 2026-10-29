@@ -1,7 +1,7 @@
 """A walkthrough written up by Claude Code from its PDF, and that write-up as a PDF.
 
 The agent is a stand-in for ``run_reading_task``; the PDF is read back with
-QtPdf.
+PDFium.
 """
 
 import os
@@ -15,7 +15,6 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtGui import QColor, QImage
-from PyQt6.QtPdf import QPdfDocument
 
 from meeting.agent.installed.drivers import AgentUnavailable, PassOutcome
 from services.settings import MeetingAgentCore
@@ -23,6 +22,7 @@ from services.walkthrough import write_up
 from services.walkthrough.document import write_markdown_pdf
 from services.walkthrough.session import WalkthroughResult
 from services.walkthrough.write_up import WriteUpFailed, document_text
+from tests import pdf_reader
 
 
 @pytest.fixture(autouse=True)
@@ -38,9 +38,7 @@ def _png(path: Path, width: int = 400, height: int = 240) -> Path:
 
 
 def _text(path: Path) -> str:
-    pdf = QPdfDocument(None)
-    assert pdf.load(str(path)) == QPdfDocument.Error.None_
-    return "\n".join(pdf.getAllText(page).text() for page in range(pdf.pageCount()))
+    return "\n".join(pdf_reader.page_texts(path))
 
 
 @pytest.fixture
@@ -284,17 +282,13 @@ def test_a_colour_qt_cant_read_leaves_the_words_as_they_were(tmp_path):
 
 
 def test_purple_text_comes_out_purple_in_the_pdf(tmp_path):
-    from PyQt6.QtCore import QSize
-
     from services.walkthrough.document import Look
 
     pdf_path = write_markdown_pdf("# Purple\n\n" + "Words in purple. " * 40,
                                   tmp_path / "write-up.pdf", folder=tmp_path, title="t",
                                   look=Look(text_color="purple"))
 
-    pdf = QPdfDocument(None)
-    pdf.load(str(pdf_path))
-    page = pdf.render(0, QSize(612, 792))
+    page = pdf_reader.render(pdf_path, 0)
     # The page isn't filled: only what was painted has any alpha.
     inked = {QColor(page.pixel(x, y)).rgb() for y in range(0, page.height(), 2)
              for x in range(0, page.width(), 2) if QColor.fromRgba(page.pixel(x, y)).alpha()}
@@ -383,9 +377,7 @@ def test_a_screenshot_keeps_its_heading_and_words_on_its_page(tmp_path):
 
     pdf_path = write_markdown_pdf(text, tmp_path / "write-up.pdf", folder=tmp_path, title="t")
 
-    pdf = QPdfDocument(None)
-    pdf.load(str(pdf_path))
-    lead_page = next(page for page in range(pdf.pageCount())
-                     if "The words about it." in pdf.getAllText(page).text())
-    assert lead_page == pdf.pageCount() - 1 > 0
-    assert "Lead" in pdf.getAllText(lead_page).text()
+    pages = pdf_reader.page_texts(pdf_path)
+    lead_page = next(page for page, text in enumerate(pages) if "The words about it." in text)
+    assert lead_page == len(pages) - 1 > 0
+    assert "Lead" in pages[lead_page]

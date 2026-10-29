@@ -51,6 +51,7 @@ build = [
     "pyinstaller>=6.10.0",
     "pytest>=8.0",
     "pytest-xdist>=3.6",
+    "pypdfium2>=5.0",
     "pip>=24",
 ]
 
@@ -119,6 +120,7 @@ constraint-dependencies = [
     "pyinstaller-hooks-contrib==2026.7",
     "pynput==1.8.2",
     "pypdf==6.16.2",
+    "pypdfium2==5.14.0",
     "pyobjc-core==12.2.2 ; sys_platform == \"darwin\"",
     "pyobjc-framework-ApplicationServices==12.2.2 ; sys_platform == \"darwin\"",
     "pyobjc-framework-Cocoa==12.2.2 ; sys_platform == \"darwin\"",
