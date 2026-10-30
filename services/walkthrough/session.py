@@ -81,7 +81,8 @@ class Note:
     """Words the user held for the agent: they go to the write-up, never the document."""
 
     text: str
-    #: The section they were said in, an index into the board's sections.
+    #: Which screenshot they were said before, counting from 0, or the
+    #: number of screenshots when they came after the last one.
     section: int
 
 
@@ -244,6 +245,7 @@ class WalkthroughSession:
         with self._lock:
             if self._open and self._note_from is None:
                 self._note_from = max(0.0, float(at_s))
+                self._checkpoint_later_locked()
 
     def release_note(self, at_s: float) -> None:
         """Hold for note was let go ``at_s`` into the recording."""
@@ -251,6 +253,13 @@ class WalkthroughSession:
             start, self._note_from = self._note_from, None
             if start is not None and at_s > start:
                 self._notes.append((start, float(at_s)))
+            if start is not None:
+                self._checkpoint_later_locked()
+
+    def _checkpoint_later_locked(self) -> None:
+        # Recovery must leave a held note out of the document too.
+        if self._writer is not None:
+            self._writer.submit(self._checkpoint)
 
     def folder(self) -> Path:
         """The walkthrough's folder, created the first time it is needed."""
@@ -366,10 +375,13 @@ class WalkthroughSession:
             # In the order kept, which recovery needs; a removed screenshot's
             # words go to the next one's section there.
             on_board = sorted(s.shot for s in self._board_locked() if s.shot is not None)
+            # A note still held when the app stops runs to the end (null).
+            held = [*self._notes, *([(self._note_from, None)] if self._note_from is not None else [])]
             value = dict(version=1, started_at=self.started_at.isoformat(),
                          journal_id=self._journal_id,
                          shots=[dict(shot=self._shots[i].path.name, kept_at_s=self._shots[i].kept_at_s)
-                                for i in on_board])
+                                for i in on_board],
+                         notes_s=[[start, None if end == math.inf else end] for start, end in held])
         if folder is not None:
             try:
                 atomic_json(folder / DRAFT_NAME, value)

@@ -1564,6 +1564,7 @@ class TranscriptionRuntime:
             result = finish.build_documents(
                 session, shots, cleaned, raws,
                 duration_s=self.controller._pending_audio_duration or 0.0,
+                notes=notes,
             )
         except OSError as exc:
             # A full disk or a read-only folder loses the document, never the

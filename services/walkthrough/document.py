@@ -72,6 +72,9 @@ class Section:
     kept_at_s: float | None = None
     #: A screenshot Review left out of the documents; kept so it can return.
     omitted: Path | None = None
+    #: What the user held Hold for note to say here: for the AI write-up only,
+    #: so never in the documents, only in the manifest.
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -308,7 +311,8 @@ def write_manifest(walkthrough: Walkthrough, folder: Path) -> Path:
 
     It holds the same sections as the documents: screenshots by file name
     within ``folder`` (null for trailing speech), times in seconds into the
-    recording, and the start with its UTC offset.
+    recording, and the start with its UTC offset. Notes held for the agent
+    are kept with their section, for a later write-up to follow.
     """
     manifest = {
         "version": MANIFEST_VERSION,
@@ -321,11 +325,13 @@ def write_manifest(walkthrough: Walkthrough, folder: Path) -> Path:
                 "kept_at_s": section.kept_at_s,
                 # Older readers ignore this and see a section without a screenshot.
                 **({"omitted_shot": _shot_name(section.omitted, folder)} if section.omitted else {}),
+                **({"notes": list(section.notes)} if section.notes else {}),
             }
             # As in the documents, an empty section is dropped, unless Review
-            # is holding a screenshot for it.
+            # is holding a screenshot for it or it holds notes for a write-up.
             for section in walkthrough.sections
             if section.shot is not None or section.omitted is not None or _tidy(section.text)
+            or section.notes
         ],
     }
     path = folder / MANIFEST_NAME

@@ -197,9 +197,10 @@ def h(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, "_model_info_for_history", lambda: "parakeet")
     built = []
 
-    def build_documents(session, shots, texts, raws, *, duration_s):
+    def build_documents(session, shots, texts, raws, *, duration_s, notes=()):
         folder = session.folder()
-        built.append(SimpleNamespace(shots=list(shots), texts=list(texts), duration_s=duration_s))
+        built.append(SimpleNamespace(shots=list(shots), texts=list(texts), duration_s=duration_s,
+                                     notes=list(notes)))
         return WalkthroughResult(
             folder=folder, pdf=folder / "walkthrough.pdf", markdown=folder / "walkthrough.md",
             clipboard_text="# Walkthrough (markdown)",
@@ -382,6 +383,7 @@ def test_a_held_note_goes_to_the_write_up_not_the_document(h, monkeypatch):
     assert "purple" not in h.history.entries[0]["text"]
     ((note,),) = written
     assert (note.text, note.section) == ("make it purple", 1)
+    assert built.notes == [note]  # saved with the walkthrough, for a later write-up
 
 
 def test_a_screenshot_moved_up_takes_its_words_into_the_document(h):

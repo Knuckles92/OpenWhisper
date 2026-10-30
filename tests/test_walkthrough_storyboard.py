@@ -4,9 +4,11 @@ from unittest.mock import Mock, patch
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QSignalSpy, QTest
+from PyQt6.QtWidgets import QLabel
 
 from services.walkthrough import library
 from tests.test_walkthrough_library import capture as capture_fixture
+from tests.test_walkthrough_library import noted_capture
 from ui_qt.widgets.walkthrough_review import WalkthroughReview
 
 capture = capture_fixture
@@ -93,6 +95,22 @@ def test_rows_show_each_screenshot_beside_its_words(review):
     assert [row.editor.toPlainText() for row in review.rows] == ["first", "second", "last"]
     assert [row.check.isChecked() for row in review.rows] == [True, True, False]
     assert not review.version_bar.isVisible()
+
+
+def test_held_notes_show_on_their_rows_and_stay_through_a_save(tmp_path):
+    folder = noted_capture(tmp_path)
+    widget = WalkthroughReview(copy_files=Mock(return_value=True))
+    widget.changed.connect(widget.show_folder)
+    widget.show_folder(folder)
+    shown = [[label.text().split("\n")[1] for label in row.findChildren(QLabel, "wlNote")]
+             for row in widget.rows]
+    assert shown == [[], ["make it purple"], ["sign off warmly"]]
+    widget.rows[0].editor.setPlainText("first, fixed")
+    widget.save_button.click()
+    _wait(widget)
+    assert [s.notes for s in library.load_document(folder).sections] == [
+        (), ("make it purple",), ("sign off warmly",)]
+    widget.close()
 
 
 def test_moving_a_row_renumbers_it_and_saving_keeps_the_new_order(review, capture):

@@ -178,7 +178,7 @@ folder (next to `meetings`):
 | `walkthrough.pdf` | The document as pages: title, date and length, then each section's words, its screenshot and a caption with when it was taken. Text is selectable; screenshots are embedded at full resolution. |
 | `walkthrough.md` | The same as Markdown, linking `shot-1.png` and so on. |
 | `walkthrough.docx` | The same as the PDF, for Word: same words, screenshots, fonts and colours, laid out on the same paper. Word does the page breaks, keeping each screenshot with its words and caption. |
-| `walkthrough.json` | The sections, screenshot names and times, for tools (and a later AI write-up) to read. |
+| `walkthrough.json` | The sections, screenshot names and times, for tools (and a later AI write-up) to read, with any notes you held for the agent. |
 | `shot-N.png` | Each annotated screenshot, full resolution. |
 | `write-up.pdf`, `write-up.md`, `write-up.docx` | Your agent's write-up, when it is turned on (see below). |
 
@@ -229,7 +229,9 @@ faded, so a later save can include it again. Nothing is shared by opening or
 saving; use a copy button when ready. The original PNGs remain, and the first
 revision's manifest is kept as `walkthrough.original.json`. History remains
 the transcript recorded at completion; saving changes the saved documents,
-not that historical entry.
+not that historical entry. A note you held for the agent shows in purple on
+the row it was said in, and moves with that row; it is never in the
+documents, only kept for a write-up.
 
 A walkthrough with an AI write-up opens on the write-up, with a switch to
 **As spoken**. The write-up's rows are its Markdown cut at each screenshot
@@ -240,19 +242,22 @@ Saving edits to the words as spoken offers **Save and redo write-up**, which
 writes it up again from the new words, or **Save without write-up**, which
 drops the old write-up because it described the old words.
 
-**Retry AI write-up** uses the saved as-spoken document and your current
-agent and instructions, without recording or transcribing again. A failed
+**Retry AI write-up** uses the saved as-spoken document, the notes you held
+for the agent, and your current agent and instructions, without recording or
+transcribing again. A failed
 retry leaves existing documents available. It runs in the background;
 **Cancel operation** requests cancellation and waits for safe completion.
 
-While recording, `draft.json` checkpoints screenshot order, timing, and the
-identity of the recorder's crash-safe audio journal. Once stopped, `audio.wav`
+While recording, `draft.json` checkpoints screenshot order, timing, when you
+held **Hold for note**, and the identity of the recorder's crash-safe audio
+journal. Once stopped, `audio.wav`
 keeps an independent recording beside the screenshots. After an interruption,
 restart OpenWhisper so startup recovery can join the recovered audio to its
 draft, then choose **Recover draft**. It transcribes the saved sections using
-your current voice model. A screenshot you removed while recording stays out;
-the order you moved screenshots into is not kept, so a recovered draft has
-them in the order taken. Screenshots whose writes never completed are left
+your current voice model. A screenshot you removed while recording stays out,
+and a note you held is cut out of the document and goes to the write-up; the
+order you moved screenshots into is not kept, so a recovered draft has them
+in the order taken. Screenshots whose writes never completed are left
 out; a draft without recoverable audio keeps its screenshots and explains
 why it cannot yet be finished. **Refresh** updates an already-open list.
 
@@ -318,8 +323,10 @@ and the status say **Write-up copied**.
   agent's message, each with where you said it ("About screenshot 2"), and
   the agent follows them under the same rule: a note can only change what
   the write-up says and how it looks. They are followed whether or not
-  **Follow notes left for the agent** is on. A write-up that fails takes
-  them with it.
+  **Follow notes left for the agent** is on. They are saved with the
+  walkthrough in `walkthrough.json`, so **Retry AI write-up** and **Save and
+  redo write-up** follow them too, placed by the screenshots the document
+  still shows.
 - **Colours and a font.** Markdown has neither, so when a note or your
   instructions ask for them, the agent starts its reply with a small block
   (`text color`, `heading color`, `font`). OpenWhisper applies it to
@@ -361,9 +368,6 @@ and the status say **Write-up copied**.
 
 - A write-up with a model of your choosing; each agent uses its own default
   model.
-- Notes held for the agent reach the write-up made when the walkthrough
-  finishes; they aren't saved with it, so **Retry AI write-up** and **Save
-  and redo write-up** can't follow them.
 - Pause, Hold for note and the Snap menu are on the column, so Wayland,
   which has none, has only Snap and Done.
 - A paired host stores a walkthrough's History entry and audio like a

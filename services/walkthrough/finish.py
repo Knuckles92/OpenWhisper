@@ -81,8 +81,12 @@ def build_documents(
     raw_texts: Sequence[str],
     *,
     duration_s: float,
+    notes: Sequence[Note] = (),
 ) -> WalkthroughResult:
-    """Write the walkthrough's Markdown, PDF, Word document and manifest into its folder."""
+    """Write the walkthrough's Markdown, PDF, Word document and manifest into its folder.
+
+    ``notes`` go into the manifest only, with the section they were said in.
+    """
     from services.walkthrough.document import (
         Section,
         Walkthrough,
@@ -93,11 +97,14 @@ def build_documents(
     )
     from services.walkthrough.word import write_docx
 
+    def held(index: int) -> tuple[str, ...]:
+        return tuple(note.text for note in notes if note.section == index)
+
     sections = [
-        Section(text=texts[index], shot=shot.path, kept_at_s=shot.kept_at_s)
+        Section(text=texts[index], shot=shot.path, kept_at_s=shot.kept_at_s, notes=held(index))
         for index, shot in enumerate(shots)
     ]
-    sections.append(Section(text=texts[len(shots)]))
+    sections.append(Section(text=texts[len(shots)], notes=held(len(shots))))
     walkthrough = Walkthrough(
         started_at=session.started_at, duration_s=duration_s, sections=tuple(sections),
     )

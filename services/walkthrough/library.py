@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from services.walkthrough.session import Shot, WalkthroughResult, WalkthroughSession
+from services.walkthrough.session import Note, Shot, WalkthroughResult, WalkthroughSession
 from services.walkthrough.storage import DOCX_NAME, MANIFEST_NAME, MARKDOWN_NAME, PDF_NAME
 
 if TYPE_CHECKING:
@@ -128,11 +128,24 @@ def load_document(folder: Path) -> Walkthrough:
         shot = _shot_file(folder, section.get("shot"))
         omitted = _shot_file(folder, section.get("omitted_shot"), required=False)
         stamp = section.get("kept_at_s")
+        notes = section.get("notes", [])
+        if not isinstance(notes, list) or not all(isinstance(note, str) for note in notes):
+            raise ValueError("Invalid walkthrough notes")
         sections.append(document.Section(str(section["text"]), shot,
                                          _seconds(stamp) if stamp is not None else None,
-                                         None if shot else omitted))
+                                         None if shot else omitted, tuple(notes)))
     return document.Walkthrough(datetime.fromisoformat(value["started_at"]),
                                 _seconds(value["duration_s"]), tuple(sections))
+
+
+def held_notes(walkthrough: Walkthrough) -> list[Note]:
+    """The notes held for the agent, each before the next screenshot the documents show."""
+    notes, shown = [], 0
+    for section in walkthrough.sections:
+        notes += [Note(text, shown) for text in section.notes]
+        if section.shot:
+            shown += 1
+    return notes
 
 
 def written_up(folder: Path) -> bool:
@@ -304,11 +317,12 @@ def retry_write_up(folder: Path, *, cancel_event=None) -> WalkthroughResult:
 
     result = load_result(folder, spoken=True)
     settings = settings_manager.load_all_settings()
-    shots = [s.shot for s in load_document(folder).sections if s.shot]
+    walkthrough = load_document(folder)
+    shots = [s.shot for s in walkthrough.sections if s.shot]
     return write_up(result, shots, agent=resolve_walkthrough_write_up_agent(settings),
                     instructions=resolve_walkthrough_write_up_instructions(settings),
                     follow_notes=resolve_walkthrough_write_up_notes(settings),
-                    cancel_event=cancel_event)
+                    notes=held_notes(walkthrough), cancel_event=cancel_event)
 
 
 def attach_recovered_audio(root: Path, recordings: Path) -> int:
@@ -363,6 +377,15 @@ def recovery_session(folder: Path) -> WalkthroughSession:
         saved = Future()
         saved.set_result(True)
         session._saves.append(saved)
+    # Held for the agent, so cut out of the sections; null runs to the end.
+    end = 0.0
+    for start, stop in draft.get("notes_s", []):
+        start = _seconds(start)
+        stop = math.inf if stop is None else _seconds(stop)
+        if start < end or stop < start:
+            raise ValueError("Unordered note times")
+        end = stop
+        session._notes.append((start, stop))
     session._folder = folder
     session.close()
     return session

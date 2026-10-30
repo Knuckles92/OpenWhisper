@@ -200,6 +200,14 @@ _STYLE = """
         border: 1px dashed rgba(@overlay-rgb, 0.14);
         border-radius: 8px;
     }
+    QLabel#wlNote {
+        color: @purple-text;
+        background-color: rgba(@purple-rgb, 0.1);
+        border: 1px solid rgba(@purple-rgb, 0.28);
+        border-radius: 8px;
+        padding: 6px 8px;
+        font-size: 12px;
+    }
     QTextEdit#wlEditor {
         color: @text;
         background-color: rgba(@overlay-rgb, 0.035);
@@ -431,7 +439,8 @@ class _Row(QFrame):
     """
 
     def __init__(self, index: int, number: int, text: str, image: Path | None, *,
-                 included: bool, stamp: str, can_omit: bool, line: str = ""):
+                 included: bool, stamp: str, can_omit: bool, line: str = "",
+                 notes: tuple[str, ...] = ()):
         super().__init__()
         self.setObjectName("wlSection")
         self.index = index
@@ -470,6 +479,13 @@ class _Row(QFrame):
         column.addLayout(top)
         self.editor = _Editor(text, number)
         column.addWidget(self.editor)
+        for note in notes:
+            # Held for the agent: shown so Retry's input is visible, never edited.
+            label = QLabel(f"Note for the agent · not in the document\n{note}")
+            label.setObjectName("wlNote")
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setWordWrap(True)
+            column.addWidget(label)
         column.addStretch(1)
         row.addLayout(column, 1)
 
@@ -830,7 +846,8 @@ class WalkthroughReview(QWidget):
                 stamp = (f"Screenshot at {clock(section.kept_at_s)}" if image
                          else f"Until {clock(section.kept_at_s)}")
             rows.append(_Row(index, index + 1, section.text, image,
-                             included=section.shot is not None, stamp=stamp, can_omit=True))
+                             included=section.shot is not None, stamp=stamp, can_omit=True,
+                             notes=section.notes))
         return rows
 
     def _write_up_rows(self) -> list[_Row]:

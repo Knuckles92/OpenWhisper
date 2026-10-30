@@ -1,5 +1,6 @@
 """Saved walkthrough review, recovery, retry, retention and file-boundary safety."""
 import json
+import math
 import os
 import subprocess
 import sys
@@ -15,7 +16,7 @@ import pytest
 from PyQt6.QtGui import QColor, QImage
 
 from services.walkthrough import document, finish, library, write_up
-from services.walkthrough.session import WalkthroughSession
+from services.walkthrough.session import Note, WalkthroughSession
 
 
 @pytest.fixture
@@ -33,6 +34,24 @@ def capture(tmp_path):
                                      ["first", "second", "last"], duration_s=3.0)
     session.end()
     return SimpleNamespace(folder=folder, root=folder.parent, result=result)
+
+
+def noted_capture(tmp_path):
+    """Two screenshots, a note held before the second and one after the last, said alone."""
+    folder = tmp_path / "captures" / "2026-10-21_14-32-05"
+    folder.mkdir(parents=True)
+    session = WalkthroughSession(started_at=datetime(2026, 10, 21, 14, 32, 5),
+                                  make_folder=lambda _: folder)
+    image = QImage(120, 80, QImage.Format.Format_RGB32)
+    image.fill(QColor("#f84f30"))
+    session.add_shot(image, 1.0)
+    session.add_shot(image, 2.0)
+    shots = session.saved_shots()
+    finish.build_documents(session, shots, ["first", "second", ""], ["first", "second", ""],
+                           duration_s=3.0,
+                           notes=[Note("make it purple", 1), Note("sign off warmly", 2)])
+    session.end()
+    return folder
 
 
 def _audio(path):
@@ -185,7 +204,44 @@ def test_retry_uses_the_spoken_document_and_current_agent_settings(capture, monk
     assert source.pdf.name == "walkthrough.pdf"
     assert [p.name for p in shots] == ["shot-1.png", "shot-2.png"]
     assert options == dict(agent="codex", instructions="Make steps", follow_notes=True,
-                           cancel_event=cancel)
+                           notes=[], cancel_event=cancel)
+
+
+def test_held_notes_are_saved_with_their_section_and_never_in_the_documents(tmp_path):
+    folder = noted_capture(tmp_path)
+    saved = library.load_document(folder)
+    assert [s.notes for s in saved.sections] == [(), ("make it purple",), ("sign off warmly",)]
+    assert saved.sections[2].text == ""  # kept for its note alone
+    assert "purple" not in (folder / "walkthrough.md").read_text(encoding="utf-8")
+    assert "purple" not in library.load_result(folder).history_text
+    value = json.loads((folder / "walkthrough.json").read_text(encoding="utf-8"))
+    value["sections"][1]["notes"] = [7]
+    (folder / "walkthrough.json").write_text(json.dumps(value), encoding="utf-8")
+    with pytest.raises(ValueError):
+        library.load_document(folder)
+
+
+def test_retry_follows_the_notes_held_while_recording(tmp_path, monkeypatch):
+    folder = noted_capture(tmp_path)
+    called = []
+    monkeypatch.setattr(write_up, "write_up",
+                        lambda result, shots, **kwargs: called.append(kwargs) or result)
+    library.retry_write_up(folder)
+    assert [(n.text, n.section) for n in called[0]["notes"]] == [
+        ("make it purple", 1), ("sign off warmly", 2)]
+
+
+def test_notes_go_with_their_section_through_review(tmp_path):
+    folder = noted_capture(tmp_path)
+    library.save_review(folder, ["second", "first", ""], [True, False, True], [1, 0, 2])
+    saved = library.load_document(folder)
+    assert [s.notes for s in saved.sections] == [("make it purple",), (), ("sign off warmly",)]
+    # Screenshot 2 is now the only one shown, so it is the first.
+    notes = library.held_notes(saved)
+    assert [(n.text, n.section) for n in notes] == [("make it purple", 0), ("sign off warmly", 1)]
+    prompt = write_up._notes(notes, ["shot-2.png"])
+    assert "About screenshot 1 (shot-2.png): make it purple" in prompt
+    assert "After the last screenshot: sign off warmly" in prompt
 
 
 def test_retry_render_failure_does_not_replace_existing_write_up(capture, monkeypatch):
@@ -219,6 +275,37 @@ def test_checkpoint_survives_session_recreation_and_keeps_audio(tmp_path):
     assert [(s.path.name, s.kept_at_s) for s in recovered.saved_shots()] == [("shot-1.png", 1.25)]
     assert (folder / library.AUDIO_NAME).read_bytes() == source.read_bytes()
     recovered.end()
+
+
+def test_a_draft_keeps_held_notes_so_recovery_leaves_them_out(tmp_path):
+    folder = tmp_path / "2026-10-21_14-32-05"
+    folder.mkdir()
+    session = WalkthroughSession(make_folder=lambda _: folder)
+    session.checkpoint_recording("a" * 32)
+    session.hold_note(0.5)
+    session.release_note(1.0)
+    session.hold_note(1.5)
+    session._writer.submit(lambda: None).result()  # the checkpoints queued before it
+    draft = json.loads((folder / library.DRAFT_NAME).read_text(encoding="utf-8"))
+    assert draft["notes_s"] == [[0.5, 1.0], [1.5, None]]
+    source = tmp_path / "recording.wav"
+    _audio(source)
+    session.preserve_audio(str(source))
+    session.end()
+    recovered = library.recovery_session(folder)
+    assert recovered.storyboard().notes_s == ((0.5, 1.0), (1.5, math.inf))
+    recovered.end()
+
+
+def test_a_draft_with_notes_out_of_order_is_refused(tmp_path):
+    folder = tmp_path / "2026-10-21_14-32-05"
+    folder.mkdir()
+    _audio(folder / library.AUDIO_NAME)
+    (folder / library.DRAFT_NAME).write_text(json.dumps(dict(
+        version=1, started_at="2026-10-21T14:32:05", journal_id="a" * 32, shots=[],
+        notes_s=[[2.0, 3.0], [1.0, 1.5]])), encoding="utf-8")
+    with pytest.raises(ValueError):
+        library.recovery_session(folder)
 
 
 def test_hard_process_exit_recovers_audio_and_screenshot_timing(tmp_path):
