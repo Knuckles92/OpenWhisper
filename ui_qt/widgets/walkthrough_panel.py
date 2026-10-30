@@ -7,9 +7,9 @@ section being spoken sits in an open slot until the next screenshot closes
 it. Hovering a screenshot offers to move it up or down or remove it; its
 words always go with it, since a section is the words and then the
 screenshot they led to. The footer takes screenshots (its menu picks the
-kind Snap repeats), undoes the last one, cancels and finishes. While Hold
-for note is held, what the user says is a note for the AI write-up, not
-the document: it shows as a purple row. At Done the ticks close up into lines while the
+kind Snap repeats), undoes the last one, pauses, cancels and finishes.
+While Hold for note is held, what the user says is a note for the AI
+write-up, not the document: it shows as a purple row. At Done the ticks close up into lines while the
 document is written, the header says what it came to, and the column fades
 once the document is ready.
 
@@ -84,6 +84,7 @@ SLOT_BADGE = 20.0
 SLOT_TIME_W = 34.0
 SLOT_HINT_H = 16.0
 SLOT_HINT = "Talking… Snap to close this section"
+PAUSED_HINT = "Paused · Resume to keep talking"
 #: The tools that hover over a screenshot, and its number badge.
 TOOL = 28.0
 TOOL_GAP = 4.0
@@ -129,6 +130,8 @@ TOOLTIPS = {
             "not into the document",
     "note-off": "Turn on AI write-up on the Walkthrough tab to leave notes for it",
     "undo": "Undo the last screenshot; its words stay",
+    "pause": "Pause: nothing is recorded until you resume",
+    "resume": "Resume recording",
     "cancel": "Cancel the walkthrough: nothing is kept",
     "done": "Finish the walkthrough",
     "up": "Move up, with its words",
@@ -311,6 +314,8 @@ class WalkthroughPanel(QWidget):
     snap_mode_chosen = pyqtSignal(str)
     #: Hold for note pressed (True) or let go (False).
     note_held = pyqtSignal(bool)
+    #: Pause (True) or resume (False).
+    pause_requested = pyqtSignal(bool)
     undo_requested = pyqtSignal()
     cancel_requested = pyqtSignal()
     finish_requested = pyqtSignal()
@@ -364,6 +369,10 @@ class WalkthroughPanel(QWidget):
         self._snap_shortcut = ""
         # Whether a note has anyone to read it: the AI write-up is on.
         self._notes_on = True
+        # Paused, and how long the pauses so far lasted, in ms of the clock.
+        self.paused = False
+        self._paused_ms = 0
+        self._paused_at = 0
         self._countdown = 0
         self._menu = None
         self._frame = QTimer(self)
@@ -382,6 +391,8 @@ class WalkthroughPanel(QWidget):
         self._hover_shot = 0
         self._shot_rects = {}
         self._countdown = 0
+        self.paused = False
+        self._paused_ms = self._paused_at = 0
         self._clock.start()
         self._enter(self.RECORDING)
         self._drag.reset()
@@ -425,6 +436,18 @@ class WalkthroughPanel(QWidget):
         self._countdown = seconds
         self.update()
 
+    def set_paused(self, paused: bool) -> None:
+        """The recording paused, or resumed: the clock stops with it."""
+        if paused == self.paused or self.state != self.RECORDING:
+            return
+        if paused:
+            self._hold(False)
+            self._paused_at = self._clock.elapsed()
+        else:
+            self._paused_ms += self._clock.elapsed() - self._paused_at
+        self.paused = paused
+        self.update()
+
     def set_notes_on(self, on: bool) -> None:
         """Whether Hold for note works: only an AI write-up reads notes."""
         self._notes_on = on
@@ -443,6 +466,7 @@ class WalkthroughPanel(QWidget):
             return
         self._hold(False)
         self._recorded_s = self._recorded()
+        self.paused = False
         self._hover_shot = 0
         self._enter(self.WRITING)
 
@@ -473,7 +497,8 @@ class WalkthroughPanel(QWidget):
         """Seconds recorded so far."""
         if self.state != self.RECORDING:
             return self._recorded_s
-        return self._clock.elapsed() / 1000.0
+        now = self._paused_at if self.paused else self._clock.elapsed()
+        return (now - self._paused_ms) / 1000.0
 
     def _enter(self, state: str) -> None:
         self.state = state
@@ -485,7 +510,7 @@ class WalkthroughPanel(QWidget):
     def _advance(self) -> None:
         now = self._now()
         dt, self._last = min(0.1, now - self._last), now
-        if self.state == self.RECORDING:
+        if self.state == self.RECORDING and not self.paused:
             self.column.advance(dt, now)
         target = 1.0
         if self.state == self.DONE:
@@ -605,6 +630,8 @@ class WalkthroughPanel(QWidget):
     def event(self, event) -> bool:
         if event.type() == QEvent.Type.ToolTip:
             key = self._hit(QPointF(event.pos())).split(":")[0]
+            if key == "pause" and self.paused:
+                key = "resume"
             note = self._footer()["note"][0]
             if not key and not self._notes_on and note.contains(QPointF(event.pos())):
                 key = "note-off"
@@ -626,6 +653,8 @@ class WalkthroughPanel(QWidget):
             self.move_requested.emit(int(number), 1)
         elif name == "remove":
             self.remove_requested.emit(int(number))
+        elif name == "pause":
+            self.pause_requested.emit(not self.paused)
         elif name == "snap-menu":
             if self._menu is None:
                 self._open_menu()
@@ -641,7 +670,7 @@ class WalkthroughPanel(QWidget):
 
     def _hold(self, on: bool) -> None:
         """Start or end a note; the walkthrough hears of it through ``note_held``."""
-        if on == self.column.holding or (on and self.state != self.RECORDING):
+        if on == self.column.holding or (on and (self.state != self.RECORDING or self.paused)):
             return
         self.column.hold_note(on, self._recorded())
         self.note_held.emit(on)
@@ -697,7 +726,8 @@ class WalkthroughPanel(QWidget):
         snap_menu = QRectF(snap.right(), top, SNAP_MENU_W, FOOT_H)
         note = QRectF(snap_menu.right() + FOOT_GAP, top, half, FOOT_H)
         undo = QRectF(inner.left(), bottom, FOOT_ICON_W, FOOT_H)
-        cancel = QRectF(undo.right() + FOOT_GAP, bottom, FOOT_ICON_W, FOOT_H)
+        pause = QRectF(undo.right() + FOOT_GAP, bottom, FOOT_ICON_W, FOOT_H)
+        cancel = QRectF(pause.right() + FOOT_GAP, bottom, FOOT_ICON_W, FOOT_H)
         done = QRectF(cancel.right() + FOOT_GAP, bottom, inner.right() - cancel.right() - FOOT_GAP,
                       FOOT_H)
         widen = self._cancel_widening()
@@ -707,7 +737,8 @@ class WalkthroughPanel(QWidget):
         return {
             "snap": (snap, recording),
             "snap-menu": (snap_menu, recording),
-            "note": (note, recording and self._notes_on),
+            "note": (note, recording and self._notes_on and not self.paused),
+            "pause": (pause, recording),
             "undo": (undo, recording and self.column.shots > 0),
             "cancel": (cancel, self.state in (self.RECORDING, self.WRITING)),
             "done": (done, recording),
@@ -762,7 +793,14 @@ class WalkthroughPanel(QWidget):
         painter.setFont(sub)
         y = inner.top() + 36
         x = inner.left()
-        if self.state == self.RECORDING:
+        if self.state == self.RECORDING and self.paused:
+            paint_icon(painter, "pause", QPointF(x + 5, y + 9), 12, token_color("text-secondary"))
+            x += 16
+            shots = self.column.shots
+            text = f"Paused  {clock(self._recorded())}"
+            if shots:
+                text += f"  ·  {shots} shot{'' if shots == 1 else 's'}"
+        elif self.state == self.RECORDING:
             pulse = 0.55 + 0.45 * (0.5 + 0.5 * math.cos(self._clock.elapsed() / 1000.0 * math.tau / 1.6))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(token_color("danger", int(255 * pulse)))
@@ -935,7 +973,9 @@ class WalkthroughPanel(QWidget):
         painter.restore()
 
     def _paint_caret(self, painter: QPainter, x: float, centre: float) -> None:
-        blink = 0.5 + 0.5 * math.cos(self._clock.elapsed() / 1000.0 * math.tau / 1.1)
+        # Paused, it rests dim rather than blinking.
+        blink = 0.0 if self.paused else 0.5 + 0.5 * math.cos(
+            self._clock.elapsed() / 1000.0 * math.tau / 1.1)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(token_color("accent", int(90 + 165 * blink)))
         painter.drawRoundedRect(QRectF(x, centre - 7, 2, 14), 1, 1)
@@ -996,12 +1036,13 @@ class WalkthroughPanel(QWidget):
         hint.setPixelSize(12)
         painter.setFont(hint)
         holding = self.column.holding
-        painter.setPen(token_color("purple-text" if holding else "accent-soft"))
+        painter.setPen(token_color("purple-text" if holding else "text-secondary" if self.paused
+                                   else "accent-soft"))
         hint_top = rect.bottom() - SLOT_PAD_BOTTOM - SLOT_HINT_H
         painter.drawText(QRectF(rect.left() + SLOT_PAD_X, hint_top, rect.width() - 2 * SLOT_PAD_X,
                                 SLOT_HINT_H),
                          Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                         NOTE_HINT if holding else SLOT_HINT)
+                         NOTE_HINT if holding else PAUSED_HINT if self.paused else SLOT_HINT)
         painter.restore()
 
     def _paint_shot(self, painter: QPainter, shot: ShotItem, left: float, top: float,
@@ -1125,6 +1166,15 @@ class WalkthroughPanel(QWidget):
             self._paint_label(painter, rect, "note", "Hold for note", token_color("purple-text"))
         elif key == "undo":
             paint_icon(painter, "undo", rect.center(), 16, token_color("text"))
+        elif key == "pause":
+            if self.paused:
+                # Paused: the button is the way back, so it stands out.
+                painter.setPen(QPen(token_color("accent-tint-border"), 1.0))
+                painter.setBrush(token_color("accent-tint-strong"))
+                painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10)
+                paint_icon(painter, "play", rect.center(), 15, token_color("accent-soft"))
+            else:
+                paint_icon(painter, "pause", rect.center(), 15, token_color("text"))
         elif key == "cancel":
             ink = token_color("danger-text-soft")
             if rect.width() > FOOT_ICON_W * 2.5:

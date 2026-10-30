@@ -77,11 +77,13 @@ class FakePanel(QObject):
     move_requested = pyqtSignal(int, int)
     remove_requested = pyqtSignal(int)
     note_held = pyqtSignal(bool)
+    pause_requested = pyqtSignal(bool)
 
     def __init__(self):
         super().__init__()
         self.calls = []
         self.notes_on = None
+        self.paused = []
         self.snap_mode = ""
         self.shortcut = ""
         self.countdowns = []
@@ -90,6 +92,9 @@ class FakePanel(QObject):
         self.snap_mode = mode
         if shortcut is not None:
             self.shortcut = shortcut
+
+    def set_paused(self, paused):
+        self.paused.append(paused)
 
     def set_notes_on(self, on):
         self.notes_on = on
@@ -609,3 +614,35 @@ def test_notes_are_offered_only_with_an_ai_write_up(h):
     _begin(h)
 
     assert h.ui.walkthrough_panel.notes_on is True
+
+
+# --- Pause -------------------------------------------------------------------------
+
+
+def test_pause_and_resume_reach_the_recorder_and_the_column(h):
+    session = _begin(h)
+    h.recorder.pause = Mock(return_value=True)
+    h.recorder.resume = Mock()
+    h.controller.status_update = Signal()
+    panel = h.ui.walkthrough_panel
+
+    panel.pause_requested.emit(True)
+    panel.pause_requested.emit(False)
+
+    h.recorder.pause.assert_called_once_with()
+    h.recorder.resume.assert_called_once_with()
+    assert panel.paused == [True, False]
+    assert h.controller.status_update.calls == [("Walkthrough · Paused",),
+                                                 ("Walkthrough · Recording...",)]
+    session.end()
+
+
+def test_a_recording_that_wont_pause_leaves_the_column_recording(h):
+    session = _begin(h)
+    h.recorder.pause = Mock(return_value=False)
+    h.controller.status_update = Signal()
+
+    h.ui.walkthrough_panel.pause_requested.emit(True)
+
+    assert h.ui.walkthrough_panel.paused == []
+    session.end()

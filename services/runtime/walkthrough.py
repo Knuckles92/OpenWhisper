@@ -144,6 +144,7 @@ class WalkthroughRuntime:
         panel.move_requested.connect(self.move_shot)
         panel.remove_requested.connect(self.remove_shot)
         panel.note_held.connect(self.hold_note)
+        panel.pause_requested.connect(self.set_paused)
 
     def finish(self) -> None:
         """Done: finish the walkthrough being recorded, if one still is."""
@@ -336,6 +337,22 @@ class WalkthroughRuntime:
         session = self._session
         if session is not None and session.move_shot(number, step) and self._panel is not None:
             self._panel.move_shot(number, step)
+
+    def set_paused(self, paused: bool) -> None:
+        """Pause the walkthrough's recording, or resume it; a pause is not in the recording."""
+        from services.runtime.transcription import WALKTHROUGH_LABEL
+
+        if self._session is None:
+            return
+        recorder = self.controller.recorder
+        if paused and not recorder.pause():
+            return
+        if not paused:
+            recorder.resume()
+        if self._panel is not None:
+            self._panel.set_paused(paused)
+        self.controller.status_update.emit(
+            f"{WALKTHROUGH_LABEL} · Paused" if paused else f"{WALKTHROUGH_LABEL} · Recording...")
 
     def hold_note(self, on: bool) -> None:
         """Hold for note pressed (``on``) or let go: what is said meanwhile is for the write-up."""

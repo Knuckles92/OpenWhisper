@@ -38,12 +38,19 @@ def _icon_path(name: str) -> QPainterPath:
         line((5, 12.5), (9.5, 17), (19, 7.5))
     elif name == "note":
         line((5, 4), (19, 4), (19, 16), (9, 16), (5, 20), (5, 4))
+    elif name == "pause":
+        path.addRoundedRect(QRectF(6, 5, 4, 14), 1, 1)
+        path.addRoundedRect(QRectF(14, 5, 4, 14), 1, 1)
+    elif name == "play":
+        line((8, 5), (19, 12), (8, 19), (8, 5))
     return path
 
 
 #: Stroke width of each icon, in grid units.
 _STROKE = {"camera": 2.0, "up": 2.4, "down": 2.4, "x": 2.4, "undo": 2.0, "check": 2.8,
-           "note": 2.2}
+           "note": 2.2, "pause": 0.0, "play": 1.5}
+#: Icons drawn solid rather than as lines.
+_FILLED = {"pause", "play"}
 
 
 def paint_icon(painter: QPainter, name: str, center: QPointF, size: float, color: QColor) -> None:
@@ -51,8 +58,11 @@ def paint_icon(painter: QPainter, name: str, center: QPointF, size: float, color
     painter.save()
     painter.translate(center.x() - size / 2, center.y() - size / 2)
     painter.scale(size / 24, size / 24)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.setPen(QPen(color, _STROKE[name], Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
-                        Qt.PenJoinStyle.RoundJoin))
+    painter.setBrush(color if name in _FILLED else Qt.BrushStyle.NoBrush)
+    if _STROKE[name]:
+        painter.setPen(QPen(color, _STROKE[name], Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                            Qt.PenJoinStyle.RoundJoin))
+    else:
+        painter.setPen(Qt.PenStyle.NoPen)
     painter.drawPath(_icon_path(name))
     painter.restore()

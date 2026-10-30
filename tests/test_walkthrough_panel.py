@@ -540,3 +540,44 @@ def test_done_while_held_ends_the_note(panel, clock):
     panel.finish()
 
     assert held == [True, False] and not panel.column.holding
+
+
+# --- Pause -------------------------------------------------------------------------
+
+
+def test_pause_asks_and_the_paused_column_stops_its_clock_and_its_ticks(panel, clock):
+    asked = []
+    panel.pause_requested.connect(asked.append)
+    panel.begin()
+    panel.grab()
+
+    _click(panel, _footer_button(panel, "pause"))
+    assert asked == [True]
+    panel._clock = SimpleNamespace(elapsed=lambda: 10_000, start=lambda: None)
+    panel.set_paused(True)
+    ticks = len(panel.column.items[-1].ticks)
+    panel._clock = SimpleNamespace(elapsed=lambda: 25_000, start=lambda: None)
+    _run(panel, clock, 0.5, level=LOUD)
+
+    assert panel._recorded() == pytest.approx(10.0)
+    assert len(panel.column.items[-1].ticks) == ticks
+    panel.grab()
+
+    _click(panel, _footer_button(panel, "pause"))
+    assert asked == [True, False]
+    panel.set_paused(False)
+    panel._clock = SimpleNamespace(elapsed=lambda: 27_000, start=lambda: None)
+    assert panel._recorded() == pytest.approx(12.0)
+
+
+def test_pausing_ends_a_note_and_no_note_starts_while_paused(panel, clock):
+    held = []
+    panel.note_held.connect(held.append)
+    panel.begin()
+    panel._hold(True)
+
+    panel.set_paused(True)
+    panel._hold(True)
+
+    assert held == [True, False]
+    assert not panel._footer()["note"][1]
