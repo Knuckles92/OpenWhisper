@@ -3,8 +3,10 @@
 A walkthrough is a recording that collects screenshots: each one the user
 keeps closes a section of the transcript. TranscriptionRuntime records and
 transcribes it like a dictation and owns its WalkthroughSession; this
-runtime decides what each shortcut press means and turns kept screenshots
-into the session's shots.
+runtime decides what each shortcut press means, turns kept screenshots
+into the session's shots, and answers the buttons on the walkthrough's
+column (ui_qt/widgets/walkthrough_panel.py), which shows the session's
+board as it changes.
 
 Outside a walkthrough the Screenshot shortcut is a plain annotate-and-copy
 screenshot tool.
@@ -57,10 +59,17 @@ class WalkthroughRuntime:
         self._active = False
         self._out_of_screenshots = False
         self._tray_timer: Optional[QTimer] = None
+        # The walkthrough's column, once made (none on Wayland); its buttons
+        # are connected here once.
+        self._panel = None
 
     @property
     def _ui(self):
         return self.controller.ui_controller
+
+    @property
+    def _session(self) -> Optional[WalkthroughSession]:
+        return self.controller.transcription_runtime.recording_walkthrough
 
     # ---- the Walkthrough shortcut ----
 
@@ -90,10 +99,30 @@ class WalkthroughRuntime:
             return
         self._active = True
         self._ui.set_walkthrough_active(True)
+        self._attach(self._ui.walkthrough_panel)
         # The pill keeps showing what is being recorded, but never in the
         # screenshots themselves.
         self._out_of_screenshots = self._ui.keep_overlay_out_of_screenshots(True)
         logger.info("Walkthrough started")
+
+    def _attach(self, panel) -> None:
+        """Answer the column's buttons; it is made once and kept for every walkthrough."""
+        if panel is None or panel is self._panel:
+            return
+        self._panel = panel
+        # "ui" is the window and tray's source (catalog.SOURCES); the
+        # column is the same user at the same desk.
+        panel.snap_requested.connect(lambda: self.snap("ui"))
+        panel.finish_requested.connect(self.finish)
+        panel.cancel_requested.connect(self.controller.cancel)
+        panel.undo_requested.connect(self.undo_last_shot)
+        panel.move_requested.connect(self.move_shot)
+        panel.remove_requested.connect(self.remove_shot)
+
+    def finish(self) -> None:
+        """Done: finish the walkthrough being recorded, if one still is."""
+        if self._session is not None:
+            self._finish()
 
     def _finish(self) -> None:
         if self._snap is not None and self._snap.active:
@@ -150,9 +179,11 @@ class WalkthroughRuntime:
                 self._finish_if_asked()
                 return
         if shot is not None:
-            self.controller.recording_destination_changed.emit(shots_label(shot.number))
-            self._ui.add_walkthrough_shot(shot.number, image)
-            self._ui.show_overlay_caption(f"Screenshot {shot.number} added")
+            count = session.shot_count
+            self.controller.recording_destination_changed.emit(shots_label(count))
+            if self._panel is not None:
+                self._panel.add_shot(shot.number, image, shot.kept_at_s)
+            self._ui.show_overlay_caption(f"Screenshot {count} added")
         else:
             # A plain screenshot, or the walkthrough stopped while this one
             # was being drawn: either way it goes to the clipboard.
@@ -197,6 +228,32 @@ class WalkthroughRuntime:
                        done=saved)
         else:
             self._tell("Screenshot copied" + unsaved, done=saved)
+
+    # ---- the column's board ----
+
+    def undo_last_shot(self) -> None:
+        """Take the newest screenshot out; its words join the section being spoken."""
+        session = self._session
+        number = session.undo_last() if session is not None else None
+        if number is not None:
+            self._shot_removed(session, number)
+
+    def remove_shot(self, number: int) -> None:
+        """Take screenshot ``number`` (as kept) out; its words join the next section."""
+        session = self._session
+        if session is not None and session.remove_shot(number):
+            self._shot_removed(session, number)
+
+    def move_shot(self, number: int, step: int) -> None:
+        """Move screenshot ``number`` (as kept) and its words up (-1) or down (1)."""
+        session = self._session
+        if session is not None and session.move_shot(number, step) and self._panel is not None:
+            self._panel.move_shot(number, step)
+
+    def _shot_removed(self, session: WalkthroughSession, number: int) -> None:
+        self.controller.recording_destination_changed.emit(shots_label(session.shot_count))
+        if self._panel is not None:
+            self._panel.remove_shot(number)
 
     # ---- the recording ending ----
 

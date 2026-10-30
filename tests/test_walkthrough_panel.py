@@ -179,3 +179,161 @@ def test_a_tall_column_scrolls_to_keep_the_newest_in_view(panel, clock):
         panel.grab()
         _run(panel, clock, 0.03)
     assert panel._scroll > 0.0
+
+
+# --- moving and removing screenshots ------------------------------------------
+
+
+def _board():
+    """Words (4 ticks), shot 1, words (8), shot 2, then words being spoken (2)."""
+    column = WalkthroughColumn()
+    _speak(column, LOUD, 4 * TICK_S)
+    column.add_shot(1, _image(), now=0.0, kept_at_s=2.0)
+    _speak(column, LOUD, 8 * TICK_S)
+    column.add_shot(2, _image(), now=0.0, kept_at_s=4.0)
+    _speak(column, LOUD, 2 * TICK_S)
+    return column
+
+
+def _shape(column):
+    return [f"shot {item.number}" if isinstance(item, ShotItem) else len(item.ticks)
+            for item in column.items]
+
+
+def test_the_board_starts_in_the_order_kept():
+    column = _board()
+    assert _shape(column) == [4, "shot 1", 8, "shot 2", 2]
+    assert (column.place(1), column.place(2), column.place(9)) == (1, 2, 0)
+
+
+def test_a_moved_screenshot_takes_its_words_and_the_words_being_spoken_stay_last():
+    column = _board()
+
+    assert column.move_shot(2, -1)
+    assert _shape(column) == [8, "shot 2", 4, "shot 1", 2]
+    assert column.place(2) == 1
+    assert not column.move_shot(1, 1)
+    assert not column.move_shot(2, -1)
+
+
+def test_a_removed_screenshots_words_run_into_the_next_section():
+    column = _board()
+
+    assert column.remove_shot(1)
+    assert _shape(column) == [12, "shot 2", 2]
+    assert column.remove_shot(2)
+    # Into the section being spoken, which the voice keeps writing.
+    assert _shape(column) == [14]
+    _speak(column, LOUD, TICK_S)
+    assert _shape(column) == [15]
+    assert column.shots == 0
+
+
+# --- the column's buttons ----------------------------------------------------
+
+
+def _signals(panel):
+    heard = []
+    panel.snap_requested.connect(lambda: heard.append("snap"))
+    panel.undo_requested.connect(lambda: heard.append("undo"))
+    panel.cancel_requested.connect(lambda: heard.append("cancel"))
+    panel.finish_requested.connect(lambda: heard.append("done"))
+    panel.move_requested.connect(lambda number, step: heard.append(("move", number, step)))
+    panel.remove_requested.connect(lambda number: heard.append(("remove", number)))
+    return heard
+
+
+def _click(panel, point):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+
+    QTest.mouseClick(panel, Qt.MouseButton.LeftButton, pos=point.toPoint())
+
+
+def _footer_button(panel, key):
+    return panel._footer()[key][0].center()
+
+
+def test_the_footer_snaps_undoes_cancels_and_finishes(panel, clock):
+    heard = _signals(panel)
+    panel.begin()
+    panel.grab()
+
+    _click(panel, _footer_button(panel, "undo"))  # no screenshot to undo yet
+    panel.add_shot(1, _image(), 3.0)
+    for key in ("snap", "undo", "cancel", "done"):
+        _click(panel, _footer_button(panel, key))
+
+    assert heard == ["snap", "undo", "cancel", "done"]
+
+
+def test_while_it_is_written_only_cancel_is_left(panel, clock):
+    heard = _signals(panel)
+    panel.begin()
+    panel.finish()
+    _run(panel, clock, 1.0)
+
+    _click(panel, _footer_button(panel, "snap"))
+    # Cancel has grown over the row Undo and Done were in.
+    assert panel._footer()["cancel"][0].width() == pytest.approx(panel._inner().width())
+    _click(panel, _footer_button(panel, "done"))
+
+    assert heard == ["cancel"]
+
+
+def test_hovering_a_screenshot_offers_to_move_or_remove_it(panel, clock):
+    heard = _signals(panel)
+    panel.begin()
+    panel.add_shot(1, _image(), 2.0)
+    panel.add_shot(2, _image(), 5.0)
+    _run(panel, clock, 1.0)
+    panel.grab()
+
+    panel._set_hover(panel._shot_rects[2].center())
+    tools = {key.split(":")[0]: rect for key, (rect, enabled) in panel._shot_tools(2).items()
+             if enabled}
+    assert set(tools) == {"up", "remove"}  # the last screenshot can't go lower
+    _click(panel, tools["up"].center())
+    _click(panel, tools["remove"].center())
+
+    assert heard == [("move", 2, -1), ("remove", 2)]
+
+
+def test_the_board_follows_what_the_walkthrough_did(panel, clock):
+    panel.begin()
+    panel.add_shot(1, _image(), 2.0)
+    panel.add_shot(2, _image(), 5.0)
+
+    panel.move_shot(2, -1)
+    assert [item.number for item in panel.column.items if isinstance(item, ShotItem)] == [2, 1]
+    panel.remove_shot(1)
+    assert panel.column.shots == 1
+    panel.grab()
+
+
+def test_dragging_anywhere_but_a_button_moves_the_column(panel, clock):
+    from PyQt6.QtCore import QPointF
+
+    panel.begin()
+    panel.grab()
+    header = QPointF(panel._inner().left() + 10, panel._inner().top() + 10)
+
+    assert panel._hit(header) == ""
+    assert panel._hit(_footer_button(panel, "done")) == "done"
+
+
+def test_every_state_paints(panel, clock):
+    panel.begin()
+    for number in (1, 2, 3):
+        _run(panel, clock, 0.4, level=LOUD)
+        panel.add_shot(number, _image(), number * 2.0)
+    _run(panel, clock, 1.0)
+    panel.grab()
+    panel._set_hover(next(iter(panel._shot_rects.values())).center())
+    assert panel._hover_shot
+    panel.grab()
+    panel.finish()
+    _run(panel, clock, 0.2)
+    panel.grab()
+    panel.complete(SimpleNamespace(shots=3, duration_s=9.0))
+    panel.grab()

@@ -1,15 +1,21 @@
 """The column at the side of the screen that writes a walkthrough as it records.
 
 While a walkthrough records, the user's voice shows as rows of ticks, like
-lines of writing, and each screenshot they keep drops in below them, so
-they can see what the document holds before it exists. At Done the ticks
-close up into lines while the document is written, the header says what it
-came to, and the column fades once the document is ready.
+lines of writing, and each screenshot they keep drops in below them,
+numbered, so they can see what the document holds before it exists. The
+section being spoken sits in an open slot until the next screenshot closes
+it. Hovering a screenshot offers to move it up or down or remove it; its
+words always go with it, since a section is the words and then the
+screenshot they led to. The footer takes screenshots, undoes the last one,
+cancels and finishes. At Done the ticks close up into lines while the
+document is written, the header says what it came to, and the column fades
+once the document is ready.
 
-The column never takes focus, and it is left out of screenshots. It can be
-dragged aside; each walkthrough opens it at the screen's edge again.
+The column never takes focus, so the app being shown keeps the keyboard,
+and it is left out of screenshots. It can be dragged aside by anything
+that isn't a button; each walkthrough opens it at the screen's edge again.
 Compositor-managed desktops (Wayland) place their own windows, so there is
-no column there.
+no column there: the recording overlay's Snap and Done stand in for it.
 """
 
 from __future__ import annotations
@@ -19,7 +25,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import QElapsedTimer, QPointF, QRectF, Qt, QTimer
+from PyQt6.QtCore import QElapsedTimer, QEvent, QPointF, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QCursor,
@@ -30,9 +36,10 @@ from PyQt6.QtGui import (
     QPainterPath,
     QPen,
 )
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtWidgets import QApplication, QToolTip, QWidget
 
 from services.walkthrough.document import clock
+from ui_qt.snap import macos
 from ui_qt.utils.desktop import compositor_managed
 from ui_qt.utils.drag_move import DragToMove
 from ui_qt.utils.loudness import level_to_height
@@ -60,10 +67,33 @@ TICK_MAX = 12.0
 ROW_PITCH = 18.0
 #: A finished row's line, once its ticks have closed up.
 LINE_H = 5.0
-GAP = 16.0
+GAP = 14.0
 SHOT_MAX_H = 190.0
 #: Screenshots are kept this many pixels wide: sharp at 2x.
 THUMB_PX = 2 * WIDTH
+
+#: The open slot of the section being spoken.
+SLOT_PAD_X = 10.0
+SLOT_PAD_TOP = 8.0
+SLOT_PAD_BOTTOM = 10.0
+SLOT_BADGE = 20.0
+SLOT_TIME_W = 34.0
+SLOT_HINT_H = 16.0
+SLOT_HINT = "Talking… Snap to close this section"
+#: The tools that hover over a screenshot, and its number badge.
+TOOL = 28.0
+TOOL_GAP = 4.0
+BADGE_H = 18.0
+#: Chips drawn on a screenshot stay dark in either theme: the picture is
+#: what they sit on.
+ON_IMAGE = QColor(28, 28, 30, 220)
+ON_IMAGE_HOVER = QColor(72, 72, 74, 235)
+ON_IMAGE_TEXT = QColor("#f5f5f7")
+#: The footer's buttons.
+FOOT_H = 40.0
+FOOT_GAP = 6.0
+#: A square footer button, holding only an icon.
+FOOT_ICON_W = 40.0
 
 FRAME_MS = 16
 TICK_GROW_S = 0.12
@@ -76,6 +106,19 @@ HOLD_S = 2.6
 #: Past the slowest real job: a long walkthrough transcribed on the CPU,
 #: then an AI write-up, which may take up to 5 minutes.
 GIVE_UP_S = 600.0
+#: One mouse-wheel notch scrolls the column this far.
+WHEEL_STEP = 60.0
+
+#: What each control says when the pointer rests on it.
+TOOLTIPS = {
+    "snap": "Take a screenshot",
+    "undo": "Undo the last screenshot; its words stay",
+    "cancel": "Cancel the walkthrough: nothing is kept",
+    "done": "Finish the walkthrough",
+    "up": "Move up, with its words",
+    "down": "Move down, with its words",
+    "remove": "Remove the screenshot; its words join the next one's",
+}
 
 
 @dataclass
@@ -89,9 +132,15 @@ class Paragraph:
 
 @dataclass
 class ShotItem:
+    #: The screenshot's number as kept: it never changes, whatever its place.
     number: int
     image: QImage
     born: float
+    #: Seconds into the recording when it was kept.
+    kept_at_s: float = 0.0
+
+
+Item = Paragraph | ShotItem
 
 
 class WalkthroughColumn:
@@ -99,14 +148,19 @@ class WalkthroughColumn:
 
     ``hear`` takes microphone levels as they arrive; ``advance`` turns the
     loudest of them into a tick every ``TICK_S`` while the user speaks.
+    A section is the paragraphs up to and including a screenshot; the last
+    one, still being spoken, has no screenshot yet.
     """
 
     def __init__(self) -> None:
-        self.items: list[Paragraph | ShotItem] = [Paragraph()]
-        self.shots = 0
+        self.items: list[Item] = [Paragraph()]
         self.speech_s = 0.0
         self._peak = 0.0
         self._carry = 0.0
+
+    @property
+    def shots(self) -> int:
+        return sum(1 for item in self.items if isinstance(item, ShotItem))
 
     def hear(self, level: float) -> None:
         self._peak = max(self._peak, level_to_height(level))
@@ -122,17 +176,65 @@ class WalkthroughColumn:
                 self._paragraph().born.append(now)
                 self.speech_s += TICK_S
 
-    def add_shot(self, number: int, image: QImage, now: float) -> None:
-        self.shots = max(self.shots, number)
+    def add_shot(self, number: int, image: QImage, now: float, kept_at_s: float = 0.0) -> None:
         last = self.items[-1]
         if isinstance(last, Paragraph) and not last.ticks:
             # Nothing was said since the last screenshot: no empty paragraph.
             self.items.pop()
-        self.items.append(ShotItem(number, image, now))
+        self.items.append(ShotItem(number, image, now, kept_at_s))
         self.items.append(Paragraph())
 
+    def sections(self) -> list[list[Item]]:
+        """The items in sections; the last is the one being spoken."""
+        sections: list[list[Item]] = [[]]
+        for item in self.items:
+            sections[-1].append(item)
+            if isinstance(item, ShotItem):
+                sections.append([])
+        return sections
+
+    def place(self, number: int) -> int:
+        """Screenshot ``number``'s place on the board, from 1; 0 once it is gone."""
+        shots = [item.number for item in self.items if isinstance(item, ShotItem)]
+        return shots.index(number) + 1 if number in shots else 0
+
+    def remove_shot(self, number: int) -> bool:
+        """Take screenshot ``number`` out; its words open the next section."""
+        sections = self.sections()
+        index = self.place(number) - 1
+        if index < 0:
+            return False
+        removed = sections.pop(index)
+        sections[index][:0] = removed[:-1]
+        self._rebuild(sections)
+        return True
+
+    def move_shot(self, number: int, step: int) -> bool:
+        """Move screenshot ``number`` and its words ``step`` sections (-1 up, 1 down)."""
+        sections = self.sections()
+        index = self.place(number) - 1
+        # The section being spoken stays last.
+        if index < 0 or not 0 <= index + step < len(sections) - 1:
+            return False
+        sections[index], sections[index + step] = sections[index + step], sections[index]
+        self._rebuild(sections)
+        return True
+
+    def _rebuild(self, sections: list[list[Item]]) -> None:
+        items: list[Item] = []
+        for item in (item for section in sections for item in section):
+            if isinstance(item, Paragraph) and items and isinstance(items[-1], Paragraph):
+                # Words that now meet run on as one paragraph.
+                items[-1].ticks += item.ticks
+                items[-1].born += item.born
+            else:
+                items.append(item)
+        if not items or not isinstance(items[-1], Paragraph):
+            items.append(Paragraph())
+        self.items = items
+
     def _paragraph(self) -> Paragraph:
-        return self.items[-1]  # add_shot always ends on a paragraph
+        return self.items[-1]  # every change ends the items on a paragraph
 
 
 def ease_out(t: float) -> float:
@@ -146,10 +248,77 @@ def ease_out_back(t: float) -> float:
     return 1.0 + (c + 1.0) * (t - 1.0) ** 3 + c * (t - 1.0) ** 2
 
 
+def _per_row(width: float) -> int:
+    return max(1, int((width + TICK_STEP - TICK_W) // TICK_STEP))
+
+
+def _rows(paragraph: Paragraph, width: float) -> int:
+    return math.ceil(len(paragraph.ticks) / _per_row(width))
+
+
+# ---- icons, drawn on a 24-unit grid ----
+
+
+def _round_pen(color: QColor, width: float) -> QPen:
+    return QPen(color, width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                Qt.PenJoinStyle.RoundJoin)
+
+
+def _icon_path(name: str) -> QPainterPath:
+    path = QPainterPath()
+
+    def line(*points: tuple[float, float]) -> None:
+        path.moveTo(*points[0])
+        for point in points[1:]:
+            path.lineTo(*point)
+
+    if name == "camera":
+        line((4, 8), (7, 8), (9, 5), (15, 5), (17, 8), (20, 8), (20, 19), (4, 19), (4, 8))
+        path.addEllipse(QPointF(12, 13), 3.5, 3.5)
+    elif name == "up":
+        line((6, 15), (12, 9), (18, 15))
+    elif name == "down":
+        line((6, 9), (12, 15), (18, 9))
+    elif name == "x":
+        line((6, 6), (18, 18))
+        line((18, 6), (6, 18))
+    elif name == "undo":
+        line((9, 14), (4, 9), (9, 4))
+        path.moveTo(4, 9)
+        path.lineTo(14, 9)
+        path.arcTo(QRectF(8, 9, 12, 12), 90, -180)
+        path.lineTo(11, 21)
+    return path
+
+
+#: Stroke width of each icon, in grid units.
+_ICON_STROKE = {"camera": 2.0, "up": 2.4, "down": 2.4, "x": 2.4, "undo": 2.0}
+
+
+def paint_icon(painter: QPainter, name: str, center: QPointF, size: float, color: QColor) -> None:
+    """Draw icon ``name`` ``size`` pixels square around ``center``."""
+    painter.save()
+    painter.translate(center.x() - size / 2, center.y() - size / 2)
+    painter.scale(size / 24, size / 24)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.setPen(_round_pen(color, _ICON_STROKE[name]))
+    painter.drawPath(_icon_path(name))
+    painter.restore()
+
+
 class WalkthroughPanel(QWidget):
     """The live column for the walkthrough being recorded; reused for the next."""
 
     RECORDING, WRITING, DONE, HIDDEN = "recording", "writing", "done", "hidden"
+
+    #: The footer's buttons, while it records (Cancel also while it is written).
+    snap_requested = pyqtSignal()
+    undo_requested = pyqtSignal()
+    cancel_requested = pyqtSignal()
+    finish_requested = pyqtSignal()
+    #: A screenshot's hover tools: its number as kept, and -1 (up) or 1 (down).
+    move_requested = pyqtSignal(int, int)
+    remove_requested = pyqtSignal(int)
 
     def __init__(self) -> None:
         super().__init__(None)
@@ -158,6 +327,8 @@ class WalkthroughPanel(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        # Its buttons explain themselves though the column is never active.
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
         self.setWindowFlags(
             Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.WindowDoesNotAcceptFocus
@@ -165,6 +336,9 @@ class WalkthroughPanel(QWidget):
         if sys.platform == "darwin":
             # The user works in another app while this column records.
             self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
+            # A click on a button leaves that app in front, as on Windows.
+            macos.make_nonactivating(self)
+        self.setMouseTracking(True)
         self._drag = DragToMove(self)
         self.state = self.HIDDEN
         self.column = WalkthroughColumn()
@@ -174,7 +348,18 @@ class WalkthroughPanel(QWidget):
         self._state_at = 0.0
         self._last = 0.0
         self._scroll = 0.0
+        # How far the user scrolled back from the newest, in pixels.
+        self._scrolled_back = 0.0
         self._opacity = 0.0
+        # The control under the pointer and the one being pressed: "snap",
+        # "undo", "cancel", "done", or a screenshot's "up:N", "down:N",
+        # "remove:N".
+        self._hover = ""
+        self._pressed = ""
+        # The screenshot under the pointer (its number as kept), or 0.
+        self._hover_shot = 0
+        # Where the last frame drew each screenshot, by number as kept.
+        self._shot_rects: dict[int, QRectF] = {}
         self._frame = QTimer(self)
         self._frame.setInterval(FRAME_MS)
         self._frame.timeout.connect(self._advance)
@@ -184,9 +369,12 @@ class WalkthroughPanel(QWidget):
     def begin(self) -> None:
         """A walkthrough started recording: an empty column on the pointer's screen."""
         self.column = WalkthroughColumn()
-        self._scroll = 0.0
+        self._scroll = self._scrolled_back = 0.0
         self._summary = ""
         self._recorded_s = 0.0
+        self._hover = self._pressed = ""
+        self._hover_shot = 0
+        self._shot_rects = {}
         self._clock.start()
         self._enter(self.RECORDING)
         self._drag.reset()
@@ -200,17 +388,30 @@ class WalkthroughPanel(QWidget):
         if self.state == self.RECORDING:
             self.column.hear(level)
 
-    def add_shot(self, number: int, image: QImage) -> None:
+    def add_shot(self, number: int, image: QImage, kept_at_s: float = 0.0) -> None:
         if self.state == self.RECORDING and not image.isNull():
             # A thumbnail is all the column draws; a full screen is many MB.
             small = image.scaledToWidth(THUMB_PX, Qt.TransformationMode.SmoothTransformation)
-            self.column.add_shot(number, small, self._now())
+            self.column.add_shot(number, small, self._now(), kept_at_s)
+            # A new screenshot brings the newest back into view.
+            self._scrolled_back = 0.0
+
+    def remove_shot(self, number: int) -> None:
+        """Screenshot ``number`` (as kept) left the walkthrough; its words stay."""
+        if self.column.remove_shot(number):
+            self._settle_hover()
+
+    def move_shot(self, number: int, step: int) -> None:
+        """Screenshot ``number`` (as kept) moved ``step`` sections, with its words."""
+        if self.column.move_shot(number, step):
+            self._settle_hover()
 
     def finish(self) -> None:
         """The recording stopped: close the ticks into lines while it is written."""
         if self.state != self.RECORDING:
             return
-        self._recorded_s = self._clock.elapsed() / 1000.0
+        self._recorded_s = self._recorded()
+        self._hover_shot = 0
         self._enter(self.WRITING)
 
     def complete(self, result) -> None:
@@ -233,6 +434,12 @@ class WalkthroughPanel(QWidget):
 
     def _now(self) -> float:
         return time.monotonic()
+
+    def _recorded(self) -> float:
+        """Seconds recorded so far."""
+        if self.state != self.RECORDING:
+            return self._recorded_s
+        return self._clock.elapsed() / 1000.0
 
     def _enter(self, state: str) -> None:
         self.state = state
@@ -272,22 +479,163 @@ class WalkthroughPanel(QWidget):
         self.move(area.right() - width - SCREEN_MARGIN + SHADOW + 1,
                   area.top() + (area.height() - height) // 2)
 
+    # ---- the pointer ----
+
+    def _controls(self) -> dict[str, QRectF]:
+        """Every control that takes a click now, by key, where it was last drawn."""
+        controls = {key: rect for key, (rect, enabled) in self._footer().items() if enabled}
+        if self.state == self.RECORDING and self._hover_shot in self._shot_rects:
+            for key, (rect, enabled) in self._shot_tools(self._hover_shot).items():
+                if enabled:
+                    controls[key] = rect
+        return controls
+
+    def _hit(self, position: QPointF) -> str:
+        for key, rect in self._controls().items():
+            if rect.contains(position):
+                return key
+        return ""
+
+    def _set_hover(self, position: QPointF | None) -> None:
+        shot = 0
+        if position is not None and self.state == self.RECORDING:
+            # The tools sit inside their screenshot, so hovering them keeps it.
+            shot = next((number for number, rect in self._shot_rects.items()
+                         if rect.adjusted(-4, -4, 4, 4).contains(position)), 0)
+        if shot != self._hover_shot:
+            self._hover_shot = shot
+        key = self._hit(position) if position is not None else ""
+        if key != self._hover:
+            self._hover = key
+            self.setCursor(Qt.CursorShape.PointingHandCursor if key
+                           else Qt.CursorShape.OpenHandCursor)
+        self.update()
+
+    def _settle_hover(self) -> None:
+        """The board changed under the pointer: find what it is over once redrawn."""
+        self._shot_rects = {}
+        self._hover_shot = 0
+        self._hover = ""
+        self.repaint()
+        self._set_hover(self.mapFromGlobal(QCursor.pos()).toPointF())
+
     def mousePressEvent(self, event) -> None:
+        key = self._hit(event.position()) if event.button() == Qt.MouseButton.LeftButton else ""
+        if key:
+            self._pressed = key
+            event.accept()
+            self.update()
+            return
         if not self._drag.press(event):
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
-        if not self._drag.move(event):
-            super().mouseMoveEvent(event)
+        if self._drag.move(event):
+            return
+        self._set_hover(event.position())
+        super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
+        pressed, self._pressed = self._pressed, ""
+        if pressed:
+            event.accept()
+            if self._hit(event.position()) == pressed:
+                self._click(pressed)
+            self.update()
+            return
         if not self._drag.release(event):
             super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._set_hover(None)
+        super().leaveEvent(event)
+
+    def wheelEvent(self, event) -> None:
+        notches = event.angleDelta().y() / 120.0
+        self._scrolled_back = max(0.0, self._scrolled_back + notches * WHEEL_STEP)
+        event.accept()
+        self.update()
+
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Type.ToolTip:
+            text = TOOLTIPS.get(self._hit(QPointF(event.pos())).split(":")[0], "")
+            if text:
+                QToolTip.showText(event.globalPos(), text, self)
+            else:
+                QToolTip.hideText()
+                event.ignore()
+            return True
+        return super().event(event)
+
+    def _click(self, key: str) -> None:
+        name, _, number = key.partition(":")
+        if name == "up":
+            self.move_requested.emit(int(number), -1)
+        elif name == "down":
+            self.move_requested.emit(int(number), 1)
+        elif name == "remove":
+            self.remove_requested.emit(int(number))
+        else:
+            {
+                "snap": self.snap_requested,
+                "undo": self.undo_requested,
+                "cancel": self.cancel_requested,
+                "done": self.finish_requested,
+            }[name].emit()
 
     # ---- painting ----
 
     def _card(self) -> QRectF:
         return QRectF(self.rect()).adjusted(SHADOW, SHADOW, -SHADOW, -SHADOW)
+
+    def _inner(self) -> QRectF:
+        return self._card().adjusted(PADDING, PADDING, -PADDING, -PADDING)
+
+    def _footer_top(self) -> float:
+        """Where the footer's buttons begin; the rule above them is 12 px higher."""
+        return self._inner().bottom() - 2 * FOOT_H - FOOT_GAP
+
+    def _cancel_widening(self) -> float:
+        """0 while it records; then Cancel grows to fill its row, the others gone."""
+        if self.state == self.WRITING:
+            return ease_out(self._since() / FADE_S)
+        return 0.0 if self.state == self.RECORDING else 1.0
+
+    def _footer(self) -> dict[str, tuple[QRectF, bool]]:
+        """Each footer button's place, and whether it takes a click now.
+
+        While the walkthrough is written only Cancel is left, filling its row.
+        """
+        inner = self._inner()
+        top = self._footer_top()
+        bottom = top + FOOT_H + FOOT_GAP
+        recording = self.state == self.RECORDING
+        snap = QRectF(inner.left(), top, inner.width(), FOOT_H)
+        undo = QRectF(inner.left(), bottom, FOOT_ICON_W, FOOT_H)
+        cancel = QRectF(undo.right() + FOOT_GAP, bottom, FOOT_ICON_W, FOOT_H)
+        done = QRectF(cancel.right() + FOOT_GAP, bottom, inner.right() - cancel.right() - FOOT_GAP,
+                      FOOT_H)
+        widen = self._cancel_widening()
+        if widen:
+            cancel = QRectF(cancel.left() + (inner.left() - cancel.left()) * widen, bottom,
+                            FOOT_ICON_W + (inner.width() - FOOT_ICON_W) * widen, FOOT_H)
+        return {
+            "snap": (snap, recording),
+            "undo": (undo, recording and self.column.shots > 0),
+            "cancel": (cancel, self.state in (self.RECORDING, self.WRITING)),
+            "done": (done, recording),
+        }
+
+    def _shot_tools(self, number: int) -> dict[str, tuple[QRectF, bool]]:
+        """A screenshot's hover tools at its top right, and whether each can act."""
+        rect = self._shot_rects[number]
+        place, count = self.column.place(number), self.column.shots
+        right = rect.right() - 8
+        tools = {}
+        for name, enabled in (("remove", True), ("down", place < count), ("up", place > 1)):
+            tools[f"{name}:{number}"] = (QRectF(right - TOOL, rect.top() + 8, TOOL, TOOL), enabled)
+            right -= TOOL + TOOL_GAP
+        return tools
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
@@ -303,10 +651,14 @@ class WalkthroughPanel(QWidget):
         painter.setPen(QPen(token_color("border-strong"), 1.0))
         painter.drawRoundedRect(card.adjusted(0.5, 0.5, -0.5, -0.5), RADIUS, RADIUS)
 
-        inner = card.adjusted(PADDING, PADDING, -PADDING, -PADDING)
+        inner = self._inner()
         top = self._paint_header(painter, inner)
-        body = QRectF(inner.left(), top, inner.width(), inner.bottom() - top)
+        foot = self._footer_top() - 12
+        body = QRectF(inner.left(), top, inner.width(), foot - 14 - top)
         self._paint_body(painter, body)
+        painter.setPen(QPen(token_color("border"), 1.0))
+        painter.drawLine(QPointF(inner.left(), foot), QPointF(inner.right(), foot))
+        self._paint_footer(painter)
         painter.end()
 
     def _paint_header(self, painter: QPainter, inner: QRectF) -> float:
@@ -330,7 +682,7 @@ class WalkthroughPanel(QWidget):
             painter.drawEllipse(QPointF(x + 5, y + 9), 4.5, 4.5)
             x += 16
             shots = self.column.shots
-            text = f"Recording  {clock(self._clock.elapsed() / 1000.0)}"
+            text = f"Recording  {clock(self._recorded())}"
             if shots:
                 text += f"  ·  {shots} shot{'' if shots == 1 else 's'}"
         elif self.state == self.WRITING:
@@ -346,25 +698,36 @@ class WalkthroughPanel(QWidget):
         painter.drawLine(QPointF(inner.left(), rule), QPointF(inner.right(), rule))
         return rule + 14
 
-    def _layout(self, width: float) -> list[tuple[Paragraph | ShotItem, float, float]]:
-        """Each item with its top and height, from the body's top."""
+    def _slot_ticks_width(self, width: float) -> float:
+        """How wide the open slot's rows of ticks are, inside a body ``width`` wide."""
+        return width - 2 * SLOT_PAD_X - SLOT_BADGE - 6 - 6 - SLOT_TIME_W
+
+    def _layout(self, width: float) -> list[tuple[str, Item | list[Item], float, float]]:
+        """Each block with its top and height, from the body's top.
+
+        A block is ``("words", Paragraph)``, ``("shot", ShotItem)`` or, while
+        it records, ``("slot", [items])`` for the section being spoken.
+        """
         laid = []
         y = 0.0
-        per_row = max(1, int((width + TICK_STEP - TICK_W) // TICK_STEP))
-        for item in self.column.items:
+        sections = self.column.sections()
+        open_section = sections.pop() if self.state == self.RECORDING else []
+        for item in (item for section in sections for item in section):
             if isinstance(item, Paragraph):
                 if not item.ticks:
-                    # The paragraph being spoken: room for its caret.
-                    if item is self.column.items[-1] and self.state == self.RECORDING:
-                        laid.append((item, y, ROW_PITCH))
-                        y += ROW_PITCH + GAP
                     continue
-                rows = math.ceil(len(item.ticks) / per_row)
-                height = rows * ROW_PITCH
+                height = _rows(item, width) * ROW_PITCH
+                laid.append(("words", item, y, height))
             else:
                 height = self._shot_size(item, width)[1]
-            laid.append((item, y, height))
+                laid.append(("shot", item, y, height))
             y += height + GAP
+        if self.state == self.RECORDING:
+            ticks = self._slot_ticks_width(width)
+            rows = sum(max(1, _rows(item, ticks)) for item in open_section)
+            height = (SLOT_PAD_TOP + max(SLOT_BADGE, rows * ROW_PITCH) + 6 + SLOT_HINT_H
+                      + SLOT_PAD_BOTTOM)
+            laid.append(("slot", open_section, y, height))
         return laid
 
     def _shot_size(self, shot: ShotItem, width: float) -> tuple[float, float]:
@@ -374,9 +737,12 @@ class WalkthroughPanel(QWidget):
 
     def _paint_body(self, painter: QPainter, body: QRectF) -> None:
         laid = self._layout(body.width())
-        content_h = laid[-1][1] + laid[-1][2] if laid else 0.0
-        # Keep the newest at the bottom in view, gliding there.
-        target = max(0.0, content_h - body.height())
+        content_h = laid[-1][2] + laid[-1][3] if laid else 0.0
+        # Keep the newest at the bottom in view, gliding there, unless the
+        # user scrolled back.
+        newest = max(0.0, content_h - body.height())
+        self._scrolled_back = min(self._scrolled_back, newest)
+        target = newest - self._scrolled_back
         self._scroll += (target - self._scroll) * min(1.0, FRAME_MS / 1000.0 / 0.18)
         painter.save()
         clip = QPainterPath()
@@ -384,14 +750,17 @@ class WalkthroughPanel(QWidget):
         painter.setClipPath(clip)
         now = self._now()
         morph = ease_out(self._since() / MORPH_S) if self.state in (self.WRITING, self.DONE) else 0.0
-        for item, top, height in laid:
+        self._shot_rects = {}
+        for kind, item, top, height in laid:
             y = body.top() + top - self._scroll
             if y + height < body.top() - 20 or y > body.bottom() + 20:
                 continue
-            if isinstance(item, Paragraph):
+            if kind == "words":
                 self._paint_paragraph(painter, item, body.left(), y, body.width(), now, morph)
-            else:
+            elif kind == "shot":
                 self._paint_shot(painter, item, body.left(), y, body.width(), now)
+            else:
+                self._paint_slot(painter, item, QRectF(body.left(), y, body.width(), height), now)
         painter.restore()
         # Fade the top edge where older items scroll away.
         if self._scroll > 1.0:
@@ -405,10 +774,9 @@ class WalkthroughPanel(QWidget):
             painter.fillRect(fade, gradient)
             painter.restore()
 
-    def _paint_paragraph(self, painter: QPainter, paragraph: Paragraph, left: float,
-                         top: float, width: float, now: float, morph: float) -> None:
-        per_row = max(1, int((width + TICK_STEP - TICK_W) // TICK_STEP))
-        color = token_color("text-soft")
+    def _paint_ticks(self, painter: QPainter, paragraph: Paragraph, left: float, top: float,
+                     width: float, now: float, morph: float, color: QColor) -> None:
+        per_row = _per_row(width)
         line = token_color("text-faint")
         painter.setPen(Qt.PenStyle.NoPen)
         for row_start in range(0, len(paragraph.ticks), per_row):
@@ -435,18 +803,78 @@ class WalkthroughPanel(QWidget):
                 h = tick_h + (LINE_H - tick_h) * morph
                 x = left + i * TICK_STEP
                 painter.drawRoundedRect(QRectF(x, centre - h / 2, w, h), 1.0, 1.0)
-        if self.state == self.RECORDING and paragraph is self.column.items[-1]:
-            self._paint_caret(painter, paragraph, left, top, per_row)
 
-    def _paint_caret(self, painter: QPainter, paragraph: Paragraph, left: float,
-                     top: float, per_row: int) -> None:
-        count = len(paragraph.ticks)
-        row, col = divmod(count, per_row)
-        x = left + col * TICK_STEP + 2
-        centre = top + row * ROW_PITCH + ROW_PITCH / 2
+    def _paint_paragraph(self, painter: QPainter, paragraph: Paragraph, left: float,
+                         top: float, width: float, now: float, morph: float) -> None:
+        self._paint_ticks(painter, paragraph, left, top, width, now, morph,
+                          token_color("text-soft"))
+
+    def _paint_caret(self, painter: QPainter, x: float, centre: float) -> None:
         blink = 0.5 + 0.5 * math.cos(self._clock.elapsed() / 1000.0 * math.tau / 1.1)
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(token_color("accent", int(90 + 165 * blink)))
         painter.drawRoundedRect(QRectF(x, centre - 7, 2, 14), 1, 1)
+
+    def _section_started(self) -> float:
+        """When the section being spoken began: the newest screenshot still kept."""
+        return max((item.kept_at_s for item in self.column.items if isinstance(item, ShotItem)),
+                   default=0.0)
+
+    def _paint_slot(self, painter: QPainter, items: list[Item], rect: QRectF, now: float) -> None:
+        """The section being spoken: an open, dashed slot the next screenshot closes."""
+        painter.save()
+        pen = QPen(token_color("accent-tint-border"), 1.5, Qt.PenStyle.CustomDashLine)
+        pen.setDashPattern([3.0, 2.5])
+        painter.setPen(pen)
+        painter.setBrush(token_color("accent-tint"))
+        painter.drawRoundedRect(rect.adjusted(0.75, 0.75, -0.75, -0.75), 10, 10)
+
+        top = rect.top() + SLOT_PAD_TOP
+        badge = QRectF(rect.left() + SLOT_PAD_X, top, SLOT_BADGE, SLOT_BADGE)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(token_color("accent"))
+        painter.drawRoundedRect(badge, 6, 6)
+        font = QFont(self.font())
+        font.setPixelSize(11)
+        font.setWeight(QFont.Weight.Bold)
+        painter.setFont(font)
+        painter.setPen(token_color("on-accent"))
+        painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, str(self.column.shots + 1))
+
+        font.setWeight(QFont.Weight.Normal)
+        painter.setFont(font)
+        painter.setPen(token_color("accent-soft"))
+        elapsed = max(0.0, self._recorded() - self._section_started())
+        time_rect = QRectF(rect.right() - SLOT_PAD_X - SLOT_TIME_W, top, SLOT_TIME_W, SLOT_BADGE)
+        painter.drawText(time_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                         clock(elapsed))
+
+        left = badge.right() + 6
+        width = self._slot_ticks_width(rect.width())
+        # A single row of ticks sits level with the badge.
+        y = top + (SLOT_BADGE - ROW_PITCH) / 2
+        caret = (left + 2, y + ROW_PITCH / 2)
+        for item in items:
+            rows = max(1, _rows(item, width))
+            self._paint_ticks(painter, item, left, y, width, now, 0.0, token_color("text"))
+            count = len(item.ticks)
+            row, col = divmod(count, _per_row(width))
+            if count and col == 0:
+                # A full row: the caret waits at its end, not on a row of its own.
+                row, col = row - 1, _per_row(width)
+            caret = (left + col * TICK_STEP + 2, y + row * ROW_PITCH + ROW_PITCH / 2)
+            y += rows * ROW_PITCH
+        self._paint_caret(painter, *caret)
+
+        hint = QFont(self.font())
+        hint.setPixelSize(12)
+        painter.setFont(hint)
+        painter.setPen(token_color("accent-soft"))
+        hint_top = rect.bottom() - SLOT_PAD_BOTTOM - SLOT_HINT_H
+        painter.drawText(QRectF(rect.left() + SLOT_PAD_X, hint_top, rect.width() - 2 * SLOT_PAD_X,
+                                SLOT_HINT_H),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, SLOT_HINT)
+        painter.restore()
 
     def _paint_shot(self, painter: QPainter, shot: ShotItem, left: float, top: float,
                     width: float, now: float) -> None:
@@ -454,7 +882,9 @@ class WalkthroughPanel(QWidget):
         t = (now - shot.born) / SHOT_IN_S
         scale = 0.82 + 0.18 * ease_out_back(t)
         rect = QRectF(left + (width - w) / 2, top, w, h)
+        self._shot_rects[shot.number] = rect
         centre = rect.center()
+        hovered = self._hover_shot == shot.number
         painter.save()
         painter.setOpacity(painter.opacity() * ease_out(t * 1.6))
         painter.translate(centre.x() + 24 * (1 - ease_out(t)), centre.y())
@@ -464,12 +894,105 @@ class WalkthroughPanel(QWidget):
         for i in (6, 4, 2):
             painter.setBrush(QColor(0, 0, 0, 16))
             painter.drawRoundedRect(rect.adjusted(-i / 2, -i / 2 + 3, i / 2, i / 2 + 3), 6 + i, 6 + i)
+        if hovered:
+            painter.setPen(QPen(token_color("accent"), 2.0))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(rect.adjusted(-3, -3, 3, 3), 8, 8)
+        painter.save()
         clip = QPainterPath()
         clip.addRoundedRect(rect, 6, 6)
         painter.setClipPath(clip, Qt.ClipOperation.IntersectClip)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.drawImage(rect, shot.image)
         painter.restore()
+        self._paint_badge(painter, shot, rect)
+        if hovered and self.state == self.RECORDING:
+            self._paint_shot_tools(painter, shot.number)
+        painter.restore()
+
+    def _paint_badge(self, painter: QPainter, shot: ShotItem, rect: QRectF) -> None:
+        """The screenshot's place on the board and when it was kept: "2 · 0:35"."""
+        font = QFont(self.font())
+        font.setPixelSize(11)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        text = f"{self.column.place(shot.number)} · {clock(shot.kept_at_s)}"
+        width = painter.fontMetrics().horizontalAdvance(text) + 16
+        badge = QRectF(rect.left() + 8, rect.top() + 8, width, BADGE_H)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(ON_IMAGE)
+        painter.drawRoundedRect(badge, BADGE_H / 2, BADGE_H / 2)
+        painter.setPen(ON_IMAGE_TEXT)
+        painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, text)
+
+    def _paint_shot_tools(self, painter: QPainter, number: int) -> None:
+        for key, (rect, enabled) in self._shot_tools(number).items():
+            name = key.split(":")[0]
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(ON_IMAGE_HOVER if self._hover == key else ON_IMAGE)
+            painter.drawRoundedRect(rect, 8, 8)
+            ink = QColor(token_color("danger-text-soft") if name == "remove" else ON_IMAGE_TEXT)
+            if not enabled:
+                ink.setAlphaF(0.3)
+            paint_icon(painter, "x" if name == "remove" else name, rect.center(), 14, ink)
+
+    def _paint_footer(self, painter: QPainter) -> None:
+        # Once it records no more, the buttons fade, all but Cancel, which
+        # stays while it is written.
+        fade = 1.0 - ease_out(self._since() / FADE_S) if self.state != self.RECORDING else 1.0
+        font = QFont(self.font())
+        font.setPixelSize(13)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        for key, (rect, enabled) in self._footer().items():
+            if self.state == self.RECORDING:
+                alpha = 1.0 if enabled else 0.4
+            else:
+                alpha = 1.0 if enabled else fade
+            if alpha <= 0.0:
+                continue
+            painter.save()
+            painter.setOpacity(painter.opacity() * alpha)
+            self._paint_button(painter, key, rect)
+            painter.restore()
+
+    def _paint_button(self, painter: QPainter, key: str, rect: QRectF) -> None:
+        hover = self._hover == key
+        pressed = self._pressed == key and hover
+        if key == "snap":
+            fill = token_color("accent-pressed" if pressed else "accent-hover" if hover else "accent")
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(fill)
+            painter.drawRoundedRect(rect, 10, 10)
+            self._paint_label(painter, rect, "camera", "Snap", token_color("on-accent"))
+            return
+        fill = token_color("border-hover" if pressed else "surface-active" if hover else "surface-hover")
+        painter.setPen(QPen(token_color("border-strong"), 1.0))
+        painter.setBrush(fill)
+        painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10)
+        if key == "undo":
+            paint_icon(painter, "undo", rect.center(), 16, token_color("text"))
+        elif key == "cancel":
+            ink = token_color("danger-text-soft")
+            if rect.width() > FOOT_ICON_W * 2.5:
+                self._paint_label(painter, rect, "x", "Cancel", ink)
+            else:
+                paint_icon(painter, "x", rect.center(), 16, ink)
+        elif key == "done":
+            self._paint_label(painter, rect, "", "Done", token_color("success"))
+
+    def _paint_label(self, painter: QPainter, rect: QRectF, icon: str, text: str,
+                     color: QColor) -> None:
+        """``text`` centred in ``rect``, after ``icon`` when there is one."""
+        metrics = painter.fontMetrics()
+        icon_w = 16.0 + 6.0 if icon else 0.0
+        width = icon_w + metrics.horizontalAdvance(text)
+        x = rect.center().x() - width / 2
+        if icon:
+            paint_icon(painter, icon, QPointF(x + 8, rect.center().y()), 16, color)
+        painter.setPen(color)
+        painter.drawText(QRectF(x + icon_w, rect.top(), width - icon_w + 2, rect.height()),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
 
 
 def make_panel() -> WalkthroughPanel | None:

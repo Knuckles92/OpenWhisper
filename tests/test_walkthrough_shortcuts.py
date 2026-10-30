@@ -62,15 +62,39 @@ class FakeSnap(QObject):
         self.failed.emit(reason)
 
 
+class FakePanel(QObject):
+    """The walkthrough's column: its buttons, and what it is told to show."""
+
+    snap_requested = pyqtSignal()
+    undo_requested = pyqtSignal()
+    cancel_requested = pyqtSignal()
+    finish_requested = pyqtSignal()
+    move_requested = pyqtSignal(int, int)
+    remove_requested = pyqtSignal(int)
+
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def add_shot(self, number, image, kept_at_s):
+        self.calls.append(("add", number, kept_at_s))
+
+    def remove_shot(self, number):
+        self.calls.append(("remove", number))
+
+    def move_shot(self, number, step):
+        self.calls.append(("move", number, step))
+
+
 class FakeUI:
     def __init__(self):
+        self.walkthrough_panel = FakePanel()
         self.snaps = []
         self.supported = (True, "")
         self.access_requests = 0
         self.excluded = []
         self.active = []
         self.captions = []
-        self.column = []
         self.copied = []
         self.notices = []
         self.statuses = []
@@ -95,9 +119,6 @@ class FakeUI:
 
     def show_overlay_caption(self, text):
         self.captions.append(text)
-
-    def add_walkthrough_shot(self, number, image):
-        self.column.append((number, image))
 
     def copy_files_to_clipboard(self, paths, text="", *, image=None):
         self.copied.append((list(paths), text, image))
@@ -132,6 +153,7 @@ def h(tmp_path, monkeypatch):
         transcription_runtime=transcription,
         recorder=recorder,
         recording_destination_changed=Signal(),
+        cancel=Mock(),
         _refuse_dictation_during_meeting=lambda: False,
         transcription_readiness_message=lambda: None,
     )
@@ -195,7 +217,7 @@ def test_a_screenshot_during_a_walkthrough_joins_it(h):
     assert shot.number == 1 and shot.kept_at_s == 12.5
     assert h.controller.recording_destination_changed.calls == [("Walkthrough · 1 shot",)]
     assert h.ui.captions == ["Screenshot 1 added"]
-    assert [number for number, _image in h.ui.column] == [1]
+    assert h.ui.walkthrough_panel.calls == [("add", 1, 12.5)]
     assert h.ui.copied == []
     session.end()
 
@@ -368,3 +390,85 @@ def test_a_plain_screenshot_without_a_writable_folder_is_still_copied(h, monkeyp
     ((paths, text, _image),) = h.ui.copied
     assert paths == [] and text == ""
     assert ("Screenshot copied (its file couldn't be saved)", False) in h.ui.notices
+
+
+# --- the walkthrough's column ------------------------------------------------
+
+
+def _keep_snap(h):
+    h.ui.walkthrough_panel.snap_requested.emit()
+    h.ui.snaps[-1].keep()
+
+
+def test_the_columns_snap_and_done_take_a_screenshot_then_finish(h):
+    session = _begin(h)
+
+    _keep_snap(h)
+    h.ui.walkthrough_panel.finish_requested.emit()
+
+    assert session.shot_count == 1
+    h.controller.stop_recording.assert_called_once()
+    # Done again, once it is over, starts nothing.
+    h.ui.walkthrough_panel.finish_requested.emit()
+    h.controller.stop_recording.assert_called_once()
+    assert h.transcription.started == ["hotkey"]
+
+
+def test_the_columns_cancel_is_the_users_cancel(h):
+    _begin(h)
+
+    h.ui.walkthrough_panel.cancel_requested.emit()
+
+    h.controller.cancel.assert_called_once_with()
+
+
+def test_undo_takes_the_newest_screenshot_out_and_says_so(h):
+    session = _begin(h)
+    _keep_snap(h)
+    _keep_snap(h)
+    panel = h.ui.walkthrough_panel
+
+    panel.undo_requested.emit()
+
+    assert session.shot_count == 1
+    assert panel.calls[-1] == ("remove", 2)
+    assert h.controller.recording_destination_changed.calls[-1] == ("Walkthrough · 1 shot",)
+    session.end()
+
+
+def test_moving_and_removing_reach_the_walkthrough_and_its_column(h):
+    session = _begin(h)
+    for _ in range(3):
+        _keep_snap(h)
+    panel = h.ui.walkthrough_panel
+
+    panel.move_requested.emit(3, -1)
+    panel.move_requested.emit(1, -1)  # already first: nothing moves
+    panel.remove_requested.emit(1)
+
+    assert panel.calls[3:] == [("move", 3, -1), ("remove", 1)]
+    assert [shot.path.name for shot in session.saved_shots()] == ["shot-3.png", "shot-2.png"]
+    assert h.controller.recording_destination_changed.calls[-1] == ("Walkthrough · 2 shots",)
+    session.end()
+
+
+def test_the_column_is_answered_once_across_walkthroughs(h):
+    _begin(h)
+    h.controller.stop_recording()
+    _begin(h)
+
+    h.ui.walkthrough_panel.snap_requested.emit()
+
+    assert len(h.ui.snaps) == 1
+
+
+def test_without_a_column_screenshots_still_join_the_walkthrough(h):
+    h.ui.walkthrough_panel = None
+    session = _begin(h)
+
+    h.runtime.snap()
+    h.ui.snaps[0].keep()
+
+    assert session.shot_count == 1
+    assert h.ui.captions == ["Screenshot 1 added"]
+    session.end()

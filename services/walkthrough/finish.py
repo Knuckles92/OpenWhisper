@@ -13,14 +13,19 @@ from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 from services.walkthrough.sections import split_recording
-from services.walkthrough.session import Shot, WalkthroughResult, WalkthroughSession
+from services.walkthrough.session import (
+    Shot,
+    Storyboard,
+    WalkthroughResult,
+    WalkthroughSession,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def transcribe_sections(
     audio_path: str,
-    shots: Sequence[Shot],
+    board: Storyboard,
     transcribe: Callable[[str], str],
     *,
     before_each: Callable[[int, int], None] = lambda index, total: None,
@@ -29,24 +34,24 @@ def transcribe_sections(
 
     Args:
         audio_path: The whole recording.
-        shots: The screenshots kept, in order.
+        board: Where it is cut, and which pieces each section reads.
         transcribe: Decodes one WAV path to text.
-        before_each: Called with (index, total) before each section is
+        before_each: Called with (index, total) before each piece is
             decoded; it may raise to stop (a Cancel).
     """
     with tempfile.TemporaryDirectory(prefix="openwhisper-walkthrough-") as folder:
         try:
-            clips = split_recording(Path(audio_path), [shot.kept_at_s for shot in shots], Path(folder))
+            clips = split_recording(Path(audio_path), board.cuts_s, Path(folder))
         except (OSError, ValueError, wave.Error):
             # Every word above the first screenshot beats losing them.
             logger.warning("Could not cut the walkthrough audio; transcribing it whole", exc_info=True)
             before_each(1, 1)
-            return [transcribe(audio_path)] + [""] * len(shots)
-        texts = []
+            return [transcribe(audio_path)] + [""] * len(board.shots)
+        words = []
         for index, clip in enumerate(clips, start=1):
             before_each(index, len(clips))
-            texts.append(transcribe(str(clip.path)) if clip.path is not None else "")
-        return texts
+            words.append((transcribe(str(clip.path)) if clip.path is not None else "").strip())
+    return [" ".join(words[piece] for piece in pieces if words[piece]) for pieces in board.sections]
 
 
 def marked_text(texts: Sequence[str], shots: int) -> str:

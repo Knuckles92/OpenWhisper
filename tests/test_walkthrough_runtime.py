@@ -339,6 +339,49 @@ def test_each_section_is_transcribed_and_the_document_copied(h):
     assert (folder / "shot-1.png").exists()
 
 
+def _record_edited(h, shots_at, edit, *, length_s=6.0):
+    """Like ``_record``, with ``edit(session)`` made to the board before it stops."""
+    assert h.runtime.start_walkthrough(h.session)
+    for kept_at in shots_at:
+        h.session.add_shot(_image(), kept_at)
+    edit(h.session)
+    h.controller.recorder.duration = length_s
+    h.runtime.stop_recording()
+    h.controller._pending_audio_path = str(h.audio)
+    h.controller._pending_audio_duration = length_s
+    h.controller._pending_source_name = h.runtime._recording_source_name(h.runtime._active_job)
+
+
+def test_a_screenshot_moved_up_takes_its_words_into_the_document(h):
+    _write_recording(h.audio, [_tone(1.9), np.zeros(int(0.3 * RATE), np.int16), _tone(1.9),
+                               np.zeros(int(0.3 * RATE), np.int16), _tone(1.6)])
+    _record_edited(h, [2.0, 4.2], lambda session: session.move_shot(2, -1))
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    # The recording is still decoded in the order it was spoken.
+    assert h.backend.paths == ["section-1.wav", "section-2.wav", "section-3.wav"]
+    (built,) = h.built
+    assert built.texts == ["second part", "first part", "last part"]
+    assert [(shot.number, shot.path.name, shot.kept_at_s) for shot in built.shots] == [
+        (1, "shot-2.png", 4.2), (2, "shot-1.png", 2.0)]
+
+
+def test_an_undone_screenshot_leaves_its_words_to_the_section_after_it(h):
+    _write_recording(h.audio, [_tone(1.9), np.zeros(int(0.3 * RATE), np.int16), _tone(1.9),
+                               np.zeros(int(0.3 * RATE), np.int16), _tone(1.6)])
+    _record_edited(h, [2.0, 4.2], lambda session: session.undo_last())
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    # Shot 2's words and the closing words are one stretch, decoded whole.
+    assert h.backend.paths == ["section-1.wav", "section-2.wav"]
+    (built,) = h.built
+    assert built.texts == ["first part", "second part"]
+    assert [shot.path.name for shot in built.shots] == ["shot-1.png"]
+    assert not (h.session.folder() / "shot-2.png").exists()
+
+
 @pytest.mark.parametrize("copy_format, pdf, markdown", [
     ("both", True, True),
     ("agent", False, True),

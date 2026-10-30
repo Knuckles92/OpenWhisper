@@ -1545,9 +1545,10 @@ class TranscriptionRuntime:
             session.preserve_audio(audio_path)
         except OSError:
             logger.exception("Could not keep the walkthrough's recovery audio")
-        shots = session.saved_shots()
+        board = session.storyboard()
+        shots = list(board.shots)
         texts = self._timed_decode(backend, lambda: finish.transcribe_sections(
-            audio_path, shots,
+            audio_path, board,
             lambda path: recognition_context.transcribe(self._incremental, backend, path, recognition),
             before_each=self._report_section,
         ))

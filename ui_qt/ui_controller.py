@@ -1119,10 +1119,10 @@ class UIController(QObject):
         # can't be, a screenshot hides the column for a moment (start_snap).
         keep_out_of_screenshots(panel, True)
 
-    def add_walkthrough_shot(self, number: int, image) -> None:
-        """Drop a kept screenshot into the walkthrough's column."""
-        if self._walkthrough_panel is not None:
-            self._walkthrough_panel.add_shot(number, image)
+    @property
+    def walkthrough_panel(self):
+        """The column that writes the walkthrough, once made; None on Wayland."""
+        return self._walkthrough_panel
 
     def _on_window_walkthrough(self) -> None:
         if self.on_walkthrough is not None:

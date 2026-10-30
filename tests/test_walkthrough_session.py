@@ -175,3 +175,153 @@ def test_a_screenshot_that_fails_to_write_is_reported_and_leaves_no_partial_file
     assert session.lost_shots == 1
     assert not shot.path.exists()
     session.end()
+
+
+# --- the board: moving and removing screenshots while it records -------------
+
+
+def _three_shots(tmp_path):
+    session = _session(tmp_path)
+    for kept_at in (2.0, 4.0, 6.0):
+        session.add_shot(_image(), kept_at)
+    return session
+
+
+def test_untouched_the_board_reads_each_piece_in_order(tmp_path):
+    session = _three_shots(tmp_path)
+
+    board = session.storyboard()
+
+    assert [shot.path.name for shot in board.shots] == ["shot-1.png", "shot-2.png", "shot-3.png"]
+    assert board.cuts_s == (2.0, 4.0, 6.0)
+    assert board.sections == ((0,), (1,), (2,), (3,))
+    session.end()
+
+
+def test_a_moved_screenshot_takes_its_words_with_it(tmp_path):
+    session = _three_shots(tmp_path)
+
+    assert session.move_shot(3, -1)
+    assert session.move_shot(3, -1)
+    board = session.storyboard()
+
+    assert [(shot.number, shot.path.name) for shot in board.shots] == [
+        (1, "shot-3.png"), (2, "shot-1.png"), (3, "shot-2.png")]
+    assert board.sections == ((2,), (0,), (1,), (3,))
+    session.end()
+
+
+def test_the_words_still_being_spoken_stay_last(tmp_path):
+    session = _three_shots(tmp_path)
+
+    assert not session.move_shot(3, 1)
+    assert not session.move_shot(1, -1)
+    assert not session.move_shot(9, 1)
+    assert session.storyboard().sections == ((0,), (1,), (2,), (3,))
+    session.end()
+
+
+def test_a_removed_screenshot_leaves_its_words_to_the_next_section(tmp_path):
+    session = _three_shots(tmp_path)
+
+    assert session.remove_shot(2)
+    board = session.storyboard()
+
+    assert [shot.path.name for shot in board.shots] == ["shot-1.png", "shot-3.png"]
+    # Its words and the next section's are one stretch: no cut between them.
+    assert board.cuts_s == (2.0, 6.0)
+    assert board.sections == ((0,), (1,), (2,))
+    assert not (tmp_path / "capture" / "shot-2.png").exists()
+    assert session.shot_count == 2
+    assert not session.remove_shot(2)
+    session.end()
+
+
+def test_words_that_moved_away_from_their_neighbours_are_cut_apart(tmp_path):
+    session = _three_shots(tmp_path)
+    session.move_shot(1, 1)  # 2, 1, 3
+
+    session.remove_shot(2)  # its words open section 1's
+    board = session.storyboard()
+
+    assert [shot.path.name for shot in board.shots] == ["shot-1.png", "shot-3.png"]
+    assert board.cuts_s == (2.0, 4.0, 6.0)
+    assert board.sections == ((1, 0), (2,), (3,))
+    session.end()
+
+
+def test_undo_takes_the_newest_screenshot_wherever_it_moved(tmp_path):
+    session = _three_shots(tmp_path)
+    session.move_shot(3, -1)
+
+    assert session.undo_last() == 3
+    assert session.undo_last() == 2
+    board = session.storyboard()
+
+    assert [shot.path.name for shot in board.shots] == ["shot-1.png"]
+    # Their words stay in the order the board showed them: shot 3's had
+    # moved above shot 2's.
+    assert board.cuts_s == (2.0, 4.0, 6.0)
+    assert board.sections == ((0,), (2, 1, 3))
+    session.end()
+
+
+def test_undoing_in_the_order_kept_rejoins_the_recording(tmp_path):
+    session = _three_shots(tmp_path)
+
+    session.undo_last()
+    session.undo_last()
+    board = session.storyboard()
+
+    assert board.cuts_s == (2.0,)
+    assert board.sections == ((0,), (1,))
+    session.end()
+
+
+def test_a_screenshot_kept_after_an_edit_closes_the_section_being_spoken(tmp_path):
+    session = _three_shots(tmp_path)
+    session.undo_last()
+
+    session.add_shot(_image(), 8.0)
+    board = session.storyboard()
+
+    assert [shot.path.name for shot in board.shots] == ["shot-1.png", "shot-2.png", "shot-4.png"]
+    assert board.cuts_s == (2.0, 4.0, 8.0)
+    assert board.sections == ((0,), (1,), (2,), (3,))
+    session.end()
+
+
+def test_a_stopped_walkthrough_keeps_its_board(tmp_path):
+    session = _three_shots(tmp_path)
+    session.close()
+
+    assert not session.remove_shot(1)
+    assert not session.move_shot(2, -1)
+    assert session.undo_last() is None
+    assert session.shot_count == 3
+    session.end()
+
+
+def test_recovery_sees_only_the_screenshots_left_on_the_board(tmp_path):
+    import json
+
+    session = _three_shots(tmp_path)
+    session.checkpoint_recording("0" * 32)
+    session.remove_shot(2)
+    session.storyboard()  # waits for the writer
+
+    draft = json.loads((tmp_path / "capture" / "draft.json").read_text(encoding="utf-8"))
+    assert [item["shot"] for item in draft["shots"]] == ["shot-1.png", "shot-3.png"]
+    session.end()
+
+
+def test_the_section_a_moment_belongs_to_follows_the_board(tmp_path):
+    session = _three_shots(tmp_path)
+    session.move_shot(2, -1)
+
+    board = session.storyboard()
+
+    assert board.section_at(1.0) == 1  # said before shot 1, which is now second
+    assert board.section_at(3.0) == 0
+    assert board.section_at(7.0) == 3
+    session.end()
