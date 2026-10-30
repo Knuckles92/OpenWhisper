@@ -2,7 +2,7 @@ import logging
 import math
 import sys
 import time
-from typing import Optional, List
+from typing import Callable, Optional, List
 from PyQt6.QtWidgets import QApplication, QWidget
 from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, pyqtSignal, QPoint, QPointF
 from PyQt6.QtGui import (
@@ -121,6 +121,8 @@ class WaveformOverlay(QWidget):
     _WORK_STATES = frozenset((STATE_PROCESSING, STATE_TRANSCRIBING))
     #: States that fade out rather than vanish when the overlay hides.
     _FADING_STATES = frozenset((STATE_PROCESSING, STATE_TRANSCRIBING, STATE_CLEANING, STATE_REWRITING))
+    #: What a stand-in (set_stand_in) shows in the overlay's place.
+    _STOOD_IN_STATES = LISTENING_STATES | _FADING_STATES
 
     def __init__(self, parent=None, *, preview: bool = False):
         """Build the overlay.
@@ -244,6 +246,9 @@ class WaveformOverlay(QWidget):
         self._hover = ""
         # Snap and Done, while a walkthrough records (set_walkthrough_controls).
         self._walkthrough_controls = False
+        # Says whether another window shows the recording in the overlay's
+        # place (set_stand_in).
+        self._stand_in: Optional[Callable[[], bool]] = None
         self._control_rects: dict[str, QRectF] = {}
         # Their shortcuts, shown in a pill above the one hovered.
         self._control_hotkeys: dict[str, str] = {}
@@ -1044,6 +1049,19 @@ class WaveformOverlay(QWidget):
         self._apply_height()
         self.update()
 
+    def set_stand_in(self, showing: Optional[Callable[[], bool]]) -> None:
+        """Let another window show the recording and its processing instead.
+
+        While ``showing()`` is true (the walkthrough's column is on screen),
+        the overlay keeps to notices and short moments; None ends that.
+        """
+        self._stand_in = showing
+        if self.isVisible() and self._stood_in(self.current_state):
+            self._finish_hide()
+
+    def _stood_in(self, state: str) -> bool:
+        return state in self._STOOD_IN_STATES and self._stand_in is not None and self._stand_in()
+
     def set_control_hotkeys(self, snap: str, finish: str) -> None:
         """The Screenshot and Walkthrough shortcuts, which Snap and Done press."""
         self._control_hotkeys = {"snap": snap, "finish": finish}
@@ -1327,6 +1345,11 @@ class WaveformOverlay(QWidget):
         self.update()
 
     def set_state(self, state: str):
+        if self._stood_in(state):
+            # A notice on screen keeps its time; the recording itself hides.
+            if self.current_state in self._STOOD_IN_STATES:
+                self._finish_hide()
+            return
         if self._fading_since is not None:
             # Something new arrived while the last result faded: show it.
             self._fading_since = None
@@ -1657,6 +1680,10 @@ class WaveformOverlay(QWidget):
             state: Optional state to set. If None, uses current state or RECORDING as default.
         """
         if self._embedded and not self.parentWidget().isVisible():
+            return
+        shown = state or (self.STATE_RECORDING if self.current_state == self.STATE_IDLE
+                          else self.current_state)
+        if self._stood_in(shown):
             return
         self._anchor_pos = QCursor.pos()
         self._reposition_near_anchor()

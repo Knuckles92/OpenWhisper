@@ -503,3 +503,59 @@ def test_buttons_reach_the_walkthrough_as_the_user():
     UIController._on_overlay_finish(ui)
 
     assert calls == [("walkthrough", "ui"), ("screenshot", "ui"), ("walkthrough", "ui")]
+
+
+# --- the column stands in for the overlay ------------------------------------
+
+
+def test_while_the_column_shows_the_walkthrough_the_overlay_keeps_to_notices(overlay):
+    showing = [True]
+    overlay.set_stand_in(lambda: showing[0])
+
+    overlay.show_at_cursor(overlay.STATE_RECORDING)
+    assert not overlay.isVisible()
+    overlay.show_notice("Couldn't save the screenshot")
+    assert overlay.isVisible() and overlay.current_state == overlay.STATE_NOTICE
+    # The notice keeps its time; the processing it would turn into stays away.
+    overlay.set_state(overlay.STATE_PROCESSING)
+    assert overlay.current_state == overlay.STATE_NOTICE
+
+    overlay.hide()
+    showing[0] = False
+    overlay.show_at_cursor(overlay.STATE_RECORDING)
+    assert overlay.isVisible() and overlay.current_state == overlay.STATE_RECORDING
+
+
+def test_a_column_that_opens_over_the_recording_overlay_hides_it(overlay):
+    _recording_walkthrough(overlay)
+    assert overlay.isVisible()
+
+    overlay.set_stand_in(lambda: True)
+
+    assert not overlay.isVisible()
+
+
+def test_the_controller_lets_the_column_stand_in_for_the_overlay(monkeypatch):
+    import ui_qt.snap
+    from ui_qt.widgets import walkthrough_panel
+
+    panel = Mock()
+    monkeypatch.setattr(walkthrough_panel, "make_panel", lambda: panel)
+    monkeypatch.setattr(ui_qt.snap, "keep_out_of_screenshots", Mock())
+    ui = SimpleNamespace(_walkthrough_panel=None, overlay=Mock())
+
+    UIController._show_walkthrough_panel(ui, True)
+
+    panel.begin.assert_called_once_with()
+    ui.overlay.set_stand_in.assert_called_once_with(panel.shows_recording)
+
+
+def test_without_a_column_wayland_keeps_the_overlay(monkeypatch):
+    from ui_qt.widgets import walkthrough_panel
+
+    monkeypatch.setattr(walkthrough_panel, "make_panel", lambda: None)
+    ui = SimpleNamespace(_walkthrough_panel=None, overlay=Mock())
+
+    UIController._show_walkthrough_panel(ui, True)
+
+    ui.overlay.set_stand_in.assert_not_called()

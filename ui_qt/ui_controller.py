@@ -1121,6 +1121,8 @@ class UIController(QObject):
         # After show(): the exclusion is set on the native window. Where it
         # can't be, a screenshot hides the column for a moment (start_snap).
         keep_out_of_screenshots(panel, True)
+        # The column shows the recording, so the recording overlay steps aside.
+        self.overlay.set_stand_in(panel.shows_recording)
 
     @property
     def walkthrough_panel(self):

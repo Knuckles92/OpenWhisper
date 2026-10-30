@@ -581,3 +581,16 @@ def test_pausing_ends_a_note_and_no_note_starts_while_paused(panel, clock):
 
     assert held == [True, False]
     assert not panel._footer()["note"][1]
+
+
+def test_the_column_stands_in_for_the_overlay_only_while_it_records_or_writes(panel, clock):
+    assert not panel.shows_recording()
+    panel.begin()
+    assert panel.shows_recording()
+    panel.finish()
+    assert panel.shows_recording()
+
+    panel.complete(SimpleNamespace(shots=0, duration_s=3.0))
+
+    # Its last seconds on screen don't hide the next dictation's overlay.
+    assert panel.isVisible() and not panel.shows_recording()

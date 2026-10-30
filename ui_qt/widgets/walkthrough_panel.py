@@ -424,6 +424,11 @@ class WalkthroughPanel(QWidget):
         if self.column.move_shot(number, step):
             self._settle_hover()
 
+    def shows_recording(self) -> bool:
+        """Whether the column is on screen showing the walkthrough, recording or
+        being written: the recording overlay would only repeat it."""
+        return self.isVisible() and self.state in (self.RECORDING, self.WRITING)
+
     def set_snap_mode(self, mode: str, shortcut: str | None = None) -> None:
         """What Snap takes, and the keys of the Screenshot shortcut, which repeats it."""
         self.snap_mode = mode
