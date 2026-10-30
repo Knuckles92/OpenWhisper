@@ -256,6 +256,9 @@ class AudioRecorder:
         self._post_roll_gate = PostRollGate(config.SAMPLE_RATE)
         # Set by cancel_recording: the callback drops blocks until next start.
         self._capture_canceled = False
+        # Set by pause: the callback drops blocks until resume, so the
+        # recording (its frames, its file) runs on as if no time passed.
+        self._paused = False
         self._stop_event = threading.Event()
         self._post_roll_end_event = threading.Event()
         self._post_roll_end_reason = ""
@@ -332,6 +335,7 @@ class AudioRecorder:
             with self._callback_lock:
                 self._post_roll_gate = PostRollGate(self.rate)
                 self._capture_canceled = False
+                self._paused = False
                 self._stream_generation += 1
                 generation = self._stream_generation
             self.last_capture_error = None
@@ -540,6 +544,9 @@ class AudioRecorder:
                     self._stop_requested_at + config.POST_ROLL_MS / 1000.0
                 )
             self._stop_event.set()
+            if self._paused:
+                # Nobody is mid-word: there is no tail to wait for.
+                self._end_post_roll("paused")
 
             logger.info("Recording stop requested, post-roll continuing in background")
             return True
@@ -547,6 +554,32 @@ class AudioRecorder:
         except Exception as e:
             logger.error(f"Failed to stop recording: {e}")
             return False
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
+    def pause(self) -> bool:
+        """Keep nothing the microphone hears until ``resume``; False when not recording.
+
+        The recording's frame count, and so its duration and every moment
+        read from it, carries on from where it paused: paused time is not
+        in the recording at all.
+        """
+        with self._callback_lock:
+            if not self.is_recording or self._stop_requested or self._capture_canceled:
+                return False
+            self._paused = True
+        logger.info("Recording paused")
+        return True
+
+    def resume(self) -> None:
+        """Keep what the microphone hears again."""
+        with self._callback_lock:
+            if not self._paused:
+                return
+            self._paused = False
+        logger.info("Recording resumed")
 
     def _end_post_roll(self, reason: str) -> None:
         """Wake the recording thread to close the stream before the cap."""
@@ -595,6 +628,10 @@ class AudioRecorder:
                         self._audio_spool.error = error
                         self._stop_for_capture_error()
                         return
+                if self._paused:
+                    # The microphone stays watched (a lost one still switches);
+                    # only what it hears is let go.
+                    return
                 audio_copy = indata.copy()
                 payload = audio_copy.tobytes()
                 if not self._audio_spool.append(payload):

@@ -5,7 +5,13 @@ import wave
 import numpy as np
 import pytest
 
-from services.walkthrough.sections import MIN_CLIP_S, REACH_S, cut_frames, split_recording
+from services.walkthrough.sections import (
+    MIN_CLIP_S,
+    REACH_S,
+    clip_stretches,
+    cut_frames,
+    split_recording,
+)
 
 RATE = 16_000
 
@@ -129,3 +135,63 @@ def test_only_16_bit_audio_is_cut(tmp_path):
 
     with pytest.raises(ValueError):
         split_recording(source, [0.5], tmp_path)
+
+
+# --- stretches held for a note -------------------------------------------------
+
+
+def _frames(path):
+    with wave.open(str(path), "rb") as clip:
+        return clip.getnframes()
+
+
+def _samples(path):
+    with wave.open(str(path), "rb") as clip:
+        return np.frombuffer(clip.readframes(clip.getnframes()), dtype="<i2")
+
+
+def test_a_held_stretch_is_left_out_of_its_section_and_cut_on_its_own(tmp_path):
+    # Speech, a note (louder), more speech; a screenshot kept at 4.0 s.
+    note = (_tone(1.0) * 2).astype(np.int16)
+    audio = np.concatenate([_tone(1.0), note, _tone(2.0), _tone(2.0)])
+    source = tmp_path / "recording.wav"
+    _write(source, audio)
+
+    first, rest = split_recording(source, [4.0], tmp_path, leave_out_s=[(1.0, 2.0)])
+    (held,) = clip_stretches(source, [(1.0, 2.0)], tmp_path)
+
+    assert first.duration_s == pytest.approx(3.0, abs=0.01)
+    assert np.abs(_samples(first.path)).max() <= 8000
+    assert rest.duration_s == pytest.approx(2.0, abs=0.01)
+    assert held.path.name == "note-1.wav" and _frames(held.path) == RATE
+    assert np.abs(_samples(held.path)).max() > 8000
+
+
+def test_a_stretch_held_across_a_screenshot_leaves_both_sections(tmp_path):
+    source = tmp_path / "recording.wav"
+    _write(source, _tone(6.0))
+
+    first, second = split_recording(source, [3.0], tmp_path, leave_out_s=[(2.0, 4.0)])
+
+    assert first.duration_s == pytest.approx(2.0, abs=0.01)
+    assert second.duration_s == pytest.approx(2.0, abs=0.01)
+
+
+def test_a_stretch_held_to_the_end_runs_to_the_last_frame(tmp_path):
+    source = tmp_path / "recording.wav"
+    _write(source, _tone(3.0))
+
+    (held,) = clip_stretches(source, [(2.0, float("inf"))], tmp_path)
+    (spoken,) = split_recording(source, [], tmp_path, leave_out_s=[(2.0, float("inf"))])
+
+    assert _frames(held.path) == RATE
+    assert spoken.duration_s == pytest.approx(2.0, abs=0.01)
+
+
+def test_a_moment_held_too_short_to_hold_words_is_no_clip(tmp_path):
+    source = tmp_path / "recording.wav"
+    _write(source, _tone(2.0))
+
+    (held,) = clip_stretches(source, [(1.0, 1.0 + MIN_CLIP_S / 2)], tmp_path)
+
+    assert held.path is None

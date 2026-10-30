@@ -1545,9 +1545,10 @@ class TranscriptionRuntime:
             session.preserve_audio(audio_path)
         except OSError:
             logger.exception("Could not keep the walkthrough's recovery audio")
-        shots = session.saved_shots()
-        texts = self._timed_decode(backend, lambda: finish.transcribe_sections(
-            audio_path, shots,
+        board = session.storyboard()
+        shots = list(board.shots)
+        texts, notes = self._timed_decode(backend, lambda: finish.transcribe_sections(
+            audio_path, board,
             lambda path: recognition_context.transcribe(self._incremental, backend, path, recognition),
             before_each=self._report_section,
         ))
@@ -1575,11 +1576,14 @@ class TranscriptionRuntime:
         lost = session.lost_shots
         if lost:
             result = dataclasses.replace(result, lost_shots=lost)
-        session.result = self._maybe_write_up(result, shots)
+        session.result = self._maybe_write_up(result, shots, notes)
         return session.result.history_text, session.result.history_raw, info
 
-    def _maybe_write_up(self, result, shots):
+    def _maybe_write_up(self, result, shots, notes=()):
         """``result`` written up by the chosen agent when Settings asks for it; worker.
+
+        ``notes`` are what the user held Hold for note to say; without a
+        write-up nothing reads them.
 
         A failure keeps the words as spoken and says why. A Cancel stops the
         job, as it does at every other step.
@@ -1603,6 +1607,7 @@ class TranscriptionRuntime:
                 result, [shot.path for shot in shots], agent=agent,
                 instructions=resolve_walkthrough_write_up_instructions(settings),
                 follow_notes=resolve_walkthrough_write_up_notes(settings),
+                notes=notes,
                 cancel_event=self._cancel_requested,
             )
         except write_up.WriteUpFailed as exc:

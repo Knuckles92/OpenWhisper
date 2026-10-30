@@ -1,10 +1,14 @@
 """The Walkthrough and Screenshot shortcuts (docs/walkthrough.md); Qt thread.
 
 A walkthrough is a recording that collects screenshots: each one the user
-keeps closes a section of the transcript. TranscriptionRuntime records and
+keeps closes a section of the transcript. Its screenshots are of the kind
+last picked from the column's Snap menu (a region, the window under the
+pointer, the whole screen, or a region in 3 seconds). TranscriptionRuntime records and
 transcribes it like a dictation and owns its WalkthroughSession; this
-runtime decides what each shortcut press means and turns kept screenshots
-into the session's shots.
+runtime decides what each shortcut press means, turns kept screenshots
+into the session's shots, and answers the buttons on the walkthrough's
+column (ui_qt/widgets/walkthrough_panel.py), which shows the session's
+board as it changes.
 
 Outside a walkthrough the Screenshot shortcut is a plain annotate-and-copy
 screenshot tool.
@@ -18,6 +22,13 @@ from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtCore import QTimer
 
+from services.settings import (
+    SettingsKey,
+    WalkthroughSnapMode,
+    resolve_walkthrough_snap_mode,
+    resolve_walkthrough_write_up,
+    settings_manager,
+)
 from services.walkthrough.session import ScreenshotNotSaved, WalkthroughSession
 
 if TYPE_CHECKING:
@@ -30,6 +41,8 @@ RECORDING_HINT = "Recording continues — talk while you draw"
 #: Lets the tray menu close before the screen is grabbed.
 TRAY_SNAP_DELAY_MS = 300
 FINISH_RECORDING_FIRST = "Finish the recording in progress first"
+#: How long "In 3 seconds" waits before it freezes the screen.
+COUNTDOWN_S = 3
 
 
 def shots_label(count: int) -> str:
@@ -57,10 +70,24 @@ class WalkthroughRuntime:
         self._active = False
         self._out_of_screenshots = False
         self._tray_timer: Optional[QTimer] = None
+        # "In 3 seconds": ticks once a second until the snap.
+        self._countdown = QTimer()
+        self._countdown.setInterval(1000)
+        self._countdown.timeout.connect(self._count_down)
+        self._countdown_left = 0
+        # The walkthrough's column, once made (none on Wayland); its buttons
+        # are connected here once.
+        self._panel = None
+        # Who asked for the snap being taken (see snap's ``source``).
+        self._source = "hotkey"
 
     @property
     def _ui(self):
         return self.controller.ui_controller
+
+    @property
+    def _session(self) -> Optional[WalkthroughSession]:
+        return self.controller.transcription_runtime.recording_walkthrough
 
     # ---- the Walkthrough shortcut ----
 
@@ -90,10 +117,39 @@ class WalkthroughRuntime:
             return
         self._active = True
         self._ui.set_walkthrough_active(True)
+        self._attach(self._ui.walkthrough_panel)
+        if self._panel is not None:
+            settings = settings_manager.load_all_settings()
+            self._panel.set_snap_mode(resolve_walkthrough_snap_mode(settings),
+                                      self._snap_shortcut())
+            # Only an AI write-up reads notes.
+            self._panel.set_notes_on(resolve_walkthrough_write_up(settings))
         # The pill keeps showing what is being recorded, but never in the
         # screenshots themselves.
         self._out_of_screenshots = self._ui.keep_overlay_out_of_screenshots(True)
         logger.info("Walkthrough started")
+
+    def _attach(self, panel) -> None:
+        """Answer the column's buttons; it is made once and kept for every walkthrough."""
+        if panel is None or panel is self._panel:
+            return
+        self._panel = panel
+        # "ui" is the window and tray's source (catalog.SOURCES); the
+        # column is the same user at the same desk.
+        panel.snap_requested.connect(lambda: self.snap("ui"))
+        panel.snap_mode_chosen.connect(self.choose_snap_mode)
+        panel.finish_requested.connect(self.finish)
+        panel.cancel_requested.connect(self.controller.cancel)
+        panel.undo_requested.connect(self.undo_last_shot)
+        panel.move_requested.connect(self.move_shot)
+        panel.remove_requested.connect(self.remove_shot)
+        panel.note_held.connect(self.hold_note)
+        panel.pause_requested.connect(self.set_paused)
+
+    def finish(self) -> None:
+        """Done: finish the walkthrough being recorded, if one still is."""
+        if self._session is not None:
+            self._finish()
 
     def _finish(self) -> None:
         if self._snap is not None and self._snap.active:
@@ -106,31 +162,92 @@ class WalkthroughRuntime:
     # ---- the Screenshot shortcut ----
 
     def snap(self, source: str = "hotkey") -> None:
-        """Take a screenshot: into the walkthrough being recorded, else onto the clipboard."""
+        """Take a screenshot: into the walkthrough being recorded, else onto the clipboard.
+
+        In a walkthrough it is of the kind last picked from the Snap menu.
+        """
         if self._snap is not None and self._snap.active:
             # Pressed again while drawing: keep it.
             self._snap.keep()
             return
+        if self._countdown_left:
+            # Pressed again while counting down: don't wait.
+            self._stop_countdown()
+            self._snap_now(WalkthroughSnapMode.REGION)
+            return
+        self._source = source
         if source == "tray":
             self._snap_after_tray_closes()
             return
-        self._snap_now()
+        self._snap_as_picked()
+
+    def choose_snap_mode(self, mode: str) -> None:
+        """A pick from the Snap menu: take it now, and from now on."""
+        if mode not in WalkthroughSnapMode.ALL:
+            return
+        settings_manager.save_setting(SettingsKey.WALKTHROUGH_SNAP_MODE, mode)
+        if self._panel is not None:
+            self._panel.set_snap_mode(mode)
+        self.snap("ui")
+
+    def _snap_mode(self) -> str:
+        """What a snap takes: the kind last picked in a walkthrough, a region outside one."""
+        if self._session is None:
+            return WalkthroughSnapMode.REGION
+        return resolve_walkthrough_snap_mode(settings_manager.load_all_settings())
+
+    @staticmethod
+    def _snap_shortcut() -> str:
+        from services.hotkey_manager import format_hotkey_display
+
+        return format_hotkey_display(settings_manager.load_hotkey_settings().get("screenshot") or "")
 
     def _snap_after_tray_closes(self) -> None:
         if self._tray_timer is None:
             self._tray_timer = QTimer()
             self._tray_timer.setSingleShot(True)
-            self._tray_timer.timeout.connect(self._snap_now)
+            self._tray_timer.timeout.connect(self._snap_as_picked)
         self._tray_timer.start(TRAY_SNAP_DELAY_MS)
 
-    def _snap_now(self) -> None:
+    def _snap_as_picked(self) -> None:
+        mode = self._snap_mode()
+        if mode == WalkthroughSnapMode.DELAYED:
+            self._countdown_left = COUNTDOWN_S
+            self._show_countdown()
+            self._countdown.start()
+        else:
+            self._snap_now(mode)
+
+    def _count_down(self) -> None:
+        self._countdown_left -= 1
+        if self._countdown_left > 0:
+            self._show_countdown()
+            return
+        self._stop_countdown()
+        self._snap_now(WalkthroughSnapMode.REGION)
+
+    def _show_countdown(self) -> None:
+        if self._panel is not None:
+            self._panel.set_countdown(self._countdown_left)
+        self._ui.show_overlay_caption(f"Snapping in {self._countdown_left}…")
+
+    def _stop_countdown(self) -> None:
+        self._countdown.stop()
+        self._countdown_left = 0
+        if self._panel is not None:
+            self._panel.set_countdown(0)
+
+    def _snap_now(self, take: str = WalkthroughSnapMode.REGION) -> None:
         supported, reason = self._ui.snap_support()
         if not supported:
             self._tell(reason)
             self._ui.request_snap_access()
             return
         session = self.controller.transcription_runtime.recording_walkthrough
-        snap = self._ui.start_snap(hint=RECORDING_HINT if session is not None else "")
+        # Asked for from our own windows, "the window" is the one in front:
+        # the pointer is on the column, the tray or the overlay, not on it.
+        snap = self._ui.start_snap(hint=RECORDING_HINT if session is not None else "",
+                                   take=take, front=self._source != "hotkey")
         self._snap, self._snap_for = snap, session
         snap.kept.connect(self._on_kept)
         snap.dropped.connect(self._on_dropped)
@@ -150,9 +267,11 @@ class WalkthroughRuntime:
                 self._finish_if_asked()
                 return
         if shot is not None:
-            self.controller.recording_destination_changed.emit(shots_label(shot.number))
-            self._ui.add_walkthrough_shot(shot.number, image)
-            self._ui.show_overlay_caption(f"Screenshot {shot.number} added")
+            count = session.shot_count
+            self.controller.recording_destination_changed.emit(shots_label(count))
+            if self._panel is not None:
+                self._panel.add_shot(shot.number, image, shot.kept_at_s)
+            self._ui.show_overlay_caption(f"Screenshot {count} added")
         else:
             # A plain screenshot, or the walkthrough stopped while this one
             # was being drawn: either way it goes to the clipboard.
@@ -198,6 +317,59 @@ class WalkthroughRuntime:
         else:
             self._tell("Screenshot copied" + unsaved, done=saved)
 
+    # ---- the column's board ----
+
+    def undo_last_shot(self) -> None:
+        """Take the newest screenshot out; its words join the section being spoken."""
+        session = self._session
+        number = session.undo_last() if session is not None else None
+        if number is not None:
+            self._shot_removed(session, number)
+
+    def remove_shot(self, number: int) -> None:
+        """Take screenshot ``number`` (as kept) out; its words join the next section."""
+        session = self._session
+        if session is not None and session.remove_shot(number):
+            self._shot_removed(session, number)
+
+    def move_shot(self, number: int, step: int) -> None:
+        """Move screenshot ``number`` (as kept) and its words up (-1) or down (1)."""
+        session = self._session
+        if session is not None and session.move_shot(number, step) and self._panel is not None:
+            self._panel.move_shot(number, step)
+
+    def set_paused(self, paused: bool) -> None:
+        """Pause the walkthrough's recording, or resume it; a pause is not in the recording."""
+        from services.runtime.transcription import WALKTHROUGH_LABEL
+
+        if self._session is None:
+            return
+        recorder = self.controller.recorder
+        if paused and not recorder.pause():
+            return
+        if not paused:
+            recorder.resume()
+        if self._panel is not None:
+            self._panel.set_paused(paused)
+        self.controller.status_update.emit(
+            f"{WALKTHROUGH_LABEL} · Paused" if paused else f"{WALKTHROUGH_LABEL} · Recording...")
+
+    def hold_note(self, on: bool) -> None:
+        """Hold for note pressed (``on``) or let go: what is said meanwhile is for the write-up."""
+        session = self._session
+        if session is None:
+            return
+        at_s = self.controller.recorder.get_recording_duration()
+        if on:
+            session.hold_note(at_s)
+        else:
+            session.release_note(at_s)
+
+    def _shot_removed(self, session: WalkthroughSession, number: int) -> None:
+        self.controller.recording_destination_changed.emit(shots_label(session.shot_count))
+        if self._panel is not None:
+            self._panel.remove_shot(number)
+
     # ---- the recording ending ----
 
     def on_recording_state_changed(self, recording: bool) -> None:
@@ -205,6 +377,7 @@ class WalkthroughRuntime:
         if recording or not self._active:
             return
         self._active = False
+        self._stop_countdown()
         self._ui.set_walkthrough_active(False)
         if self._out_of_screenshots:
             self._out_of_screenshots = False

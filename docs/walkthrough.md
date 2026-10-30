@@ -8,7 +8,9 @@ tool copies a single annotated screenshot.
 Code: `services/runtime/walkthrough.py` (what each shortcut press does),
 `services/runtime/transcription.py` (the `walkthrough` job),
 `services/walkthrough/` (`session`, `sections`, `finish`, `document`,
-`storage`), `ui_qt/snap/` (screen capture and the drawing overlay) and
+`storage`), `ui_qt/snap/` (screen capture and the drawing overlay),
+`ui_qt/widgets/walkthrough_panel.py` and `walkthrough_snap_menu.py` (the
+column at the screen's edge and its Snap menu) and
 `ui_qt/widgets/walkthrough_ready.py` (the card that says it's ready).
 
 ## Using it
@@ -17,10 +19,10 @@ The main window's **Walkthrough** tab (between Upload File and Meeting Mode)
 has a **Start Walkthrough** button. While one records it reads **Finish
 Walkthrough**, a **Cancel** button joins it, and the window keeps the
 Walkthrough tab in front; a walkthrough started in compact mode stays there.
-While a walkthrough records the recording overlay offers **Snap** and
-**Done**, so it works without any shortcut. Those two take clicks on Windows
-and X11, where clicking the overlay leaves the app you are explaining in
-front. Both shortcuts start unassigned: the tab shows them (or **Not set**)
+While a walkthrough records, the column at the screen's edge (below) has
+**Snap**, **Done** and the rest of its controls, so it works without any
+shortcut. On Wayland, where there is no column, the recording overlay offers
+**Snap** and **Done** instead. Both shortcuts start unassigned: the tab shows them (or **Not set**)
 above the button, and **Walkthrough settings** opens **Settings → Dictation →
 Walkthroughs** to set them. The tray menu has **Start Walkthrough** and
 **Take Screenshot** too. Hovering the button shows its shortcut; the badge at
@@ -62,8 +64,9 @@ the copy choice, **Minimize to tray** and the AI write-up card fold away under
 **Setup**, which says what's chosen; with none yet, they show as before.
 
 - **Walkthrough** starts recording. Talk as you would to a colleague looking
-  over your shoulder. The recording overlay says **Walkthrough**, then how
-  many screenshots you have kept.
+  over your shoulder. The column's header says how long it has recorded and
+  how many screenshots you have kept (on Wayland, the recording overlay
+  does).
 - **Screenshot** freezes the screen under the pointer. Drag out the part
   that matters (Enter or a double-click takes the whole screen), mark it up,
   and press Enter to keep it or Esc to throw it away. The recording keeps
@@ -75,12 +78,48 @@ the copy choice, **Minimize to tray** and the AI write-up card fold away under
 While a walkthrough records, a column at the right edge of the screen
 writes it as you go: your voice shows as rows of ticks, like lines of
 writing, and each screenshot you keep drops in below what you said before
-it, so you can see what the document will hold. At **Done** the ticks close
-up into lines while the document is written, the header says its length and
-how many screenshots it has, and the column fades once the document is
-ready. It never takes focus and never appears in screenshots. Drag it
-aside if it covers something; the next walkthrough opens it at the edge
-again. Compositor-placed desktops (Wayland) don't show it.
+it, with its number and when you took it (**2 · 0:35**), so you can see what
+the document will hold. What you are saying now sits in an open, dashed
+slot, **Talking… Snap to close this section**, until the next screenshot
+closes it. Under it are the walkthrough's controls:
+
+- **Snap** takes a screenshot. Its **▾** opens a menu beside the column that
+  picks what Snap takes: a **Region** you draw (the overlay below), the
+  **Window under the pointer**, the **Whole screen**, or a region **In 3
+  seconds**, which counts down on the button and then freezes the screen,
+  so you can open a menu or hover something first. Picking one takes it at
+  once, and from then on Snap and the Screenshot shortcut repeat it, in
+  later walkthroughs too. A window or the whole screen is kept straight
+  away, without the drawing overlay. From the column's button or menu, "the
+  window" is the one in front, since clicking the column leaves that app in
+  front; from the shortcut it is the one under the pointer. **Window under
+  the pointer** is offered on Windows and macOS. Outside a walkthrough the
+  Screenshot shortcut always draws a region.
+- **Hold for note**: hold it while you talk, and what you say goes to the AI
+  write-up as an instruction, not into the document (see AI write-up). It
+  shows as a purple row, **Note for the agent · not in the document**. It
+  works only while **AI write-up** is on, since nothing else reads a note.
+- **Undo** takes the newest screenshot out. What you said before it stays,
+  in the section you are speaking.
+- **Pause** stops the recording until you press it again; nothing is
+  recorded meanwhile, and the screenshots you keep after it still line up
+  with your words. Hold for note waits for you to resume.
+- **Cancel** throws the walkthrough away. It stays, filling its row, while
+  the document is written.
+- **Done** finishes it.
+
+Hovering a screenshot shows three buttons: move it up, move it down, or
+remove it. Its words always go with it, since a section is what you said and
+then the screenshot it led to; a removed screenshot's words join the section
+after it, and its file is deleted. What you are saying now always stays last.
+
+At **Done** the ticks close up into lines while the document is written, the
+header says its length and how many screenshots it has, and the column fades
+once the document is ready. It never takes focus: clicks and drags reach it,
+and the app you are explaining keeps the keyboard. It never appears in
+screenshots. Drag it aside by anything that isn't a button, and scroll it
+with the mouse wheel to reach older screenshots; the next walkthrough opens
+it at the edge again. Compositor-placed desktops (Wayland) don't show it.
 
 Drawing tools, with their keys: arrow (A), box (B), pen (P), highlighter
 (H), text (T) and numbered steps (N); colours 1–4; undo Ctrl+Z, redo
@@ -91,12 +130,11 @@ A snap freezes every monitor, so you can select on any of them. Starting a
 selection on one monitor clears the others. On Hyprland a snap covers only
 the focused monitor.
 
-A walkthrough sends the recording overlay to the top-left corner of the
-screen it opened on. It stays there until you drag it somewhere else, and then
-it keeps that spot for the rest of the recording. While you draw, it waits in
-the corner above the dimmed screen, still animating, and goes back to its
-spot afterward. None of this applies on Wayland, where the overlay is part of
-the main window.
+While the column is on screen the recording overlay stays hidden: the
+column already shows the recording and its write-up. Notices, such as a
+screenshot that couldn't be saved, still appear at the pointer. On Wayland,
+where there is no column, the overlay is part of the main window and shows
+the walkthrough with its **Snap** and **Done**.
 
 ## How your words line up with the screenshots
 
@@ -112,6 +150,16 @@ Whatever you say after the last screenshot comes last.
   at most half as loud as the moment itself, so a word you were finishing
   as you pressed Enter stays whole and steady speech is cut where you kept
   the screenshot.
+- The recording is always cut in the order you kept the screenshots; the
+  sections are then put in the column's order, each with its words. Speech
+  that ends up next to itself in one section, as after **Undo**, is one
+  stretch of audio and transcribed whole, so no word is split where a
+  removed screenshot was.
+- What you say while holding **Hold for note** is cut out of its section
+  exactly where you pressed and let go, with no search for a pause, and
+  transcribed on its own as a note, never into the document.
+- A pause leaves nothing in the recording, so the frame count, and every
+  moment read from it, carries on from where you paused.
 - Each section is transcribed on its own with your usual voice model,
   through the same call a dictation uses, so every engine works, including
   a paired host. No engine has to report timestamps.
@@ -202,7 +250,9 @@ identity of the recorder's crash-safe audio journal. Once stopped, `audio.wav`
 keeps an independent recording beside the screenshots. After an interruption,
 restart OpenWhisper so startup recovery can join the recovered audio to its
 draft, then choose **Recover draft**. It transcribes the saved sections using
-your current voice model. Screenshots whose writes never completed are left
+your current voice model. A screenshot you removed while recording stays out;
+the order you moved screenshots into is not kept, so a recovered draft has
+them in the order taken. Screenshots whose writes never completed are left
 out; a draft without recoverable audio keeps its screenshots and explains
 why it cannot yet be finished. **Refresh** updates an already-open list.
 
@@ -263,6 +313,13 @@ and the status say **Write-up copied**.
   the note and leaves the note itself out of the write-up. A note can only
   change what the write-up says and how it looks. The as-spoken files keep
   every word, notes included.
+- **Notes you hold for the agent** (**Hold for note** on the column) are
+  never in the as-spoken files. They come after the walkthrough in the
+  agent's message, each with where you said it ("About screenshot 2"), and
+  the agent follows them under the same rule: a note can only change what
+  the write-up says and how it looks. They are followed whether or not
+  **Follow notes left for the agent** is on. A write-up that fails takes
+  them with it.
 - **Colours and a font.** Markdown has neither, so when a note or your
   instructions ask for them, the agent starts its reply with a small block
   (`text color`, `heading color`, `font`). OpenWhisper applies it to
@@ -304,6 +361,11 @@ and the status say **Write-up copied**.
 
 - A write-up with a model of your choosing; each agent uses its own default
   model.
+- Notes held for the agent reach the write-up made when the walkthrough
+  finishes; they aren't saved with it, so **Retry AI write-up** and **Save
+  and redo write-up** can't follow them.
+- Pause, Hold for note and the Snap menu are on the column, so Wayland,
+  which has none, has only Snap and Done.
 - A paired host stores a walkthrough's History entry and audio like a
   dictation's, but not its screenshots.
 - Whether a particular chat app attaches a file pasted from the clipboard

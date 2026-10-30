@@ -1081,12 +1081,14 @@ class UIController(QObject):
 
         request_access()
 
-    def start_snap(self, *, hint: str = ""):
+    def start_snap(self, *, hint: str = "", take: str = "region", front: bool = False):
         """Freeze the screen under the pointer for a screenshot; a SnapSession.
 
         The recording overlay never appears in it, yet stays in sight in a
         corner above the snap while it is drawn. On Wayland the overlay is
         a part of the main window, which must not be hidden for it.
+        ``take`` is what to keep (ui_qt.snap.session's REGION, SCREEN, WINDOW),
+        and ``front`` makes WINDOW the window in front (see ``start_snap``).
         """
         from ui_qt.snap import start_snap
 
@@ -1094,7 +1096,8 @@ class UIController(QObject):
         keep_out = floating
         if self._walkthrough_panel is not None and self._walkthrough_panel.isVisible():
             keep_out += (self._walkthrough_panel,)
-        return start_snap(keep_out=keep_out, hint=hint, float_above=floating, parent=self)
+        return start_snap(keep_out=keep_out, hint=hint, float_above=floating, parent=self,
+                          take=take, front=front)
 
     def keep_overlay_out_of_screenshots(self, enabled: bool) -> bool:
         """Leave the recording overlay out of every screen capture, or stop.
@@ -1139,11 +1142,13 @@ class UIController(QObject):
         # After show(): the exclusion is set on the native window. Where it
         # can't be, a screenshot hides the column for a moment (start_snap).
         keep_out_of_screenshots(panel, True)
+        # The column shows the recording, so the recording overlay steps aside.
+        self.overlay.set_stand_in(panel.shows_recording)
 
-    def add_walkthrough_shot(self, number: int, image) -> None:
-        """Drop a kept screenshot into the walkthrough's column."""
-        if self._walkthrough_panel is not None:
-            self._walkthrough_panel.add_shot(number, image)
+    @property
+    def walkthrough_panel(self):
+        """The column that writes the walkthrough, once made; None on Wayland."""
+        return self._walkthrough_panel
 
     def _on_window_walkthrough(self) -> None:
         if self.on_walkthrough is not None:

@@ -267,3 +267,55 @@ def test_gate_percentiles_come_from_the_whole_recording():
     gate.observe(-90.0, BLOCK)
     assert gate.frames_after_stop == BLOCK
     assert gate.floor_db == -60.0
+
+
+# --- a paused walkthrough -----------------------------------------------------------
+
+
+def test_nothing_is_kept_while_paused_so_later_moments_stay_in_step(recorder):
+    assert recorder.start_recording()
+    _feed(recorder, [-25.0] * 10)
+    assert recorder.pause() and recorder.paused
+
+    _feed(recorder, [-25.0] * 30, seed=100)
+    assert recorder._recorded_sample_frames == 10 * BLOCK
+    assert recorder.get_recording_duration() == pytest.approx(10 * BLOCK / RATE)
+
+    recorder.resume()
+    _feed(recorder, [-25.0] * 5, seed=200)
+    assert recorder._recorded_sample_frames == 15 * BLOCK
+
+
+def test_blocks_still_arriving_while_paused_keep_the_microphone_alive(recorder):
+    assert recorder.start_recording()
+    recorder.pause()
+    before = recorder._last_callback_at
+
+    time.sleep(0.01)
+    _feed(recorder, [-60.0])
+
+    assert recorder._last_callback_at > before
+
+
+def test_done_while_paused_stops_without_waiting_for_a_tail(recorder):
+    assert recorder.start_recording()
+    _feed(recorder, [-25.0] * 10)
+    recorder.pause()
+    started = time.monotonic()
+
+    assert recorder.stop_recording()
+    assert recorder.wait_for_stop_completion()
+
+    assert recorder._post_roll_end_reason == "paused"
+    assert time.monotonic() - started < config.POST_ROLL_MS / 1000.0 / 2
+
+
+def test_only_a_recording_can_pause_and_the_next_one_starts_unpaused(recorder):
+    assert not recorder.pause()
+    assert recorder.start_recording()
+    assert recorder.pause()
+    recorder.stop_recording()
+    recorder.wait_for_stop_completion()
+
+    assert recorder.start_recording()
+    assert not recorder.paused

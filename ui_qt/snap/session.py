@@ -2,9 +2,11 @@
 
 ``start_snap`` grabs every screen before any of our UI appears, then opens
 an overlay on each (on Hyprland, the focused screen alone), so the user can
-select on whichever screen holds what they want. The session it returns
-reports exactly one outcome (``kept``, ``dropped`` or ``failed``), never
-from inside ``start_snap``, so callers connect after it returns.
+select on whichever screen holds what they want. Asked for the whole screen
+or the window under the pointer instead, it grabs the pointer's screen and
+keeps that, or the window's part of it, with no overlay. The session it
+returns reports exactly one outcome (``kept``, ``dropped`` or ``failed``),
+never from inside ``start_snap``, so callers connect after it returns.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from PyQt6 import sip
 from PyQt6.QtGui import QCursor, QGuiApplication, QImage, QScreen
 from PyQt6.QtWidgets import QWidget
 
-from ui_qt.snap import capture, export, macos
+from ui_qt.snap import capture, export, macos, pointed
 from ui_qt.snap.overlay import SnapOverlay
 from ui_qt.snap.support import snap_support
 
@@ -35,6 +37,10 @@ logger = logging.getLogger(__name__)
 
 CAPTURE_FAILED = "Couldn't capture the screen. Try again in a moment."
 NO_SCREEN = "There's no screen to capture."
+
+#: What a snap keeps: a region drawn on the overlay, or at once, the whole
+#: screen under the pointer or the window under it.
+REGION, SCREEN, WINDOW = "region", "screen", "window"
 
 #: Sessions still waiting on their outcome. Holding them here lets a caller
 #: write ``start_snap().kept.connect(...)`` without keeping the session.
@@ -87,6 +93,8 @@ class SnapSession(QObject):
         self._parked: list[Parkable] = []
         self._decided = False
         self._keep_when_captured = False
+        # The window to keep, in the pointer's screen's logical pixels.
+        self._crop: QRect | None = None
         self._failure = ""
         # Owned timers: they die with the session, never firing at a dead one.
         self._settle = QTimer(self)
@@ -143,7 +151,8 @@ class SnapSession(QObject):
     # ---- capture ----
 
     def _start(
-        self, keep_out: Sequence[QWidget], hint: str, float_above: Sequence[Parkable]
+        self, keep_out: Sequence[QWidget], hint: str, float_above: Sequence[Parkable],
+        take: str = REGION, front: bool = False,
     ) -> None:
         supported, reason = snap_support()
         if not supported:
@@ -153,13 +162,20 @@ class SnapSession(QObject):
         if not screens:
             self._fail_soon(NO_SCREEN)
             return
+        if take != REGION:
+            # Kept at once: only the pointer's screen is needed. A window
+            # that can't be found leaves the whole screen.
+            screens = screens[:1]
+            self._keep_when_captured = True
+            if take == WINDOW:
+                self._crop = pointed.window_under_pointer(screens[0], keep_out, front=front)
         self._screens, self._hint = screens, hint
         self._float_above = tuple(float_above)
         # Opening the overlay makes OpenWhisper active on macOS; whoever
         # had the focus gets it back at the end (``_finish``).
         macos.remember_focus()
         self._hidden.extend(capture.hide_windows(keep_out))
-        if not self._hidden:
+        if not self._hidden and not self._keep_when_captured:
             self._capture()
             return
         # Let the hide reach the window system, then give the compositor a
@@ -168,7 +184,8 @@ class SnapSession(QObject):
             QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
         )
         if not self._decided:
-            self._settle.start(capture.settle_ms(screens[0]))
+            # A keep reports from the event loop, after start_snap returns.
+            self._settle.start(capture.settle_ms(screens[0]) if self._hidden else 0)
 
     def _capture(self) -> None:
         if self._decided:
@@ -180,7 +197,7 @@ class SnapSession(QObject):
         if images[0] is None:
             self._fail_soon(CAPTURE_FAILED)
         elif self._keep_when_captured:
-            whole = export.render(images[0], export.logical_rect(images[0]))
+            whole = export.render(images[0], self._crop or export.logical_rect(images[0]))
             self._finish(lambda: self.kept.emit(whole))
         else:
             # Another screen that couldn't be captured is left uncovered.
@@ -261,6 +278,8 @@ def start_snap(
     hint: str = "",
     float_above: Sequence[Parkable] = (),
     parent: QObject | None = None,
+    take: str = REGION,
+    front: bool = False,
 ) -> SnapSession:
     """Freeze the screens and open an overlay on each (Qt thread only).
 
@@ -272,6 +291,11 @@ def start_snap(
         float_above: Windows that stay in sight while the overlay is open,
             parked in a corner above it and put back once the snap ends.
         parent: Optional owner of the returned session.
+        take: ``REGION`` opens the overlay; ``SCREEN`` and ``WINDOW`` keep
+            the screen under the pointer, or the window under it, at once.
+            A pointer on one of ``keep_out`` means the window in front.
+        front: For ``WINDOW``, keep the window in front whatever the
+            pointer is on: the snap was asked for from our own windows.
 
     Returns:
         The session; connect to its signals right away. One outcome follows,
@@ -282,5 +306,5 @@ def start_snap(
         raise RuntimeError("start_snap must be called on the Qt thread")
     session = SnapSession(parent)
     _live.add(session)
-    session._start(tuple(keep_out), hint, tuple(float_above))
+    session._start(tuple(keep_out), hint, tuple(float_above), take, front)
     return session

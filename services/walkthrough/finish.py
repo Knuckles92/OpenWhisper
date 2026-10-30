@@ -12,41 +12,55 @@ import wave
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
-from services.walkthrough.sections import split_recording
-from services.walkthrough.session import Shot, WalkthroughResult, WalkthroughSession
+from services.walkthrough.sections import clip_stretches, split_recording
+from services.walkthrough.session import (
+    Note,
+    Shot,
+    Storyboard,
+    WalkthroughResult,
+    WalkthroughSession,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def transcribe_sections(
     audio_path: str,
-    shots: Sequence[Shot],
+    board: Storyboard,
     transcribe: Callable[[str], str],
     *,
     before_each: Callable[[int, int], None] = lambda index, total: None,
-) -> list[str]:
-    """The words of each section, one more than there are screenshots.
+) -> tuple[list[str], list[Note]]:
+    """The words of each section, one more than there are screenshots, and the notes.
 
     Args:
         audio_path: The whole recording.
-        shots: The screenshots kept, in order.
+        board: Where it is cut, which pieces each section reads, and the
+            stretches held for a note, which no section reads.
         transcribe: Decodes one WAV path to text.
-        before_each: Called with (index, total) before each section is
+        before_each: Called with (index, total) before each clip is
             decoded; it may raise to stop (a Cancel).
     """
     with tempfile.TemporaryDirectory(prefix="openwhisper-walkthrough-") as folder:
         try:
-            clips = split_recording(Path(audio_path), [shot.kept_at_s for shot in shots], Path(folder))
+            clips = split_recording(Path(audio_path), board.cuts_s, Path(folder),
+                                    leave_out_s=board.notes_s)
+            held = clip_stretches(Path(audio_path), board.notes_s, Path(folder))
         except (OSError, ValueError, wave.Error):
             # Every word above the first screenshot beats losing them.
             logger.warning("Could not cut the walkthrough audio; transcribing it whole", exc_info=True)
             before_each(1, 1)
-            return [transcribe(audio_path)] + [""] * len(shots)
-        texts = []
-        for index, clip in enumerate(clips, start=1):
-            before_each(index, len(clips))
-            texts.append(transcribe(str(clip.path)) if clip.path is not None else "")
-        return texts
+            return [transcribe(audio_path)] + [""] * len(board.shots), []
+        total = len(clips) + len(held)
+        decoded = []
+        for index, clip in enumerate([*clips, *held], start=1):
+            before_each(index, total)
+            decoded.append((transcribe(str(clip.path)) if clip.path is not None else "").strip())
+    words, said = decoded[:len(clips)], decoded[len(clips):]
+    texts = [" ".join(words[piece] for piece in pieces if words[piece]) for pieces in board.sections]
+    notes = [Note(text, board.section_at(start))
+             for text, (start, _end) in zip(said, board.notes_s, strict=True) if text]
+    return texts, notes
 
 
 def marked_text(texts: Sequence[str], shots: int) -> str:

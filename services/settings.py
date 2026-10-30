@@ -348,6 +348,9 @@ class SettingsKey:
     # Whether the write-up follows notes the user speaks to the agent
     # ("note for the agent: make the text purple") instead of writing them up.
     WALKTHROUGH_WRITE_UP_NOTES: Final[str] = "walkthrough_write_up_notes"
+    # What a walkthrough's Snap takes, as last picked from the column's Snap
+    # menu: the Snap button and the Screenshot shortcut repeat it.
+    WALKTHROUGH_SNAP_MODE: Final[str] = "walkthrough_snap_mode"
 
 
 #: Keys the single live-preview toggle replaced. Dropped whenever that toggle
@@ -426,6 +429,23 @@ class WalkthroughCopyFormat:
         BOTH: "PDF and Markdown copy",
         AGENT: "Markdown copy",
         WORD: "Word document copy",
+    }
+
+
+class WalkthroughSnapMode:
+    """Values for ``SettingsKey.WALKTHROUGH_SNAP_MODE``. Labels are what the Snap menu shows."""
+
+    REGION: Final[str] = "region"  # draw one on the frozen screen
+    WINDOW: Final[str] = "window"  # the window under the pointer
+    SCREEN: Final[str] = "screen"  # the whole screen under the pointer
+    DELAYED: Final[str] = "delayed"  # draw a region on the screen as it is 3 seconds on
+
+    ALL: Final[Tuple[str, ...]] = (REGION, WINDOW, SCREEN, DELAYED)
+    LABELS: Final[Dict[str, str]] = {
+        REGION: "Region",
+        WINDOW: "Window under the pointer",
+        SCREEN: "Whole screen",
+        DELAYED: "In 3 seconds",
     }
 
 
@@ -850,6 +870,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.WALKTHROUGH_WRITE_UP_AGENT: MeetingAgentCore.CLAUDE_CODE,
     SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS: "",
     SettingsKey.WALKTHROUGH_WRITE_UP_NOTES: False,
+    SettingsKey.WALKTHROUGH_SNAP_MODE: WalkthroughSnapMode.REGION,
 })
 
 
@@ -1386,6 +1407,8 @@ resolve_walkthrough_write_up = _bool_resolver(SettingsKey.WALKTHROUGH_WRITE_UP)
 resolve_walkthrough_write_up_agent = _choice_resolver(
     SettingsKey.WALKTHROUGH_WRITE_UP_AGENT, MeetingAgentCore.INSTALLED)
 resolve_walkthrough_write_up_notes = _bool_resolver(SettingsKey.WALKTHROUGH_WRITE_UP_NOTES)
+resolve_walkthrough_snap_mode = _choice_resolver(
+    SettingsKey.WALKTHROUGH_SNAP_MODE, WalkthroughSnapMode.ALL)
 
 
 def resolve_walkthrough_title(settings: Optional[Mapping[str, Any]] = None) -> str:

@@ -8,11 +8,16 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ## [Unreleased]
 
 ### Added
+- **Controls on the walkthrough column** — the column at the screen's edge now runs the walkthrough: **Snap**, **Hold for note**, **Undo** (takes the newest screenshot out; its words stay), **Pause**, **Cancel** and **Done**. Screenshots are numbered with when you took them (**2 · 0:35**), and what you're saying sits in an open slot until the next screenshot closes it. Hover a screenshot to move it up or down, or remove it: its words always go with it, and a removed screenshot's words join the section after it. The column never takes the focus from the app you're showing; drag it by anything that isn't a button, and scroll it to reach older screenshots.
+- **A Snap menu** — the **▾** beside Snap picks what it takes: a **Region** you draw, the **Window under the pointer** (Windows and macOS), the **Whole screen**, or a region **In 3 seconds**, which counts down and then freezes the screen so you can open a menu first. Picking one takes it at once; Snap and the Screenshot shortcut repeat it from then on, in later walkthroughs too.
+- **Hold for note** — hold it while you talk, and what you say goes to the AI write-up as an instruction instead of into the document. It shows as a purple row, **Note for the agent · not in the document**, and the agent gets each note with where you said it. It works while **AI write-up** is on.
+- **Pause a walkthrough** — **Pause** stops recording until you resume; nothing is recorded meanwhile, and screenshots kept afterwards still line up with your words. Done while paused finishes at once.
 - **The last walkthrough, right on the Walkthrough tab** — under the start button, the newest walkthrough shows as a storyboard: each screenshot beside its words, with **Copy PDF**, **Copy Markdown**, **Copy Word**, the PDF as a chip to drag into any app, and **Open PDF**. A walkthrough that finishes shows there at once, a card clicked in the Walkthroughs side panel opens there, and the ready card's **Review** brings the window up on it. With a walkthrough to show, the copy choice and AI write-up fold away under **Setup**.
 - **Reorder a walkthrough** — drag a row by its grip, or press Alt+Up / Alt+Down in its words, to move a screenshot and the words that led to it; saving rebuilds the PDF, Word document and Markdown in the new order.
 - **Edit an AI write-up** — a written-up walkthrough opens on its write-up, cut into rows at its screenshots, with a switch to **As spoken**. Edit or reorder the write-up and save to rebuild its PDF and Word document; Copy and Open use the version shown. Saving edits to the words as spoken offers **Save and redo write-up**.
 
 ### Changed
+- **No recording pill beside the walkthrough column** — while the column shows a walkthrough, recording or being written, the recording overlay stays hidden, since it only repeated it; notices still appear. On Wayland, which has no column, the overlay keeps its Snap and Done.
 - **Saved Walkthroughs uses the same storyboard** — screenshots now sit beside their words instead of below them, and clicking one opens the full picture.
 
 ## [2.8.3] - 2026-10-28
