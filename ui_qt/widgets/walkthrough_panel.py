@@ -94,6 +94,7 @@ BADGE_H = 18.0
 ON_IMAGE = QColor(28, 28, 30, 220)
 ON_IMAGE_HOVER = QColor(72, 72, 74, 235)
 ON_IMAGE_TEXT = QColor("#f5f5f7")
+ON_IMAGE_DANGER = QColor("#ff6961")
 #: The footer's buttons.
 FOOT_H = 40.0
 FOOT_GAP = 6.0
@@ -1105,7 +1106,7 @@ class WalkthroughPanel(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(ON_IMAGE_HOVER if self._hover == key else ON_IMAGE)
             painter.drawRoundedRect(rect, 8, 8)
-            ink = QColor(token_color("danger-text-soft") if name == "remove" else ON_IMAGE_TEXT)
+            ink = QColor(ON_IMAGE_DANGER if name == "remove" else ON_IMAGE_TEXT)
             if not enabled:
                 ink.setAlphaF(0.3)
             paint_icon(painter, "x" if name == "remove" else name, rect.center(), 14, ink)
@@ -1155,7 +1156,7 @@ class WalkthroughPanel(QWidget):
                                  QPointF(rect.left() + 0.5, rect.bottom()))
                 paint_icon(painter, "up", rect.center(), 12, ink)
             elif self._countdown:
-                self._paint_label(painter, rect, "camera", f"In {self._countdown}…", ink)
+                self._paint_label(painter, rect, "camera", f"Snap in {self._countdown}", ink)
             else:
                 self._paint_label(painter, rect, "camera", "Snap", ink)
             return
