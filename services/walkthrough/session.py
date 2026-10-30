@@ -202,6 +202,8 @@ class WalkthroughSession:
         #: moments still divide the recording.
         self._shots: list[Shot] = []
         self._saves: list[Future] = []
+        #: Removed screenshots' files being deleted.
+        self._deletes: list[Future] = []
         #: The board, once the user changed it; until then it is one section
         #: per screenshot in the order kept (``_board_locked``).
         self._board: Optional[list[_Section]] = None
@@ -290,7 +292,7 @@ class WalkthroughSession:
                 return False
             _remove(self._board_locked(), place)
             # After its own write: the writer runs one task at a time, in order.
-            self._writer.submit(self._delete_shot, self._shots[number - 1])
+            self._deletes.append(self._writer.submit(self._delete_shot, self._shots[number - 1]))
         return True
 
     def undo_last(self) -> Optional[int]:
@@ -416,11 +418,13 @@ class WalkthroughSession:
         """The board once its screenshots are written; worker thread.
 
         A screenshot whose PNG could not be written leaves the board like a
-        removed one: its words join the next section.
+        removed one: its words join the next section. Removed screenshots'
+        files are gone by the time it returns.
         """
         with self._lock:
             shots = list(self._shots)
             pending = list(zip(shots, self._saves, strict=True))
+            deletes = list(self._deletes)
             board = [_Section(list(s.pieces), s.shot) for s in self._board_locked()]
             notes = tuple(self._notes)
         for index, (shot, future) in enumerate(pending):
@@ -432,6 +436,11 @@ class WalkthroughSession:
             place = next((p for p, section in enumerate(board) if section.shot == index), None)
             if not written and place is not None:
                 _remove(board, place)
+        for future in deletes:
+            try:
+                future.result(timeout=timeout)
+            except Exception:
+                logger.warning("A removed walkthrough screenshot could not be deleted", exc_info=True)
         return _storyboard(board, shots, notes)
 
     def saved_shots(self, timeout: float = SAVE_WAIT_S) -> list[Shot]:
