@@ -337,3 +337,108 @@ def test_every_state_paints(panel, clock):
     panel.grab()
     panel.complete(SimpleNamespace(shots=3, duration_s=9.0))
     panel.grab()
+
+
+# --- the Snap menu -------------------------------------------------------------
+
+
+def test_the_chevron_opens_the_menu_beside_the_column(panel, clock):
+    from services.settings import WalkthroughSnapMode
+
+    chosen = []
+    panel.snap_mode_chosen.connect(chosen.append)
+    panel.begin()
+    panel.set_snap_mode(WalkthroughSnapMode.SCREEN, "Ctrl+Alt+S")
+    panel.grab()
+
+    _click(panel, _footer_button(panel, "snap-menu"))
+    menu = panel._menu
+    assert menu is not None and menu.isVisible()
+    assert menu.current == "screen" and menu.shortcut == "Ctrl+Alt+S"
+    # Beside the column, not over it.
+    assert menu.geometry().right() < panel.mapToGlobal(panel._card().topLeft().toPoint()).x() + 20
+    menu.grab()
+
+    index = menu.modes.index(WalkthroughSnapMode.DELAYED)
+    _click(menu, menu._item(index).center())
+    assert chosen == ["delayed"]
+
+
+def test_the_menu_offers_a_window_only_where_one_can_be_found(panel, monkeypatch):
+    from ui_qt.snap import pointed
+
+    monkeypatch.setattr(pointed, "supported", lambda: False)
+    assert "window" not in panel.snap_modes()
+    monkeypatch.setattr(pointed, "supported", lambda: True)
+    assert panel.snap_modes() == ("region", "window", "screen", "delayed")
+
+
+def test_the_countdown_shows_on_snap(panel, clock):
+    panel.begin()
+    panel.set_countdown(2)
+    panel.grab()
+    assert panel._countdown == 2
+    panel.finish()
+    assert panel._countdown == 0
+
+
+def test_the_menu_never_takes_the_focus(panel, clock):
+    from PyQt6.QtCore import Qt
+
+    panel.begin()
+    panel.grab()
+    _click(panel, _footer_button(panel, "snap-menu"))
+    flags = panel._menu.windowFlags()
+
+    assert flags & Qt.WindowType.WindowDoesNotAcceptFocus
+    # A popup takes the focus on Windows, whatever it is told.
+    assert panel._menu.windowType() == Qt.WindowType.Tool
+
+
+def test_the_chevron_again_or_another_click_in_the_column_closes_the_menu(panel, clock):
+    from PyQt6.QtCore import QPointF
+
+    panel.begin()
+    panel.grab()
+    _click(panel, _footer_button(panel, "snap-menu"))
+    _click(panel, _footer_button(panel, "snap-menu"))
+    _pump_events()
+    assert panel._menu is None
+
+    _click(panel, _footer_button(panel, "snap-menu"))
+    _click(panel, QPointF(panel._inner().left() + 10, panel._inner().top() + 10))
+    _pump_events()
+    assert panel._menu is None
+
+
+def test_the_menu_closes_once_the_pointer_has_wandered_off(panel, clock, monkeypatch):
+    from PyQt6.QtCore import QRect
+
+    from ui_qt.widgets import walkthrough_snap_menu
+
+    panel.begin()
+    panel.grab()
+    _click(panel, _footer_button(panel, "snap-menu"))
+    menu = panel._menu
+    menu._near = QRect()
+    monkeypatch.setattr(walkthrough_snap_menu.QCursor, "pos",
+                        staticmethod(lambda: menu.geometry().topLeft() - QRect(0, 0, 50, 50).bottomRight()))
+    now = [50.0]
+    monkeypatch.setattr(walkthrough_snap_menu.time, "monotonic", lambda: now[0])
+
+    menu._check_pointer()
+    now[0] += walkthrough_snap_menu.AWAY_S / 2
+    menu._check_pointer()
+    assert menu.isVisible()
+    now[0] += walkthrough_snap_menu.AWAY_S
+    menu._check_pointer()
+    _pump_events()
+    assert panel._menu is None
+
+
+def _pump_events():
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    QApplication.processEvents()

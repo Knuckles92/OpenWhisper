@@ -33,5 +33,8 @@ class InMemorySettings:
     def mutate_settings(self, mutator):
         return mutator(self.values)
 
+    def load_hotkey_settings(self):
+        return self.values.get(SettingsKey.HOTKEYS, {})
+
     def load_model_selection(self):
         return self.values.get(SettingsKey.SELECTED_MODEL, "local_whisper")

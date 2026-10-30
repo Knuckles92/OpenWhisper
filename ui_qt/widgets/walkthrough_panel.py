@@ -6,8 +6,8 @@ numbered, so they can see what the document holds before it exists. The
 section being spoken sits in an open slot until the next screenshot closes
 it. Hovering a screenshot offers to move it up or down or remove it; its
 words always go with it, since a section is the words and then the
-screenshot they led to. The footer takes screenshots, undoes the last one,
-cancels and finishes. At Done the ticks close up into lines while the
+screenshot they led to. The footer takes screenshots (its menu picks the
+kind Snap repeats), undoes the last one, cancels and finishes. At Done the ticks close up into lines while the
 document is written, the header says what it came to, and the column fades
 once the document is ready.
 
@@ -38,12 +38,14 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QApplication, QToolTip, QWidget
 
+from services.settings import WalkthroughSnapMode
 from services.walkthrough.document import clock
-from ui_qt.snap import macos
+from ui_qt.snap import macos, pointed
 from ui_qt.utils.desktop import compositor_managed
 from ui_qt.utils.drag_move import DragToMove
 from ui_qt.utils.loudness import level_to_height
 from ui_qt.utils.palette import token_color
+from ui_qt.widgets.walkthrough_icons import paint_icon
 
 #: The column's width, and its gap from the screen's right edge.
 WIDTH = 296
@@ -94,6 +96,8 @@ FOOT_H = 40.0
 FOOT_GAP = 6.0
 #: A square footer button, holding only an icon.
 FOOT_ICON_W = 40.0
+#: The Snap button's part that opens its menu.
+SNAP_MENU_W = 26.0
 
 FRAME_MS = 16
 TICK_GROW_S = 0.12
@@ -111,7 +115,8 @@ WHEEL_STEP = 60.0
 
 #: What each control says when the pointer rests on it.
 TOOLTIPS = {
-    "snap": "Take a screenshot",
+    "snap": "Take a screenshot: {mode}",
+    "snap-menu": "Choose what Snap takes",
     "undo": "Undo the last screenshot; its words stay",
     "cancel": "Cancel the walkthrough: nothing is kept",
     "done": "Finish the walkthrough",
@@ -256,56 +261,6 @@ def _rows(paragraph: Paragraph, width: float) -> int:
     return math.ceil(len(paragraph.ticks) / _per_row(width))
 
 
-# ---- icons, drawn on a 24-unit grid ----
-
-
-def _round_pen(color: QColor, width: float) -> QPen:
-    return QPen(color, width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
-                Qt.PenJoinStyle.RoundJoin)
-
-
-def _icon_path(name: str) -> QPainterPath:
-    path = QPainterPath()
-
-    def line(*points: tuple[float, float]) -> None:
-        path.moveTo(*points[0])
-        for point in points[1:]:
-            path.lineTo(*point)
-
-    if name == "camera":
-        line((4, 8), (7, 8), (9, 5), (15, 5), (17, 8), (20, 8), (20, 19), (4, 19), (4, 8))
-        path.addEllipse(QPointF(12, 13), 3.5, 3.5)
-    elif name == "up":
-        line((6, 15), (12, 9), (18, 15))
-    elif name == "down":
-        line((6, 9), (12, 15), (18, 9))
-    elif name == "x":
-        line((6, 6), (18, 18))
-        line((18, 6), (6, 18))
-    elif name == "undo":
-        line((9, 14), (4, 9), (9, 4))
-        path.moveTo(4, 9)
-        path.lineTo(14, 9)
-        path.arcTo(QRectF(8, 9, 12, 12), 90, -180)
-        path.lineTo(11, 21)
-    return path
-
-
-#: Stroke width of each icon, in grid units.
-_ICON_STROKE = {"camera": 2.0, "up": 2.4, "down": 2.4, "x": 2.4, "undo": 2.0}
-
-
-def paint_icon(painter: QPainter, name: str, center: QPointF, size: float, color: QColor) -> None:
-    """Draw icon ``name`` ``size`` pixels square around ``center``."""
-    painter.save()
-    painter.translate(center.x() - size / 2, center.y() - size / 2)
-    painter.scale(size / 24, size / 24)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.setPen(_round_pen(color, _ICON_STROKE[name]))
-    painter.drawPath(_icon_path(name))
-    painter.restore()
-
-
 class WalkthroughPanel(QWidget):
     """The live column for the walkthrough being recorded; reused for the next."""
 
@@ -313,6 +268,8 @@ class WalkthroughPanel(QWidget):
 
     #: The footer's buttons, while it records (Cancel also while it is written).
     snap_requested = pyqtSignal()
+    #: A pick from the Snap menu: a WalkthroughSnapMode, to take now and repeat.
+    snap_mode_chosen = pyqtSignal(str)
     undo_requested = pyqtSignal()
     cancel_requested = pyqtSignal()
     finish_requested = pyqtSignal()
@@ -360,6 +317,12 @@ class WalkthroughPanel(QWidget):
         self._hover_shot = 0
         # Where the last frame drew each screenshot, by number as kept.
         self._shot_rects: dict[int, QRectF] = {}
+        # What Snap takes, the Screenshot shortcut's keys, and the seconds
+        # left before an "In 3 seconds" snap (0: none counting down).
+        self.snap_mode = WalkthroughSnapMode.REGION
+        self._snap_shortcut = ""
+        self._countdown = 0
+        self._menu = None
         self._frame = QTimer(self)
         self._frame.setInterval(FRAME_MS)
         self._frame.timeout.connect(self._advance)
@@ -375,6 +338,7 @@ class WalkthroughPanel(QWidget):
         self._hover = self._pressed = ""
         self._hover_shot = 0
         self._shot_rects = {}
+        self._countdown = 0
         self._clock.start()
         self._enter(self.RECORDING)
         self._drag.reset()
@@ -406,8 +370,27 @@ class WalkthroughPanel(QWidget):
         if self.column.move_shot(number, step):
             self._settle_hover()
 
+    def set_snap_mode(self, mode: str, shortcut: str | None = None) -> None:
+        """What Snap takes, and the keys of the Screenshot shortcut, which repeats it."""
+        self.snap_mode = mode
+        if shortcut is not None:
+            self._snap_shortcut = shortcut
+        self.update()
+
+    def set_countdown(self, seconds: int) -> None:
+        """Seconds until an "In 3 seconds" snap, shown on Snap; 0 when none is coming."""
+        self._countdown = seconds
+        self.update()
+
+    def snap_modes(self) -> tuple[str, ...]:
+        """The kinds of screenshot this desktop can take."""
+        return tuple(mode for mode in WalkthroughSnapMode.ALL
+                     if mode != WalkthroughSnapMode.WINDOW or pointed.supported())
+
     def finish(self) -> None:
         """The recording stopped: close the ticks into lines while it is written."""
+        self._close_menu()
+        self._countdown = 0
         if self.state != self.RECORDING:
             return
         self._recorded_s = self._recorded()
@@ -424,6 +407,7 @@ class WalkthroughPanel(QWidget):
 
     def dismiss(self) -> None:
         """Canceled or failed: fade at once."""
+        self._close_menu()
         if self.state in (self.RECORDING, self.WRITING, self.DONE):
             self._summary = ""
             self._enter(self.DONE)
@@ -521,6 +505,9 @@ class WalkthroughPanel(QWidget):
 
     def mousePressEvent(self, event) -> None:
         key = self._hit(event.position()) if event.button() == Qt.MouseButton.LeftButton else ""
+        if key != "snap-menu":
+            # Any other click in the column puts the menu away.
+            self._close_menu()
         if key:
             self._pressed = key
             event.accept()
@@ -558,7 +545,8 @@ class WalkthroughPanel(QWidget):
 
     def event(self, event) -> bool:
         if event.type() == QEvent.Type.ToolTip:
-            text = TOOLTIPS.get(self._hit(QPointF(event.pos())).split(":")[0], "")
+            text = TOOLTIPS.get(self._hit(QPointF(event.pos())).split(":")[0], "").format(
+                mode=WalkthroughSnapMode.LABELS[self.snap_mode].lower())
             if text:
                 QToolTip.showText(event.globalPos(), text, self)
             else:
@@ -575,6 +563,11 @@ class WalkthroughPanel(QWidget):
             self.move_requested.emit(int(number), 1)
         elif name == "remove":
             self.remove_requested.emit(int(number))
+        elif name == "snap-menu":
+            if self._menu is None:
+                self._open_menu()
+            else:
+                self._close_menu()
         else:
             {
                 "snap": self.snap_requested,
@@ -582,6 +575,24 @@ class WalkthroughPanel(QWidget):
                 "cancel": self.cancel_requested,
                 "done": self.finish_requested,
             }[name].emit()
+
+    def _open_menu(self) -> None:
+        from ui_qt.widgets.walkthrough_snap_menu import SnapMenu
+
+        menu = self._menu = SnapMenu(self.snap_modes(), self.snap_mode, self._snap_shortcut)
+        menu.chosen.connect(self.snap_mode_chosen)
+        menu.destroyed.connect(self._menu_gone)
+        card = self._card().toRect().translated(self.mapToGlobal(self.rect().topLeft()))
+        snap = self._footer()["snap"][0]
+        menu.open_beside(card, self.mapToGlobal(snap.bottomLeft().toPoint()).y(),
+                         self.frameGeometry())
+
+    def _menu_gone(self) -> None:
+        self._menu = None
+
+    def _close_menu(self) -> None:
+        if self._menu is not None:
+            self._menu.close()
 
     # ---- painting ----
 
@@ -610,7 +621,8 @@ class WalkthroughPanel(QWidget):
         top = self._footer_top()
         bottom = top + FOOT_H + FOOT_GAP
         recording = self.state == self.RECORDING
-        snap = QRectF(inner.left(), top, inner.width(), FOOT_H)
+        snap = QRectF(inner.left(), top, inner.width() - SNAP_MENU_W, FOOT_H)
+        snap_menu = QRectF(snap.right(), top, SNAP_MENU_W, FOOT_H)
         undo = QRectF(inner.left(), bottom, FOOT_ICON_W, FOOT_H)
         cancel = QRectF(undo.right() + FOOT_GAP, bottom, FOOT_ICON_W, FOOT_H)
         done = QRectF(cancel.right() + FOOT_GAP, bottom, inner.right() - cancel.right() - FOOT_GAP,
@@ -621,6 +633,7 @@ class WalkthroughPanel(QWidget):
                             FOOT_ICON_W + (inner.width() - FOOT_ICON_W) * widen, FOOT_H)
         return {
             "snap": (snap, recording),
+            "snap-menu": (snap_menu, recording),
             "undo": (undo, recording and self.column.shots > 0),
             "cancel": (cancel, self.state in (self.RECORDING, self.WRITING)),
             "done": (done, recording),
@@ -959,12 +972,31 @@ class WalkthroughPanel(QWidget):
     def _paint_button(self, painter: QPainter, key: str, rect: QRectF) -> None:
         hover = self._hover == key
         pressed = self._pressed == key and hover
-        if key == "snap":
-            fill = token_color("accent-pressed" if pressed else "accent-hover" if hover else "accent")
+        if key in ("snap", "snap-menu"):
+            # One rounded button in two parts: Snap, then the menu's chevron.
+            footer = self._footer()
+            whole = footer["snap"][0].united(footer["snap-menu"][0])
+            if key == "snap":
+                fill = "accent-pressed" if pressed else "accent-hover" if hover else "accent"
+            else:
+                fill = "accent-hover" if pressed or hover or self._menu is not None \
+                    else "accent-pressed"
+            painter.save()
+            painter.setClipRect(rect)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(fill)
-            painter.drawRoundedRect(rect, 10, 10)
-            self._paint_label(painter, rect, "camera", "Snap", token_color("on-accent"))
+            painter.setBrush(token_color(fill))
+            painter.drawRoundedRect(whole, 10, 10)
+            painter.restore()
+            ink = token_color("on-accent")
+            if key == "snap-menu":
+                painter.setPen(QPen(token_color("on-accent", 77), 1.0))
+                painter.drawLine(QPointF(rect.left() + 0.5, rect.top()),
+                                 QPointF(rect.left() + 0.5, rect.bottom()))
+                paint_icon(painter, "up", rect.center(), 12, ink)
+            elif self._countdown:
+                self._paint_label(painter, rect, "camera", f"In {self._countdown}…", ink)
+            else:
+                self._paint_label(painter, rect, "camera", "Snap", ink)
             return
         fill = token_color("border-hover" if pressed else "surface-active" if hover else "surface-hover")
         painter.setPen(QPen(token_color("border-strong"), 1.0))

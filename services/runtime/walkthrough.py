@@ -1,7 +1,9 @@
 """The Walkthrough and Screenshot shortcuts (docs/walkthrough.md); Qt thread.
 
 A walkthrough is a recording that collects screenshots: each one the user
-keeps closes a section of the transcript. TranscriptionRuntime records and
+keeps closes a section of the transcript. Its screenshots are of the kind
+last picked from the column's Snap menu (a region, the window under the
+pointer, the whole screen, or a region in 3 seconds). TranscriptionRuntime records and
 transcribes it like a dictation and owns its WalkthroughSession; this
 runtime decides what each shortcut press means, turns kept screenshots
 into the session's shots, and answers the buttons on the walkthrough's
@@ -20,6 +22,12 @@ from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtCore import QTimer
 
+from services.settings import (
+    SettingsKey,
+    WalkthroughSnapMode,
+    resolve_walkthrough_snap_mode,
+    settings_manager,
+)
 from services.walkthrough.session import ScreenshotNotSaved, WalkthroughSession
 
 if TYPE_CHECKING:
@@ -32,6 +40,8 @@ RECORDING_HINT = "Recording continues — talk while you draw"
 #: Lets the tray menu close before the screen is grabbed.
 TRAY_SNAP_DELAY_MS = 300
 FINISH_RECORDING_FIRST = "Finish the recording in progress first"
+#: How long "In 3 seconds" waits before it freezes the screen.
+COUNTDOWN_S = 3
 
 
 def shots_label(count: int) -> str:
@@ -59,9 +69,16 @@ class WalkthroughRuntime:
         self._active = False
         self._out_of_screenshots = False
         self._tray_timer: Optional[QTimer] = None
+        # "In 3 seconds": ticks once a second until the snap.
+        self._countdown = QTimer()
+        self._countdown.setInterval(1000)
+        self._countdown.timeout.connect(self._count_down)
+        self._countdown_left = 0
         # The walkthrough's column, once made (none on Wayland); its buttons
         # are connected here once.
         self._panel = None
+        # Who asked for the snap being taken (see snap's ``source``).
+        self._source = "hotkey"
 
     @property
     def _ui(self):
@@ -100,6 +117,8 @@ class WalkthroughRuntime:
         self._active = True
         self._ui.set_walkthrough_active(True)
         self._attach(self._ui.walkthrough_panel)
+        if self._panel is not None:
+            self._panel.set_snap_mode(self._snap_mode(), self._snap_shortcut())
         # The pill keeps showing what is being recorded, but never in the
         # screenshots themselves.
         self._out_of_screenshots = self._ui.keep_overlay_out_of_screenshots(True)
@@ -113,6 +132,7 @@ class WalkthroughRuntime:
         # "ui" is the window and tray's source (catalog.SOURCES); the
         # column is the same user at the same desk.
         panel.snap_requested.connect(lambda: self.snap("ui"))
+        panel.snap_mode_chosen.connect(self.choose_snap_mode)
         panel.finish_requested.connect(self.finish)
         panel.cancel_requested.connect(self.controller.cancel)
         panel.undo_requested.connect(self.undo_last_shot)
@@ -135,31 +155,92 @@ class WalkthroughRuntime:
     # ---- the Screenshot shortcut ----
 
     def snap(self, source: str = "hotkey") -> None:
-        """Take a screenshot: into the walkthrough being recorded, else onto the clipboard."""
+        """Take a screenshot: into the walkthrough being recorded, else onto the clipboard.
+
+        In a walkthrough it is of the kind last picked from the Snap menu.
+        """
         if self._snap is not None and self._snap.active:
             # Pressed again while drawing: keep it.
             self._snap.keep()
             return
+        if self._countdown_left:
+            # Pressed again while counting down: don't wait.
+            self._stop_countdown()
+            self._snap_now(WalkthroughSnapMode.REGION)
+            return
+        self._source = source
         if source == "tray":
             self._snap_after_tray_closes()
             return
-        self._snap_now()
+        self._snap_as_picked()
+
+    def choose_snap_mode(self, mode: str) -> None:
+        """A pick from the Snap menu: take it now, and from now on."""
+        if mode not in WalkthroughSnapMode.ALL:
+            return
+        settings_manager.save_setting(SettingsKey.WALKTHROUGH_SNAP_MODE, mode)
+        if self._panel is not None:
+            self._panel.set_snap_mode(mode)
+        self.snap("ui")
+
+    def _snap_mode(self) -> str:
+        """What a snap takes: the kind last picked in a walkthrough, a region outside one."""
+        if self._session is None:
+            return WalkthroughSnapMode.REGION
+        return resolve_walkthrough_snap_mode(settings_manager.load_all_settings())
+
+    @staticmethod
+    def _snap_shortcut() -> str:
+        from services.hotkey_manager import format_hotkey_display
+
+        return format_hotkey_display(settings_manager.load_hotkey_settings().get("screenshot") or "")
 
     def _snap_after_tray_closes(self) -> None:
         if self._tray_timer is None:
             self._tray_timer = QTimer()
             self._tray_timer.setSingleShot(True)
-            self._tray_timer.timeout.connect(self._snap_now)
+            self._tray_timer.timeout.connect(self._snap_as_picked)
         self._tray_timer.start(TRAY_SNAP_DELAY_MS)
 
-    def _snap_now(self) -> None:
+    def _snap_as_picked(self) -> None:
+        mode = self._snap_mode()
+        if mode == WalkthroughSnapMode.DELAYED:
+            self._countdown_left = COUNTDOWN_S
+            self._show_countdown()
+            self._countdown.start()
+        else:
+            self._snap_now(mode)
+
+    def _count_down(self) -> None:
+        self._countdown_left -= 1
+        if self._countdown_left > 0:
+            self._show_countdown()
+            return
+        self._stop_countdown()
+        self._snap_now(WalkthroughSnapMode.REGION)
+
+    def _show_countdown(self) -> None:
+        if self._panel is not None:
+            self._panel.set_countdown(self._countdown_left)
+        self._ui.show_overlay_caption(f"Snapping in {self._countdown_left}…")
+
+    def _stop_countdown(self) -> None:
+        self._countdown.stop()
+        self._countdown_left = 0
+        if self._panel is not None:
+            self._panel.set_countdown(0)
+
+    def _snap_now(self, take: str = WalkthroughSnapMode.REGION) -> None:
         supported, reason = self._ui.snap_support()
         if not supported:
             self._tell(reason)
             self._ui.request_snap_access()
             return
         session = self.controller.transcription_runtime.recording_walkthrough
-        snap = self._ui.start_snap(hint=RECORDING_HINT if session is not None else "")
+        # Asked for from our own windows, "the window" is the one in front:
+        # the pointer is on the column, the tray or the overlay, not on it.
+        snap = self._ui.start_snap(hint=RECORDING_HINT if session is not None else "",
+                                   take=take, front=self._source != "hotkey")
         self._snap, self._snap_for = snap, session
         snap.kept.connect(self._on_kept)
         snap.dropped.connect(self._on_dropped)
@@ -262,6 +343,7 @@ class WalkthroughRuntime:
         if recording or not self._active:
             return
         self._active = False
+        self._stop_countdown()
         self._ui.set_walkthrough_active(False)
         if self._out_of_screenshots:
             self._out_of_screenshots = False

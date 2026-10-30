@@ -781,3 +781,52 @@ class TestCapture:
         monkeypatch.setattr(QGuiApplication, "platformName", lambda: "cocoa")
         assert capture.settle_ms(SimpleNamespace(refreshRate=lambda: 144.0)) == 300
         assert capture.settle_ms(SimpleNamespace(refreshRate=lambda: 30.0)) == 300
+
+
+class TestKeepingAtOnce:
+    """The Snap menu's whole screen and window under the pointer: no overlay."""
+
+    def test_the_whole_screen_is_kept_after_start_snap_returns(self):
+        snap = start_snap(take=session.SCREEN)
+        kept = Spy(snap.kept)
+
+        assert len(kept) == 0 and snap.active
+        assert _pump_until(lambda: len(kept) == 1)
+        (image,), = kept.calls
+        screen = capture.screen_under_cursor()
+        assert image.deviceIndependentSize().toSize() == screen.geometry().size()
+        assert not any(isinstance(w, session.SnapOverlay) and w.isVisible()
+                       for w in QApplication.topLevelWidgets())
+
+    def test_the_window_under_the_pointer_is_cropped_out_of_its_screen(self, monkeypatch):
+        asked = []
+
+        def found(screen, ours, *, front):
+            asked.append(front)
+            return QRect(10, 20, 64, 48)
+
+        monkeypatch.setattr(session.pointed, "window_under_pointer", found)
+        snap = start_snap(take=session.WINDOW, front=True)
+        kept = Spy(snap.kept)
+
+        assert _pump_until(lambda: len(kept) == 1)
+        (image,), = kept.calls
+        assert image.deviceIndependentSize().toSize() == QSize(64, 48)
+        assert asked == [True]
+
+    def test_a_window_that_cant_be_found_leaves_the_whole_screen(self, monkeypatch):
+        monkeypatch.setattr(session.pointed, "window_under_pointer",
+                            lambda screen, ours, *, front: None)
+        snap = start_snap(take=session.WINDOW)
+        kept = Spy(snap.kept)
+
+        assert _pump_until(lambda: len(kept) == 1)
+        (image,), = kept.calls
+        assert image.deviceIndependentSize().toSize() == capture.screen_under_cursor().geometry().size()
+
+    def test_only_the_pointers_screen_is_grabbed(self, grabs):
+        snap = start_snap(take=session.SCREEN)
+        kept = Spy(snap.kept)
+
+        assert _pump_until(lambda: len(kept) == 1)
+        assert len(grabs) == 1
