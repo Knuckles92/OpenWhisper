@@ -1,12 +1,16 @@
-"""The Walkthrough tab: start one, and choose what happens to it.
+"""The Walkthrough tab: start one, choose what happens to it, and work with the last one.
 
 Everything a walkthrough uses that people change between walkthroughs sits
 here: whether an agent writes it up, which one, what it is asked for, whether
 it follows notes spoken to it, what lands on the clipboard, and whether the
 window goes to the tray as one starts. The rest
 (shortcuts, how the document looks) stays in Settings → Walkthroughs, one
-link away. Past walkthroughs are in the side panel, which lists them while
-this tab is open. See docs/walkthrough.md.
+link away.
+
+Below that, the newest walkthrough shows as a storyboard to fix, reorder and
+copy again (``walkthrough_review.py``); one picked in the side panel, which
+lists past walkthroughs while this tab is open, shows there instead. With a
+walkthrough to show, the choices fold away under Setup. See docs/walkthrough.md.
 """
 from __future__ import annotations
 
@@ -37,6 +41,8 @@ from services.settings import (
     resolve_walkthrough_write_up_notes,
     settings_manager,
 )
+from services.walkthrough import library
+from services.walkthrough.storage import captures_root
 from services.walkthrough.write_up import (
     AGENTS,
     DEFAULT_INSTRUCTIONS,
@@ -46,14 +52,18 @@ from services.walkthrough.write_up import (
 from ui_qt.dialogs.settings_destinations import WALKTHROUGHS
 from ui_qt.widgets.agent_picker import FOUND, AgentMark, describe_agent
 from ui_qt.widgets.buttons import PrimaryButton, WarningButton
+from ui_qt.widgets.collapsible_header import CollapsibleSectionToggle
 from ui_qt.widgets.feature_badge import FeatureBadge
 from ui_qt.widgets.no_wheel import NoWheelComboBox
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.settings_switch import SettingsSwitch
+from ui_qt.widgets.walkthrough_review import WalkthroughReview
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 #: The preset menu's last item while the prompt is the user's own words.
 OWN_PROMPT = "Your own"
+#: The storyboard never shrinks below this, so a couple of rows always show.
+REVIEW_MIN_HEIGHT = 380
 #: How long typing in the prompt pauses before it is saved.
 PROMPT_SAVE_DELAY_MS = 400
 
@@ -111,6 +121,15 @@ _STYLE = """
         background-color: @accent;
         border-color: @accent;
         image: url(ui_qt/assets/check.svg);
+    }
+    QWidget#walkthroughSetupRow, QWidget#walkthroughCopyArea,
+    QToolButton#walkthroughSetupToggle {
+        background: transparent;
+    }
+    QLabel#walkthroughSetupSummary {
+        color: @text-muted;
+        font-size: 12px;
+        background: transparent;
     }
     QLabel#walkthroughSectionTitle {
         color: @text;
@@ -247,6 +266,8 @@ class WalkthroughTab(QWidget):
     #: Throw the recording walkthrough away.
     cancel_requested = pyqtSignal()
     settings_requested = pyqtSignal(str)
+    #: The storyboard saved, rewrote or deleted a walkthrough: lists of them are stale.
+    walkthroughs_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -278,10 +299,16 @@ class WalkthroughTab(QWidget):
         column.setSpacing(12)
         column.addWidget(self._hero())
         column.addWidget(self._write_up_card())
-        column.addStretch(1)
+        self.review = WalkthroughReview()
+        self.review.setMinimumHeight(REVIEW_MIN_HEIGHT)
+        self.review.changed.connect(self._on_review_changed)
+        self.review.hide()
+        column.addWidget(self.review, 1)
+        column.addStretch()
 
         self.load_settings()
         self._show_agents()
+        self.show_walkthrough()
 
     # ---- building ----
 
@@ -330,9 +357,30 @@ class WalkthroughTab(QWidget):
         buttons.addWidget(self.cancel_button, 1)
         body.addLayout(buttons)
 
+        # Shown only with a walkthrough below: then the choices fold away.
+        self.setup_row = QWidget()
+        self.setup_row.setObjectName("walkthroughSetupRow")
+        setup = QHBoxLayout(self.setup_row)
+        setup.setContentsMargins(0, 0, 0, 0)
+        setup.setSpacing(10)
+        self.setup_toggle = CollapsibleSectionToggle(
+            "Setup", expand_tooltip="Show what's copied and how it's written up",
+            collapse_tooltip="Fold the choices away")
+        self.setup_toggle.setObjectName("walkthroughSetupToggle")
+        self.setup_toggle.toggled_expanded.connect(self._show_setup)
+        setup.addWidget(self.setup_toggle)
+        self.setup_summary = QLabel("")
+        self.setup_summary.setObjectName("walkthroughSetupSummary")
+        setup.addWidget(self.setup_summary, 1)
+        self.setup_row.hide()
+        body.addWidget(self.setup_row)
+
         # With or without a write-up, this is what lands on the clipboard. The
         # label sits above so the four choices keep one row at the minimum width.
-        copy = QVBoxLayout()
+        self.copy_area = QWidget()
+        self.copy_area.setObjectName("walkthroughCopyArea")
+        copy = QVBoxLayout(self.copy_area)
+        copy.setContentsMargins(0, 0, 0, 0)
         copy.setSpacing(6)
         copy_label = QLabel("Copy when it finishes")
         copy_label.setObjectName("walkthroughKeyName")
@@ -345,7 +393,7 @@ class WalkthroughTab(QWidget):
             "you can edit.")
         self.copy_bar.activated.connect(self._on_copy_chosen)
         copy.addWidget(self.copy_bar)
-        body.addLayout(copy)
+        copy.addSpacing(4)
 
         self.minimize_check = QCheckBox("Minimize to tray when it starts")
         self.minimize_check.setObjectName("walkthroughMinimizeCheck")
@@ -354,12 +402,13 @@ class WalkthroughTab(QWidget):
             "Open it again from the tray icon.")
         self.minimize_check.toggled.connect(
             lambda on: settings_manager.save_setting(SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY, on))
-        body.addWidget(self.minimize_check)
+        copy.addWidget(self.minimize_check)
+        body.addWidget(self.copy_area)
         self.set_hotkeys("", "")
         return hero
 
     def _write_up_card(self) -> QFrame:
-        card = QFrame()
+        card = self.write_up_card = QFrame()
         card.setObjectName("engineCard")
         body = QVBoxLayout(card)
         body.setContentsMargins(16, 12, 16, 14)
@@ -498,6 +547,7 @@ class WalkthroughTab(QWidget):
 
     def _on_copy_chosen(self, index: int) -> None:
         settings_manager.save_setting(SettingsKey.WALKTHROUGH_COPY_FORMAT, COPY_CHOICES[index][0])
+        self._sync_setup_summary()
 
     def _sync_write_up(self) -> None:
         on = self.write_up_switch.isChecked()
@@ -508,6 +558,7 @@ class WalkthroughTab(QWidget):
         for agent, choice in self.agent_choices.items():
             choice.setChecked(on and agent == self._agent)
         self.prompt_area.setVisible(on)
+        self._sync_setup_summary()
 
     # ---- the prompt ----
 
@@ -585,3 +636,44 @@ class WalkthroughTab(QWidget):
             "Finish Walkthrough" if walkthrough_active else "Start Walkthrough")
         self.walkthrough_button.set_active(walkthrough_active or not is_recording)
         self.cancel_button.setVisible(walkthrough_active)
+
+    # ---- the storyboard ----
+
+    def show_walkthrough(self, folder=None, *, ask: bool = False) -> bool:
+        """Show ``folder``, or the newest walkthrough, as the storyboard.
+
+        Unsaved edits stay unless ``ask`` is set and the user lets them go;
+        False when they stayed, or while the storyboard is saving.
+        """
+        review = self.review
+        if review._busy or (review._dirty and not (ask and review.discard_changes())):
+            return False
+        if folder is None:
+            folders = library.entries(captures_root())
+            folder = folders[0] if folders else None
+        review.show_folder(folder)
+        shown = folder is not None
+        review.setVisible(shown)
+        self.setup_row.setVisible(shown)
+        self._show_setup(self.setup_toggle.is_expanded())
+        return True
+
+    def fills_height(self) -> bool:
+        """With a storyboard, the page takes whatever height the window is given."""
+        return not self.review.isHidden()
+
+    def _show_setup(self, expanded: bool) -> None:
+        # With nothing below to make room for, the choices are always open.
+        shown = expanded or self.review.isHidden()
+        self.copy_area.setVisible(shown)
+        self.write_up_card.setVisible(shown)
+
+    def _on_review_changed(self, folder) -> None:
+        self.show_walkthrough(folder)
+        self.walkthroughs_changed.emit()
+
+    def _sync_setup_summary(self) -> None:
+        copy = COPY_CHOICES[self.copy_bar.currentIndex()][1]
+        write_up = (f"AI write-up by {AGENT_SPECS[self._agent].name}"
+                    if self.write_up_switch.isChecked() else "No AI write-up")
+        self.setup_summary.setText(f"Copies {copy}  ·  {write_up}")

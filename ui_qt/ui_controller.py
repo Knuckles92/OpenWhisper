@@ -457,6 +457,9 @@ class UIController(QObject):
         meeting_tab = self.main_window._screen_widgets.get("meeting")
         if meeting_tab is not None:
             self._connect_meeting_tab(meeting_tab)
+        walkthrough_tab = self.main_window._screen_widgets.get("walkthrough")
+        if walkthrough_tab is not None:
+            self._connect_walkthrough_tab(walkthrough_tab)
 
         self.main_window.on_show_copied_animation = self.show_copied_animation
         self.main_window.confirm_quit = self._confirm_quit_while_busy
@@ -499,6 +502,24 @@ class UIController(QObject):
     def _on_screen_created(self, key, widget):
         if key == "meeting":
             self._connect_meeting_tab(widget)
+        elif key == "walkthrough":
+            self._connect_walkthrough_tab(widget)
+
+    def _connect_walkthrough_tab(self, walkthrough_tab) -> None:
+        # Read at each use: the application controller sets these after the window exists.
+        walkthrough_tab.review.bind(
+            copy_files=self.copy_files_to_clipboard,
+            recover=lambda folder: self.on_recover_walkthrough and self.on_recover_walkthrough(folder),
+            acquire=lambda: self.acquire_walkthrough_library and self.acquire_walkthrough_library(),
+            release=lambda: self.release_walkthrough_library and self.release_walkthrough_library(),
+            submit=self._submit_walkthrough_work)
+
+    def _submit_walkthrough_work(self, work) -> None:
+        submit = self.submit_walkthrough_library
+        if submit is not None:
+            submit(work)
+        else:
+            threading.Thread(target=work, name="walkthrough-review", daemon=True).start()
 
     def _connect_meeting_tab(self, meeting_tab):
         meeting_tab.start_requested.connect(self._on_meeting_start_requested)
@@ -1153,12 +1174,14 @@ class UIController(QObject):
         previous = self._walkthrough_ready
         self._walkthrough_ready = show_ready(previous, result, copied=copied)
         if previous is None and self._walkthrough_ready is not None:
-            self._walkthrough_ready.review_requested.connect(self.show_walkthrough_library)
+            self._walkthrough_ready.review_requested.connect(self.main_window.show_walkthrough)
             self._walkthrough_ready.copy_requested.connect(self._copy_walkthrough_again)
         if self._walkthrough_panel is not None:
             self._walkthrough_panel.complete(result)
+        self.main_window.walkthrough_finished(result.folder)
         dialog = getattr(self, "_walkthrough_library", None)
-        if dialog is not None and dialog.isVisible() and not dialog._busy and not dialog._dirty:
+        if (dialog is not None and dialog.isVisible()
+                and not dialog.review._busy and not dialog.review._dirty):
             dialog.refresh(result.folder)
 
     def _copy_walkthrough_again(self, result, copy_format: str) -> None:
@@ -1173,9 +1196,13 @@ class UIController(QObject):
             self.set_status(f"Couldn't open the walkthrough: {exc}")
 
     def cancel_walkthrough_library(self) -> None:
+        """Stop review work in Saved Walkthroughs and the Walkthrough tab (quitting)."""
         dialog = self._walkthrough_library
         if dialog is not None:
-            dialog._cancel.set()
+            dialog.review.cancel()
+        walkthrough_tab = self.main_window._screen_widgets.get("walkthrough")
+        if walkthrough_tab is not None:
+            walkthrough_tab.review.cancel()
 
     def show_walkthrough_library(self, folder=None) -> None:
         from ui_qt.dialogs.walkthrough_library import WalkthroughLibraryDialog
@@ -1190,7 +1217,7 @@ class UIController(QObject):
             # The side panel lists walkthroughs while their tab is open.
             self._walkthrough_library.changed.connect(self.main_window.refresh_history)
         dialog = self._walkthrough_library
-        if not dialog._busy and not dialog._dirty:
+        if not dialog.review._busy and not dialog.review._dirty:
             dialog.refresh(folder)
         dialog.show()
         dialog.raise_()

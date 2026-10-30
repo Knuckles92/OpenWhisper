@@ -985,6 +985,10 @@ class TranscriptionTabBase(QWidget):
         """Whether the transcription card is currently collapsed."""
         return self.transcription_card.is_collapsed
 
+    def fills_height(self) -> bool:
+        """An open transcript takes whatever height the window is given."""
+        return not self.is_transcription_collapsed()
+
     def expand_transcription(self) -> None:
         """Expand the transcript card through the normal user-toggle path."""
         if self.is_transcription_collapsed():

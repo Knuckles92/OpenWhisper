@@ -7,6 +7,14 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+- **The last walkthrough, right on the Walkthrough tab** — under the start button, the newest walkthrough shows as a storyboard: each screenshot beside its words, with **Copy PDF**, **Copy Markdown**, **Copy Word**, the PDF as a chip to drag into any app, and **Open PDF**. A walkthrough that finishes shows there at once, a card clicked in the Walkthroughs side panel opens there, and the ready card's **Review** brings the window up on it. With a walkthrough to show, the copy choice and AI write-up fold away under **Setup**.
+- **Reorder a walkthrough** — drag a row by its grip, or press Alt+Up / Alt+Down in its words, to move a screenshot and the words that led to it; saving rebuilds the PDF, Word document and Markdown in the new order.
+- **Edit an AI write-up** — a written-up walkthrough opens on its write-up, cut into rows at its screenshots, with a switch to **As spoken**. Edit or reorder the write-up and save to rebuild its PDF and Word document; Copy and Open use the version shown. Saving edits to the words as spoken offers **Save and redo write-up**.
+
+### Changed
+- **Saved Walkthroughs uses the same storyboard** — screenshots now sit beside their words instead of below them, and clicking one opens the full picture.
+
 ## [2.8.3] - 2026-10-28
 
 ### Changed

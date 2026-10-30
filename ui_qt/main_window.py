@@ -566,7 +566,7 @@ class MainWindow(QMainWindow):
             self.past_meetings_clear_requested.emit
         )
         self.history_sidebar.calendar_requested.connect(self.open_history_calendar)
-        self.history_sidebar.walkthrough_selected.connect(self.walkthrough_library_requested)
+        self.history_sidebar.walkthrough_selected.connect(self._on_walkthrough_picked)
         self.history_sidebar.width_animated.connect(self._on_sidebar_width_animated)
         self.history_sidebar.animation.finished.connect(
             self._on_sidebar_animation_finished
@@ -670,6 +670,7 @@ class MainWindow(QMainWindow):
                 widget.walkthrough_requested.connect(self.walkthrough_requested)
                 widget.cancel_requested.connect(self._on_quick_record_canceled)
                 widget.settings_requested.connect(self.settings_destination_requested)
+                widget.walkthroughs_changed.connect(self.refresh_history)
         for method, (args, kwargs) in self._screen_updates[key].items():
             if isinstance(method, tuple):
                 method = method[0]
@@ -1223,11 +1224,8 @@ class MainWindow(QMainWindow):
         return self.tabbed_content.stack.currentWidget()
 
     def _page_is_elastic(self, page: QWidget) -> bool:
-        """An open transcript fills whatever height the user gives it."""
-        return (
-            hasattr(page, "is_transcription_collapsed")
-            and not page.is_transcription_collapsed()
-        )
+        """An open transcript or a walkthrough storyboard fills whatever height the user gives it."""
+        return hasattr(page, "fills_height") and page.fills_height()
 
     def _page_content_height(self, page: QWidget) -> int:
         """The height ``page`` needs to show all of its content without scrolling."""
@@ -1837,6 +1835,25 @@ class MainWindow(QMainWindow):
     def refresh_history(self):
         self.history_sidebar.refresh()
         self._refresh_history_calendar()
+
+    def _on_walkthrough_picked(self, folder) -> None:
+        """A side-panel walkthrough opens in the tab; "Open library" opens them all."""
+        if folder is None:
+            self.walkthrough_library_requested.emit(None)
+        else:
+            self.walkthrough_tab.show_walkthrough(folder, ask=True)
+
+    def show_walkthrough(self, folder) -> None:
+        """Bring the window forward on the Walkthrough tab, showing ``folder``."""
+        self.restore_from_tray()
+        self.tabbed_content.set_current_index(TabbedContentWidget.TAB_WALKTHROUGH)
+        self.walkthrough_tab.show_walkthrough(folder, ask=True)
+
+    def walkthrough_finished(self, folder) -> None:
+        """Show a walkthrough that just finished, unless edits to another are open."""
+        tab = self._screen_widgets.get("walkthrough")
+        if tab is not None:
+            tab.show_walkthrough(folder)
 
     def refresh_past_meetings(self) -> None:
         if self.tabbed_content.current_index() == TabbedContentWidget.TAB_MEETING_MODE:

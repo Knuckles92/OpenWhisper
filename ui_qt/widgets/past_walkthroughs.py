@@ -34,7 +34,7 @@ from services.walkthrough import library
 from services.walkthrough.document import clock
 from services.walkthrough.storage import captures_root
 from services.walkthrough.write_up import MARKDOWN_NAME, PDF_NAME
-from ui_qt.dialogs.walkthrough_library import _day, _shots, _started, _time
+from ui_qt.widgets.walkthrough_review import _day, _shots, _started, _time
 
 logger = logging.getLogger(__name__)
 

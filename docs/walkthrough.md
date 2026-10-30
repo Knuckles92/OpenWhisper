@@ -48,8 +48,18 @@ instead of History, the way Meeting Mode lists Past Meetings there: one card
 per walkthrough, newest first, with its title (the write-up's heading, or
 its first words), its first screenshot, its length and an **AI write-up** or
 **Interrupted** label. The search box matches titles and everything said.
-Clicking a card opens it in Saved Walkthroughs; **Open library** opens the
-newest. The panel shows the newest 60; the library has them all.
+Clicking a card shows it in the tab's storyboard (below); **Open library**
+opens Saved Walkthroughs. The panel shows the newest 60; the library has
+them all.
+
+Below the start button, the tab shows the newest walkthrough as a
+**storyboard**: each screenshot beside the words that led to it, with
+**Copy PDF**, **Copy Markdown**, **Copy Word**, the PDF as a chip to drag into
+any app, and **Open PDF**. It is the same editor as Saved Walkthroughs (see
+[Review](#review-recovery-and-storage)). A walkthrough that finishes shows
+there unless you have unsaved edits to another. With a walkthrough to show,
+the copy choice, **Minimize to tray** and the AI write-up card fold away under
+**Setup**, which says what's chosen; with none yet, they show as before.
 
 - **Walkthrough** starts recording. Talk as you would to a colleague looking
   over your shoulder. The recording overlay says **Walkthrough**, then how
@@ -150,8 +160,8 @@ With **PDF and Markdown copy**, the clipboard gets two things at once:
 
 A card in the corner of the screen says it's ready, with **Open**, **Show in
 folder**, and the PDF as a chip you can drag into any app. Dragging works
-even where pasting a file doesn't. **Review / Retry write-up** opens the saved
-document; **Copy PDF** copies only the file, **Copy Word document** copies the
+even where pasting a file doesn't. **Review / Retry write-up** opens the
+Walkthrough tab on the saved document; **Copy PDF** copies only the file, **Copy Word document** copies the
 `.docx` file to paste into an email or a folder, and **Copy Markdown** copies only
 the Markdown with a file link to each screenshot. **Open Word document** opens it
 in Word, or whatever opens `.docx` files, to edit. These actions are also available later
@@ -160,15 +170,27 @@ the card disappears or the clipboard has been overwritten.
 
 ## Review, recovery, and storage
 
-**Saved Walkthroughs…** lists completed documents and interrupted drafts.
-Edit each section's transcript, uncheck an accidental screenshot, then choose
-**Save review** to regenerate the PDF, Word document, Markdown, and manifest. An unchecked
-screenshot stays listed, faded, so a later review can include it again. Nothing is
-shared by opening or saving the review; use a copy button when ready. The
-original PNGs remain, and the first revision's manifest is kept as
-`walkthrough.original.json`. A review clears an earlier AI write-up because
-it describes the old revision. History remains the transcript recorded at
-completion; review changes the saved documents, not that historical entry.
+**Saved Walkthroughs…** lists completed documents and interrupted drafts,
+beside the same storyboard the Walkthrough tab shows. Each row is a section:
+its screenshot (click it to open the full picture) beside its words. Edit the
+words in place, switch off an accidental screenshot, or drag a row by its grip
+(or press Alt+Up / Alt+Down in its words) to move a screenshot and its words
+together, then choose **Save changes** to regenerate the PDF, Word document,
+Markdown, and manifest in that order. A switched-off screenshot stays listed,
+faded, so a later save can include it again. Nothing is shared by opening or
+saving; use a copy button when ready. The original PNGs remain, and the first
+revision's manifest is kept as `walkthrough.original.json`. History remains
+the transcript recorded at completion; saving changes the saved documents,
+not that historical entry.
+
+A walkthrough with an AI write-up opens on the write-up, with a switch to
+**As spoken**. The write-up's rows are its Markdown cut at each screenshot
+line; edit the words or drag rows, and **Save changes** rebuilds the
+write-up's PDF and Word document (a look asked for in a spoken note isn't
+kept, since it's never saved). Copy and Open use whichever version shows.
+Saving edits to the words as spoken offers **Save and redo write-up**, which
+writes it up again from the new words, or **Save without write-up**, which
+drops the old write-up because it described the old words.
 
 **Retry AI write-up** uses the saved as-spoken document and your current
 agent and instructions, without recording or transcribing again. A failed

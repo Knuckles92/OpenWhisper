@@ -97,7 +97,7 @@ def _thumbnail(path: Optional[Path]) -> Optional[QPixmap]:
     return rounded
 
 
-class _FileChip(QFrame):
+class FileChip(QFrame):
     """The document to drag into any app that takes files, or to click and open."""
 
     clicked = pyqtSignal()
@@ -222,7 +222,7 @@ class WalkthroughReadyCard(QWidget):
         row = QHBoxLayout()
         row.setContentsMargins(0, 8, 0, 0)
         row.setSpacing(4)
-        self.chip = _FileChip(self)
+        self.chip = FileChip(self)
         self.chip.clicked.connect(self._open)
         row.addWidget(self.chip)
         row.addStretch(1)

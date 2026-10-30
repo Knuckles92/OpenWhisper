@@ -185,21 +185,30 @@ def entries(root: Path) -> list[Path]:
                   reverse=True)
 
 
-def save_review(folder: Path, texts: list[str], keep: list[bool]) -> WalkthroughResult:
-    """Regenerate all four documents; keep omitted images and the original manifest."""
+def save_review(folder: Path, texts: list[str], keep: list[bool],
+                order: list[int] | None = None) -> WalkthroughResult:
+    """Regenerate all four documents; keep omitted images and the original manifest.
+
+    ``texts`` and ``keep`` follow the sections as Review shows them, and
+    ``order`` names the saved section each one is (the saved order when None),
+    so a moved screenshot takes the words that led to it along.
+    """
     from services.walkthrough import document
     from services.walkthrough.finish import document_settings
     from services.walkthrough.word import write_docx
 
     original = load_document(folder)
-    if len(texts) != len(original.sections) or len(keep) != len(texts):
+    count = len(original.sections)
+    order = list(range(count)) if order is None else list(order)
+    if len(texts) != count or len(keep) != count or sorted(order) != list(range(count)):
         raise ValueError("The document changed; reopen Review")
     def revise(section, text, included):
         image = section.shot or section.omitted
         return replace(section, text=text, shot=image if included else None,
                        omitted=None if included else image)
     updated = replace(original, sections=tuple(
-        revise(*fields) for fields in zip(original.sections, texts, keep, strict=True)))
+        revise(original.sections[index], text, included)
+        for index, text, included in zip(order, texts, keep, strict=True)))
     fmt, page_size = document_settings()
     # Render in isolation first: a failed PDF cannot destroy the saved document.
     with tempfile.TemporaryDirectory(prefix=".review-", dir=folder) as staging:
@@ -222,6 +231,66 @@ def save_review(folder: Path, texts: list[str], keep: list[bool]) -> Walkthrough
                       (MARKDOWN_NAME, PDF_NAME, DOCX_NAME, MANIFEST_NAME),
                       remove=("write-up.md", "write-up.pdf", "write-up.docx"))
     return load_result(folder, spoken=True)
+
+
+def write_up_parts(text: str) -> list[tuple[str, str]]:
+    """A write-up's Markdown cut after each screenshot that has a line of its own.
+
+    Each part is the words before a screenshot and that screenshot's line as
+    written, indent included, so a screenshot inside a list item stays in it.
+    Words after the last screenshot make a last part whose line is "".
+    """
+    from services.walkthrough.write_up import _IMAGE
+
+    parts, words = [], []
+    for line in text.splitlines():
+        if _IMAGE.fullmatch(line.strip()):
+            parts.append(("\n".join(words).strip("\n"), line))
+            words = []
+        else:
+            words.append(line)
+    rest = "\n".join(words).strip("\n")
+    if rest.strip() or not parts:
+        parts.append((rest, ""))
+    return parts
+
+
+def join_write_up(parts: list[tuple[str, str]]) -> str:
+    """The Markdown ``write_up_parts`` cut, in the parts' (possibly new) order."""
+    blocks = []
+    for words, line in parts:
+        if words.strip():
+            blocks.append(words.strip("\n"))
+        if line:
+            blocks.append(line)
+    return "\n\n".join(blocks)
+
+
+def write_up_shot(folder: Path, line: str) -> Path | None:
+    """The screenshot a write-up ``line`` shows, when it is one of ``folder``'s."""
+    from services.walkthrough.write_up import _IMAGE
+
+    match = _IMAGE.fullmatch(line.strip())
+    if match is None:
+        return None
+    try:
+        return _shot_file(folder, match[2].strip("<>"), required=False)
+    except ValueError:
+        return None  # not one of this walkthrough's screenshots
+
+
+def save_write_up(folder: Path, text: str) -> WalkthroughResult:
+    """Rebuild a write-up's Markdown, PDF and Word document from edited Markdown.
+
+    The look a spoken note asked for is never saved with a write-up, so the
+    rebuilt documents have the usual look.
+    """
+    from services.walkthrough.document import Look
+    from services.walkthrough.write_up import _write
+
+    if not written_up(folder):
+        raise ValueError("This walkthrough has no write-up to save")
+    return _write(load_result(folder), text.strip(), Look())
 
 
 def retry_write_up(folder: Path, *, cancel_event=None) -> WalkthroughResult:

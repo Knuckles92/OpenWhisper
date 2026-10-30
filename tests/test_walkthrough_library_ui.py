@@ -17,112 +17,112 @@ capture = capture_fixture
 def dialog(capture):
     widget = WalkthroughLibraryDialog(root=capture.root, copy_files=Mock(return_value=True))
     yield widget
-    widget._dirty = False
+    widget.review._dirty = False
     widget.close()
 
 
 def _wait(dialog):
     for _ in range(300):
-        if not dialog._busy:
+        if not dialog.review._busy:
             return
         QTest.qWait(10)
     pytest.fail("Library worker did not finish")
 
 
 def test_review_loads_section_editors_and_screenshot_choices(dialog):
-    assert len(dialog._editors) == 3
-    assert dialog._editors[0].toPlainText() == "first"
-    assert [c.isChecked() for c in dialog._checks] == [True, True, False]
-    assert dialog._editors[0].accessibleName() == "Section 1 transcript"
-    assert dialog.save_button.isEnabled()
-    assert not dialog.recover_button.isEnabled()
+    assert len(dialog.review._editors) == 3
+    assert dialog.review._editors[0].toPlainText() == "first"
+    assert [c.isChecked() for c in dialog.review._checks] == [True, True, False]
+    assert dialog.review._editors[0].accessibleName() == "Section 1 transcript"
+    assert dialog.review.save_button.isEnabled()
+    assert not dialog.review.recover_button.isEnabled()
 
 
 def test_copy_buttons_send_explicit_clipboard_formats(dialog, capture):
-    dialog.markdown_button.click()
-    args, kwargs = dialog._copy_files.call_args
+    dialog.review.markdown_button.click()
+    args, kwargs = dialog.review._copy_files.call_args
     assert args == ([],)
     assert "first" in kwargs["text"]
-    dialog.pdf_button.click()
-    args, kwargs = dialog._copy_files.call_args
+    dialog.review.pdf_button.click()
+    args, kwargs = dialog.review._copy_files.call_args
     assert args == ([capture.result.pdf],)
     assert kwargs == {"text": ""}
 
 
 def test_unsaved_edits_cannot_be_shared_or_written_up(dialog):
-    dialog._editors[0].setPlainText("corrected")
-    dialog.markdown_button.click()
-    dialog._copy_files.assert_not_called()
-    assert "Save" in dialog.notice.text()
-    dialog.retry_button.trigger()
-    assert not dialog._busy
+    dialog.review._editors[0].setPlainText("corrected")
+    dialog.review.markdown_button.click()
+    dialog.review._copy_files.assert_not_called()
+    assert "Save" in dialog.review.notice.text()
+    dialog.review.retry_button.trigger()
+    assert not dialog.review._busy
 
 
 def test_save_regenerates_and_releases_the_app_gate(dialog, capture):
-    dialog._acquire = Mock(return_value=None)
-    dialog._release = Mock()
-    dialog._editors[0].setPlainText("corrected")
-    dialog._checks[0].setChecked(False)
-    dialog.save_button.click()
-    assert not dialog.markdown_button.isEnabled()
+    dialog.review._acquire = Mock(return_value=None)
+    dialog.review._release = Mock()
+    dialog.review._editors[0].setPlainText("corrected")
+    dialog.review._checks[0].setChecked(False)
+    dialog.review.save_button.click()
+    assert not dialog.review.markdown_button.isEnabled()
     _wait(dialog)
-    dialog._acquire.assert_called_once()
-    dialog._release.assert_called_once()
-    assert not dialog._dirty
+    dialog.review._acquire.assert_called_once()
+    dialog.review._release.assert_called_once()
+    assert not dialog.review._dirty
     result = library.load_result(capture.folder)
     assert result.shots == 1
     # The omitted screenshot stays switchable, so the next save can restore it.
-    assert [c.isChecked() for c in dialog._checks] == [False, True, False]
-    assert dialog._checks[0].isEnabled()
-    dialog._checks[0].setChecked(True)
-    dialog.save_button.click()
+    assert [c.isChecked() for c in dialog.review._checks] == [False, True, False]
+    assert dialog.review._checks[0].isEnabled()
+    dialog.review._checks[0].setChecked(True)
+    dialog.review.save_button.click()
     _wait(dialog)
     assert library.load_result(capture.folder).shots == 2
     assert "corrected" in result.clipboard_text
 
 
 def test_gate_refusal_starts_no_worker(dialog):
-    dialog._acquire = Mock(return_value="Finish recording first")
-    dialog.save_button.click()
-    assert not dialog._busy
-    assert dialog.notice.text() == "Finish recording first"
+    dialog.review._acquire = Mock(return_value="Finish recording first")
+    dialog.review.save_button.click()
+    assert not dialog.review._busy
+    assert dialog.review.notice.text() == "Finish recording first"
 
 
 def test_executor_submission_failure_releases_the_gate(dialog):
-    dialog._release = Mock()
-    dialog._submit = Mock(side_effect=RuntimeError("shutting down"))
-    dialog.save_button.click()
-    assert not dialog._busy
-    dialog._release.assert_called_once()
-    assert "shutting down" in dialog.notice.text()
+    dialog.review._release = Mock()
+    dialog.review._submit = Mock(side_effect=RuntimeError("shutting down"))
+    dialog.review.save_button.click()
+    assert not dialog.review._busy
+    dialog.review._release.assert_called_once()
+    assert "shutting down" in dialog.review.notice.text()
 
 
 def test_cancel_before_a_queued_retry_starts_preserves_the_source(dialog, monkeypatch):
     queued = []
-    dialog._submit = queued.append
+    dialog.review._submit = queued.append
     retry = Mock()
     monkeypatch.setattr(library, "retry_write_up", retry)
-    dialog.retry_button.trigger()
-    assert dialog._busy
+    dialog.review.retry_button.trigger()
+    assert dialog.review._busy
     dialog.reject()
-    assert dialog._cancel.is_set()
+    assert dialog.review._cancel.is_set()
     queued[0]()
-    assert not dialog._busy
+    assert not dialog.review._busy
     retry.assert_not_called()
-    assert "canceled" in dialog.notice.text()
+    assert "canceled" in dialog.review.notice.text()
 
 
 def test_render_failure_preserves_unsaved_editors_and_button_states(dialog, monkeypatch):
     def fail(*args):
         raise OSError("full disk")
     monkeypatch.setattr(library, "save_review", fail)
-    dialog._editors[0].setPlainText("keep this correction")
-    dialog.save_button.click()
+    dialog.review._editors[0].setPlainText("keep this correction")
+    dialog.review.save_button.click()
     _wait(dialog)
-    assert dialog._dirty
-    assert dialog._editors[0].toPlainText() == "keep this correction"
-    assert not dialog.recover_button.isEnabled()
-    assert "full disk" in dialog.notice.text()
+    assert dialog.review._dirty
+    assert dialog.review._editors[0].toPlainText() == "keep this correction"
+    assert not dialog.review.recover_button.isEnabled()
+    assert "full disk" in dialog.review.notice.text()
 
 
 def test_ready_card_exposes_review_and_every_copy_format(capture):
@@ -150,10 +150,10 @@ def test_review_write_up_retry_is_off_thread_and_cancelable(dialog, monkeypatch,
         seen.append((folder, cancel_event))
         return capture.result
     monkeypatch.setattr(library, "retry_write_up", retry)
-    dialog.retry_button.trigger()
+    dialog.review.retry_button.trigger()
     _wait(dialog)
     assert seen[0][0] == capture.folder
-    assert seen[0][1] is dialog._cancel
+    assert seen[0][1] is dialog.review._cancel
 
 
 def test_recovery_requests_the_selected_draft(capture):
@@ -162,7 +162,7 @@ def test_recovery_requests_the_selected_draft(capture):
     (capture.folder / library.AUDIO_NAME).write_bytes(b"audio")
     recover = Mock()
     widget = WalkthroughLibraryDialog(root=capture.root, recover=recover)
-    assert widget.recover_button.isEnabled()
-    widget.recover_button.click()
+    assert widget.review.recover_button.isEnabled()
+    widget.review.recover_button.click()
     recover.assert_called_once_with(str(capture.folder))
     widget.close()
