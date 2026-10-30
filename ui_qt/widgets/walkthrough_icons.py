@@ -36,11 +36,14 @@ def _icon_path(name: str) -> QPainterPath:
         path.lineTo(11, 21)
     elif name == "check":
         line((5, 12.5), (9.5, 17), (19, 7.5))
+    elif name == "note":
+        line((5, 4), (19, 4), (19, 16), (9, 16), (5, 20), (5, 4))
     return path
 
 
 #: Stroke width of each icon, in grid units.
-_STROKE = {"camera": 2.0, "up": 2.4, "down": 2.4, "x": 2.4, "undo": 2.0, "check": 2.8}
+_STROKE = {"camera": 2.0, "up": 2.4, "down": 2.4, "x": 2.4, "undo": 2.0, "check": 2.8,
+           "note": 2.2}
 
 
 def paint_icon(painter: QPainter, name: str, center: QPointF, size: float, color: QColor) -> None:

@@ -442,3 +442,101 @@ def _pump_events():
 
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     QApplication.processEvents()
+
+
+# --- Hold for note -------------------------------------------------------------
+
+
+def _kinds(column):
+    return [("note" if item.note else "words", len(item.ticks)) if isinstance(item, Paragraph)
+            else f"shot {item.number}" for item in column.items]
+
+
+def test_words_said_while_held_are_a_note_of_their_own():
+    column = WalkthroughColumn()
+    _speak(column, LOUD, 2 * TICK_S)
+    column.hold_note(True, 1.0)
+    _speak(column, LOUD, 3 * TICK_S)
+    column.hold_note(False, 2.0)
+    _speak(column, LOUD, TICK_S)
+
+    assert _kinds(column) == [("words", 2), ("note", 3), ("words", 1)]
+    assert (column.items[1].started_s, column.items[1].ended_s) == (1.0, 2.0)
+
+
+def test_a_note_held_in_silence_leaves_nothing():
+    column = WalkthroughColumn()
+    column.hold_note(True, 1.0)
+    column.hold_note(False, 1.5)
+
+    assert _kinds(column) == [("words", 0)]
+
+
+def test_a_screenshot_while_held_closes_the_section_and_the_note_goes_on():
+    column = WalkthroughColumn()
+    column.hold_note(True, 1.0)
+    _speak(column, LOUD, 2 * TICK_S)
+    column.add_shot(1, _image(), now=0.0, kept_at_s=3.0)
+    _speak(column, LOUD, TICK_S)
+
+    assert _kinds(column) == [("note", 2), "shot 1", ("note", 1)]
+    assert column.items[0].ended_s == 3.0
+
+
+def test_notes_never_run_into_the_words_beside_them():
+    column = WalkthroughColumn()
+    _speak(column, LOUD, 2 * TICK_S)
+    column.add_shot(1, _image(), now=0.0, kept_at_s=1.0)
+    column.hold_note(True, 1.0)
+    _speak(column, LOUD, TICK_S)
+    column.hold_note(False, 2.0)
+
+    column.remove_shot(1)
+
+    assert _kinds(column) == [("words", 2), ("note", 1), ("words", 0)]
+
+
+def test_holding_the_button_writes_a_note_until_it_is_let_go(panel, clock):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+
+    held = []
+    panel.note_held.connect(held.append)
+    panel.begin()
+    panel.grab()
+    button = _footer_button(panel, "note").toPoint()
+
+    QTest.mousePress(panel, Qt.MouseButton.LeftButton, pos=button)
+    _run(panel, clock, 0.5, level=LOUD)
+    panel.grab()
+    # Let go off the button: the note still ends.
+    QTest.mouseRelease(panel, Qt.MouseButton.LeftButton, pos=button + button / 4)
+    _run(panel, clock, 0.3, level=LOUD)
+
+    assert held == [True, False]
+    note, after = panel.column.items[-2:]
+    assert note.note and note.ticks and not after.note and after.ticks
+    panel.grab()
+
+
+def test_without_an_ai_write_up_there_is_no_one_to_read_a_note(panel, clock):
+    held = []
+    panel.note_held.connect(held.append)
+    panel.begin()
+    panel.set_notes_on(False)
+    panel.grab()
+
+    _click(panel, _footer_button(panel, "note"))
+
+    assert held == []
+
+
+def test_done_while_held_ends_the_note(panel, clock):
+    held = []
+    panel.note_held.connect(held.append)
+    panel.begin()
+    panel._hold(True)
+
+    panel.finish()
+
+    assert held == [True, False] and not panel.column.holding

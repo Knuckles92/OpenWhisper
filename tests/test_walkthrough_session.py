@@ -325,3 +325,22 @@ def test_the_section_a_moment_belongs_to_follows_the_board(tmp_path):
     assert board.section_at(3.0) == 0
     assert board.section_at(7.0) == 3
     session.end()
+
+
+# --- notes held for the agent ---------------------------------------------------
+
+
+def test_held_stretches_reach_the_storyboard(tmp_path):
+    session = _three_shots(tmp_path)
+
+    session.hold_note(2.5)
+    session.release_note(3.5)
+    session.release_note(3.9)  # nothing held: ignored
+    session.hold_note(7.0)
+    session.close()  # still held: it runs to the end
+    session.hold_note(8.0)  # the recording stopped
+
+    board = session.storyboard()
+    assert board.notes_s == ((2.5, 3.5), (7.0, float("inf")))
+    assert board.section_at(2.5) == 1
+    session.end()

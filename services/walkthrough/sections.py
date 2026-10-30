@@ -5,6 +5,9 @@ frame count, which those moments are read from, matches the saved WAV
 sample for sample, so a moment is an exact place in the file. The cut then
 moves to the quietest tenth of a second nearby, so a word the user was
 finishing as they kept the screenshot stays whole in one section.
+
+The stretches the user held Hold for note are taken out of the sections
+and cut as clips of their own, at exactly the moments held.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ import wave
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -83,34 +86,84 @@ def _quietest(samples: np.ndarray, rate: int, low: int, high: int, target: int) 
     return int(middles[quietest])
 
 
-def split_recording(wav_path: Path, marks_s: Sequence[float], out_dir: Path) -> list[Clip]:
+Stretch = Tuple[float, float]
+
+
+def split_recording(wav_path: Path, marks_s: Sequence[float], out_dir: Path, *,
+                    leave_out_s: Sequence[Stretch] = ()) -> list[Clip]:
     """One clip per section: before the first mark, between marks, and after the last.
+
+    Args:
+        leave_out_s: Stretches, (start, end) in seconds in time order, that
+            no section holds.
 
     Raises:
         ValueError: The recording isn't 16-bit PCM.
         OSError, wave.Error: It can't be read, or a clip can't be written.
     """
-    with wave.open(str(wav_path), "rb") as source:
-        params = source.getparams()
-        pcm = source.readframes(params.nframes)
-    if params.sampwidth != _SAMPLE_WIDTH:
-        raise ValueError(f"expected 16-bit audio, got {8 * params.sampwidth}-bit")
-    channels = params.nchannels
-    frame_bytes = _SAMPLE_WIDTH * channels
-    frames = len(pcm) // frame_bytes
-    samples = np.frombuffer(pcm, dtype="<i2", count=frames * channels)
-    if channels > 1:
-        samples = samples.reshape(frames, channels)
-    edges = [0, *cut_frames(samples, params.framerate, marks_s), frames]
-    clips = []
-    for index, (start, end) in enumerate(pairwise(edges), start=1):
-        duration = (end - start) / params.framerate
+    recording = _Recording(wav_path)
+    gaps = recording.frames_of(leave_out_s)
+    edges = [0, *cut_frames(recording.samples, recording.rate, marks_s), recording.frames]
+    return [recording.clip(_without(start, end, gaps), out_dir / f"section-{index}.wav")
+            for index, (start, end) in enumerate(pairwise(edges), start=1)]
+
+
+def clip_stretches(wav_path: Path, stretches_s: Sequence[Stretch], out_dir: Path) -> list[Clip]:
+    """One clip per stretch, (start, end) in seconds, cut exactly there.
+
+    Raises:
+        As ``split_recording``.
+    """
+    recording = _Recording(wav_path)
+    return [recording.clip([span], out_dir / f"note-{index}.wav")
+            for index, span in enumerate(recording.frames_of(stretches_s), start=1)]
+
+
+class _Recording:
+    """A 16-bit PCM WAV, read whole."""
+
+    def __init__(self, wav_path: Path) -> None:
+        with wave.open(str(wav_path), "rb") as source:
+            self.params = source.getparams()
+            self.pcm = source.readframes(self.params.nframes)
+        if self.params.sampwidth != _SAMPLE_WIDTH:
+            raise ValueError(f"expected 16-bit audio, got {8 * self.params.sampwidth}-bit")
+        channels = self.params.nchannels
+        self.rate = self.params.framerate
+        self.frame_bytes = _SAMPLE_WIDTH * channels
+        self.frames = len(self.pcm) // self.frame_bytes
+        samples = np.frombuffer(self.pcm, dtype="<i2", count=self.frames * channels)
+        self.samples = samples.reshape(self.frames, channels) if channels > 1 else samples
+
+    def frames_of(self, stretches_s: Sequence[Stretch]) -> list[tuple[int, int]]:
+        """Stretches in seconds as frame ranges inside the recording."""
+        def frame(seconds: float) -> int:
+            return self.frames if seconds == float("inf") else \
+                min(max(int(round(seconds * self.rate)), 0), self.frames)
+
+        return [(frame(start), frame(end)) for start, end in stretches_s]
+
+    def clip(self, spans: Sequence[tuple[int, int]], path: Path) -> Clip:
+        """``spans`` of frames joined into a WAV at ``path``; no file when too short."""
+        duration = sum(end - start for start, end in spans) / self.rate
         if duration < MIN_CLIP_S:
-            clips.append(Clip(None, duration))
-            continue
-        path = out_dir / f"section-{index}.wav"
+            return Clip(None, duration)
         with wave.open(str(path), "wb") as clip:
-            clip.setparams(params)
-            clip.writeframes(pcm[start * frame_bytes:end * frame_bytes])
-        clips.append(Clip(path, duration))
-    return clips
+            clip.setparams(self.params)
+            for start, end in spans:
+                clip.writeframes(self.pcm[start * self.frame_bytes:end * self.frame_bytes])
+        return Clip(path, duration)
+
+
+def _without(start: int, end: int, gaps: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+    """``[start, end)`` less every gap (in order, not overlapping), as spans in order."""
+    spans, at = [], start
+    for low, high in gaps:
+        if high <= at or low >= end:
+            continue
+        if low > at:
+            spans.append((at, low))
+        at = max(at, high)
+    if at < end:
+        spans.append((at, end))
+    return spans

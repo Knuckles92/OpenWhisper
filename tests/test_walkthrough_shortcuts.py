@@ -76,10 +76,12 @@ class FakePanel(QObject):
     finish_requested = pyqtSignal()
     move_requested = pyqtSignal(int, int)
     remove_requested = pyqtSignal(int)
+    note_held = pyqtSignal(bool)
 
     def __init__(self):
         super().__init__()
         self.calls = []
+        self.notes_on = None
         self.snap_mode = ""
         self.shortcut = ""
         self.countdowns = []
@@ -88,6 +90,9 @@ class FakePanel(QObject):
         self.snap_mode = mode
         if shortcut is not None:
             self.shortcut = shortcut
+
+    def set_notes_on(self, on):
+        self.notes_on = on
 
     def set_countdown(self, seconds):
         self.countdowns.append(seconds)
@@ -578,3 +583,29 @@ def test_a_countdown_ends_with_its_walkthrough(h):
     assert not h.runtime._countdown.isActive()
     assert h.ui.walkthrough_panel.countdowns[-1] == 0
     assert h.ui.snaps == []
+
+
+# --- Hold for note ---------------------------------------------------------------
+
+
+def test_holding_for_a_note_marks_the_recording_where_it_is(h):
+    session = _begin(h)
+
+    h.recorder.get_recording_duration = lambda: 3.0
+    h.ui.walkthrough_panel.note_held.emit(True)
+    h.recorder.get_recording_duration = lambda: 5.5
+    h.ui.walkthrough_panel.note_held.emit(False)
+
+    assert session.storyboard().notes_s == ((3.0, 5.5),)
+    session.end()
+
+
+def test_notes_are_offered_only_with_an_ai_write_up(h):
+    _begin(h)
+    assert h.ui.walkthrough_panel.notes_on is False
+    h.controller.stop_recording()
+
+    h.settings.values[SettingsKey.WALKTHROUGH_WRITE_UP] = True
+    _begin(h)
+
+    assert h.ui.walkthrough_panel.notes_on is True

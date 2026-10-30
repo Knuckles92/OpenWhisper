@@ -26,6 +26,7 @@ from services.settings import (
     SettingsKey,
     WalkthroughSnapMode,
     resolve_walkthrough_snap_mode,
+    resolve_walkthrough_write_up,
     settings_manager,
 )
 from services.walkthrough.session import ScreenshotNotSaved, WalkthroughSession
@@ -118,7 +119,11 @@ class WalkthroughRuntime:
         self._ui.set_walkthrough_active(True)
         self._attach(self._ui.walkthrough_panel)
         if self._panel is not None:
-            self._panel.set_snap_mode(self._snap_mode(), self._snap_shortcut())
+            settings = settings_manager.load_all_settings()
+            self._panel.set_snap_mode(resolve_walkthrough_snap_mode(settings),
+                                      self._snap_shortcut())
+            # Only an AI write-up reads notes.
+            self._panel.set_notes_on(resolve_walkthrough_write_up(settings))
         # The pill keeps showing what is being recorded, but never in the
         # screenshots themselves.
         self._out_of_screenshots = self._ui.keep_overlay_out_of_screenshots(True)
@@ -138,6 +143,7 @@ class WalkthroughRuntime:
         panel.undo_requested.connect(self.undo_last_shot)
         panel.move_requested.connect(self.move_shot)
         panel.remove_requested.connect(self.remove_shot)
+        panel.note_held.connect(self.hold_note)
 
     def finish(self) -> None:
         """Done: finish the walkthrough being recorded, if one still is."""
@@ -330,6 +336,17 @@ class WalkthroughRuntime:
         session = self._session
         if session is not None and session.move_shot(number, step) and self._panel is not None:
             self._panel.move_shot(number, step)
+
+    def hold_note(self, on: bool) -> None:
+        """Hold for note pressed (``on``) or let go: what is said meanwhile is for the write-up."""
+        session = self._session
+        if session is None:
+            return
+        at_s = self.controller.recorder.get_recording_duration()
+        if on:
+            session.hold_note(at_s)
+        else:
+            session.release_note(at_s)
 
     def _shot_removed(self, session: WalkthroughSession, number: int) -> None:
         self.controller.recording_destination_changed.emit(shots_label(session.shot_count))

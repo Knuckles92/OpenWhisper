@@ -7,7 +7,9 @@ section being spoken sits in an open slot until the next screenshot closes
 it. Hovering a screenshot offers to move it up or down or remove it; its
 words always go with it, since a section is the words and then the
 screenshot they led to. The footer takes screenshots (its menu picks the
-kind Snap repeats), undoes the last one, cancels and finishes. At Done the ticks close up into lines while the
+kind Snap repeats), undoes the last one, cancels and finishes. While Hold
+for note is held, what the user says is a note for the AI write-up, not
+the document: it shows as a purple row. At Done the ticks close up into lines while the
 document is written, the header says what it came to, and the column fades
 once the document is ready.
 
@@ -98,6 +100,12 @@ FOOT_GAP = 6.0
 FOOT_ICON_W = 40.0
 #: The Snap button's part that opens its menu.
 SNAP_MENU_W = 26.0
+#: A note's purple row: its padding, and its "Note for the agent" line.
+NOTE_PAD_X = 8.0
+NOTE_PAD_TOP = 6.0
+NOTE_HEAD_H = 15.0
+NOTE_PAD_BOTTOM = 7.0
+NOTE_HINT = "Note for the agent · not in the document"
 
 FRAME_MS = 16
 TICK_GROW_S = 0.12
@@ -117,6 +125,9 @@ WHEEL_STEP = 60.0
 TOOLTIPS = {
     "snap": "Take a screenshot: {mode}",
     "snap-menu": "Choose what Snap takes",
+    "note": "Hold while you talk: it goes to the AI write-up as an instruction, "
+            "not into the document",
+    "note-off": "Turn on AI write-up on the Walkthrough tab to leave notes for it",
     "undo": "Undo the last screenshot; its words stay",
     "cancel": "Cancel the walkthrough: nothing is kept",
     "done": "Finish the walkthrough",
@@ -133,6 +144,11 @@ class Paragraph:
     ticks: list[float] = field(default_factory=list)
     #: When each tick was written, to grow it in.
     born: list[float] = field(default_factory=list)
+    #: Said while Hold for note was held: for the agent, not the document.
+    note: bool = False
+    #: A note's span in seconds of recording; it ends None while held.
+    started_s: float = 0.0
+    ended_s: float | None = None
 
 
 @dataclass
@@ -159,6 +175,8 @@ class WalkthroughColumn:
 
     def __init__(self) -> None:
         self.items: list[Item] = [Paragraph()]
+        #: Hold for note is held: the voice writes a note.
+        self.holding = False
         self.speech_s = 0.0
         self._peak = 0.0
         self._carry = 0.0
@@ -186,7 +204,27 @@ class WalkthroughColumn:
         if isinstance(last, Paragraph) and not last.ticks:
             # Nothing was said since the last screenshot: no empty paragraph.
             self.items.pop()
+        elif isinstance(last, Paragraph) and last.note and self.holding:
+            last.ended_s = kept_at_s
         self.items.append(ShotItem(number, image, now, kept_at_s))
+        # A note still held goes on after the screenshot.
+        self.items.append(Paragraph(note=self.holding, started_s=kept_at_s))
+
+    def hold_note(self, on: bool, at_s: float) -> None:
+        """Hold for note was pressed (``on``) or let go, ``at_s`` into the recording."""
+        if on == self.holding:
+            return
+        self.holding = on
+        last = self.items[-1]
+        if on:
+            if isinstance(last, Paragraph) and not last.ticks:
+                self.items.pop()
+            self.items.append(Paragraph(note=True, started_s=at_s))
+            return
+        last.ended_s = at_s
+        if not last.ticks:
+            # Held in silence: nothing to show.
+            self.items.pop()
         self.items.append(Paragraph())
 
     def sections(self) -> list[list[Item]]:
@@ -228,8 +266,9 @@ class WalkthroughColumn:
     def _rebuild(self, sections: list[list[Item]]) -> None:
         items: list[Item] = []
         for item in (item for section in sections for item in section):
-            if isinstance(item, Paragraph) and items and isinstance(items[-1], Paragraph):
-                # Words that now meet run on as one paragraph.
+            if (isinstance(item, Paragraph) and items and isinstance(items[-1], Paragraph)
+                    and not item.note and not items[-1].note):
+                # Words that now meet run on as one paragraph; notes stay apart.
                 items[-1].ticks += item.ticks
                 items[-1].born += item.born
             else:
@@ -270,6 +309,8 @@ class WalkthroughPanel(QWidget):
     snap_requested = pyqtSignal()
     #: A pick from the Snap menu: a WalkthroughSnapMode, to take now and repeat.
     snap_mode_chosen = pyqtSignal(str)
+    #: Hold for note pressed (True) or let go (False).
+    note_held = pyqtSignal(bool)
     undo_requested = pyqtSignal()
     cancel_requested = pyqtSignal()
     finish_requested = pyqtSignal()
@@ -321,6 +362,8 @@ class WalkthroughPanel(QWidget):
         # left before an "In 3 seconds" snap (0: none counting down).
         self.snap_mode = WalkthroughSnapMode.REGION
         self._snap_shortcut = ""
+        # Whether a note has anyone to read it: the AI write-up is on.
+        self._notes_on = True
         self._countdown = 0
         self._menu = None
         self._frame = QTimer(self)
@@ -382,6 +425,11 @@ class WalkthroughPanel(QWidget):
         self._countdown = seconds
         self.update()
 
+    def set_notes_on(self, on: bool) -> None:
+        """Whether Hold for note works: only an AI write-up reads notes."""
+        self._notes_on = on
+        self.update()
+
     def snap_modes(self) -> tuple[str, ...]:
         """The kinds of screenshot this desktop can take."""
         return tuple(mode for mode in WalkthroughSnapMode.ALL
@@ -393,6 +441,7 @@ class WalkthroughPanel(QWidget):
         self._countdown = 0
         if self.state != self.RECORDING:
             return
+        self._hold(False)
         self._recorded_s = self._recorded()
         self._hover_shot = 0
         self._enter(self.WRITING)
@@ -408,6 +457,7 @@ class WalkthroughPanel(QWidget):
     def dismiss(self) -> None:
         """Canceled or failed: fade at once."""
         self._close_menu()
+        self._hold(False)
         if self.state in (self.RECORDING, self.WRITING, self.DONE):
             self._summary = ""
             self._enter(self.DONE)
@@ -510,6 +560,8 @@ class WalkthroughPanel(QWidget):
             self._close_menu()
         if key:
             self._pressed = key
+            if key == "note":
+                self._hold(True)
             event.accept()
             self.update()
             return
@@ -519,15 +571,22 @@ class WalkthroughPanel(QWidget):
     def mouseMoveEvent(self, event) -> None:
         if self._drag.move(event):
             return
+        if self.column.holding and not event.buttons() & Qt.MouseButton.LeftButton:
+            # The button came up somewhere this window never heard of.
+            self._pressed = ""
+            self._hold(False)
         self._set_hover(event.position())
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
         pressed, self._pressed = self._pressed, ""
+        if pressed == "note":
+            # Let go anywhere: the note ends.
+            self._hold(False)
+        elif pressed and self._hit(event.position()) == pressed:
+            self._click(pressed)
         if pressed:
             event.accept()
-            if self._hit(event.position()) == pressed:
-                self._click(pressed)
             self.update()
             return
         if not self._drag.release(event):
@@ -545,7 +604,11 @@ class WalkthroughPanel(QWidget):
 
     def event(self, event) -> bool:
         if event.type() == QEvent.Type.ToolTip:
-            text = TOOLTIPS.get(self._hit(QPointF(event.pos())).split(":")[0], "").format(
+            key = self._hit(QPointF(event.pos())).split(":")[0]
+            note = self._footer()["note"][0]
+            if not key and not self._notes_on and note.contains(QPointF(event.pos())):
+                key = "note-off"
+            text = TOOLTIPS.get(key, "").format(
                 mode=WalkthroughSnapMode.LABELS[self.snap_mode].lower())
             if text:
                 QToolTip.showText(event.globalPos(), text, self)
@@ -575,6 +638,14 @@ class WalkthroughPanel(QWidget):
                 "cancel": self.cancel_requested,
                 "done": self.finish_requested,
             }[name].emit()
+
+    def _hold(self, on: bool) -> None:
+        """Start or end a note; the walkthrough hears of it through ``note_held``."""
+        if on == self.column.holding or (on and self.state != self.RECORDING):
+            return
+        self.column.hold_note(on, self._recorded())
+        self.note_held.emit(on)
+        self.update()
 
     def _open_menu(self) -> None:
         from ui_qt.widgets.walkthrough_snap_menu import SnapMenu
@@ -621,8 +692,10 @@ class WalkthroughPanel(QWidget):
         top = self._footer_top()
         bottom = top + FOOT_H + FOOT_GAP
         recording = self.state == self.RECORDING
-        snap = QRectF(inner.left(), top, inner.width() - SNAP_MENU_W, FOOT_H)
+        half = (inner.width() - FOOT_GAP) / 2
+        snap = QRectF(inner.left(), top, half - SNAP_MENU_W, FOOT_H)
         snap_menu = QRectF(snap.right(), top, SNAP_MENU_W, FOOT_H)
+        note = QRectF(snap_menu.right() + FOOT_GAP, top, half, FOOT_H)
         undo = QRectF(inner.left(), bottom, FOOT_ICON_W, FOOT_H)
         cancel = QRectF(undo.right() + FOOT_GAP, bottom, FOOT_ICON_W, FOOT_H)
         done = QRectF(cancel.right() + FOOT_GAP, bottom, inner.right() - cancel.right() - FOOT_GAP,
@@ -634,6 +707,7 @@ class WalkthroughPanel(QWidget):
         return {
             "snap": (snap, recording),
             "snap-menu": (snap_menu, recording),
+            "note": (note, recording and self._notes_on),
             "undo": (undo, recording and self.column.shots > 0),
             "cancel": (cancel, self.state in (self.RECORDING, self.WRITING)),
             "done": (done, recording),
@@ -718,15 +792,20 @@ class WalkthroughPanel(QWidget):
     def _layout(self, width: float) -> list[tuple[str, Item | list[Item], float, float]]:
         """Each block with its top and height, from the body's top.
 
-        A block is ``("words", Paragraph)``, ``("shot", ShotItem)`` or, while
-        it records, ``("slot", [items])`` for the section being spoken.
+        A block is ``("words", Paragraph)``, ``("note", Paragraph)``,
+        ``("shot", ShotItem)`` or, while it records, ``("slot", [items])`` for
+        the section being spoken.
         """
         laid = []
         y = 0.0
         sections = self.column.sections()
         open_section = sections.pop() if self.state == self.RECORDING else []
         for item in (item for section in sections for item in section):
-            if isinstance(item, Paragraph):
+            if isinstance(item, Paragraph) and item.note:
+                height = (NOTE_PAD_TOP + NOTE_HEAD_H + 3 + max(1, _rows(item, width - 2 * NOTE_PAD_X))
+                          * ROW_PITCH + NOTE_PAD_BOTTOM)
+                laid.append(("note", item, y, height))
+            elif isinstance(item, Paragraph):
                 if not item.ticks:
                     continue
                 height = _rows(item, width) * ROW_PITCH
@@ -770,6 +849,9 @@ class WalkthroughPanel(QWidget):
                 continue
             if kind == "words":
                 self._paint_paragraph(painter, item, body.left(), y, body.width(), now, morph)
+            elif kind == "note":
+                self._paint_note(painter, item, QRectF(body.left(), y, body.width(), height), now,
+                                 morph)
             elif kind == "shot":
                 self._paint_shot(painter, item, body.left(), y, body.width(), now)
             else:
@@ -822,6 +904,36 @@ class WalkthroughPanel(QWidget):
         self._paint_ticks(painter, paragraph, left, top, width, now, morph,
                           token_color("text-soft"))
 
+    def _note_length(self, note: Paragraph) -> float:
+        end = note.ended_s if note.ended_s is not None else self._recorded()
+        return max(0.0, end - note.started_s)
+
+    def _paint_note(self, painter: QPainter, note: Paragraph, rect: QRectF, now: float,
+                    morph: float) -> None:
+        """A note for the agent: a purple row that says it stays out of the document."""
+        painter.save()
+        painter.setPen(QPen(token_color("purple", 102), 1.0))
+        painter.setBrush(token_color("purple", 36))
+        painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10)
+        ink = token_color("purple-text")
+        head = QRectF(rect.left() + NOTE_PAD_X, rect.top() + NOTE_PAD_TOP,
+                      rect.width() - 2 * NOTE_PAD_X, NOTE_HEAD_H)
+        paint_icon(painter, "note", QPointF(head.left() + 6, head.center().y()), 12, ink)
+        font = QFont(self.font())
+        # 10 px, so all of it fits the column: "not in the document" is the point.
+        font.setPixelSize(10)
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(ink)
+        text = f"Note for the agent · {clock(self._note_length(note))} · not in the document"
+        painter.drawText(head.adjusted(18, 0, 0, 0),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         painter.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight,
+                                                          int(head.width() - 18)))
+        self._paint_ticks(painter, note, head.left(), head.bottom() + 3, head.width(), now, morph,
+                          ink)
+        painter.restore()
+
     def _paint_caret(self, painter: QPainter, x: float, centre: float) -> None:
         blink = 0.5 + 0.5 * math.cos(self._clock.elapsed() / 1000.0 * math.tau / 1.1)
         painter.setPen(Qt.PenStyle.NoPen)
@@ -869,7 +981,8 @@ class WalkthroughPanel(QWidget):
         caret = (left + 2, y + ROW_PITCH / 2)
         for item in items:
             rows = max(1, _rows(item, width))
-            self._paint_ticks(painter, item, left, y, width, now, 0.0, token_color("text"))
+            ink = token_color("purple-text" if item.note else "text")
+            self._paint_ticks(painter, item, left, y, width, now, 0.0, ink)
             count = len(item.ticks)
             row, col = divmod(count, _per_row(width))
             if count and col == 0:
@@ -882,11 +995,13 @@ class WalkthroughPanel(QWidget):
         hint = QFont(self.font())
         hint.setPixelSize(12)
         painter.setFont(hint)
-        painter.setPen(token_color("accent-soft"))
+        holding = self.column.holding
+        painter.setPen(token_color("purple-text" if holding else "accent-soft"))
         hint_top = rect.bottom() - SLOT_PAD_BOTTOM - SLOT_HINT_H
         painter.drawText(QRectF(rect.left() + SLOT_PAD_X, hint_top, rect.width() - 2 * SLOT_PAD_X,
                                 SLOT_HINT_H),
-                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, SLOT_HINT)
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         NOTE_HINT if holding else SLOT_HINT)
         painter.restore()
 
     def _paint_shot(self, painter: QPainter, shot: ShotItem, left: float, top: float,
@@ -1002,7 +1117,13 @@ class WalkthroughPanel(QWidget):
         painter.setPen(QPen(token_color("border-strong"), 1.0))
         painter.setBrush(fill)
         painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10)
-        if key == "undo":
+        if key == "note":
+            if self.column.holding:
+                painter.setPen(QPen(token_color("purple"), 1.0))
+                painter.setBrush(token_color("purple", 70))
+                painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 10, 10)
+            self._paint_label(painter, rect, "note", "Hold for note", token_color("purple-text"))
+        elif key == "undo":
             paint_icon(painter, "undo", rect.center(), 16, token_color("text"))
         elif key == "cancel":
             ink = token_color("danger-text-soft")

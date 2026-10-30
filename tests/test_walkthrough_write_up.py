@@ -381,3 +381,33 @@ def test_a_screenshot_keeps_its_heading_and_words_on_its_page(tmp_path):
     lead_page = next(page for page, text in enumerate(pages) if "The words about it." in text)
     assert lead_page == len(pages) - 1 > 0
     assert "Lead" in pages[lead_page]
+
+
+def test_held_notes_follow_the_walkthrough_with_where_each_was_said(walkthrough):
+    from services.walkthrough.session import Note
+
+    notes = [Note("make this one bigger", 1), Note("leave out the setup part", 2)]
+    for agent_id in ("claude_code", "codex"):
+        for follow_notes in (False, True):
+            agent = Agent(PassOutcome(ok=True, text=REPLY))
+
+            write_up.write_up(walkthrough.result, walkthrough.shots, agent=agent_id,
+                              follow_notes=follow_notes, notes=notes, run=agent)
+
+            (call,) = agent.calls
+            assert call.user_prompt.endswith(
+                "Notes for you, not part of the walkthrough:\n"
+                "- About screenshot 2 (shot-2.png): make this one bigger\n"
+                "- After the last screenshot: leave out the setup part")
+            assert "left you notes" in call.system_prompt
+            # The limit on what a note may do, said once.
+            assert call.system_prompt.count("change only what the document says") == 1
+
+
+def test_without_held_notes_the_prompt_lists_none(walkthrough):
+    agent = Agent(PassOutcome(ok=True, text=REPLY))
+
+    write_up.write_up(walkthrough.result, walkthrough.shots, run=agent)
+
+    assert "Notes for you" not in agent.calls[0].user_prompt
+    assert "left you notes" not in agent.calls[0].system_prompt

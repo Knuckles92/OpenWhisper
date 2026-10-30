@@ -10,13 +10,16 @@ The session also keeps the board the live column shows: its sections in
 order, each the words that led to a screenshot and then the screenshot.
 Moving a screenshot moves its words with it, and removing one leaves its
 words to the section after it. The recording itself only ever runs
-forward, so the board says which pieces of it each section reads.
+forward, so the board says which pieces of it each section reads. And it
+keeps the stretches the user held Hold for note: what they said then is
+for the AI write-up, not the document.
 """
 
 from __future__ import annotations
 
 import bisect
 import logging
+import math
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -63,11 +66,23 @@ class Storyboard:
     #: For each section, one per screenshot and then the words after the
     #: last: the pieces it reads, in order.
     sections: tuple[tuple[int, ...], ...] = ((0,),)
+    #: The stretches held for a note, (start, end) in seconds, in time order;
+    #: they are left out of every piece. A note held to the end ends at inf.
+    notes_s: tuple[tuple[float, float], ...] = ()
 
     def section_at(self, at_s: float) -> int:
         """The section that reads the moment ``at_s`` of the recording."""
         piece = bisect.bisect_right(self.cuts_s, at_s)
         return next(index for index, pieces in enumerate(self.sections) if piece in pieces)
+
+
+@dataclass(frozen=True)
+class Note:
+    """Words the user held for the agent: they go to the write-up, never the document."""
+
+    text: str
+    #: The section they were said in, an index into the board's sections.
+    section: int
 
 
 @dataclass
@@ -83,7 +98,8 @@ class _Section:
     shot: Optional[int] = None
 
 
-def _storyboard(board: list[_Section], shots: list[Shot]) -> Storyboard:
+def _storyboard(board: list[_Section], shots: list[Shot],
+                notes_s: tuple[tuple[float, float], ...] = ()) -> Storyboard:
     """``board`` as the pieces the recording is cut into; ``shots`` are all those kept."""
     # Pieces that follow each other in time within one section are one
     # stretch of speech: no cut between them, so no word is split there.
@@ -106,6 +122,7 @@ def _storyboard(board: list[_Section], shots: list[Shot]) -> Storyboard:
                     for number, shot in enumerate(on_board, start=1)),
         cuts_s=tuple(shots[index].kept_at_s for index in cuts),
         sections=tuple(sections),
+        notes_s=notes_s,
     )
 
 
@@ -188,6 +205,9 @@ class WalkthroughSession:
         #: The board, once the user changed it; until then it is one section
         #: per screenshot in the order kept (``_board_locked``).
         self._board: Optional[list[_Section]] = None
+        #: Stretches held for a note, and when the one being held began.
+        self._notes: list[tuple[float, float]] = []
+        self._note_from: Optional[float] = None
         self._writer: Optional[ThreadPoolExecutor] = None
         self._open = True
         self._journal_id = ""
@@ -207,9 +227,28 @@ class WalkthroughSession:
             return self._open
 
     def close(self) -> None:
-        """Take no more screenshots; the recording stopped or was canceled."""
+        """Take no more screenshots; the recording stopped or was canceled.
+
+        A note still held runs to the end of the recording.
+        """
         with self._lock:
             self._open = False
+            if self._note_from is not None:
+                self._notes.append((self._note_from, math.inf))
+                self._note_from = None
+
+    def hold_note(self, at_s: float) -> None:
+        """Hold for note was pressed ``at_s`` into the recording: what follows is for the agent."""
+        with self._lock:
+            if self._open and self._note_from is None:
+                self._note_from = max(0.0, float(at_s))
+
+    def release_note(self, at_s: float) -> None:
+        """Hold for note was let go ``at_s`` into the recording."""
+        with self._lock:
+            start, self._note_from = self._note_from, None
+            if start is not None and at_s > start:
+                self._notes.append((start, float(at_s)))
 
     def folder(self) -> Path:
         """The walkthrough's folder, created the first time it is needed."""
@@ -383,6 +422,7 @@ class WalkthroughSession:
             shots = list(self._shots)
             pending = list(zip(shots, self._saves, strict=True))
             board = [_Section(list(s.pieces), s.shot) for s in self._board_locked()]
+            notes = tuple(self._notes)
         for index, (shot, future) in enumerate(pending):
             try:
                 written = future.result(timeout=timeout)
@@ -392,7 +432,7 @@ class WalkthroughSession:
             place = next((p for p, section in enumerate(board) if section.shot == index), None)
             if not written and place is not None:
                 _remove(board, place)
-        return _storyboard(board, shots)
+        return _storyboard(board, shots, notes)
 
     def saved_shots(self, timeout: float = SAVE_WAIT_S) -> list[Shot]:
         """The screenshots whose PNG was written, in the board's order; worker thread."""

@@ -352,6 +352,38 @@ def _record_edited(h, shots_at, edit, *, length_s=6.0):
     h.controller._pending_source_name = h.runtime._recording_source_name(h.runtime._active_job)
 
 
+def test_a_held_note_goes_to_the_write_up_not_the_document(h, monkeypatch):
+    _write_recording(h.audio, [_tone(1.9), np.zeros(int(0.3 * RATE), np.int16), _tone(1.9),
+                               np.zeros(int(0.3 * RATE), np.int16), _tone(1.6)])
+    h.backend.words = ["first part", "second part", "last part", "make it purple"]
+    written = []
+
+    def write_up(result, shots, *, notes, **kwargs):
+        written.append(list(notes))
+        return result
+
+    from services.walkthrough import write_up as module
+
+    h.settings.values[SettingsKey.WALKTHROUGH_WRITE_UP] = True
+    monkeypatch.setattr(module, "write_up", write_up)
+
+    def hold(session):
+        session.hold_note(2.6)
+        session.release_note(3.4)
+
+    _record_edited(h, [2.0, 4.2], hold)
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    # Each section, then the note on its own.
+    assert h.backend.paths == ["section-1.wav", "section-2.wav", "section-3.wav", "note-1.wav"]
+    (built,) = h.built
+    assert built.texts == ["first part", "second part", "last part"]
+    assert "purple" not in h.history.entries[0]["text"]
+    ((note,),) = written
+    assert (note.text, note.section) == ("make it purple", 1)
+
+
 def test_a_screenshot_moved_up_takes_its_words_into_the_document(h):
     _write_recording(h.audio, [_tone(1.9), np.zeros(int(0.3 * RATE), np.int16), _tone(1.9),
                                np.zeros(int(0.3 * RATE), np.int16), _tone(1.6)])
@@ -549,7 +581,7 @@ def _write_up_on(h, monkeypatch, write_up):
 def test_a_walkthrough_written_up_is_what_gets_copied(h, monkeypatch):
     calls = []
 
-    def write_up(result, shots, *, agent, instructions, follow_notes, cancel_event):
+    def write_up(result, shots, *, agent, instructions, follow_notes, notes, cancel_event):
         calls.append((shots, agent, instructions, follow_notes, cancel_event))
         return dataclasses.replace(result, pdf=result.folder / "write-up.pdf",
                                    clipboard_text="# Checklist", written_up=True)
