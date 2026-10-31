@@ -1414,7 +1414,7 @@ class SettingsDialog(QDialog):
             "Puts back what you had copied once a paste lands, including "
             "Command Mode rewrites. Turn off to keep the pasted text on the "
             "clipboard.",
-            design_icon("refresh-blue.svg"),
+            design_icon("arrow-back-up-gray.svg"),
         )
         self.restore_clipboard_check = self.restore_clipboard_tile.checkbox
 
@@ -1454,7 +1454,7 @@ class SettingsDialog(QDialog):
             "Notify me about updates",
             "Shows an Update button in the title bar and the tray menu when "
             "a newer release is found. Requires automatic checks.",
-            design_icon("info-blue.svg"),
+            design_icon("bell-amber.svg"),
         )
         self.update_notify_check = self.update_notify_tile.checkbox
         self.update_notify_check.setObjectName("updateNotifyEnabledCheck")
@@ -1464,7 +1464,7 @@ class SettingsDialog(QDialog):
             "When OpenWhisper is updated while it is running, offers to "
             "restart so the update finishes. Turn off if you chose "
             "\"Don't show this again\" and changed your mind.",
-            design_icon("refresh-blue.svg"),
+            design_icon("download-blue.svg"),
         )
         self.update_restart_prompt_check = self.update_restart_prompt_tile.checkbox
         self.update_restart_prompt_check.setObjectName("updateRestartPromptCheck")
@@ -1915,7 +1915,7 @@ class SettingsDialog(QDialog):
             "limit is passed; the newest recording is always kept. "
             "Transcription history text is kept separately.",
             self.recording_retention_combo,
-            design_icon("box-blue.svg"),
+            design_icon("file-music-blue.svg"),
         )
 
         self.max_recordings_label = QLabel("Number to keep")
@@ -1975,7 +1975,7 @@ class SettingsDialog(QDialog):
             "The final transcript uses your selected model and follows the "
             "General paste and clipboard settings. Its text size is under "
             "Appearance.",
-            design_icon("bolt-green.svg"),
+            design_icon("typography-blue.svg"),
         )
         self.streaming_enabled_check = self.streaming_enabled_tile.checkbox
         self.streaming_enabled_check.toggled.connect(
@@ -2751,12 +2751,12 @@ class SettingsDialog(QDialog):
         self.meeting_report_brief_tile = SettingTile(
             "Brief",
             "One-page editorial summary. Reuses the same cards as Signal.",
-            design_icon("box-blue.svg"),
+            design_icon("notes-blue.svg"),
         )
         self.meeting_report_signal_tile = SettingTile(
             "Signal",
             "One-screen glance. Reuses the same cards as Brief.",
-            design_icon("bolt-green.svg"),
+            design_icon("broadcast-green.svg"),
         )
         self.meeting_report_ribbon_check = self.meeting_report_ribbon_tile.checkbox
         self.meeting_report_brief_check = self.meeting_report_brief_tile.checkbox
@@ -2812,7 +2812,7 @@ class SettingsDialog(QDialog):
             "Localhost keeps the live dashboard on this computer. Sharing "
             "serves it to other devices on your local network.",
             self.meeting_bind_combo,
-            design_icon("box-blue.svg"),
+            design_icon("world-blue.svg"),
         )
 
         self.meeting_bind_warning = WrappedLabel(
@@ -2844,7 +2844,7 @@ class SettingsDialog(QDialog):
             "Automatic lets the meeting server pick a free port each session. "
             "Pick a fixed port only if you need a stable link.",
             self.meeting_port_spinbox,
-            design_icon("bolt-green.svg"),
+            design_icon("server-blue.svg"),
             compact=True,
         )
         self._tile_group(layout, "Port", [self.meeting_port_tile])

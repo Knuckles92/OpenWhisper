@@ -475,7 +475,7 @@ class ModelAssignments(QObject):
         # One card for whichever runner is chosen above: its model, then the
         # thinking level, which agents and API models both take.
         self.cleanup_model_tile = InfoTile(
-            "Cleanup model", _CLEANUP_ENDPOINT_DESCRIPTION, _design_icon("box-blue.svg"),
+            "Cleanup model", _CLEANUP_ENDPOINT_DESCRIPTION, _design_icon("cpu-blue.svg"),
         )
         self.cleanup_model_tile.add_body(self.cleanup_agent_picker.model_card)
         self.cleanup_model_tile.add_body(self.text_model_picker)
@@ -638,7 +638,7 @@ class ModelAssignments(QObject):
             )
 
         self.meeting_model_tile = InfoTile(
-            "Insights model", _MEETING_SDK_DESCRIPTION, _design_icon("box-blue.svg"),
+            "Insights model", _MEETING_SDK_DESCRIPTION, _design_icon("cpu-blue.svg"),
         )
         self.meeting_model_tile.add_body(self.meeting_agent_picker.model_card)
         self.meeting_model_tile.add_body(self.meeting_model_picker)
