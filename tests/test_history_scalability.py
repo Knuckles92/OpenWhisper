@@ -71,7 +71,7 @@ def test_large_history_does_not_stretch_section_header():
         for index in range(sidebar.MAX_HISTORY_ITEMS + 1)
     ]
     sidebar._history_load_generation = 1
-    sidebar._apply_history_results(1, "", [], "")
+    sidebar._apply_history_results(1, "", entries[:3], "")
     sidebar.show()
     app.processEvents()
     empty_header_height = sidebar.history_header.height()
@@ -121,7 +121,7 @@ def test_history_header_counts_the_cards_after_a_batch_lands_on_three_uploads():
     singles = _entries("single", 3)
     sidebar._apply_history_results(1, "", list(singles), "")
     app.processEvents()
-    assert sidebar.history_header.text() == "HISTORY (3)"
+    assert sidebar.history_header.text() == "3 entries"
 
     batch = _entries("batch", 20)
     sidebar._apply_history_results(1, "", batch + singles, "")
@@ -129,7 +129,7 @@ def test_history_header_counts_the_cards_after_a_batch_lands_on_three_uploads():
 
     assert sidebar.rendered_card_count() == 23
     assert len(_visible_cards(sidebar)) == 23
-    assert sidebar.history_header.text() == "HISTORY (23)"
+    assert sidebar.history_header.text() == "23 entries"
     sidebar.deleteLater()
     app.processEvents()
 
@@ -159,7 +159,7 @@ def test_history_header_matches_the_cards_when_a_card_fails_to_build():
 
     shown = len(_visible_cards(sidebar))
     assert sidebar.rendered_card_count() == shown
-    assert sidebar.history_header.text() == f"HISTORY ({shown})"
+    assert sidebar.history_header.text() == f"{shown} entries"
     sidebar.deleteLater()
     app.processEvents()
 
@@ -174,7 +174,7 @@ def test_history_shows_one_card_per_entry_id():
     app.processEvents()
 
     assert len(_visible_cards(sidebar)) == 4
-    assert sidebar.history_header.text() == "HISTORY (4)"
+    assert sidebar.history_header.text() == "4 entries"
     sidebar.deleteLater()
     app.processEvents()
 
@@ -192,6 +192,7 @@ def test_cleared_history_cards_leave_the_list_at_once():
     # Before the event loop runs the deferred deletes.
     assert _visible_cards(sidebar) == []
     assert not any(card.isVisible() for card in cards)
-    assert sidebar.history_header.text() == "HISTORY"
+    # The panel title says History; with no cards there is nothing to count.
+    assert not sidebar.history_header.isVisibleTo(sidebar)
     sidebar.deleteLater()
     app.processEvents()

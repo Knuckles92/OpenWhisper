@@ -194,7 +194,7 @@ def test_panel_search_filters_and_empty_copy():
 
     header = panel.findChild(QLabel, "sectionHeader")
     assert header is not None
-    assert header.text() == "PAST MEETINGS (2)"
+    assert header.text() == "2 meetings"
 
     copied = []
     panel.copy_transcript_requested.connect(copied.append)

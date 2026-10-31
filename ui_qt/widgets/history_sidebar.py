@@ -875,8 +875,11 @@ class HistorySidebar(QWidget):
         scroll_layout.setSpacing(12)
         scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        self.history_header = QLabel("HISTORY")
+        # The panel title already says History; this line only counts the
+        # cards, and hides while there are none.
+        self.history_header = QLabel("")
         self.history_header.setObjectName("sectionHeader")
+        self.history_header.hide()
         self.history_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
         self.history_header.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -964,9 +967,7 @@ class HistorySidebar(QWidget):
             QLabel#sectionHeader {
                 color: @text-secondary-strong;
                 padding-top: 4px;
-                letter-spacing: 0.5px;
-                text-transform: uppercase;
-                font-size: 10px;
+                font-size: 11px;
                 font-weight: 600;
             }
             QPushButton#sidebarMenuBtn {
@@ -1273,8 +1274,10 @@ class HistorySidebar(QWidget):
         # a card that failed to build left the new count over the old list.
         rendered = self.rendered_card_count()
         self.history_header.setText(
-            f"HISTORY ({rendered}{'+' if has_more else ''})" if rendered else "HISTORY"
+            f"{rendered}{'+' if has_more else ''} "
+            f"{'entry' if rendered == 1 and not has_more else 'entries'}"
         )
+        self.history_header.setVisible(bool(rendered))
         if notice:
             self._add_remote_notice(notice)
         if has_more:
@@ -1289,7 +1292,8 @@ class HistorySidebar(QWidget):
         """Replace the list with one line, such as why it is empty."""
         self._clear_layout(self.history_list_layout)
         self._history_cards = {}
-        self.history_header.setText("HISTORY")
+        self.history_header.setText("")
+        self.history_header.hide()
         self.history_list_layout.addWidget(self._make_empty_label(message))
 
     def _create_card(self, entry, settings) -> HistoryItemWidget:

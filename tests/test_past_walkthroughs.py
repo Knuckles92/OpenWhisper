@@ -112,7 +112,7 @@ def test_cards_list_newest_first_and_open_in_the_library(panel, root):
 
     assert [card.summary.folder for card in panel.cards] == [newer, older]
     assert panel.cards[0].when_label.text() == "Today · 10:30 AM"
-    assert panel.count_header.text() == "WALKTHROUGHS (2)"
+    assert panel.count_header.text() == "2 walkthroughs"
     QTest.mouseClick(panel.cards[1], Qt.MouseButton.LeftButton)
     QTest.keyClick(panel.cards[0], Qt.Key.Key_Return)
     panel.library_button.click()
@@ -126,7 +126,7 @@ def test_search_keeps_the_cards_holding_every_word(panel, root):
 
     panel.search_input.setText("History  PANEL")
     assert [card.isVisibleTo(panel) for card in panel.cards] == [True, False]
-    assert panel.count_header.text() == "WALKTHROUGHS (1)"
+    assert panel.count_header.text() == "1 walkthrough"
 
     panel.search_input.setText("nothing like this")
     assert panel.empty_label.text() == "No walkthrough says that"
@@ -148,7 +148,7 @@ def test_only_the_newest_are_built(panel, root, monkeypatch):
     _loaded(panel)
 
     assert len(panel.cards) == 2
-    assert panel.count_header.text() == "WALKTHROUGHS (2+)"
+    assert panel.count_header.text() == "2+ walkthroughs"
     assert "all 3" in panel.empty_label.text()
 
 

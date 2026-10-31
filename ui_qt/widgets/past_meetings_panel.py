@@ -469,8 +469,11 @@ class PastMeetingsPanel(QWidget):
         self.meetings_layout.setSpacing(12)
         self.meetings_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        self.section_header = QLabel("PAST MEETINGS")
+        # The panel title already says Past Meetings; this line only counts
+        # the meetings, and hides while there are none.
+        self.section_header = QLabel("")
         self.section_header.setObjectName("sectionHeader")
+        self.section_header.hide()
         self.section_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
         self.meetings_layout.addWidget(self.section_header)
 
@@ -693,7 +696,8 @@ class PastMeetingsPanel(QWidget):
     def _show_load_failure(self) -> None:
         self._meetings = []
         self._clear_list()
-        self.section_header.setText("PAST MEETINGS")
+        self.section_header.setText("")
+        self.section_header.hide()
         self.meetings_list_layout.addWidget(
             self._placeholder("Past meetings could not be loaded")
         )
@@ -725,7 +729,10 @@ class PastMeetingsPanel(QWidget):
         total = len(self._meetings)
         shown = min(len(meetings), self.MAX_MEETINGS)
         suffix = "+" if self._has_more and shown == self.MAX_MEETINGS else ""
-        self.section_header.setText(f"PAST MEETINGS ({shown}{suffix})")
+        self.section_header.setText(
+            f"{shown}{suffix} {'meeting' if shown == 1 and not suffix else 'meetings'}"
+        )
+        self.section_header.setVisible(bool(shown))
 
         if not self._meetings:
             self._clear_list()
@@ -929,9 +936,7 @@ class PastMeetingsPanel(QWidget):
             QLabel#sectionHeader {
                 color: @text-secondary-strong;
                 padding-top: 4px;
-                letter-spacing: 0.5px;
-                text-transform: uppercase;
-                font-size: 10px;
+                font-size: 11px;
                 font-weight: 600;
                 background-color: transparent;
             }
