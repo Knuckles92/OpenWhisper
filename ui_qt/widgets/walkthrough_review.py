@@ -46,12 +46,18 @@ from ui_qt.utils.file_reveal import reveal_in_file_manager
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.palette import token_color
 from ui_qt.widgets.context_menu import context_menu
+from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.walkthrough_ready import FileChip
 
-#: The largest a screenshot shows beside its words, in logical pixels.
-PREVIEW_SIZE = QSize(232, 146)
+#: The largest a screenshot shows beside its words, in logical pixels; it
+#: grows toward this with the room its row has.
+PREVIEW_SIZE = QSize(360, 225)
+#: The narrowest a screenshot gets, so a narrow window keeps it beside its words.
+PREVIEW_MIN_WIDTH = 180
+#: How a row's width splits between its screenshot and its words.
+PREVIEW_STRETCH, WORDS_STRETCH = 3, 4
 SPOKEN_HINT = ("Fix any words, drag a row to move a screenshot and its words, or switch a "
                "screenshot off to leave it out. Original screenshots are kept.")
 WRITE_UP_HINT = ("Fix the write-up's words or drag a row to move a screenshot. "
@@ -180,7 +186,8 @@ _STYLE = """
         border: none;
         border-radius: 1px;
     }
-    QLabel#wlStamp, QLabel#wlInclude, QLabel#wlPreview, QLabel#wlNoShot {
+    QLabel#wlStamp, QLabel#wlInclude, QWidget#wlPreview, QLabel#wlNoShot,
+    QWidget#wlActionGroup {
         background: transparent;
     }
     QLabel#wlStep {
@@ -290,7 +297,7 @@ def _shots(count: int) -> str:
 
 
 def _preview(path: Path, ratio: float) -> QPixmap | None:
-    """The screenshot decoded at the size it shows, with rounded corners."""
+    """The screenshot decoded at the largest size it shows."""
     reader = QImageReader(str(path))
     size = reader.size()
     if not size.isValid():
@@ -301,29 +308,9 @@ def _preview(path: Path, ratio: float) -> QPixmap | None:
     image = reader.read()
     if image.isNull():
         return None
-    pixmap = QPixmap(image.size())
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    clip = QPainterPath()
-    clip.addRoundedRect(QRectF(pixmap.rect()), 8 * ratio, 8 * ratio)
-    painter.setClipPath(clip)
-    painter.drawImage(0, 0, image)
-    painter.end()
+    pixmap = QPixmap.fromImage(image)
     pixmap.setDevicePixelRatio(ratio)
     return pixmap
-
-
-def _faded(pixmap: QPixmap) -> QPixmap:
-    """``pixmap`` as a screenshot left out of the document: mostly see-through."""
-    faded = QPixmap(pixmap.size())
-    faded.setDevicePixelRatio(pixmap.devicePixelRatio())
-    faded.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(faded)
-    painter.setOpacity(0.28)
-    painter.drawPixmap(0, 0, pixmap)
-    painter.end()
-    return faded
 
 
 def _pill(text: str, tone: str = "") -> QLabel:
@@ -414,17 +401,68 @@ class _Grip(QWidget):
         self._press = None
 
 
-class _Preview(QLabel):
-    """A row's screenshot; clicking it opens the full picture."""
+class _Preview(QWidget):
+    """A row's screenshot, as large as its row has room for; clicking it opens the full picture.
 
-    def __init__(self, image: Path):
+    ``picture`` is decoded once at the largest size it shows and drawn
+    smaller as the row narrows, faded while the screenshot is left out.
+    """
+
+    def __init__(self, image: Path, picture: QPixmap, included: bool):
         super().__init__()
         self.image = image
+        self._picture = picture
+        self._included = included
         self.setObjectName("wlPreview")
         self.setAccessibleName(f"Preview of {image.name}")
-        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("Open the full screenshot")
+        size = picture.deviceIndependentSize()
+        self._ratio = size.height() / size.width()
+        # Never drawn larger than decoded: a small region stays its own size.
+        self._widest = round(size.width())
+        self.setMinimumWidth(min(PREVIEW_MIN_WIDTH, self._widest))
+        self.setMaximumWidth(self._widest)
+        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+
+    @property
+    def included(self) -> bool:
+        return self._included
+
+    def set_included(self, on: bool) -> None:
+        """Fade the screenshot while it's left out, so the next save can bring it back."""
+        self._included = on
+        self.update()
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        return round(min(width, self._widest) * self._ratio)
+
+    def sizeHint(self) -> QSize:
+        # The row shares out the rest by stretch, so every row's screenshot is as wide.
+        return self.minimumSizeHint()
+
+    def minimumSizeHint(self) -> QSize:
+        width = self.minimumWidth()
+        return QSize(width, self.heightForWidth(width))
+
+    def paintEvent(self, event):
+        width = min(self.width(), self._widest)
+        shown = QRectF(0, 0, width, self.heightForWidth(width))
+        painter = QPainter(self)
+        painter.setRenderHints(QPainter.RenderHint.Antialiasing
+                               | QPainter.RenderHint.SmoothPixmapTransform)
+        corners = QPainterPath()
+        corners.addRoundedRect(shown, 8, 8)
+        painter.setClipPath(corners)
+        if not self._included:
+            painter.setOpacity(0.28)
+        painter.drawPixmap(shown, self._picture, QRectF(self._picture.rect()))
+        painter.end()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -445,12 +483,13 @@ class _Row(QFrame):
         self.setObjectName("wlSection")
         self.index = index
         self.line = line
+        self.preview: _Preview | None = None
         row = QHBoxLayout(self)
         row.setContentsMargins(8, 12, 14, 12)
         row.setSpacing(10)
         self.grip = _Grip(self)
         row.addWidget(self.grip)
-        row.addWidget(self._picture(image, included, can_omit), 0, Qt.AlignmentFlag.AlignTop)
+        row.addWidget(self._picture(image, included), PREVIEW_STRETCH, Qt.AlignmentFlag.AlignTop)
         column = QVBoxLayout()
         column.setSpacing(8)
         top = QHBoxLayout()
@@ -487,37 +526,30 @@ class _Row(QFrame):
             label.setWordWrap(True)
             column.addWidget(label)
         column.addStretch(1)
-        row.addLayout(column, 1)
+        row.addLayout(column, WORDS_STRETCH)
 
-    def _picture(self, image: Path | None, included: bool, can_omit: bool) -> QLabel:
-        if image is None:
-            empty = QLabel("No screenshot")
-            empty.setObjectName("wlNoShot")
-            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty.setFixedSize(PREVIEW_SIZE.width(), 64)
-            return empty
-        preview = _Preview(image)
-        preview.setFixedWidth(PREVIEW_SIZE.width())
-        shown = _preview(image, self.devicePixelRatioF())
-        if shown is None:
-            preview.setText(f"{image.name} is missing")
-            preview.setObjectName("wlStamp")
-            return preview
-        faded = _faded(shown)
-        preview.setPixmap(shown if included else faded)
-        self._pictures = (preview, shown, faded)
-        return preview
+    def _picture(self, image: Path | None, included: bool) -> QWidget:
+        shown = _preview(image, self.devicePixelRatioF()) if image else None
+        if shown is not None:
+            self.preview = _Preview(image, shown, included)
+            return self.preview
+        # As wide as the screenshots in the other rows, so the words line up.
+        empty = QLabel("No screenshot" if image is None else f"{image.name} is missing")
+        empty.setObjectName("wlNoShot")
+        empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty.setWordWrap(True)
+        empty.setMinimumWidth(PREVIEW_MIN_WIDTH)
+        empty.setMaximumWidth(PREVIEW_SIZE.width())
+        empty.setFixedHeight(64)
+        return empty
 
     def set_number(self, number: int) -> None:
         self.step.setText(str(number))
         self.editor.setAccessibleName(f"Section {number} transcript")
 
     def show_included(self, on: bool) -> None:
-        """Fade the screenshot while it's left out, so the next save can bring it back."""
-        pictures = getattr(self, "_pictures", None)
-        if pictures is not None:
-            preview, shown, faded = pictures
-            preview.setPixmap(shown if on else faded)
+        if self.preview is not None:
+            self.preview.set_included(on)
 
 
 class _Board(QWidget):
@@ -619,7 +651,7 @@ class WalkthroughReview(QWidget):
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(6)
         column.addLayout(self._header())
-        column.addLayout(self._actions())
+        column.addWidget(self._actions())
         status = QHBoxLayout()
         self.notice = QLabel(SPOKEN_HINT)
         self.notice.setObjectName("wlNotice")
@@ -684,9 +716,8 @@ class WalkthroughReview(QWidget):
         head.addWidget(self.version_bar, 0, Qt.AlignmentFlag.AlignTop)
         return head
 
-    def _actions(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setSpacing(8)
+    def _actions(self) -> Reflow:
+        """Copy and the file on the left; Open and More beside them, or below once narrow."""
         self.pdf_button = self._button(
             "Copy PDF", "wlPrimary", lambda: self._copy(WalkthroughCopyFormat.PDF))
         self.pdf_button.setToolTip("The PDF file, to paste or attach anywhere, agents included")
@@ -712,12 +743,22 @@ class WalkthroughReview(QWidget):
         self.menu.addSeparator()
         self.delete_button = self._menu_action("Delete…", self._delete)
         self.more_button.setMenu(self.menu)
-        for widget in (self.pdf_button, self.markdown_button, self.copy_word_button, self.chip):
+        self.copy_group = self._group(
+            self.pdf_button, self.markdown_button, self.copy_word_button, self.chip)
+        self.action_row = Reflow(self.copy_group, self._group(self.open_button, self.more_button))
+        return self.action_row
+
+    @staticmethod
+    def _group(*widgets: QWidget) -> QWidget:
+        group = QWidget()
+        group.setObjectName("wlActionGroup")
+        row = QHBoxLayout(group)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        for widget in widgets:
             row.addWidget(widget)
         row.addStretch(1)
-        row.addWidget(self.open_button)
-        row.addWidget(self.more_button)
-        return row
+        return group
 
     def _save_bar(self) -> QFrame:
         self.save_bar = QFrame()
@@ -737,6 +778,12 @@ class WalkthroughReview(QWidget):
         row.addWidget(self.save_redo_button)
         self.save_bar.hide()
         return self.save_bar
+
+    def minimumSizeHint(self) -> QSize:
+        # The row of actions ignores its own width so Open can drop below Copy,
+        # but the copy buttons themselves never squash.
+        return super().minimumSizeHint().expandedTo(
+            QSize(self.copy_group.minimumSizeHint().width(), 0))
 
     def _button(self, text: str, name: str, slot) -> QPushButton:
         button = QPushButton(text)

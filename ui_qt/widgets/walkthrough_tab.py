@@ -10,7 +10,9 @@ link away.
 Below that, the newest walkthrough shows as a storyboard to fix, reorder and
 copy again (``walkthrough_review.py``); one picked in the side panel, which
 lists past walkthroughs while this tab is open, shows there instead. With a
-walkthrough to show, the choices fold away under Setup. See docs/walkthrough.md.
+walkthrough to show, the choices fold away under Setup and the window widens
+for the storyboard, giving the width back on the next tab. See
+docs/walkthrough.md.
 """
 from __future__ import annotations
 
@@ -64,6 +66,9 @@ from ui_qt.widgets.wrapped_label import WrappedLabel
 OWN_PROMPT = "Your own"
 #: The storyboard never shrinks below this, so a couple of rows always show.
 REVIEW_MIN_HEIGHT = 380
+#: How wide the page asks the window to be while a storyboard shows: room
+#: for each screenshot at a size you can read beside a comfortable line of words.
+STORYBOARD_WIDTH = 900
 #: How long typing in the prompt pauses before it is saved.
 PROMPT_SAVE_DELAY_MS = 400
 
@@ -661,6 +666,10 @@ class WalkthroughTab(QWidget):
     def fills_height(self) -> bool:
         """With a storyboard, the page takes whatever height the window is given."""
         return not self.review.isHidden()
+
+    def preferred_width(self) -> int:
+        """With a storyboard, the window widens to show it (0: as wide as the window is)."""
+        return STORYBOARD_WIDTH if self.fills_height() else 0
 
     def _show_setup(self, expanded: bool) -> None:
         # With nothing below to make room for, the choices are always open.

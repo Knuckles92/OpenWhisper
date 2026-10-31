@@ -272,7 +272,7 @@ from ui_qt.dialogs.history_entry_dialog import HistoryEntryDialog
 
 
 class _PageLayoutWatcher(QObject):
-    """Call back when a tab page's content may have changed height.
+    """Call back when a tab page's content may have changed size.
 
     Installed on each page's scroll content. Any row shown, hidden or
     rewrapped below it re-lays that widget out, which posts it a
@@ -391,18 +391,23 @@ class MainWindow(QMainWindow):
         self._geometry_format = "collapsed_content_v1"
 
         self._current_tab_index = TabbedContentWidget.TAB_QUICK_RECORD
-        # Every tab sizes the window to its page (see _sync_page_height),
+        # Every tab sizes the window to its page (see _sync_page_size),
         # except an open transcript, which keeps the height the user gives it.
         self._transcript_height = config.MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT
         # The page height the window last fitted, so it refits only on change.
         self._page_fit = None
+        # The content width the page last asked for, so it rewidens only on change.
+        self._page_width_need = None
+        # The window's width, without the side panel, from before a page
+        # widened it; a page that fits in it gets it back.
+        self._own_width = None
         # How short the window may go on this page: its fit, capped so a long
         # page can still be shrunk to scroll.
         self._page_floor = config.MAIN_WINDOW_MIN_HEIGHT
-        self._page_height_timer = QTimer(self)
-        self._page_height_timer.setSingleShot(True)
-        self._page_height_timer.timeout.connect(self._sync_page_height)
-        self._page_watcher = _PageLayoutWatcher(self._schedule_page_height_sync, self)
+        self._page_fit_timer = QTimer(self)
+        self._page_fit_timer.setSingleShot(True)
+        self._page_fit_timer.timeout.connect(self._sync_page_size)
+        self._page_watcher = _PageLayoutWatcher(self._schedule_page_fit, self)
         # The page whose scrollbar a window animation is holding off.
         self._unscrolled_page = None
         self._meeting_intro_scheduled = False
@@ -1202,23 +1207,24 @@ class MainWindow(QMainWindow):
             self._transcript_height = target_height
         self._animate_resize(self.width(), target_height)
 
-    def _schedule_page_height_sync(self) -> None:
-        """Queue a page height check for the next event-loop pass.
+    def _schedule_page_fit(self) -> None:
+        """Queue a page size check for the next event-loop pass.
 
         Deferring keeps the check off the state-update path and coalesces a
         burst of layout changes into one fit.
         """
         if not self._compositor_managed:
-            self._page_height_timer.start(0)
+            self._page_fit_timer.start(0)
 
     def _refit_page(self, animate: bool = True) -> None:
-        """Fit the window to the page now, even if its height has not changed.
+        """Fit the window to the page now, even if its size has not changed.
 
         Not deferred: a page just switched to would otherwise show a frame at
         the old height, with a scrollbar it is about to lose.
         """
         self._page_fit = None
-        self._sync_page_height(animate)
+        self._page_width_need = None
+        self._sync_page_size(animate)
 
     def _current_page(self) -> QWidget:
         return self.tabbed_content.stack.currentWidget()
@@ -1227,25 +1233,54 @@ class MainWindow(QMainWindow):
         """An open transcript or a walkthrough storyboard fills whatever height the user gives it."""
         return hasattr(page, "fills_height") and page.fills_height()
 
-    def _page_content_height(self, page: QWidget) -> int:
-        """The height ``page`` needs to show all of its content without scrolling."""
-        area = page.scroll_area
-        layout = area.widget().layout()
-        # The width the content gets once it fits, which has no scrollbar.
-        width = area.contentsRect().width()
+    def _page_content_height(self, page: QWidget, width: int) -> int:
+        """The height ``page`` needs to show all of its content ``width`` wide without scrolling."""
+        layout = page.scroll_area.widget().layout()
         if layout.hasHeightForWidth() and width > 0:
             return max(layout.minimumHeightForWidth(width), layout.heightForWidth(width))
         return max(layout.minimumSize().height(), layout.sizeHint().height())
 
-    def _sync_page_height(self, animate: bool = True) -> None:
-        """Smoothly fit the window's height to the selected tab's page.
+    def _page_content_width(self, page: QWidget) -> int:
+        """The width ``page``'s content needs: all of it unclipped, or more where it reads better."""
+        need = page.scroll_area.widget().minimumSizeHint().width()
+        if hasattr(page, "preferred_width"):
+            need = max(need, page.preferred_width())
+        return need
 
-        Every tab sizes the window to its page, so none shows blank space below
-        its content or a scrollbar it does not need, and the window follows as
-        rows come and go. An open transcript is the exception: it fills the
-        height the user last gave it. The window refits only when the page's
-        height changes (or on _refit_page), so a height the user drags stays
-        until then.
+    def _page_width(self, page: QWidget) -> int:
+        """The window width for ``page``: the user's own, widened while the page needs more.
+
+        Widening remembers the width it started from, and the next page that
+        fits in that width gets it back, so the Walkthrough tab's storyboard
+        doesn't leave every other tab wide. The width is chosen again only
+        when the page's need changes (or on _refit_page), so a width the user
+        drags stays until then.
+        """
+        need = self._page_content_width(page)
+        if need == self._page_width_need:
+            return self.width()
+        self._page_width_need = need
+        panel = self.history_sidebar.width()
+        own = self.width() if self._own_width is None else self._own_width + panel
+        # Everything beside the page's content (side panel included) stays as wide.
+        wanted = self.width() - page.scroll_area.contentsRect().width() + need
+        if wanted <= own:
+            self._own_width = None
+            return own
+        if self._own_width is None:
+            self._own_width = self.width() - panel
+        return wanted
+
+    def _sync_page_size(self, animate: bool = True) -> None:
+        """Smoothly fit the window to the selected tab's page.
+
+        Every tab sizes the window's height to its page, so none shows blank
+        space below its content or a scrollbar it does not need, and the
+        window follows as rows come and go. An open transcript is the
+        exception: it fills the height the user last gave it. A page that
+        needs more width than the window has widens it (_page_width). The
+        window refits only when the page's needs change (or on _refit_page),
+        so a size the user drags stays until then.
         """
         page = self._current_page()
         if (
@@ -1259,17 +1294,26 @@ class MainWindow(QMainWindow):
             or not hasattr(page, "scroll_area")
         ):
             return
-        if self._resize_animation_running():
-            # Refit once the window settles (_on_resize_animation_finished).
+        if (
+            self._resize_animation_running()
+            or self.history_sidebar.animation.state() == QPropertyAnimation.State.Running
+        ):
+            # Refit once the window settles (_on_resize_animation_finished,
+            # _on_sidebar_animation_finished).
             return
 
         from PyQt6.QtWidgets import QApplication
 
         # Settle pending layouts so the chrome and the page measure as shown.
         QApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)
+        width = self._clamp_geometry(0, 0, self._page_width(page), self.height()).width()
         chrome = self.height() - self.tabbed_content.stack.height()
-        fit = min(chrome + self._page_content_height(page), self._max_usable_height())
-        if fit == self._page_fit:
+        # The width the content gets once the window is there, with no scrollbar.
+        content_width = page.scroll_area.contentsRect().width() + width - self.width()
+        fit = min(
+            chrome + self._page_content_height(page, content_width), self._max_usable_height()
+        )
+        if fit == self._page_fit and width == self.width():
             return
         self._page_fit = fit
         self._page_floor = min(fit, config.MAIN_WINDOW_MIN_HEIGHT)
@@ -1277,12 +1321,12 @@ class MainWindow(QMainWindow):
         # Lower the floor first so a shrink is not stopped short; a rise
         # waits until the window is there, or it would jump.
         self.setMinimumHeight(min(self._page_floor, self.height()))
-        if abs(target - self.height()) > 1:
+        if abs(target - self.height()) > 1 or width != self.width():
             if animate:
-                self._animate_resize(self.width(), target)
+                self._animate_resize(width, target)
                 return
             geo = self.geometry()
-            self.setGeometry(self._clamp_geometry(geo.x(), geo.y(), geo.width(), target))
+            self.setGeometry(self._clamp_geometry(geo.x(), geo.y(), width, target))
         self.setMinimumHeight(self._page_floor)
 
     def _resize_animation_running(self) -> bool:
@@ -1296,7 +1340,7 @@ class MainWindow(QMainWindow):
             return
         # A transcript toggle moves the window ahead of the floor's refit.
         self.setMinimumHeight(min(self._page_floor, self.height()))
-        self._schedule_page_height_sync()
+        self._schedule_page_fit()
 
     def _max_usable_height(self) -> int:
         from PyQt6.QtWidgets import QApplication
@@ -1783,7 +1827,7 @@ class MainWindow(QMainWindow):
             page.updateGeometry()
             page.scroll_area.widget().updateGeometry()
             page.scroll_area.viewport().update()
-        self._schedule_page_height_sync()
+        self._schedule_page_fit()
 
     def _animate_resize(self, target_width: int, target_height: int):
         """Animate window resize.
@@ -2134,6 +2178,9 @@ class MainWindow(QMainWindow):
         )
         if history_expanded:
             width = max(self.minimumWidth(), width - self._sidebar_width)
+        if self._own_width is not None:
+            # A page widened the window for itself; the width is the user's own.
+            width = self._own_width
 
         try:
             settings_manager.save_setting(
@@ -2237,7 +2284,7 @@ class MainWindow(QMainWindow):
         # A narrower window rewraps a page's text, changing how much height
         # it needs. Height-only changes cannot alter the wrap.
         if event.oldSize().width() != event.size().width():
-            self._schedule_page_height_sync()
+            self._schedule_page_fit()
         if not self._resizing:
             self._schedule_geometry_save()
 

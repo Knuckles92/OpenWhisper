@@ -63,6 +63,12 @@ there unless you have unsaved edits to another. With a walkthrough to show,
 the copy choice, **Minimize to tray** and the AI write-up card fold away under
 **Setup**, which says what's chosen; with none yet, they show as before.
 
+The window widens for the storyboard (to about 930 pixels, or as far as the
+screen allows) and gives the width back when you switch to another tab; a
+window you've already made wider stays as it is. Screenshots grow with the
+room each row has, and in a narrow window **Open PDF** moves below the copy
+buttons, so nothing is cut off at the right edge.
+
 - **Walkthrough** starts recording. Talk as you would to a colleague looking
   over your shoulder. The column's header says how long it has recorded and
   how many screenshots you have kept (on Wayland, the recording overlay

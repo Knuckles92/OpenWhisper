@@ -264,3 +264,147 @@ def test_a_side_panel_pick_opens_in_the_tab_and_open_library_opens_the_dialog(ca
         finally:
             window._force_quit = True
             window.close()
+
+
+# ---- room ----
+
+def _large_capture(tmp_path):
+    """Two screenshots as large as a real screen's, so previews can take any size."""
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from PyQt6.QtGui import QColor, QImage
+
+    from services.walkthrough import finish
+    from services.walkthrough.session import WalkthroughSession
+
+    folder = tmp_path / "captures" / "2026-10-30_14-15-02"
+    folder.mkdir(parents=True)
+    session = WalkthroughSession(started_at=datetime(2026, 10, 30, 14, 15, 2),
+                                 make_folder=lambda _: folder)
+    image = QImage(1600, 1000, QImage.Format.Format_RGB32)
+    image.fill(QColor("#e8845c"))
+    session.add_shot(image, 14.0)
+    session.add_shot(image, 36.0)
+    words = ["On billing, Change plan stalls for three seconds.",
+             "Then the invoices table hangs on its last rows.", "That's it."]
+    finish.build_documents(session, session.saved_shots(), words, words, duration_s=50.0)
+    session.end()
+    return SimpleNamespace(folder=folder, root=folder.parent)
+
+
+def _settle(window):
+    """Wait for the window to finish fitting itself to its page."""
+    for _ in range(300):
+        QTest.qWait(10)
+        if not window._resize_animation_running() and not window._page_fit_timer.isActive():
+            return
+    pytest.fail("The window kept resizing")
+
+
+@pytest.fixture
+def window(tmp_path):
+    from PyQt6.QtCore import QRect
+
+    from config import config
+    from ui_qt.main_window import MainWindow
+    from ui_qt.widgets import walkthrough_tab
+
+    capture = _large_capture(tmp_path)
+    with patch("ui_qt.dialogs.meeting_intro_dialog.maybe_show_meeting_mode_intro"), \
+            patch.object(walkthrough_tab, "captures_root", return_value=capture.root):
+        window = MainWindow()
+        window._available_screen_rect = lambda: QRect(0, 0, 1600, 1000)
+        window.setGeometry(40, 40, config.MAIN_WINDOW_DEFAULT_WIDTH, 700)
+        window.show()
+        _settle(window)
+        yield window
+        window.walkthrough_tab.review._dirty = False
+        window._force_quit = True
+        window.close()
+
+
+def _open_tab(window, index):
+    window.tabbed_content.set_current_index(index)
+    _settle(window)
+
+
+def test_a_storyboard_widens_the_window_and_the_next_tab_gives_the_width_back(window):
+    from config import config
+    from services.settings import SettingsKey, settings_manager
+    from ui_qt.widgets.tabbed_content import TabbedContentWidget
+    from ui_qt.widgets.walkthrough_tab import STORYBOARD_WIDTH
+
+    _open_tab(window, TabbedContentWidget.TAB_WALKTHROUGH)
+    assert window.walkthrough_tab.scroll_area.contentsRect().width() == STORYBOARD_WIDTH
+    # The width the window keeps for next time is the user's own.
+    with patch.object(settings_manager, "save_setting") as save:
+        window._save_geometry()
+    key, saved = save.call_args.args
+    assert key == SettingsKey.WINDOW_GEOMETRY
+    assert saved["width"] == config.MAIN_WINDOW_DEFAULT_WIDTH
+
+    _open_tab(window, TabbedContentWidget.TAB_QUICK_RECORD)
+    assert window.width() == config.MAIN_WINDOW_DEFAULT_WIDTH
+
+
+def test_a_window_already_wide_enough_keeps_its_width(window):
+    from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+    window.setGeometry(40, 40, 1100, 700)
+    _settle(window)
+    _open_tab(window, TabbedContentWidget.TAB_WALKTHROUGH)
+    assert window.width() == 1100
+    _open_tab(window, TabbedContentWidget.TAB_QUICK_RECORD)
+    assert window.width() == 1100
+
+
+def test_dragged_to_its_narrowest_the_storyboard_shows_whole(window):
+    """Nothing runs past the right edge: Open drops below Copy, screenshots shrink."""
+    from config import config
+    from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+    _open_tab(window, TabbedContentWidget.TAB_WALKTHROUGH)
+    geo = window.geometry()
+    window.setGeometry(geo.x(), geo.y(), config.MAIN_WINDOW_MIN_WIDTH, geo.height())
+    _settle(window)
+
+    assert window.width() == config.MAIN_WINDOW_MIN_WIDTH
+    tab = window.walkthrough_tab
+    viewport = tab.scroll_area.viewport()
+    assert tab.scroll_area.widget().width() == viewport.width()
+    review = tab.review
+    assert review.action_row.stacked
+    edge = review.mapTo(viewport, review.rect().topRight()).x()
+    assert edge < viewport.width()
+    for row in review.rows:
+        assert row.width() <= review.board.width()
+
+
+def test_a_screenshot_grows_with_its_row_and_keeps_its_shape(tmp_path):
+    from PyQt6.QtWidgets import QApplication
+
+    from ui_qt.widgets.walkthrough_review import PREVIEW_MIN_WIDTH, PREVIEW_SIZE
+
+    widget = WalkthroughReview()
+    widget.show_folder(_large_capture(tmp_path).folder)
+    widget.show()
+    sizes = []
+    for width in (560, 900):
+        widget.resize(width, 700)
+        for _ in range(3):
+            QApplication.processEvents()
+        sizes.append(widget.rows[0].preview.size())
+    narrow, wide = sizes
+    assert PREVIEW_MIN_WIDTH <= narrow.width() < wide.width() <= PREVIEW_SIZE.width()
+    for size in sizes:
+        assert abs(size.height() - size.width() * 1000 / 1600) <= 1
+    widget.close()
+
+
+def test_a_screenshot_left_out_fades_and_comes_back(review):
+    row = review.rows[0]
+    row.check.setChecked(False)
+    assert not row.preview.included
+    row.check.setChecked(True)
+    assert row.preview.included
