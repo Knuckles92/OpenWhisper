@@ -108,9 +108,9 @@ class NoWheelSpinBox(QSpinBox):
     hidden so the theme cannot draw them as two-border corner marks.
     """
 
-    STEPPER_WIDTH = 28
+    STEPPER_WIDTH = 22
     STEPPER_GAP = 4
-    ICON_SIZE = QSize(16, 10)
+    ICON_SIZE = QSize(14, 14)
 
     def __init__(self, parent=None):
         super().__init__(parent)

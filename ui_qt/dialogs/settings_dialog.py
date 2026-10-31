@@ -1911,13 +1911,12 @@ class SettingsDialog(QDialog):
             design_icon("box-blue.svg"),
         )
 
-        self.max_recordings_label = QLabel("Number to keep:")
+        self.max_recordings_label = QLabel("Number to keep")
         self.max_recordings_spinbox = NoWheelSpinBox()
         self.max_recordings_spinbox.setMinimum(1)
         self.max_recordings_spinbox.setMaximum(1000)
         self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
         self.max_recordings_spinbox.setMinimumHeight(40)
-        self.max_recordings_spinbox.setMinimumWidth(120)
         # Retention deletes audio, so typed digits commit on Enter or
         # focus-out: tracking every keystroke once applied "1" on the way
         # from 20 to 100 and pruned all but one recording.
@@ -1928,7 +1927,7 @@ class SettingsDialog(QDialog):
         self.max_recordings_spinbox.editingFinished.connect(
             self._commit_retention
         )
-        self.max_recordings_mb_label = QLabel("Folder size limit:")
+        self.max_recordings_mb_label = QLabel("Folder size limit")
         self.max_recordings_mb_label.setObjectName("settingsTileFieldLabel")
         self.max_recordings_mb_spinbox = NoWheelSpinBox()
         self.max_recordings_mb_spinbox.setMinimum(10)
@@ -1937,7 +1936,10 @@ class SettingsDialog(QDialog):
         self.max_recordings_mb_spinbox.setSuffix(" MB")
         self.max_recordings_mb_spinbox.setValue(config.MAX_SAVED_RECORDINGS_MB)
         self.max_recordings_mb_spinbox.setMinimumHeight(40)
-        self.max_recordings_mb_spinbox.setMinimumWidth(140)
+        # One width for both limits, wide enough for the largest folder size.
+        retention_width = round(156 * current_ui_font_scale())
+        self.max_recordings_spinbox.setFixedWidth(retention_width)
+        self.max_recordings_mb_spinbox.setFixedWidth(retention_width)
         self.max_recordings_mb_spinbox.setKeyboardTracking(False)
         self.max_recordings_mb_spinbox.valueChanged.connect(
             self._schedule_retention_commit

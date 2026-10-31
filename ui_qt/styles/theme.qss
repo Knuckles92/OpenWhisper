@@ -1702,12 +1702,15 @@ QToolButton#spinStepDown {
     color: @slate-text-2;
 }
 
+/* Theme-coloured Tabler chevrons, small enough to read as a slim rail. */
 QToolButton#spinStepUp {
     border-top-right-radius: 7px;
+    qproperty-icon: url(ui_qt/assets/tabler/chevron-up-gray@icon-suffix.svg);
 }
 
 QToolButton#spinStepDown {
     border-bottom-right-radius: 7px;
+    qproperty-icon: url(ui_qt/assets/tabler/chevron-down-gray@icon-suffix.svg);
 }
 
 QToolButton#spinStepUp:hover,
