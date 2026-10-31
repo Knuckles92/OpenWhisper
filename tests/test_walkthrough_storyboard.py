@@ -209,16 +209,17 @@ def tab(capture):
 def test_the_tab_opens_on_the_newest_walkthrough_with_setup_folded(tab, capture):
     assert tab.review.folder == capture.folder
     assert tab.fills_height()
-    assert tab.setup_bar.isVisibleTo(tab)
+    assert tab.setup_toggle.isVisibleTo(tab)
+    assert tab.review_rule.isVisibleTo(tab)
     assert not tab.copy_area.isVisibleTo(tab)
     assert not tab.write_up_card.isVisibleTo(tab)
-    assert "Copies PDF" in tab.setup_bar.summary.text()
-    assert tab.setup_bar.action.text().startswith("Change")
-    tab.setup_bar.click()
+    assert tab.copy_summary.text() == "Copies <b>PDF</b>"
+    assert tab.setup_toggle.text().startswith("Change")
+    tab.setup_toggle.click()
     assert tab.copy_area.isVisibleTo(tab)
     assert tab.write_up_card.isVisibleTo(tab)
-    assert tab.setup_bar.action.text().startswith("Done")
-    tab.setup_bar.click()
+    assert tab.setup_toggle.text().startswith("Done")
+    tab.setup_toggle.click()
     assert not tab.copy_area.isVisibleTo(tab)
     assert not tab.write_up_card.isVisibleTo(tab)
 
@@ -230,7 +231,10 @@ def test_with_no_walkthrough_the_choices_show_as_before(tmp_path):
         tab = walkthrough_tab.WalkthroughTab()
     assert tab.review.isHidden()
     assert not tab.fills_height()
-    assert not tab.setup_bar.isVisibleTo(tab)
+    assert not tab.setup_toggle.isVisibleTo(tab)
+    assert not tab.review_rule.isVisibleTo(tab)
+    # The summary still says what happens; there is nothing to fold for.
+    assert tab.copy_summary.isVisibleTo(tab)
     assert tab.copy_area.isVisibleTo(tab)
     assert tab.write_up_card.isVisibleTo(tab)
     tab.close()
@@ -243,7 +247,7 @@ def test_closing_the_walkthrough_puts_the_tab_back_until_one_is_chosen(tab, capt
     tab.review.close_button.click()
     assert tab.review.isHidden()
     assert not tab.fills_height()
-    assert not tab.setup_bar.isVisibleTo(tab)
+    assert not tab.setup_toggle.isVisibleTo(tab)
     assert tab.copy_area.isVisibleTo(tab)
     # Still the newest, so the next launch opens without it too.
     with patch.object(walkthrough_tab, "captures_root", return_value=capture.root):
