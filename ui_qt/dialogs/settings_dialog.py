@@ -3576,14 +3576,20 @@ class SettingsDialog(QDialog):
         field.setMaximumWidth(220)
         card.add_control(field)
 
+        # Every row gets a Clear, so the shortcut column lines up. A required
+        # shortcut's stays disabled: it can be changed but never left empty.
+        button = Button("Clear")
+        button.setObjectName("hotkeyClearButton")
+        button.setAccessibleName(f"Clear {title} shortcut")
+        fit_compact_button(button, 68)
+        card.add_control(button)
         clear_button = None
         if optional:
-            clear_button = Button("Clear")
-            clear_button.setObjectName("hotkeyClearButton")
-            clear_button.setAccessibleName(f"Clear {title} shortcut")
-            fit_compact_button(clear_button, 68)
+            clear_button = button
             clear_button.clicked.connect(lambda _checked=False, key=key: self._clear_hotkey(key))
-            card.add_control(clear_button)
+        else:
+            button.setEnabled(False)
+            button.setToolTip(f"{title} can't be empty. Click its shortcut to change it.")
         self._shortcut_rows.append(_ShortcutRow(key, page, field, clear_button, note))
         if page == HOTKEYS:
             self.hotkey_inputs[key] = field
