@@ -124,6 +124,32 @@ QPushButton[tone="primary"]:disabled {
     border-color: @slate-border;
 }
 
+QPushButton[tone="danger"] {
+    color: @on-accent;
+    background-color: @danger;
+    border: 1px solid @danger;
+    border-radius: 8px;
+    padding: 6px 16px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton[tone="danger"]:hover {
+    background-color: @danger-hover;
+    border-color: @danger-hover;
+}
+
+QPushButton[tone="danger"]:pressed {
+    background-color: @danger-pressed;
+    border-color: @danger-pressed;
+}
+
+QPushButton[tone="danger"]:disabled {
+    color: @slate-text-disabled;
+    background-color: @slate-disabled;
+    border-color: @slate-border;
+}
+
 /* Danger buttons (for cancel/stop) */
 QPushButton#dangerButton {
     background-color: @danger; /* Apple System Red */

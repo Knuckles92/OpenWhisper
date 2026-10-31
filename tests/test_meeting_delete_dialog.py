@@ -3,7 +3,7 @@
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QPushButton
+from PyQt6.QtWidgets import QDialog, QLabel, QPushButton
 
 from ui_qt.dialogs.meeting_delete_dialog import MeetingDeleteDialog
 
@@ -35,17 +35,25 @@ def test_options_stay_in_layout_after_show_and_resize(has_audio):
     dialog.close()
 
 
+def test_cancel_comes_first_and_delete_is_the_danger_action():
+    dialog = MeetingDeleteDialog()
+    dialog.show()
+    QTest.qWait(20)
+    assert dialog.cancel_button.x() < dialog.delete_button.x()
+    assert dialog.delete_button.property("tone") == "danger"
+    assert dialog.cancel_button.height() == dialog.delete_button.height()
+    assert dialog.cancel_button.isDefault()
+    dialog.close()
+
+
 @pytest.mark.parametrize("action", ["delete", "cancel", "enter", "escape", "close"])
 def test_confirmation_actions(action):
     dialog = MeetingDeleteDialog(has_audio=True)
     dialog.show()
     QTest.qWait(20)
     if action in ("delete", "cancel"):
-        standard = (
-            QDialogButtonBox.StandardButton.Ok if action == "delete"
-            else QDialogButtonBox.StandardButton.Cancel
-        )
-        QTest.mouseClick(dialog.buttons.button(standard), Qt.MouseButton.LeftButton)
+        button = dialog.delete_button if action == "delete" else dialog.cancel_button
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
     elif action in ("enter", "escape"):
         key = Qt.Key.Key_Return if action == "enter" else Qt.Key.Key_Escape
         QTest.keyClick(dialog, key)

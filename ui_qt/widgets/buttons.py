@@ -347,6 +347,17 @@ def compact_primary_button(button: Button) -> Button:
     return button
 
 
+def compact_danger_button(button: Button) -> Button:
+    """The danger fill at the compact size, for a destructive dialog action.
+
+    Sized like ``neutral_button`` and ``compact_primary_button``, so a
+    Cancel beside it shares its height.
+    """
+    set_style_property(button, "tone", "danger")
+    button.set_base_minimum_size(0, 34)
+    return button
+
+
 # The theme styles the classes below by object name ("primaryButton",
 # "dangerButton", ...). Give an instance an identifier with
 # setProperty("buttonId", ...), not setObjectName, or it loses its colours.
