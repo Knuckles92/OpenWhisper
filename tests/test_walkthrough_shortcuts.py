@@ -162,11 +162,18 @@ class FakeTranscription:
     def __init__(self):
         self.recording_walkthrough = None
         self.started = []
+        self.writing_up = False
+        self.write_ups_canceled = 0
 
     def start_walkthrough(self, session, *, source):
         self.started.append(source)
         self.recording_walkthrough = session
         return True
+
+    def cancel_write_up(self):
+        if self.writing_up:
+            self.write_ups_canceled += 1
+        return self.writing_up
 
 
 @pytest.fixture
@@ -449,6 +456,25 @@ def test_the_columns_cancel_is_the_users_cancel(h):
     h.ui.walkthrough_panel.cancel_requested.emit()
 
     h.controller.cancel.assert_called_once_with()
+
+
+def test_the_columns_cancel_stops_its_write_up_not_a_dictation(h):
+    _begin(h)
+    h.transcription.writing_up = True
+
+    h.ui.walkthrough_panel.cancel_requested.emit()
+
+    assert h.transcription.write_ups_canceled == 1
+    h.controller.cancel.assert_not_called()
+
+
+def test_a_new_walkthrough_waits_for_the_last_ones_write_up(h):
+    h.transcription.writing_up = True
+
+    h.runtime.toggle()
+
+    assert h.transcription.started == []
+    assert walkthrough_module.WAIT_FOR_WRITE_UP in h.ui.statuses
 
 
 def test_undo_takes_the_newest_screenshot_out_and_says_so(h):

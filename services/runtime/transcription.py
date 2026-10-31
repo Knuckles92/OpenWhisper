@@ -37,6 +37,7 @@ from services.settings import (
     SETTING_DEFAULTS,
     SettingsKey,
     resolve_walkthrough_copy_format,
+    resolve_walkthrough_write_up,
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
@@ -218,6 +219,9 @@ class TranscriptionRuntime:
         # The walkthrough job's WalkthroughSession, from its start until the
         # job ends; read and changed under _job_lock.
         self._walkthrough = None
+        # Stops the AI write-up of a finished walkthrough while one runs,
+        # after its job; Qt thread only.
+        self._write_up_cancel: Optional[threading.Event] = None
         self._stop_started_at = 0.0
         self._cancel_started_at = 0.0
 
@@ -264,6 +268,8 @@ class TranscriptionRuntime:
 
     def begin_shutdown(self) -> None:
         self._cancel_requested.set()
+        if self._write_up_cancel is not None:
+            self._write_up_cancel.set()
         self._incremental.discard()
 
     def _claim_job(self, job: Optional[dictation_pipeline.DictationJob] = None) -> bool:
@@ -963,6 +969,10 @@ class TranscriptionRuntime:
         if self.controller.is_meeting_active() or self.controller.recorder.is_recording:
             self._report_busy("recovering a walkthrough")
             return
+        if self.writing_up or getattr(self.controller, "_walkthrough_library_busy", False) is True:
+            self.controller.status_update.emit(
+                "Wait for the walkthrough being saved to finish before recovering one")
+            return
         try:
             folder = Path(folder)
             session = recovery_session(folder)
@@ -1577,44 +1587,74 @@ class TranscriptionRuntime:
         lost = session.lost_shots
         if lost:
             result = dataclasses.replace(result, lost_shots=lost)
-        session.result = self._maybe_write_up(result, shots, notes)
-        return session.result.history_text, session.result.history_raw, info
+        session.result = result
+        session.write_up_input = ([shot.path for shot in shots], list(notes))
+        return result.history_text, result.history_raw, info
 
-    def _maybe_write_up(self, result, shots, notes=()):
-        """``result`` written up by the chosen agent when Settings asks for it; worker.
+    @property
+    def writing_up(self) -> bool:
+        """Whether an AI write-up of a finished walkthrough is running; Qt thread."""
+        return self._write_up_cancel is not None
 
-        ``notes`` are what the user held Hold for note to say; without a
-        write-up nothing reads them.
+    def _start_write_up(self, session, settings) -> None:
+        """Write ``session``'s walkthrough up off the job slot, then copy it; Qt thread.
 
-        A failure keeps the words as spoken and says why. A Cancel stops the
-        job, as it does at every other step.
+        The job ended with the as-spoken document, so dictation keeps
+        working for the minutes the agent takes. ``notes`` are what the
+        user held Hold for note to say; without a write-up nothing reads
+        them. A failure or a Cancel keeps the words as spoken and says why.
         """
         from services.settings import (
-            resolve_walkthrough_write_up,
             resolve_walkthrough_write_up_agent,
             resolve_walkthrough_write_up_instructions,
             resolve_walkthrough_write_up_notes,
         )
         from services.walkthrough import write_up
 
-        settings = settings_manager.load_all_settings()
-        if not resolve_walkthrough_write_up(settings):
-            return result
+        result = session.result
+        shots, notes = session.write_up_input
         agent = resolve_walkthrough_write_up_agent(settings)
+        instructions = resolve_walkthrough_write_up_instructions(settings)
+        follow_notes = resolve_walkthrough_write_up_notes(settings)
+        cancel = self._write_up_cancel = threading.Event()
+
+        def work():
+            try:
+                written = write_up.write_up(
+                    result, shots, agent=agent, instructions=instructions,
+                    follow_notes=follow_notes, notes=notes, cancel_event=cancel,
+                )
+            except Exception as exc:
+                # Whatever stopped it, the walkthrough as spoken is still copied.
+                logger.warning("Walkthrough write-up failed: %s", exc)
+                written = dataclasses.replace(result, write_up_error=str(exc) or "failed")
+            self.controller.walkthrough_written_up.emit(written)
+
         self.controller.status_update.emit(
             f"Writing it up with {write_up.agent_name(agent)}...")
         try:
-            return write_up.write_up(
-                result, [shot.path for shot in shots], agent=agent,
-                instructions=resolve_walkthrough_write_up_instructions(settings),
-                follow_notes=resolve_walkthrough_write_up_notes(settings),
-                notes=notes,
-                cancel_event=self._cancel_requested,
-            )
-        except write_up.WriteUpFailed as exc:
-            self._raise_if_canceled()
-            logger.warning("Walkthrough write-up failed: %s", exc)
-            return dataclasses.replace(result, write_up_error=str(exc))
+            self.controller.walkthrough_executor.submit(work)
+        except RuntimeError as exc:
+            # Shutting down: nothing will write it up.
+            self.on_walkthrough_written_up(
+                dataclasses.replace(result, write_up_error=str(exc)))
+
+    def on_walkthrough_written_up(self, result) -> None:
+        """The write-up came back, failed or was canceled: copy what there is; Qt thread."""
+        self._write_up_cancel = None
+        if getattr(self.controller, "_shutting_down", False) is True:
+            return
+        self._copy_walkthrough(self.controller.ui_controller, result)
+
+    def cancel_write_up(self) -> bool:
+        """Stop the AI write-up in progress; its walkthrough is copied as spoken."""
+        cancel = self._write_up_cancel
+        if cancel is None:
+            return False
+        if not cancel.is_set():
+            cancel.set()
+            self.controller.status_update.emit("Stopping the write-up...")
+        return True
 
     def _report_section(self, index: int, total: int) -> None:
         """Stop a canceled walkthrough between sections, or say which one is next."""
@@ -2185,12 +2225,10 @@ class TranscriptionRuntime:
             self._notify_forced_outcome(job, pasted)
 
     def _deliver_walkthrough(self, ui, transcript: str = "") -> None:
-        """Copy a finished walkthrough and show where it is; Qt thread.
+        """Copy a finished walkthrough, or write it up first; Qt thread.
 
-        The clipboard holds the preferred PDF file, Markdown with absolute
-        image paths, or both. Never pasted: the user
-        chooses where it goes. When the document couldn't be written, the
-        words are copied as text and History keeps them.
+        When the document couldn't be written, the words are copied as
+        text and History keeps them.
         """
         with self._job_lock:
             session = self._walkthrough
@@ -2212,6 +2250,18 @@ class TranscriptionRuntime:
             if callable(dismiss):
                 dismiss()
             return
+        settings = settings_manager.load_all_settings()
+        if resolve_walkthrough_write_up(settings):
+            self._start_write_up(session, settings)
+            return
+        self._copy_walkthrough(ui, result)
+
+    def _copy_walkthrough(self, ui, result) -> None:
+        """Copy a walkthrough's document and show where it is; Qt thread.
+
+        The clipboard holds the preferred PDF file, Markdown with absolute
+        image paths, or both. Never pasted: the user chooses where it goes.
+        """
         copy_format = resolve_walkthrough_copy_format(settings_manager.load_all_settings())
         files, text = result.clipboard(copy_format)
         copied = ui.copy_files_to_clipboard(files, text=text)

@@ -342,12 +342,16 @@ and the status say **Write-up copied**.
   `write-up.pdf` and `write-up.docx` and keeps it out of `write-up.md`. Colours are CSS names or
   `#rrggbb`. A colour Qt can't read is ignored, and a font you don't have
   falls back to the usual one. Links keep their own colour.
-- **It uses your own plan** and usually takes 10 to 60 seconds. Dictation
-  waits for it, as for any job.
+- **It uses your own plan** and usually takes 10 to 60 seconds. It runs
+  after the walkthrough's transcription job, so dictation keeps working
+  meanwhile; the document is copied once the write-up is done. A new
+  walkthrough, a recovery, a backup or a library edit waits for it.
 - **The as-spoken files always stay.** If the write-up fails (the agent
   missing or signed out, a timeout, or no usable reply), the walkthrough is
-  copied as spoken and the status says why. **Cancel** during the write-up
-  cancels the walkthrough, as it does at every other step.
+  copied as spoken and the status says why. **Cancel** on the column, or
+  the Cancel shortcut when nothing is being recorded or transcribed, stops
+  the write-up the same way: the walkthrough is already in History, so it
+  is kept and copied as spoken.
 
 ## Where it works
 

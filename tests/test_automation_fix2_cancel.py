@@ -154,7 +154,8 @@ def _users_cancel(h, *, canceled_a_job):
     from services.application_controller import ApplicationController
 
     controller = SimpleNamespace(
-        transcription_runtime=SimpleNamespace(cancel=lambda: canceled_a_job),
+        transcription_runtime=SimpleNamespace(cancel=lambda: canceled_a_job,
+                                              cancel_write_up=lambda: False),
         action_runtime=h.rt,
     )
     # On the Qt thread the signal calls its slot at once.
@@ -173,7 +174,8 @@ def test_a_cancel_from_the_hotkey_thread_reaches_actions_on_the_qt_thread(
     controller = ApplicationController.__new__(ApplicationController)
     QObject.__init__(controller)
     threads = []
-    controller.transcription_runtime = SimpleNamespace(cancel=lambda: False)
+    controller.transcription_runtime = SimpleNamespace(cancel=lambda: False,
+                                                       cancel_write_up=lambda: False)
     controller.action_runtime = SimpleNamespace(
         cancel=lambda: threads.append(threading.current_thread()) or 1)
     controller.actions_cancel_requested.connect(controller._cancel_actions)  # as _connect_signals

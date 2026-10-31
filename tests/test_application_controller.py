@@ -8,7 +8,7 @@ import tempfile
 import time
 import types
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from config import config
 
@@ -1002,6 +1002,60 @@ class TestApplicationController:
         controller.meeting_runtime._starting = True
         assert "meeting" in controller._acquire_backup()
         assert not controller._backup_in_progress
+
+    def test_walkthrough_library_edit_leaves_dictation_free(self):
+        """A redone write-up runs an agent for minutes; the hotkey must still dictate."""
+        controller = self._create_controller()
+        controller.walkthrough_executor.shutdown(wait=False)
+        controller._startup_database_ready = True
+        central = types.SimpleNamespace(isEnabled=lambda: True, setEnabled=Mock())
+        controller.ui_controller.main_window.centralWidget = lambda: central
+        ui = controller.ui_controller
+        assert ui.submit_walkthrough_library.__self__ is controller.walkthrough_executor
+
+        assert ui.acquire_walkthrough_library() is None
+        central.setEnabled.assert_not_called()
+        assert controller._backup_in_progress is False
+        assert controller.transcription_runtime._claim_job() is True
+        controller.transcription_runtime._finish_job()
+        # It still shuts out a backup and a second edit until released.
+        assert "walkthrough" in controller._acquire_backup()
+        assert "other walkthrough" in ui.acquire_walkthrough_library()
+        ui.release_walkthrough_library()
+        assert controller._acquire_backup() is None
+        assert "backup" in ui.acquire_walkthrough_library()
+        controller._release_backup()
+
+    def test_walkthrough_library_waits_for_a_walkthrough_job(self):
+        from services.dictation_pipeline import DictationJob, JobMode
+
+        controller = self._create_controller()
+        controller.walkthrough_executor.shutdown(wait=False)
+        controller._startup_database_ready = True
+        runtime = controller.transcription_runtime
+        assert runtime._claim_job(DictationJob(mode=JobMode.WALKTHROUGH)) is True
+        assert "transcribed" in controller._acquire_walkthrough_library()
+        runtime._finish_job()
+        assert runtime._claim_job(DictationJob(mode=JobMode.DICTATION)) is True
+        assert controller._acquire_walkthrough_library() is None
+        runtime._finish_job()
+
+    def test_a_walkthrough_write_up_holds_the_library_but_not_dictation(self):
+        import threading
+
+        controller = self._create_controller()
+        controller.walkthrough_executor.shutdown(wait=False)
+        controller._startup_database_ready = True
+        runtime = controller.transcription_runtime
+        runtime._write_up_cancel = threading.Event()
+
+        assert "walkthrough" in controller._acquire_backup()
+        assert "write-up" in controller._acquire_walkthrough_library()
+        assert runtime._claim_job() is True
+        runtime._finish_job()
+        # The user's Cancel with nothing recorded or transcribed stops it.
+        controller.cancel()
+        assert runtime._write_up_cancel.is_set()
 
     def test_backup_restore_only_requests_restart_after_success(self):
         exits = []

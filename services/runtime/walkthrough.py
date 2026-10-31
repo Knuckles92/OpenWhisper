@@ -41,6 +41,7 @@ RECORDING_HINT = "Recording continues — talk while you draw"
 #: Lets the tray menu close before the screen is grabbed.
 TRAY_SNAP_DELAY_MS = 300
 FINISH_RECORDING_FIRST = "Finish the recording in progress first"
+WAIT_FOR_WRITE_UP = "Wait for the last walkthrough's write-up, or cancel it"
 #: How long "In 3 seconds" waits before it freezes the screen.
 COUNTDOWN_S = 3
 
@@ -104,6 +105,10 @@ class WalkthroughRuntime:
     def _begin(self, source: str) -> None:
         if self.controller._refuse_dictation_during_meeting():
             return
+        if self.controller.transcription_runtime.writing_up:
+            # The column is still showing the last one being written up.
+            self._tell(WAIT_FOR_WRITE_UP)
+            return
         unavailable = self.controller.transcription_readiness_message()
         if unavailable:
             self._tell(unavailable)
@@ -139,12 +144,20 @@ class WalkthroughRuntime:
         panel.snap_requested.connect(lambda: self.snap("ui"))
         panel.snap_mode_chosen.connect(self.choose_snap_mode)
         panel.finish_requested.connect(self.finish)
-        panel.cancel_requested.connect(self.controller.cancel)
+        panel.cancel_requested.connect(self.cancel)
         panel.undo_requested.connect(self.undo_last_shot)
         panel.move_requested.connect(self.move_shot)
         panel.remove_requested.connect(self.remove_shot)
         panel.note_held.connect(self.hold_note)
         panel.pause_requested.connect(self.set_paused)
+
+    def cancel(self) -> None:
+        """The column's Cancel: its write-up, while one runs, else its walkthrough.
+
+        A dictation made during the write-up is the user's Cancel to stop.
+        """
+        if not self.controller.transcription_runtime.cancel_write_up():
+            self.controller.cancel()
 
     def finish(self) -> None:
         """Done: finish the walkthrough being recorded, if one still is."""

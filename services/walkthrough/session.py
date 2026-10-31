@@ -216,6 +216,9 @@ class WalkthroughSession:
         self._journal_id = ""
         #: The built document; set by the job worker before it delivers.
         self.result: Optional[WalkthroughResult] = None
+        #: What an AI write-up of ``result`` reads once the job is done:
+        #: the screenshots' files and the notes held for it; set with it.
+        self.write_up_input: tuple[list[Path], list] = ([], [])
         #: Why the document could not be written, when the words were kept
         #: without it; set by the job worker.
         self.document_error = ""
@@ -462,8 +465,8 @@ class WalkthroughSession:
     def discard(self) -> None:
         """Delete what the walkthrough wrote, and its folder if that empties it.
 
-        The user canceled. A Cancel during the write-up comes after the
-        as-spoken documents are written, so they go with the screenshots.
+        The user canceled while it was recorded or transcribed. A Cancel
+        during the AI write-up, which runs after the job, keeps it as spoken.
         """
         from services.walkthrough import document, write_up
 

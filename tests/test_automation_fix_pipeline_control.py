@@ -113,6 +113,7 @@ def test_cancel_stops_running_actions_only_with_no_job_to_cancel(canceled_a_job)
 
     controller = SimpleNamespace(transcription_runtime=Mock(), actions_cancel_requested=Mock())
     controller.transcription_runtime.cancel.return_value = canceled_a_job
+    controller.transcription_runtime.cancel_write_up.return_value = False
     ApplicationController.cancel(controller)
     controller.transcription_runtime.cancel.assert_called_once_with()
     assert controller.actions_cancel_requested.emit.call_count == (0 if canceled_a_job else 1)

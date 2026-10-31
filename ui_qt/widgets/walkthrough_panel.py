@@ -134,6 +134,8 @@ TOOLTIPS = {
     "pause": "Pause: nothing is recorded until you resume",
     "resume": "Resume recording",
     "cancel": "Cancel the walkthrough: nothing is kept",
+    "cancel-writing": "Cancel: nothing is kept, unless the AI is already writing it up; "
+                      "then it's kept as spoken",
     "done": "Finish the walkthrough",
     "up": "Move up, with its words",
     "down": "Move down, with its words",
@@ -638,6 +640,8 @@ class WalkthroughPanel(QWidget):
             key = self._hit(QPointF(event.pos())).split(":")[0]
             if key == "pause" and self.paused:
                 key = "resume"
+            if key == "cancel" and self.state == self.WRITING:
+                key = "cancel-writing"
             note = self._footer()["note"][0]
             if not key and not self._notes_on and note.contains(QPointF(event.pos())):
                 key = "note-off"

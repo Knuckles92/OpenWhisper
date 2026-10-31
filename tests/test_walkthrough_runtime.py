@@ -126,6 +126,7 @@ class FakeBackend:
     def __init__(self, words=("first part", "second part", "last part")):
         self.words = list(words)
         self.paths = []
+        self.is_transcribing = False
 
     def transcribe(self, path):
         self.paths.append(Path(path).name)
@@ -177,6 +178,7 @@ def h(monkeypatch, tmp_path):
         transcription_failed=Signal(),
         executor=SimpleNamespace(submit=lambda fn, *args: None),
         persistence_executor=SimpleNamespace(submit=lambda fn, *args: fn(*args)),
+        walkthrough_executor=SimpleNamespace(submit=lambda fn, *args: fn(*args)),
         current_backend=backend,
         _streaming_enabled=False,
         _pending_audio_path=None,
@@ -190,6 +192,7 @@ def h(monkeypatch, tmp_path):
     )
     runtime = TranscriptionRuntime(controller)
     controller.history_persisted = Signal(runtime.on_history_persisted)
+    controller.walkthrough_written_up = Signal(runtime.on_walkthrough_written_up)
     controller.transcription_completed.handler = runtime.on_transcription_complete
     controller.transcription_failed.handler = runtime.on_transcription_error
     runtime._incremental = Mock()
@@ -599,10 +602,31 @@ def test_a_walkthrough_written_up_is_what_gets_copied(h, monkeypatch):
     ((shots, agent, instructions, follow_notes, cancel_event),) = calls
     assert shots == [folder / "shot-1.png"] and instructions == "Make it a checklist."
     assert follow_notes is True
-    assert agent == "codex" and cancel_event is h.runtime._cancel_requested
+    assert agent == "codex" and cancel_event is not h.runtime._cancel_requested
     assert ("Writing it up with Codex...",) in h.controller.status_update.calls
     assert h.ui.copied_files == [([folder / "write-up.pdf"], "# Checklist")]
     assert "Write-up copied (1 screenshot) — paste it into your agent" in h.ui.statuses
+    assert not h.runtime.writing_up
+
+
+def test_a_dictation_runs_while_the_write_up_is_still_writing(h, monkeypatch):
+    queued = []
+    h.controller.walkthrough_executor = SimpleNamespace(submit=queued.append)
+    _write_up_on(h, monkeypatch, lambda result, shots, **kwargs: dataclasses.replace(
+        result, clipboard_text="# Checklist", written_up=True))
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    assert h.runtime.writing_up and len(queued) == 1
+    assert h.ui.copied_files == [] and h.ui.ready == []
+    # The walkthrough's job is over and its words are in History.
+    assert not h.runtime.has_active_job and h.history.entries
+    assert h.runtime._claim_job() is True
+    h.runtime._finish_job()
+    queued[0]()
+    assert not h.runtime.writing_up
+    (result, _copied), = h.ui.ready
+    assert result.written_up
 
 
 def test_a_failed_write_up_copies_the_walkthrough_as_spoken(h, monkeypatch):
@@ -625,20 +649,32 @@ def test_a_failed_write_up_copies_the_walkthrough_as_spoken(h, monkeypatch):
     assert result.write_up_error == "Claude Code is not signed in."
 
 
-def test_a_cancel_during_the_write_up_stops_the_walkthrough(h, monkeypatch):
+def test_a_cancel_during_the_write_up_keeps_the_walkthrough_as_spoken(h, monkeypatch):
     from services.walkthrough.write_up import WriteUpFailed
 
     def write_up(result, shots, *, cancel_event, **kwargs):
-        cancel_event.set()
+        assert cancel_event.is_set()
         raise WriteUpFailed("canceled")
 
+    queued = []
+    h.controller.walkthrough_executor = SimpleNamespace(submit=queued.append)
+    h.settings.values[SettingsKey.WALKTHROUGH_COPY_FORMAT] = "both"
     _write_up_on(h, monkeypatch, write_up)
     folder = h.session.folder()
 
     h.runtime.transcribe_audio_file(str(h.audio))
+    # The user's Cancel once the job is over: nothing else is left to stop.
+    assert h.runtime.cancel() is False
+    assert h.runtime.cancel_write_up() is True
+    queued[0]()
 
-    assert h.ui.copied_files == []
-    assert not (folder / "shot-1.png").exists()
+    # Its words are already in History, so nothing is deleted.
+    assert h.history.entries
+    assert (folder / "shot-1.png").exists()
+    assert h.ui.copied_files == [([folder / "walkthrough.pdf"], "# Walkthrough (markdown)")]
+    (result, _copied), = h.ui.ready
+    assert result.write_up_error == "canceled"
+    assert not h.runtime.writing_up
 
 
 def test_an_unreadable_recording_is_transcribed_whole_above_the_screenshots(h):

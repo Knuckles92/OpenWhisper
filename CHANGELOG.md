@@ -21,6 +21,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **No recording pill beside the walkthrough column** — while the column shows a walkthrough, recording or being written, the recording overlay stays hidden, since it only repeated it; notices still appear. On Wayland, which has no column, the overlay keeps its Snap and Done.
 - **Saved Walkthroughs uses the same storyboard** — screenshots now sit beside their words instead of below them, and clicking one opens the full picture.
 
+### Fixed
+- **Dictation works while an AI write-up runs** — redoing a write-up, or saving and redoing one, no longer turns the dictation shortcut away ("Wait for backup or restore preparation to finish") or greys out the window. Neither does the write-up that follows a walkthrough: the walkthrough's job ends once its words are saved, and the document is copied when the agent is done. **Cancel** during that write-up now keeps the walkthrough as spoken instead of deleting it, since its words are already in History.
+
 ## [2.8.3] - 2026-10-28
 
 ### Changed

@@ -152,6 +152,8 @@ class ApplicationController(QObject):
     # fixed text, optional raw text, optional CleanupInfo
     transcription_completed = pyqtSignal(str, object, object)
     transcription_failed = pyqtSignal(str)
+    # a finished walkthrough's WalkthroughResult, written up or not
+    walkthrough_written_up = pyqtSignal(object)
     recording_capture_failed = pyqtSignal(str)
     history_persisted = pyqtSignal(object)
     startup_database_ready = pyqtSignal(str)
@@ -312,6 +314,12 @@ class ApplicationController(QObject):
         self.component_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="component"
         )
+        # Walkthrough library edits get one too: redoing a write-up runs an
+        # agent for minutes, and dictation finishes on the shared pool.
+        self.walkthrough_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="walkthrough-library"
+        )
+        self._walkthrough_library_busy = False
 
         self.hotkey_manager = None
         self.streaming_transcriber = None
@@ -481,11 +489,9 @@ class ApplicationController(QObject):
         )
         self.ui_controller.on_retranscribe = self.retranscribe_audio
         self.ui_controller.on_recover_walkthrough = self.transcription_runtime.recover_walkthrough
-        # Library writes use the same exclusive gate as backups: neither can
-        # race a capture, restore, meeting, or another document operation.
-        self.ui_controller.acquire_walkthrough_library = self._acquire_backup
-        self.ui_controller.release_walkthrough_library = self._release_backup
-        self.ui_controller.submit_walkthrough_library = self.executor.submit
+        self.ui_controller.acquire_walkthrough_library = self._acquire_walkthrough_library
+        self.ui_controller.release_walkthrough_library = self._release_walkthrough_library
+        self.ui_controller.submit_walkthrough_library = self.walkthrough_executor.submit
         self.ui_controller.on_upload_audio = self.upload_audio_file
         self.ui_controller.on_upload_audio_files = self.upload_audio_files
         self.ui_controller.on_upload_cancel = self.cancel
@@ -1044,6 +1050,8 @@ class ApplicationController(QObject):
             return "Wait for recording recovery to finish before backing up or restoring."
         runtime, meeting = self.transcription_runtime, self.meeting_runtime
         with runtime._capture_lock, meeting._lock, runtime._job_lock:
+            if self._walkthrough_library_busy or runtime.writing_up:
+                return "Wait for the walkthrough to finish saving before backing up or restoring."
             if (self._backup_in_progress or self.recorder.is_recording
                     or runtime._job_active
                     or bool(getattr(self.current_backend, "is_transcribing", False))):
@@ -1067,6 +1075,36 @@ class ApplicationController(QObject):
             central = self.ui_controller.main_window.centralWidget()
             if central:
                 central.setEnabled(self._backup_central_enabled)
+
+    def _acquire_walkthrough_library(self):
+        """Reserve the walkthrough library for one edit; Qt thread.
+
+        An edit shuts out a backup or restore, another edit, and a
+        walkthrough being transcribed or written up into the library.
+        Dictation keeps working: it never touches the library.
+        """
+        if self._shutting_down or not self._startup_database_ready:
+            return "Wait for OpenWhisper to finish starting."
+        recovery = self._startup_recovery_future
+        if recovery is not None and not recovery.done():
+            # Startup recovery attaches audio to drafts and prunes old entries.
+            return "Wait for recording recovery to finish."
+        runtime = self.transcription_runtime
+        with runtime._job_lock:
+            if self._backup_in_progress:
+                return "Wait for the backup or restore to finish."
+            if self._walkthrough_library_busy:
+                return "Wait for the other walkthrough change to finish."
+            if runtime.writing_up:
+                return "Wait for the AI write-up to finish."
+            job = runtime._active_job
+            if runtime._job_active and job is not None and job.mode == JobMode.WALKTHROUGH:
+                return "Wait for the walkthrough being transcribed to finish."
+            self._walkthrough_library_busy = True
+        return None
+
+    def _release_walkthrough_library(self):
+        self._walkthrough_library_busy = False
 
     def _on_restore_staged(self, _path, error):
         if not error and not self._shutting_down:
@@ -2521,9 +2559,11 @@ class ApplicationController(QObject):
         it cancels the actions still running, which is how a long Quick
         answer is stopped. Either way the status says what was canceled,
         or that there was nothing to cancel (a dictation already pasted and
-        being saved included).
+        being saved included). An AI write-up still running is stopped only
+        when nothing is being recorded or transcribed.
         """
-        if not self.transcription_runtime.cancel():
+        runtime = self.transcription_runtime
+        if not runtime.cancel() and not runtime.cancel_write_up():
             self.actions_cancel_requested.emit()
 
     def _cancel_actions(self) -> None:
@@ -2666,6 +2706,7 @@ class ApplicationController(QObject):
         self.actions_cancel_requested.connect(self._cancel_actions)
         self.transcription_completed.connect(self._on_transcription_complete)
         self.transcription_failed.connect(self._on_transcription_error)
+        self.walkthrough_written_up.connect(self.transcription_runtime.on_walkthrough_written_up)
         self.batch_completed.connect(self._on_batch_complete)
         self.batch_progress.connect(self.ui_controller.set_batch_progress)
         self.batch_item_finished.connect(self.ui_controller.set_batch_item_finished)
@@ -2869,7 +2910,7 @@ class ApplicationController(QObject):
         _attempt(lambda: self.record_sync.stop(timeout=2.0), "Error stopping the record sync")
         _attempt(self._stop_remote_engine, "Error stopping the remote engine host")
 
-        for executor in (self.executor, self.component_executor):
+        for executor in (self.executor, self.component_executor, self.walkthrough_executor):
             _attempt(lambda: executor.shutdown(wait=True, cancel_futures=True),
                      "Error during executor shutdown")
 
