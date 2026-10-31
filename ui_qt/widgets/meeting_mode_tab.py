@@ -899,8 +899,8 @@ class MeetingModeTab(QWidget):
         content_layout.addStretch()
 
     #: Lines the AI insights details up with the checkbox text: the
-    #: indicator's 20px plus the 8px ``spacing`` theme.qss gives the checkbox.
-    _AI_DETAIL_INDENT = 28
+    #: indicator's 15px plus the 8px ``spacing`` theme.qss gives the checkbox.
+    _AI_DETAIL_INDENT = 23
 
     def _build_ai_panel(self) -> QFrame:
         """Build the AI insights switch with what it does and where it runs.
