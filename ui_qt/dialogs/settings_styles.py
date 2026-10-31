@@ -1,4 +1,4 @@
-"""Settings → Personalize → Styles: the app you dictate into and the tone it gets.
+"""Settings → Personalize → Apps & styles: the app you dictate into and the tone it gets.
 
 Settings imports this module when it registers its pages, before the page is
 built, so it imports only modules Settings has already loaded.

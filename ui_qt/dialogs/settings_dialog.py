@@ -355,7 +355,7 @@ _CHAPTERS = (
     ("Personalize", "wand-purple.svg", (
         (DICTIONARY, "Dictionary", _PAGE_MODULE_ICONS[DICTIONARY]),
         (SNIPPETS, "Snippets", _PAGE_MODULE_ICONS[SNIPPETS]),
-        (STYLES, "Styles", _PAGE_MODULE_ICONS[STYLES]),
+        (STYLES, "Apps & styles", _PAGE_MODULE_ICONS[STYLES]),
         (CLEANUP_RULES, "Learned rules", "stack-slate.svg"),
         (CLEANUP_PROFILES, "Profiles", "typography-blue.svg"),
         (COMMANDS, "Commands", _PAGE_MODULE_ICONS[COMMANDS]),
@@ -987,7 +987,7 @@ class SettingsDialog(QDialog):
         )
         self._add_page(
             CLEANUP,
-            "AI transcript cleanup",
+            "AI cleanup",
             "Rewrite a finished dictation with a language model, together with "
             "your learned rules.",
             self._build_cleanup_page,
@@ -1001,7 +1001,7 @@ class SettingsDialog(QDialog):
         )
         self._add_page(
             CLEANUP_PROFILES,
-            "Cleanup profiles",
+            "Profiles",
             "Turn a recording into a support ticket, email, or your own format.",
             self._build_cleanup_profiles_page,
         )
@@ -1015,14 +1015,14 @@ class SettingsDialog(QDialog):
             )
         self._add_page(
             MEETING_VOICE,
-            "Meeting voice & speakers",
+            "Voice & speakers",
             "Choose local or remote speech for live captions and the optional "
             "end-of-meeting re-transcription. Applies to your next meeting.",
             self.models.build_meeting_voice_page,
         )
         self._add_page(
             MEETING_INTELLIGENCE,
-            "Meeting intelligence",
+            "Intelligence",
             "Pi or a coding agent you already use runs every Meeting Mode "
             "pass. Nothing is sent until you turn on "
             "AI insights for a meeting.",
@@ -1042,7 +1042,7 @@ class SettingsDialog(QDialog):
         )
         self._add_page(
             MEETING_DASHBOARD,
-            "Dashboard access",
+            "Dashboard",
             "Who can open the live meeting dashboard, and on which port.",
             self._build_meeting_dashboard_page,
         )

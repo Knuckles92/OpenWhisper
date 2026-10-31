@@ -152,9 +152,14 @@ class TestPersonalizeRail:
         assert [dialog.rail.name(key) for key in automate] == ["Actions", "Hooks", "API & MCP"]
         assert dialog.rail.chapter(CLEANUP) == "Dictation"
         assert [dialog.rail.name(key) for key in personalize] == [
-            "Dictionary", "Snippets", "Styles", "Learned rules", "Profiles", "Commands",
+            "Dictionary", "Snippets", "Apps & styles", "Learned rules", "Profiles", "Commands",
         ]
         assert dialog._headings[STYLES][0] == "Apps & styles"
+
+    def test_every_sidebar_name_is_its_page_title(self, make_dialog):
+        dialog, _store = make_dialog()
+        for key in dialog.rail.keys():
+            assert dialog.rail.name(key) == dialog._headings[key][0], key
 
     def test_page_modules_are_registered_without_building_their_pages(self, make_dialog):
         dialog, _store = make_dialog()
