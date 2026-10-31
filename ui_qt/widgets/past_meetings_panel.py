@@ -1027,33 +1027,31 @@ class PastMeetingsPanel(QWidget):
                 font-size: 11px;
                 background-color: transparent;
             }
+            /* The shared meeting pill: fully rounded, tinted, no outline
+               (see the meeting badge rules in theme.qss). */
             QLabel#pastMeetingInsightsPill {
                 color: @text-secondary-strong;
                 background-color: rgba(@overlay-rgb, 0.08);
-                border: 1px solid rgba(@overlay-rgb, 0.12);
-                border-radius: 6px;
+                border: none;
+                border-radius: 10px;
                 padding: 0px 8px;
-                font-size: 10px;
+                font-size: 11px;
                 font-weight: 600;
             }
             QLabel#pastMeetingInsightsPill[pillTone="warning"] {
                 color: @warning-text;
                 background-color: rgba(@warning-rgb, 0.15);
-                border: 1px solid rgba(@warning-rgb, 0.35);
             }
             QLabel#pastMeetingInsightsPill[pillTone="success"] {
                 color: @success-text;
                 background-color: rgba(@success-rgb, 0.15);
-                border: 1px solid rgba(@success-rgb, 0.35);
             }
             QLabel#pastMeetingInsightsPill[pillTone="location"] {
                 color: @accent-soft;
-                background-color: rgba(@accent-rgb, 0.12);
-                border: 1px solid rgba(@accent-rgb, 0.25);
+                background-color: rgba(@accent-rgb, 0.15);
             }
             QLabel#pastMeetingInsightsPill[pillTone="neutral"] {
                 color: @text-secondary-strong;
                 background-color: rgba(@overlay-rgb, 0.08);
-                border: 1px solid rgba(@overlay-rgb, 0.12);
             }
         """)

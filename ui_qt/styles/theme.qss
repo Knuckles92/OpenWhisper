@@ -2804,16 +2804,6 @@ QWidget#meetingModeScrollHost {
     background-color: transparent;
 }
 
-QLabel#meetingBetaBadge {
-    color: @warning-text;
-    background-color: rgba(@warning-rgb, 0.12);
-    border: 1px solid rgba(@warning-rgb, 0.3);
-    border-radius: 8px;
-    padding: 2px 8px;
-    font-size: 11px;
-    font-weight: 600;
-}
-
 QLabel#meetingBetaNotice {
     color: @text-body;
     background-color: transparent;
@@ -3034,34 +3024,6 @@ QLabel#meetingFinalizationIdentityMeta {
     font-size: 12px;
 }
 
-QLabel#meetingFinalizationIdentityPill {
-    color: @text-secondary-strong;
-    background-color: rgba(@overlay-rgb, 0.08);
-    border: 1px solid rgba(@overlay-rgb, 0.12);
-    border-radius: 10px;
-    padding: 2px 8px;
-    font-size: 10px;
-    font-weight: 600;
-}
-
-QLabel#meetingFinalizationIdentityPill[pillTone="warning"] {
-    color: @warning-text;
-    background-color: rgba(@warning-rgb, 0.15);
-    border: 1px solid rgba(@warning-rgb, 0.35);
-}
-
-QLabel#meetingFinalizationIdentityPill[pillTone="success"] {
-    color: @success-text;
-    background-color: rgba(@success-rgb, 0.15);
-    border: 1px solid rgba(@success-rgb, 0.35);
-}
-
-QLabel#meetingFinalizationIdentityPill[pillTone="neutral"] {
-    color: @text-secondary-strong;
-    background-color: rgba(@overlay-rgb, 0.08);
-    border: 1px solid rgba(@overlay-rgb, 0.12);
-}
-
 QLabel#meetingFinalizationTitle {
     color: @text;
     background-color: transparent;
@@ -3069,26 +3031,43 @@ QLabel#meetingFinalizationTitle {
     font-weight: 600;
 }
 
+/* Meeting badges share one pill: 20px tall (set in code), fully rounded, a
+   tinted fill and coloured text, no outline. Tones: neutral (default for the
+   identity pill), accent (default for the step badge), success, warning. The
+   Past Meetings card pills use the same values in their own stylesheet. */
+QLabel#meetingBetaBadge,
+QLabel#meetingFinalizationIdentityPill,
 QLabel#meetingFinalizationStepBadge {
-    color: @accent;
-    background-color: rgba(@accent-rgb, 0.15);
-    border: 1px solid rgba(@accent-rgb, 0.35);
+    border: none;
     border-radius: 10px;
-    padding: 2px 8px;
+    padding: 0px 8px;
     font-size: 11px;
     font-weight: 600;
 }
 
+QLabel#meetingFinalizationIdentityPill,
+QLabel#meetingFinalizationIdentityPill[pillTone="neutral"],
+QLabel#meetingFinalizationStepBadge[badgeTone="neutral"] {
+    color: @text-secondary-strong;
+    background-color: rgba(@overlay-rgb, 0.08);
+}
+
+QLabel#meetingFinalizationStepBadge {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.15);
+}
+
+QLabel#meetingFinalizationIdentityPill[pillTone="success"],
 QLabel#meetingFinalizationStepBadge[badgeTone="success"] {
     color: @success-text;
     background-color: rgba(@success-rgb, 0.15);
-    border: 1px solid rgba(@success-rgb, 0.35);
 }
 
+QLabel#meetingBetaBadge,
+QLabel#meetingFinalizationIdentityPill[pillTone="warning"],
 QLabel#meetingFinalizationStepBadge[badgeTone="warning"] {
     color: @warning-text;
     background-color: rgba(@warning-rgb, 0.15);
-    border: 1px solid rgba(@warning-rgb, 0.35);
 }
 
 QWidget#meetingFinalizationActiveBox {
