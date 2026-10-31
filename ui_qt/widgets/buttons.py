@@ -358,6 +358,12 @@ def compact_danger_button(button: Button) -> Button:
     return button
 
 
+#: Width of the Start button that leads Quick Record, Walkthrough and
+#: Meeting Mode (a green ``SuccessButton``, centred), so the same action looks
+#: the same on every tab. Paired controls under or beside it share this width.
+START_BUTTON_WIDTH = 340
+
+
 # The theme styles the classes below by object name ("primaryButton",
 # "dangerButton", ...). Give an instance an identifier with
 # setProperty("buttonId", ...), not setObjectName, or it loses its colours.

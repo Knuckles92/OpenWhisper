@@ -1,4 +1,8 @@
-"""A small "New" or "?" chip on a button's right side that explains it."""
+"""A small "New" or "?" chip that explains a feature.
+
+It sits on a button's right side, or on its own in a layout beside the
+feature's controls (pass ``button=None`` and a parent).
+"""
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRectF, QSize, Qt
 from PyQt6.QtGui import QFont, QFontMetrics, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import QPushButton, QToolTip, QWidget
@@ -13,8 +17,9 @@ class FeatureBadge(QWidget):
     explanation lives here instead of in the button's tooltip. A click on
     the chip shows the explanation and never reaches the button.
 
-    It is frosted glass over the button's fill: a tint of the label colour,
-    not a sticker of its own colour, so it reads as part of the button.
+    On a button it is frosted glass over the button's fill: a tint of the
+    label colour, not a sticker of its own colour, so it reads as part of the
+    button. On its own it is an accent-tinted pill with accent text.
     """
 
     NEW = "New"
@@ -26,8 +31,9 @@ class FeatureBadge(QWidget):
     _GAP = 4  # between the star and the word
     _CLEARANCE = 8  # kept between the chip and the button's centred label
 
-    def __init__(self, button: QPushButton, explanation: str):
-        super().__init__(button)
+    def __init__(self, button: QPushButton | None, explanation: str,
+                 parent: QWidget | None = None):
+        super().__init__(button if button is not None else parent)
         self.setObjectName("featureBadge")
         self._button = button
         self._text = self.NEW
@@ -45,8 +51,9 @@ class FeatureBadge(QWidget):
         self.setCursor(Qt.CursorShape.WhatsThisCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.set_explanation(explanation)
-        # Follows the button's size and its active/inactive look.
-        button.installEventFilter(self)
+        if button is not None:
+            # Follows the button's size and its active/inactive look.
+            button.installEventFilter(self)
         self._place()
 
     def set_explanation(self, explanation: str) -> None:
@@ -86,6 +93,11 @@ class FeatureBadge(QWidget):
 
     def _place(self) -> None:
         button = self._button
+        if button is None:
+            # Standalone: the layout places it; only its size follows the word.
+            self.setFixedSize(self.sizeHint())
+            self.update()
+            return
         key = (button.width(), button.height(), button.text(), self._text)
         if key == self._placed_for:
             return
@@ -125,6 +137,10 @@ class FeatureBadge(QWidget):
 
     def _colors(self):
         """``(ink, fill, edge)`` for the button's current look."""
+        if self._button is None:
+            ink = token_color("accent")
+            fill = token_color("accent", 70 if self._hovered else 38)
+            return ink, fill, token_color("accent", 140 if self._hovered else 90)
         if self._button.property("inactive"):
             # The button is flat and grey while a dictation runs.
             ink = token_color("text-muted")

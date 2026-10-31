@@ -57,7 +57,7 @@ from services.walkthrough.styles import (
 from services.walkthrough.write_up import AGENTS, DEFAULT_INSTRUCTIONS
 from ui_qt.dialogs.settings_destinations import WALKTHROUGHS
 from ui_qt.widgets.agent_picker import FOUND, AgentMark, describe_agent
-from ui_qt.widgets.buttons import PrimaryButton, WarningButton
+from ui_qt.widgets.buttons import START_BUTTON_WIDTH, SuccessButton, WarningButton
 from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.feature_badge import FeatureBadge
 from ui_qt.widgets.no_wheel import NoWheelComboBox
@@ -420,6 +420,18 @@ class WalkthroughTab(QWidget):
 
         keys = QHBoxLayout()
         keys.setSpacing(6)
+        # Leads the shortcut row rather than sitting on the Start button, so
+        # the button matches the other tabs' Start buttons.
+        self.walkthrough_badge = FeatureBadge(
+            None,
+            "Talk while you take screenshots, then get one document with your "
+            "words and pictures in order, copied to paste into an agent or chat.",
+            hero,
+        )
+        self.walkthrough_badge.set_new(
+            not resolve_walkthrough_intro_seen(settings_manager.load_all_settings()))
+        keys.addWidget(self.walkthrough_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        keys.addSpacing(4)
         self.start_key = _key_chip("")
         self.snap_key = _key_chip("")
         for name, chip in (("Start / finish", self.start_key), ("Screenshot", self.snap_key)):
@@ -436,25 +448,22 @@ class WalkthroughTab(QWidget):
         keys.addWidget(self.settings_link)
         body.addLayout(keys)
 
-        buttons = QHBoxLayout()
+        # Start fills the shared Start width; while a walkthrough runs, Finish
+        # and Cancel split it (growing only if their labels need more).
+        button_box = QWidget()
+        button_box.setMinimumWidth(START_BUTTON_WIDTH)
+        buttons = QHBoxLayout(button_box)
+        buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(12)
-        self.walkthrough_button = PrimaryButton("Start Walkthrough")
+        self.walkthrough_button = SuccessButton("Start Walkthrough")
         self.walkthrough_button.setProperty("buttonId", "walkthrough")
         self.walkthrough_button.clicked.connect(self.walkthrough_requested)
-        self.walkthrough_badge = FeatureBadge(
-            self.walkthrough_button,
-            "Talk while you take screenshots, then get one document with your "
-            "words and pictures in order, copied to paste into an agent or chat.",
-        )
-        self.walkthrough_badge.set_new(
-            not resolve_walkthrough_intro_seen(settings_manager.load_all_settings()))
-        self.walkthrough_button.reserve_beside_label(FeatureBadge.room_beside_label())
         buttons.addWidget(self.walkthrough_button, 1)
         self.cancel_button = WarningButton("Cancel")
         self.cancel_button.clicked.connect(self.cancel_requested)
         self.cancel_button.hide()
         buttons.addWidget(self.cancel_button, 1)
-        body.addLayout(buttons)
+        body.addWidget(button_box, 0, Qt.AlignmentFlag.AlignHCenter)
 
         # Shown only with a walkthrough below: then the choices fold away.
         self.setup_bar = SetupBar()

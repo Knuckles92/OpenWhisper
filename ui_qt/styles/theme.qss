@@ -212,23 +212,6 @@ QPushButton#warningButton[inactive="true"]:pressed {
     border: 1px solid @border;
 }
 
-/* Start Walkthrough sits with the record controls (quick_record_tab.py):
-   their size and weight with the accent fill, and their outline while a
-   dictation records and it can't start. */
-QPushButton#primaryButton[buttonId="walkthrough"] {
-    font-size: 14px;
-    font-weight: 600;
-    padding: 10px 20px;
-}
-
-QPushButton#primaryButton[buttonId="walkthrough"][inactive="true"],
-QPushButton#primaryButton[buttonId="walkthrough"][inactive="true"]:hover,
-QPushButton#primaryButton[buttonId="walkthrough"][inactive="true"]:pressed {
-    background-color: @surface;
-    color: @text-muted;
-    border: 1px solid @border;
-}
-
 /* ComboBox (Model selector) */
 QComboBox {
     background-color: @surface;
@@ -2871,26 +2854,6 @@ QLabel#meetingElapsedLabel {
     padding: 0 4px;
 }
 
-/* Start and End keep the accent colors their SuccessButton / DangerButton
-   classes imply; the meeting-specific object names replace the class ones. */
-QPushButton#meetingStartButton {
-    background-color: @success;
-    color: @on-accent;
-    padding: 12px 28px;
-    font-size: 15px;
-    font-weight: 600;
-    border-radius: 10px;
-    min-width: 220px;
-}
-
-QPushButton#meetingStartButton:hover {
-    background-color: @success-hover;
-}
-
-QPushButton#meetingStartButton:pressed {
-    background-color: @success-pressed;
-}
-
 QPushButton#meetingPauseButton,
 QPushButton#meetingDashboardButton,
 QPushButton#meetingGuestLinkButton {
@@ -2899,6 +2862,8 @@ QPushButton#meetingGuestLinkButton {
     border-radius: 8px;
 }
 
+/* End keeps the danger fill its DangerButton class implies; the meeting
+   object name replaces the class one. */
 QPushButton#meetingEndButton {
     background-color: @danger;
     color: @on-accent;
