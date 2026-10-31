@@ -443,3 +443,27 @@ def test_a_screenshot_left_out_fades_and_comes_back(review):
     assert not row.preview.included
     row.check.setChecked(True)
     assert row.preview.included
+
+
+def test_a_screenshot_corner_button_copies_just_that_picture(review, capture):
+    from ui_qt.widgets.walkthrough_review import SHOT_COPY_INSET, SHOT_COPY_SIZE
+
+    row = review.rows[1]
+    button = row.preview.copy_button
+    assert button.x() + SHOT_COPY_SIZE + SHOT_COPY_INSET <= row.preview.width()
+    with patch("ui_qt.widgets.walkthrough_review.QDesktopServices.openUrl") as opened:
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+    opened.assert_not_called()
+    ([path],), kwargs = review._copy_files.call_args
+    assert path == row.preview.image
+    assert path.parent == capture.folder
+    assert kwargs["text"] == str(path)
+    assert not kwargs["image"].isNull()
+    assert review.notice.text() == "Screenshot copied."
+
+
+def test_a_screenshot_copies_even_with_unsaved_edits(review):
+    review.rows[0].editor.setPlainText("unsaved")
+    review.rows[0].preview.copy_button.click()
+    review._copy_files.assert_called_once()
+    assert review.notice.text() == "Screenshot copied."
