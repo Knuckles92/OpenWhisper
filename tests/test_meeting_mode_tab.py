@@ -332,9 +332,10 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertIn("when supported", subtitle)
         self.assertIn("PulseAudio", linux_hint)
         self.assertTrue(
-            "not yet publicly promoted" in linux_hint
+            "is a preview" in linux_hint
             or "not a supported" in linux_hint
         )
+        self.assertNotIn("publicly promoted", linux_hint)
         self.assertIn("WASAPI", win_hint)
         # macOS captures system audio, but only once the user grants it, so
         # the copy must name the permission rather than promise the channel.

@@ -64,10 +64,9 @@ def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str
         from meeting.platform import linux_meeting_implementation_ready
         if linux_meeting_implementation_ready():
             hint = (
-                "Linux system-audio capture is implemented (PulseAudio / "
-                "PipeWire-Pulse) but not yet publicly promoted. After the "
-                "Linux preview acknowledgement, OpenWhisper can enable "
-                "the default output monitor or continue microphone-only."
+                "Meeting Mode on Linux is a preview. System audio comes "
+                "through PulseAudio or PipeWire, or you can continue with "
+                "the microphone only."
             )
         else:
             os_name = meeting_unsupported_os_name(platform)
@@ -185,6 +184,16 @@ def installed_agent_destination(
             return f"{spec.name} isn't signed in", f"sign in, or {elsewhere}"
     where = describe_choice(agent_id, resolve_meeting_agent_model(agent_id, settings))
     return where, "your agent receives transcript text, never audio"
+
+
+def meeting_audio_platform_tone(platform: Optional[str] = None) -> str:
+    """``"note"`` for Linux's preview line, ``"warning"`` for unsupported ones."""
+    platform = platform or sys.platform
+    if platform.startswith("linux"):
+        from meeting.platform import linux_meeting_implementation_ready
+        if linux_meeting_implementation_ready():
+            return "note"
+    return "warning"
 
 
 def meeting_audio_shows_platform_warning(platform: Optional[str] = None) -> bool:
@@ -523,31 +532,34 @@ class MeetingModeTab(QWidget):
         title_row.addStretch()
         intro_card.layout.addLayout(title_row)
 
+        # One body style for the intro lines (theme.qss: meetingIntroText);
+        # the platform line below is a quiet note box, not more body text.
+        intro_text = QVBoxLayout()
+        intro_text.setSpacing(4)
+        subtitle_copy, platform_copy = meeting_audio_support_copy()
+        self.subtitle = WrappedLabel(subtitle_copy)
+        self.subtitle.setObjectName("meetingIntroText")
+        self.subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.subtitle.setToolTip(platform_copy)
+        intro_text.addWidget(self.subtitle)
+        self.speech_destination = WrappedLabel("")
+        self.speech_destination.setObjectName("meetingIntroText")
+        self.speech_destination.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        intro_text.addWidget(self.speech_destination)
         beta_notice = WrappedLabel(
             "Meeting Mode is in beta. Transcripts and insights may be inaccurate."
         )
-        beta_notice.setObjectName("meetingBetaNotice")
+        beta_notice.setObjectName("meetingIntroText")
         beta_notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        intro_card.layout.addWidget(beta_notice)
-
-        subtitle_copy, platform_copy = meeting_audio_support_copy()
-        self.subtitle = WrappedLabel(subtitle_copy)
-        self.subtitle.setObjectName("meetingModeSubtitle")
-        self.subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.subtitle.setFont(QFont("Segoe UI", 11))
-        self.subtitle.setToolTip(platform_copy)
-        intro_card.layout.addWidget(self.subtitle)
+        intro_text.addWidget(beta_notice)
+        intro_card.layout.addLayout(intro_text)
         self.platform_hint = WrappedLabel(platform_copy, intro_card)
         self.platform_hint.setObjectName("meetingModePlatformHint")
+        self.platform_hint.setProperty("tone", meeting_audio_platform_tone())
         self.platform_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.platform_hint.setFont(QFont("Segoe UI", 10))
         self.platform_hint.setAccessibleName("Meeting platform notice")
         self.platform_hint.setVisible(meeting_audio_shows_platform_warning())
         intro_card.layout.addWidget(self.platform_hint)
-        self.speech_destination = WrappedLabel("")
-        self.speech_destination.setObjectName("meetingSpeechDestination")
-        self.speech_destination.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        intro_card.layout.addWidget(self.speech_destination)
         content_layout.addWidget(intro_card)
 
         # Active session card. It comes before the AI insights panel so the

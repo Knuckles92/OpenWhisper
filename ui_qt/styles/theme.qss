@@ -2831,20 +2831,25 @@ QWidget#meetingModeScrollHost {
     background-color: transparent;
 }
 
-QLabel#meetingBetaNotice {
-    color: @text-body;
-    background-color: transparent;
-    font-size: 12px;
-}
-
-QLabel#meetingModeSubtitle {
+QLabel#meetingIntroText {
     color: @text-secondary;
     background-color: transparent;
+    font-size: 13px;
 }
 
 QLabel#meetingModePlatformHint {
+    color: @text-secondary;
+    background-color: @surface-sunken;
+    border: 1px solid @border;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+}
+
+QLabel#meetingModePlatformHint[tone="warning"] {
     color: @warning-text;
-    background-color: transparent;
+    background-color: @warning-tint;
+    border-color: @warning-tint-border;
 }
 
 QLabel#meetingStatusPill {
