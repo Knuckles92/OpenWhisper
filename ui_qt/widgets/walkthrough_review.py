@@ -39,9 +39,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from services.settings import WalkthroughCopyFormat
+from services.settings import (
+    WalkthroughCopyFormat,
+    resolve_walkthrough_write_up_instructions,
+    settings_manager,
+)
 from services.walkthrough import library
 from services.walkthrough.document import clock
+from services.walkthrough.write_up import DEFAULT_INSTRUCTIONS
 from ui_qt.utils.file_reveal import reveal_in_file_manager
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.palette import token_color
@@ -672,7 +677,8 @@ class WalkthroughReview(QWidget):
         self.actions = [self.save_button, self.save_redo_button, self.discard_button,
                         self.pdf_button, self.markdown_button, self.copy_word_button,
                         self.open_button, self.open_word_button, self.folder_button,
-                        self.retry_button, self.delete_button, self.recover_button,
+                        self.retry_button, self.style_button, self.prompt_button,
+                        self.delete_button, self.recover_button,
                         self.version_bar]
         self.show_folder(None)
 
@@ -740,6 +746,11 @@ class WalkthroughReview(QWidget):
         self.folder_button = self._menu_action("Show in folder", self._reveal)
         self.menu.addSeparator()
         self.retry_button = self._menu_action("Redo AI write-up", self._retry)
+        # Filled as it opens, so styles saved anywhere since show.
+        self.style_menu = context_menu(self.menu)
+        self.style_menu.aboutToShow.connect(self._fill_style_menu)
+        self.style_button = self.menu.addMenu(self.style_menu)
+        self.prompt_button = self._menu_action("Redo with a new prompt…", self._retry_with_prompt)
         self.menu.addSeparator()
         self.delete_button = self._menu_action("Delete…", self._delete)
         self.more_button.setMenu(self.menu)
@@ -933,7 +944,10 @@ class WalkthroughReview(QWidget):
         self.kind.setVisible(has and (draft or not self._written))
         self.version_bar.setVisible(self._written and walkthrough is not None)
         self.version_bar.setCurrentIndex(1 if self._spoken else 0)
+        redo = "Redo" if self._written else "Write up"
         self.retry_button.setText("Redo AI write-up" if self._written else "Write up with AI")
+        self.style_menu.setTitle(f"{redo} as")
+        self.prompt_button.setText(f"{redo} with a new prompt…")
         self.title.setVisible(has)
         if not self._busy:
             self.notice.setText(SPOKEN_HINT if self._spoken else WRITE_UP_HINT)
@@ -941,7 +955,8 @@ class WalkthroughReview(QWidget):
     def _show_actions(self, ready: bool, draft: bool) -> None:
         folder = self._folder
         for button in (self.save_button, self.discard_button, self.pdf_button,
-                       self.markdown_button, self.retry_button, self.open_button):
+                       self.markdown_button, self.retry_button, self.style_button,
+                       self.prompt_button, self.open_button):
             button.setEnabled(ready)
         # A draft has no document yet: nothing to copy, open or edit.
         for widget in (self.pdf_button, self.markdown_button, self.copy_word_button,
@@ -1159,11 +1174,41 @@ class WalkthroughReview(QWidget):
             self.notice.setText(str(exc))
 
     def _retry(self):
+        self._redo(None)
+
+    def _redo(self, instructions: str | None):
+        """Write it up again: with ``instructions``, or Settings' prompt when None."""
         if self._folder and not self._dirty:
             folder = self._folder
-            self.run(lambda: library.retry_write_up(folder, cancel_event=self._cancel))
+            self.run(lambda: library.retry_write_up(
+                folder, instructions=instructions, cancel_event=self._cancel))
         elif self._dirty:
             self.notice.setText("Save your changes before writing it up.")
+
+    def _fill_style_menu(self) -> None:
+        from services.walkthrough.styles import load_styles
+
+        self.style_menu.clear()
+        for style in load_styles(settings_manager.load_all_settings()):
+            action = self.style_menu.addAction(style.name)
+            action.setToolTip(style.instructions)
+            action.triggered.connect(
+                lambda _checked=False, words=style.instructions: self._redo(words))
+        self.style_menu.setToolTipsVisible(True)
+
+    def _retry_with_prompt(self):
+        from ui_qt.dialogs.write_up_prompt_dialog import WriteUpPromptDialog
+
+        if self._dirty:
+            self.notice.setText("Save your changes before writing it up.")
+            return
+        if not self._folder:
+            return
+        prompt = (resolve_walkthrough_write_up_instructions(settings_manager.load_all_settings())
+                  or DEFAULT_INSTRUCTIONS)
+        dialog = WriteUpPromptDialog(prompt, self, written=self._written)
+        if dialog.exec():
+            self._redo(dialog.prompt_text())
 
     def _recover_draft(self):
         if self._folder and self._recover:

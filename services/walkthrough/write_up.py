@@ -54,51 +54,6 @@ DEFAULT_INSTRUCTIONS = (
     "helps most."
 )
 
-#: Starting points the Walkthrough tab offers: (name, instructions), the
-#: default first. Picking one only fills in the instructions, which stay the
-#: user's to edit; the setting keeps the words, not the name.
-PRESETS = (
-    ("Walkthrough", DEFAULT_INSTRUCTIONS),
-    ("Step-by-step guide", (
-        "Turn this into a how-to guide someone could follow on their own. Give "
-        "it a short title, then numbered steps in the order I did them, each "
-        "saying what to do and what you should see, with the screenshot for "
-        "that step right under it. Tidy my wording and drop filler, but keep "
-        "every detail someone would need to repeat it."
-    )),
-    ("Bug report", (
-        "Write this up as a bug report. Start with a short title and a "
-        "one-sentence summary of the problem, then the steps to reproduce it, "
-        "what happened, and what I expected instead. Put each screenshot where "
-        "it shows the problem best. Keep exact names, numbers and error "
-        "messages as I said or showed them, and don't guess at causes I didn't "
-        "mention."
-    )),
-    ("Design feedback", (
-        "Write this up as design feedback on the screens I'm showing. Give it a "
-        "short title, then one section per change I'm suggesting: what's there "
-        "now, what I'd change and why, with the screenshot that shows it. End "
-        "with a short list of the proposed changes. Tidy my wording and keep my "
-        "reasoning, but don't add ideas I didn't have."
-    )),
-    ("Task for an agent", (
-        "Write this up as a brief for a coding agent to act on. Give it a short "
-        "title, then the goal in a sentence or two, what to change and where, "
-        "as I described it, and how to tell it's done. Put each screenshot "
-        "beside the part it explains. Keep the exact names of screens, buttons "
-        "and files, and don't add requirements I didn't state."
-    )),
-)
-
-
-def preset_name(instructions: str) -> str:
-    """The preset these instructions are, word for word, or "" for the user's own.
-
-    "" instructions are the default's, as everywhere else.
-    """
-    text = instructions.strip() or DEFAULT_INSTRUCTIONS
-    return next((name for name, words in PRESETS if words == text), "")
-
 #: The fixed part: where things are, what is safe to trust, and the format
 #: rules the PDF depends on. ``{source}`` says how the agent sees it,
 #: ``{speech}`` whether the user may speak to it.

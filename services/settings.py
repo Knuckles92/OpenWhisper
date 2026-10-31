@@ -345,6 +345,10 @@ class SettingsKey:
     WALKTHROUGH_WRITE_UP: Final[str] = "walkthrough_write_up"
     WALKTHROUGH_WRITE_UP_AGENT: Final[str] = "walkthrough_write_up_agent"
     WALKTHROUGH_WRITE_UP_INSTRUCTIONS: Final[str] = "walkthrough_write_up_instructions"
+    # Saved write-up styles, [{id, name, instructions}], beside the built-in
+    # default. Absent means the starters, so deleting every style leaves an
+    # empty list rather than bringing them back.
+    WALKTHROUGH_WRITE_UP_STYLES: Final[str] = "walkthrough_write_up_styles"
     # Whether the write-up follows notes the user speaks to the agent
     # ("note for the agent: make the text purple") instead of writing them up.
     WALKTHROUGH_WRITE_UP_NOTES: Final[str] = "walkthrough_write_up_notes"

@@ -146,14 +146,14 @@ def test_ready_card_exposes_review_and_every_copy_format(capture):
 
 def test_review_write_up_retry_is_off_thread_and_cancelable(dialog, monkeypatch, capture):
     seen = []
-    def retry(folder, *, cancel_event):
-        seen.append((folder, cancel_event))
+    def retry(folder, *, instructions, cancel_event):
+        seen.append((folder, instructions, cancel_event))
         return capture.result
     monkeypatch.setattr(library, "retry_write_up", retry)
     dialog.review.retry_button.trigger()
     _wait(dialog)
-    assert seen[0][0] == capture.folder
-    assert seen[0][1] is dialog.review._cancel
+    # The plain redo uses Settings' prompt.
+    assert seen == [(capture.folder, None, dialog.review._cancel)]
 
 
 def test_recovery_requests_the_selected_draft(capture):

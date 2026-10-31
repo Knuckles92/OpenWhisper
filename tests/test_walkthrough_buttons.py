@@ -16,10 +16,14 @@ from services.settings import (
     settings_manager,
 )
 from services.walkthrough import write_up
+from services.walkthrough.styles import load_styles
 from ui_qt.overlays import waveform_overlay
 from ui_qt.overlays.waveform_overlay import WaveformOverlay
 from ui_qt.ui_controller import UIController
 from ui_qt.widgets.walkthrough_tab import COPY_CHOICES, OWN_PROMPT, WalkthroughTab
+
+#: The styles a new install picks from: the default, then the starters.
+STYLES = load_styles({})
 
 
 @pytest.fixture
@@ -192,7 +196,7 @@ def test_the_tab_opens_on_the_saved_choices():
         SettingsKey.WALKTHROUGH_WRITE_UP_AGENT: MeetingAgentCore.OPENCODE_CLI,
         SettingsKey.WALKTHROUGH_WRITE_UP_NOTES: True,
         SettingsKey.WALKTHROUGH_COPY_FORMAT: WalkthroughCopyFormat.BOTH,
-        SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS: write_up.PRESETS[2][1],
+        SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS: STYLES[2].instructions,
         SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY: True,
     })
     tab = WalkthroughTab()
@@ -201,8 +205,8 @@ def test_the_tab_opens_on_the_saved_choices():
         assert tab.agent_choices[MeetingAgentCore.OPENCODE_CLI].isChecked()
         assert tab.notes_switch.isChecked()
         assert COPY_CHOICES[tab.copy_bar.currentIndex()][0] == WalkthroughCopyFormat.BOTH
-        assert tab.prompt_edit.toPlainText() == write_up.PRESETS[2][1]
-        assert tab.preset_combo.currentText() == write_up.PRESETS[2][0]
+        assert tab.prompt_edit.toPlainText() == STYLES[2].instructions
+        assert tab.preset_combo.currentText() == STYLES[2].name
     finally:
         tab.close()
 
@@ -243,8 +247,8 @@ def test_the_prompt_shows_the_default_words_and_saves_them_as_default(tab):
     assert _saved_prompt() == ""
 
 
-def test_a_preset_fills_the_prompt_and_is_saved_at_once(tab):
-    name, words = write_up.PRESETS[3]
+def test_a_style_fills_the_prompt_and_is_saved_at_once(tab):
+    name, words = STYLES[3].name, STYLES[3].instructions
 
     tab.preset_combo.setCurrentIndex(3)
     tab.preset_combo.activated.emit(3)
@@ -255,7 +259,7 @@ def test_a_preset_fills_the_prompt_and_is_saved_at_once(tab):
     assert tab.preset_combo.currentText() == name
 
 
-def test_typing_your_own_prompt_saves_it_and_a_preset_can_be_tried_and_undone(tab):
+def test_typing_your_own_prompt_saves_it_and_a_style_can_be_tried_and_undone(tab):
     tab.prompt_edit.setPlainText("Make it a checklist.")
 
     assert tab.preset_combo.currentText() == OWN_PROMPT
@@ -264,7 +268,7 @@ def test_typing_your_own_prompt_saves_it_and_a_preset_can_be_tried_and_undone(ta
     assert _saved_prompt() == "Make it a checklist."
 
     tab.preset_combo.activated.emit(1)
-    assert _saved_prompt() == write_up.PRESETS[1][1]
+    assert _saved_prompt() == STYLES[1].instructions
     own = tab.preset_combo.findText(OWN_PROMPT)
     tab.preset_combo.activated.emit(own)
     assert tab.prompt_edit.toPlainText() == "Make it a checklist."

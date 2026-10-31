@@ -306,7 +306,9 @@ def save_write_up(folder: Path, text: str) -> WalkthroughResult:
     return _write(load_result(folder), text.strip(), Look())
 
 
-def retry_write_up(folder: Path, *, cancel_event=None) -> WalkthroughResult:
+def retry_write_up(folder: Path, *, instructions: str | None = None,
+                   cancel_event=None) -> WalkthroughResult:
+    """Write ``folder`` up again: with ``instructions``, or Settings' when None."""
     from services.settings import (
         resolve_walkthrough_write_up_agent,
         resolve_walkthrough_write_up_instructions,
@@ -319,8 +321,10 @@ def retry_write_up(folder: Path, *, cancel_event=None) -> WalkthroughResult:
     settings = settings_manager.load_all_settings()
     walkthrough = load_document(folder)
     shots = [s.shot for s in walkthrough.sections if s.shot]
+    if instructions is None:
+        instructions = resolve_walkthrough_write_up_instructions(settings)
     return write_up(result, shots, agent=resolve_walkthrough_write_up_agent(settings),
-                    instructions=resolve_walkthrough_write_up_instructions(settings),
+                    instructions=instructions.strip(),
                     follow_notes=resolve_walkthrough_write_up_notes(settings),
                     notes=held_notes(walkthrough), cancel_event=cancel_event)
 

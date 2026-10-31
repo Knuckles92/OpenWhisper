@@ -21,7 +21,9 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -45,12 +47,14 @@ from services.settings import (
 )
 from services.walkthrough import library
 from services.walkthrough.storage import captures_root
-from services.walkthrough.write_up import (
-    AGENTS,
-    DEFAULT_INSTRUCTIONS,
-    PRESETS,
-    preset_name,
+from services.walkthrough.styles import (
+    DEFAULT_STYLE,
+    delete_style,
+    load_styles,
+    save_style,
+    style_for,
 )
+from services.walkthrough.write_up import AGENTS, DEFAULT_INSTRUCTIONS
 from ui_qt.dialogs.settings_destinations import WALKTHROUGHS
 from ui_qt.widgets.agent_picker import FOUND, AgentMark, describe_agent
 from ui_qt.widgets.buttons import PrimaryButton, WarningButton
@@ -62,7 +66,7 @@ from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.walkthrough_review import WalkthroughReview
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
-#: The preset menu's last item while the prompt is the user's own words.
+#: The style menu's last item while the prompt is the user's own words.
 OWN_PROMPT = "Your own"
 #: The storyboard never shrinks below this, so a couple of rows always show.
 REVIEW_MIN_HEIGHT = 380
@@ -229,6 +233,20 @@ _STYLE = """
         font-size: 12px;
         min-width: 150px;
     }
+    QPushButton#walkthroughStyleLink {
+        color: @accent;
+        background-color: transparent;
+        border: none;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 2px 0;
+        min-height: 0;
+    }
+    QPushButton#walkthroughStyleLink:hover,
+    QPushButton#walkthroughStyleLink:focus {
+        color: @accent-soft;
+        text-decoration: underline;
+    }
     QPlainTextEdit#walkthroughPrompt {
         color: @text;
         background-color: @slate-field;
@@ -356,8 +374,9 @@ class WalkthroughTab(QWidget):
         self.is_recording = False
         self.walkthrough_active = False
         self._scan_token = 0
-        #: The user's own prompt, kept while a preset is tried in its place.
+        #: The user's own prompt, kept while a style is tried in its place.
         self._own_prompt = ""
+        self._styles = load_styles(settings_manager.load_all_settings())
         self._prompt_timer = QTimer(self)
         self._prompt_timer.setSingleShot(True)
         self._prompt_timer.setInterval(PROMPT_SAVE_DELAY_MS)
@@ -537,9 +556,7 @@ class WalkthroughTab(QWidget):
         head.addWidget(start)
         self.preset_combo = NoWheelComboBox()
         self.preset_combo.setObjectName("walkthroughPreset")
-        self.preset_combo.setAccessibleName("Prompt preset")
-        for name, _words in PRESETS:
-            self.preset_combo.addItem(name)
+        self.preset_combo.setAccessibleName("Write-up style")
         self.preset_combo.activated.connect(self._on_preset_chosen)
         head.addWidget(self.preset_combo)
         area.addLayout(head)
@@ -569,8 +586,24 @@ class WalkthroughTab(QWidget):
             "agent follows it instead of writing it into the document.")
         options.addWidget(self.notes_label)
         options.addStretch(1)
+        self.save_style_button = self._style_link(
+            "Save as style…", "Keep these words as a style to pick here and in Redo as",
+            self._save_as_style)
+        options.addWidget(self.save_style_button)
+        self.delete_style_button = self._style_link(
+            "Delete style", "Remove this style from the list; the words stay in the box",
+            self._delete_style)
+        options.addWidget(self.delete_style_button)
         area.addLayout(options)
         return self.prompt_area
+
+    def _style_link(self, text: str, tip: str, slot) -> QPushButton:
+        button = QPushButton(text)
+        button.setObjectName("walkthroughStyleLink")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setToolTip(tip)
+        button.clicked.connect(slot)
+        return button
 
     # ---- state ----
 
@@ -582,6 +615,7 @@ class WalkthroughTab(QWidget):
         if self._prompt_timer.isActive():
             self._save_prompt()
         settings = settings_manager.load_all_settings()
+        self._styles = load_styles(settings)
         quiet = (self.write_up_switch, self.notes_switch, self.prompt_edit, self.minimize_check)
         for widget in quiet:
             widget.blockSignals(True)
@@ -643,23 +677,58 @@ class WalkthroughTab(QWidget):
             "" if text == DEFAULT_INSTRUCTIONS else text)
 
     def _show_preset(self) -> None:
-        """Point the menu at the preset the prompt is, or at the user's own words."""
+        """Point the menu at the style the prompt is, or at the user's own words.
+
+        The menu is rebuilt each time: styles are saved and deleted here and
+        from the storyboard's Redo with a new prompt.
+        """
         text = self.prompt_edit.toPlainText().strip()
-        name = preset_name(text)
-        if not name:
+        style = style_for(text, self._styles)
+        if style is None:
             self._own_prompt = text
-        own = self.preset_combo.findText(OWN_PROMPT)
-        if self._own_prompt and own < 0:
-            self.preset_combo.addItem(OWN_PROMPT)
-            own = self.preset_combo.count() - 1
-        self.preset_combo.setCurrentIndex(self.preset_combo.findText(name) if name else own)
+        combo = self.preset_combo
+        combo.clear()
+        for each in self._styles:
+            combo.addItem(each.name, each.id)
+        if self._own_prompt:
+            combo.addItem(OWN_PROMPT, "")
+        combo.setCurrentIndex(combo.findData(style.id if style else ""))
+        self.save_style_button.setVisible(style is None and bool(text))
+        self.delete_style_button.setVisible(style is not None and style != DEFAULT_STYLE)
 
     def _on_preset_chosen(self, index: int) -> None:
-        # The last item, past the presets, brings back the user's own words.
-        words = PRESETS[index][1] if index < len(PRESETS) else self._own_prompt
+        # The last item, past the styles, brings back the user's own words.
+        style_id = self.preset_combo.itemData(index)
+        words = next((style.instructions for style in self._styles if style.id == style_id),
+                     self._own_prompt)
         if words != self.prompt_edit.toPlainText().strip():
             self.prompt_edit.setPlainText(words)
         self._save_prompt()
+
+    def _save_as_style(self) -> None:
+        text = self.prompt_edit.toPlainText().strip()
+        name, ok = QInputDialog.getText(
+            self, "Save as style", "Name the style. A name already saved is replaced.")
+        if not ok or not name.strip():
+            return
+        try:
+            settings_manager.mutate_settings(lambda settings: save_style(settings, name, text))
+        except ValueError as exc:
+            QMessageBox.warning(self, "Save as style", str(exc))
+            return
+        self._styles = load_styles(settings_manager.load_all_settings())
+        self._show_preset()
+
+    def _delete_style(self) -> None:
+        style = style_for(self.prompt_edit.toPlainText(), self._styles)
+        if style is None or style == DEFAULT_STYLE or QMessageBox.question(
+            self, "Delete style", f"Delete the style \"{style.name}\"? Its words stay in the box.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        settings_manager.mutate_settings(lambda settings: delete_style(settings, style.id))
+        self._styles = load_styles(settings_manager.load_all_settings())
+        self._show_preset()
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
