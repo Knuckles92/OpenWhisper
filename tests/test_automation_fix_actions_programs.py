@@ -60,8 +60,10 @@ def test_cancel_stops_the_program_and_everything_it_started(tmp_path):
     code = (
         "import subprocess, sys, time; from pathlib import Path; "
         "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
-        "Path(sys.argv[1]).write_text(str(p.pid)); print('started', flush=True); time.sleep(60)"
+        "print('started', flush=True); Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(60)"
     )
+    # "started" is in the pipe before the pid file appears, so a cancel sent
+    # as soon as the test sees the file can't beat the print.
     cancel = threading.Event()
     results = []
     worker = threading.Thread(target=lambda: results.append(programs.run_once(
