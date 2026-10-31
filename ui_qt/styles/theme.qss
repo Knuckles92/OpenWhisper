@@ -4078,8 +4078,12 @@ QWidget#settingsRailChapter:hover {
     border-color: @slate-border;
 }
 
-/* The chapter holding the current page only brightens its name (below);
-   the page itself wears the one selection pill. */
+/* The chapter holding the current page wears the same pill as a selected
+   top-level page, so the top level always says where you are. */
+QWidget#settingsRailChapter[active="true"] {
+    background-color: @accent-tint;
+    border-color: @accent-border;
+}
 
 QLabel#settingsRailChapterName,
 QLabel#settingsRailChevron {
@@ -4097,8 +4101,9 @@ QLabel#settingsRailChapterName[active="true"] {
     color: @slate-text;
 }
 
-/* A chapter's pages hang off a guide line under its icon. The current page
-   wears the same pill as a selected Home, beside the line. */
+/* A chapter's pages hang off a guide line under its icon; the current page
+   lights its stretch of the line and its name instead of taking a second
+   pill under the chapter's. */
 QWidget#modelManagerRailItem[nested="true"],
 QWidget#modelManagerRailItem[nested="true"]:hover,
 QWidget#modelManagerRailItem[nested="true"][selected="true"] {
@@ -4111,20 +4116,8 @@ QFrame#settingsRailGuide {
     border: none;
 }
 
-QWidget#settingsRailPagePill {
-    background-color: transparent;
-    border: 1px solid transparent;
-    border-radius: 9px;
-}
-
-QWidget#settingsRailPagePill:hover {
-    background-color: @slate-rail-hover;
-    border-color: @slate-border;
-}
-
-QWidget#settingsRailPagePill[selected="true"] {
-    background-color: @accent-tint;
-    border-color: @accent-border;
+QFrame#settingsRailGuide[selected="true"] {
+    background-color: @accent;
 }
 
 QWidget#modelManagerRailItem[nested="true"] QLabel#modelManagerRailName {
@@ -4137,8 +4130,12 @@ QWidget#modelManagerRailItem[nested="true"]:hover QLabel#modelManagerRailName {
 }
 
 QWidget#modelManagerRailItem[nested="true"] QLabel#modelManagerRailName[selected="true"] {
-    color: @slate-text;
+    color: @accent-soft;
     font-weight: 600;
+}
+
+QWidget#modelManagerRailItem[nested="true"] QLabel#modelManagerRailValue[selected="true"] {
+    color: @slate-text-3;
 }
 
 QWidget#homePage,
