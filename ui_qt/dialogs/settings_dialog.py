@@ -916,6 +916,13 @@ class SettingsDialog(QDialog):
         heading.addWidget(self.page_title)
         heading.addSpacing(2)
         heading.addWidget(self.page_subtitle)
+        # A hairline closes the heading, so a scrolled page slides under a
+        # clean edge rather than being sliced off mid-card.
+        heading.addSpacing(6)
+        header_divider = QFrame()
+        header_divider.setObjectName("settingsPageHeaderDivider")
+        header_divider.setFixedHeight(1)
+        heading.addWidget(header_divider)
         layout.addLayout(heading)
 
         # Shared by every page, so model and download messages land in one

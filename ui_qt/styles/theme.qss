@@ -514,6 +514,12 @@ QLabel#modelManagerSubtitle {
     border: none;
 }
 
+/* Under every Settings page heading; pages scroll beneath it. */
+QFrame#settingsPageHeaderDivider {
+    background-color: @slate-border-subtle;
+    border: none;
+}
+
 QLabel#textProviderUrl {
     color: @slate-text-4;
     font-size: 11px;
