@@ -23,14 +23,17 @@ While a walkthrough records, the column at the screen's edge (below) has
 **Snap**, **Done** and the rest of its controls, so it works without any
 shortcut. On Wayland, where there is no column, the recording overlay offers
 **Snap** and **Done** instead. Both shortcuts start unassigned: the tab shows them (or **Not set**)
-above the button, and **Walkthrough settings** opens **Settings → Dictation →
+under the button, and **Walkthrough settings** opens **Settings → Dictation →
 Walkthroughs** to set them. The tray menu has **Start Walkthrough** and
 **Take Screenshot** too. Hovering the button shows its shortcut; the badge at
 its right end (**New** until your first walkthrough, then **?**) says what it
 does.
 
-The tab also holds the choices people change between walkthroughs, saved to
-the same settings as **Settings → Dictation → Walkthroughs**:
+Beside the button, **When it finishes** says what happens after a walkthrough:
+what's copied, whether an agent writes it up and which one, and whether the
+window goes to the tray as one starts. In a narrow window it moves under the
+button. Below them, the tab holds the choices themselves, saved to the same
+settings as **Settings → Dictation → Walkthroughs**:
 
 - **Copy when it finishes**: **PDF**, **PDF + Markdown**, **Markdown** or
   **Word** (see below).
@@ -60,10 +63,10 @@ Below the start button, the tab shows the newest walkthrough as a
 any app, and **Open PDF**. It is the same editor as Saved Walkthroughs (see
 [Review](#review-recovery-and-storage)). A walkthrough that finishes shows
 there unless you have unsaved edits to another. With a walkthrough to show,
-the copy choice, **Minimize to tray** and the AI write-up card fold away under
-the **Setup** bar, which says what's chosen. Click anywhere on it (**Change**)
-to open them and again (**Done**) to fold them away; with no walkthrough yet,
-they show as before.
+the copy choice, **Minimize to tray** and the AI write-up fold away, and
+**When it finishes** beside the button still says what's chosen. Its
+**Change** opens them in the same card and **Done** folds them away; with no
+walkthrough yet, they stay open.
 
 The window widens for the storyboard (to about 930 pixels, or as far as the
 screen allows) and gives the width back when you switch to another tab; a

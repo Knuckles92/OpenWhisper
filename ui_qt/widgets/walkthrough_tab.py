@@ -9,15 +9,18 @@ link away.
 
 Below that, the newest walkthrough shows as a storyboard to fix, reorder and
 copy again (``walkthrough_review.py``); one picked in the side panel, which
-lists past walkthroughs while this tab is open, shows there instead. With a
-walkthrough to show, the choices fold away under Setup and the window widens
-for the storyboard, giving the width back on the next tab. See
+lists past walkthroughs while this tab is open, shows there instead. Beside the
+Start button, a summary says what happens when a walkthrough finishes. With a
+walkthrough to show, the choices fold away behind the summary's Change, and the
+window widens for the storyboard, giving the width back on the next tab. See
 docs/walkthrough.md.
 """
 from __future__ import annotations
 
 from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
+    QBoxLayout,
     QCheckBox,
     QFrame,
     QHBoxLayout,
@@ -58,7 +61,6 @@ from services.walkthrough.write_up import AGENTS, DEFAULT_INSTRUCTIONS
 from ui_qt.dialogs.settings_destinations import WALKTHROUGHS
 from ui_qt.widgets.agent_picker import FOUND, AgentMark, describe_agent
 from ui_qt.widgets.buttons import SuccessButton, WarningButton, start_row
-from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.feature_badge import FeatureBadge
 from ui_qt.widgets.no_wheel import NoWheelComboBox
 from ui_qt.widgets.segmented_bar import SegmentedBar
@@ -134,41 +136,31 @@ _STYLE = """
     QWidget#walkthroughCopyArea {
         background: transparent;
     }
-    QPushButton#walkthroughSetupBar {
-        background-color: @slate-field;
-        border: 1px solid @slate-border;
-        border-radius: 10px;
-        padding: 0;
-        min-height: 0;
-        text-align: left;
+    QWidget#walkthroughSplit,
+    QWidget#walkthroughStartColumn,
+    QWidget#walkthroughSummary,
+    QWidget#walkthroughSetupPanel,
+    QFrame#walkthroughSetupSection {
+        background: transparent;
+        border: none;
     }
-    QPushButton#walkthroughSetupBar:hover {
-        background-color: @slate-raised;
-        border-color: @slate-border-hover;
+    QFrame#walkthroughRule {
+        background-color: @border;
+        border: none;
     }
-    QPushButton#walkthroughSetupBar:checked {
-        background-color: @accent-tint;
-        border-color: @accent-tint-border;
-    }
-    QPushButton#walkthroughSetupBar:focus {
-        border-color: @accent;
-    }
-    QLabel#walkthroughSetupTitle {
-        color: @text;
-        font-size: 13px;
+    QLabel#walkthroughOverline {
+        color: @text-secondary;
+        font-size: 11px;
         font-weight: 700;
         background: transparent;
     }
-    QLabel#walkthroughSetupSummary {
-        color: @text-secondary;
-        font-size: 12px;
+    QLabel#walkthroughSummaryLine {
+        color: @text;
+        font-size: 13px;
         background: transparent;
     }
-    QLabel#walkthroughSetupAction {
-        color: @accent;
-        font-size: 12px;
-        font-weight: 600;
-        background: transparent;
+    QLabel#walkthroughSummaryLine[muted="true"] {
+        color: @text-secondary;
     }
     QLabel#walkthroughSectionTitle {
         color: @text;
@@ -311,49 +303,67 @@ class AgentChoice(QPushButton):
         self.setToolTip(state.detail or state.pill)
 
 
-class SetupBar(QPushButton):
-    """The bar the choices fold under: what's chosen, and what a click does.
+def _rule(vertical: bool = False) -> QFrame:
+    rule = QFrame()
+    rule.setObjectName("walkthroughRule")
+    if vertical:
+        rule.setFixedWidth(1)
+    else:
+        rule.setFixedHeight(1)
+    return rule
 
-    The whole bar is the click target, and its right end names the click
-    (Change, Done) so it reads as a control whether the choices are folded or
-    open below it.
+
+class StartSplit(QWidget):
+    """Start on the left and what happens when it finishes on the right.
+
+    Side by side while both fit at their narrowest, the summary under Start
+    once they don't (a narrow window or a large font), so neither forces the
+    page wider than its window. Its own minimum width is ignored, as
+    ``Reflow``'s is: the width comes from the card.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, start: QWidget, summary: QWidget, parent=None):
         super().__init__(parent)
-        self.setObjectName("walkthroughSetupBar")
-        self.setCheckable(True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAccessibleName("Setup")
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        row = QHBoxLayout(self)
-        row.setContentsMargins(12, 8, 12, 8)
-        row.setSpacing(10)
-        title = QLabel("Setup")
-        title.setObjectName("walkthroughSetupTitle")
-        row.addWidget(title)
-        self.summary = ElidingLabel()
-        self.summary.setObjectName("walkthroughSetupSummary")
-        row.addWidget(self.summary, 1)
-        self.action = QLabel()
-        self.action.setObjectName("walkthroughSetupAction")
-        row.addWidget(self.action)
-        for child in (title, self.summary, self.action):
-            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.toggled.connect(self._show_state)
-        self._show_state(False)
+        self.setObjectName("walkthroughSplit")
+        # Its height is its content's: the start column's centring stretch
+        # would otherwise take the page's spare height.
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self._start = start
+        self._summary = summary
+        self._across = _rule(vertical=True)
+        self._under = _rule()
+        self._box = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        self._box.setContentsMargins(0, 0, 0, 0)
+        self._box.setSpacing(0)
+        self._box.addWidget(start, 3)
+        self._box.addWidget(self._across)
+        self._box.addWidget(self._under)
+        self._box.addWidget(summary, 2)
+        self._stacked = None
+        self._place(False)
 
-    def sizeHint(self) -> QSize:
-        return self.layout().sizeHint()
+    @property
+    def stacked(self) -> bool:
+        return bool(self._stacked)
 
-    def set_summary(self, text: str) -> None:
-        self.summary.setText(text)
-        self.setAccessibleDescription(text)
+    def _place(self, stacked: bool) -> None:
+        if stacked == self._stacked:
+            return
+        self._stacked = stacked
+        self._box.setDirection(
+            QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight)
+        # The 3:2 split is across; stacked, each takes its own height.
+        self._box.setStretchFactor(self._start, 0 if stacked else 3)
+        self._box.setStretchFactor(self._summary, 0 if stacked else 2)
+        self._across.setVisible(not stacked)
+        self._under.setVisible(stacked)
+        self.updateGeometry()
 
-    def _show_state(self, expanded: bool) -> None:
-        self.action.setText("Done  ▴" if expanded else "Change  ▾")
-        self.setToolTip("Fold the choices away" if expanded
-                        else "Change what's copied and how it's written up")
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        needed = (self._start.minimumSizeHint().width() + 1
+                  + self._summary.minimumSizeHint().width())
+        self._place(self.width() < needed)
 
 
 class WalkthroughTab(QWidget):
@@ -397,7 +407,10 @@ class WalkthroughTab(QWidget):
         column.setContentsMargins(24, 6, 24, 16)
         column.setSpacing(12)
         column.addWidget(self._hero())
-        column.addWidget(self._write_up_card())
+        # Sets the newest walkthrough apart from the card that starts the next.
+        self.review_rule = _rule()
+        self.review_rule.hide()
+        column.addWidget(self.review_rule)
         self.review = WalkthroughReview(closable=True)
         self.review.setMinimumHeight(REVIEW_MIN_HEIGHT)
         self.review.changed.connect(self._on_review_changed)
@@ -416,42 +429,21 @@ class WalkthroughTab(QWidget):
         hero = QFrame()
         hero.setObjectName("walkthroughHero")
         body = QVBoxLayout(hero)
-        body.setContentsMargins(16, 12, 16, 14)
-        body.setSpacing(10)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        self.split = StartSplit(self._start_column(), self._summary_column())
+        body.addWidget(self.split)
+        body.addWidget(self._setup_panel())
+        self.set_hotkeys("", "")
+        return hero
 
-        keys = QHBoxLayout()
-        keys.setSpacing(6)
-        # Leads the shortcut row rather than sitting on the Start button, so
-        # the button matches the other tabs' Start buttons.
-        self.walkthrough_badge = FeatureBadge(
-            None,
-            "Talk while you take screenshots, then get one document with your "
-            "words and pictures in order, copied to paste into an agent or chat.",
-            hero,
-        )
-        self.walkthrough_badge.set_new(
-            not resolve_walkthrough_intro_seen(settings_manager.load_all_settings()))
-        keys.addWidget(self.walkthrough_badge, 0, Qt.AlignmentFlag.AlignVCenter)
-        self.start_key = _key_chip("")
-        self.snap_key = _key_chip("")
-        # Gaps only between the pairs: the stretch already separates the last
-        # chip from the link, and the row has to fit the window's minimum width.
-        for index, (name, chip) in enumerate(
-            (("Start / finish", self.start_key), ("Screenshot", self.snap_key))
-        ):
-            if index:
-                keys.addSpacing(10)
-            label = QLabel(name)
-            label.setObjectName("walkthroughKeyName")
-            keys.addWidget(label)
-            keys.addWidget(chip)
-        keys.addStretch(1)
-        self.settings_link = QPushButton("Walkthrough settings  →")
-        self.settings_link.setObjectName("walkthroughSettingsLink")
-        self.settings_link.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.settings_link.clicked.connect(lambda: self.settings_requested.emit(WALKTHROUGHS))
-        keys.addWidget(self.settings_link)
-        body.addLayout(keys)
+    def _start_column(self) -> QWidget:
+        column = QWidget()
+        column.setObjectName("walkthroughStartColumn")
+        body = QVBoxLayout(column)
+        body.setContentsMargins(16, 14, 16, 14)
+        body.setSpacing(10)
+        body.addStretch(1)
 
         # Start fills the shared Start width; while a walkthrough runs, Finish
         # and Cancel split it.
@@ -469,11 +461,97 @@ class WalkthroughTab(QWidget):
         buttons.addWidget(self.cancel_button, 1)
         body.addLayout(start_row(button_box))
 
+        keys = QHBoxLayout()
+        keys.setSpacing(6)
+        keys.addStretch(1)
+        # Leads the shortcut row rather than sitting on the Start button, so
+        # the button matches the other tabs' Start buttons.
+        self.walkthrough_badge = FeatureBadge(
+            None,
+            "Talk while you take screenshots, then get one document with your "
+            "words and pictures in order, copied to paste into an agent or chat.",
+            column,
+        )
+        self.walkthrough_badge.set_new(
+            not resolve_walkthrough_intro_seen(settings_manager.load_all_settings()))
+        keys.addWidget(self.walkthrough_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.start_key = _key_chip("")
+        self.snap_key = _key_chip("")
+        for index, (name, chip) in enumerate(
+            (("Start / finish", self.start_key), ("Screenshot", self.snap_key))
+        ):
+            if index:
+                keys.addSpacing(10)
+            label = QLabel(name)
+            label.setObjectName("walkthroughKeyName")
+            keys.addWidget(label)
+            keys.addWidget(chip)
+        keys.addStretch(1)
+        body.addLayout(keys)
+        body.addStretch(1)
+        return column
+
+    def _summary_column(self) -> QWidget:
+        """What happens when a walkthrough finishes, and the way to change it."""
+        column = QWidget()
+        column.setObjectName("walkthroughSummary")
+        body = QVBoxLayout(column)
+        body.setContentsMargins(16, 12, 16, 12)
+        body.setSpacing(6)
+        heading = QLabel("WHEN IT FINISHES")
+        heading.setObjectName("walkthroughOverline")
+        font = heading.font()
+        font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 108)
+        heading.setFont(font)
+        body.addWidget(heading)
+        self.copy_summary = self._summary_line()
+        body.addWidget(self.copy_summary)
+        self.write_up_summary = self._summary_line()
+        body.addWidget(self.write_up_summary)
+        self.minimize_summary = self._summary_line()
+        self.minimize_summary.setText("Goes to the tray as it starts")
+        body.addWidget(self.minimize_summary)
+        body.addStretch(1)
+
+        links = QHBoxLayout()
+        links.setSpacing(14)
         # Shown only with a walkthrough below: then the choices fold away.
-        self.setup_bar = SetupBar()
-        self.setup_bar.toggled.connect(self._show_setup)
-        self.setup_bar.hide()
-        body.addWidget(self.setup_bar)
+        self.setup_toggle = QPushButton()
+        self.setup_toggle.setObjectName("walkthroughSettingsLink")
+        self.setup_toggle.setCheckable(True)
+        self.setup_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setup_toggle.toggled.connect(self._show_setup)
+        self.setup_toggle.hide()
+        links.addWidget(self.setup_toggle)
+        self.settings_link = QPushButton("Walkthrough settings  →")
+        self.settings_link.setObjectName("walkthroughSettingsLink")
+        self.settings_link.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_link.setToolTip("Shortcuts and how the document looks")
+        self.settings_link.clicked.connect(lambda: self.settings_requested.emit(WALKTHROUGHS))
+        links.addWidget(self.settings_link)
+        links.addStretch(1)
+        body.addLayout(links)
+        return column
+
+    @staticmethod
+    def _summary_line() -> QLabel:
+        line = QLabel()
+        line.setObjectName("walkthroughSummaryLine")
+        line.setTextFormat(Qt.TextFormat.RichText)
+        return line
+
+    def _setup_panel(self) -> QWidget:
+        """The choices themselves, open under the split until a walkthrough shows."""
+        self.setup_panel = QWidget()
+        self.setup_panel.setObjectName("walkthroughSetupPanel")
+        panel = QVBoxLayout(self.setup_panel)
+        panel.setContentsMargins(0, 0, 0, 0)
+        panel.setSpacing(0)
+        panel.addWidget(_rule())
+        inner = QVBoxLayout()
+        inner.setContentsMargins(16, 12, 16, 14)
+        inner.setSpacing(12)
+        panel.addLayout(inner)
 
         # With or without a write-up, this is what lands on the clipboard. The
         # label sits above so the four choices keep one row at the minimum width.
@@ -500,18 +578,18 @@ class WalkthroughTab(QWidget):
         self.minimize_check.setToolTip(
             "Gets this window out of the way of what you're showing. "
             "Open it again from the tray icon.")
-        self.minimize_check.toggled.connect(
-            lambda on: settings_manager.save_setting(SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY, on))
+        self.minimize_check.toggled.connect(self._on_minimize_toggled)
         copy.addWidget(self.minimize_check)
-        body.addWidget(self.copy_area)
-        self.set_hotkeys("", "")
-        return hero
+        inner.addWidget(self.copy_area)
+        inner.addWidget(_rule())
+        inner.addWidget(self._write_up_card())
+        return self.setup_panel
 
     def _write_up_card(self) -> QFrame:
         card = self.write_up_card = QFrame()
-        card.setObjectName("engineCard")
+        card.setObjectName("walkthroughSetupSection")
         body = QVBoxLayout(card)
-        body.setContentsMargins(16, 12, 16, 14)
+        body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(10)
 
         head = QHBoxLayout()
@@ -659,6 +737,10 @@ class WalkthroughTab(QWidget):
             # Picking an agent is asking for a write-up.
             self.write_up_switch.setChecked(True)
         self._sync_write_up()
+
+    def _on_minimize_toggled(self, on: bool) -> None:
+        settings_manager.save_setting(SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY, on)
+        self._sync_setup_summary()
 
     def _on_copy_chosen(self, index: int) -> None:
         settings_manager.save_setting(SettingsKey.WALKTHROUGH_COPY_FORMAT, COPY_CHOICES[index][0])
@@ -819,8 +901,9 @@ class WalkthroughTab(QWidget):
         review.show_folder(folder)
         shown = folder is not None
         review.setVisible(shown)
-        self.setup_bar.setVisible(shown)
-        self._show_setup(self.setup_bar.isChecked())
+        self.review_rule.setVisible(shown)
+        self.setup_toggle.setVisible(shown)
+        self._show_setup(self.setup_toggle.isChecked())
         return True
 
     def fills_height(self) -> bool:
@@ -834,8 +917,10 @@ class WalkthroughTab(QWidget):
     def _show_setup(self, expanded: bool) -> None:
         # With nothing below to make room for, the choices are always open.
         shown = expanded or self.review.isHidden()
-        self.copy_area.setVisible(shown)
-        self.write_up_card.setVisible(shown)
+        self.setup_panel.setVisible(shown)
+        self.setup_toggle.setText("Done  ▴" if expanded else "Change  ▾")
+        self.setup_toggle.setToolTip("Fold the choices away" if expanded
+                                     else "Change what's copied and how it's written up")
 
     def _on_review_changed(self, folder) -> None:
         self.show_walkthrough(folder)
@@ -843,6 +928,12 @@ class WalkthroughTab(QWidget):
 
     def _sync_setup_summary(self) -> None:
         copy = COPY_CHOICES[self.copy_bar.currentIndex()][1]
-        write_up = (f"AI write-up by {AGENT_SPECS[self._agent].name}"
-                    if self.write_up_switch.isChecked() else "No AI write-up")
-        self.setup_bar.set_summary(f"Copies {copy}  ·  {write_up}")
+        self.copy_summary.setText(f"Copies <b>{copy}</b>")
+        on = self.write_up_switch.isChecked()
+        self.write_up_summary.setText(
+            f"AI write-up by <b>{AGENT_SPECS[self._agent].name}</b>" if on else "No AI write-up")
+        self.write_up_summary.setProperty("muted", not on)
+        self.write_up_summary.style().unpolish(self.write_up_summary)
+        self.write_up_summary.style().polish(self.write_up_summary)
+        # Unticked is the usual case: only say so when it will happen.
+        self.minimize_summary.setVisible(self.minimize_check.isChecked())
