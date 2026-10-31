@@ -266,6 +266,43 @@ def test_minimizing_to_tray_on_start_is_off_until_ticked_and_then_saved(tab):
     assert settings_manager.load_all_settings()[SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY] is True
 
 
+def test_the_summary_beside_start_says_what_happens_when_it_finishes(tab):
+    assert tab.copy_summary.text() == "Copies <b>PDF</b>"
+    assert tab.write_up_summary.text() == "No AI write-up"
+    assert tab.write_up_summary.property("muted") is True
+    assert not tab.minimize_summary.isVisibleTo(tab)
+
+    index = next(i for i, (value, _label) in enumerate(COPY_CHOICES)
+                 if value == WalkthroughCopyFormat.WORD)
+    tab.copy_bar.buttons[index].click()
+    tab.agent_choices[MeetingAgentCore.CODEX].click()
+    tab.minimize_check.click()
+
+    assert tab.copy_summary.text() == "Copies <b>Word</b>"
+    assert tab.write_up_summary.text() == "AI write-up by <b>Codex</b>"
+    assert tab.write_up_summary.property("muted") is False
+    assert tab.minimize_summary.isVisibleTo(tab)
+
+
+def test_the_summary_sits_beside_start_and_moves_under_it_when_narrow(tab):
+    tab.set_hotkeys("Ctrl+Alt+Shift+W", "Ctrl+Alt+Shift+S")
+    tab.show()
+    tab.resize(930, 700)
+    QApplication.processEvents()
+    split = tab.split
+    assert not split.stacked
+    assert split._summary.geometry().left() > tab.walkthrough_button.mapTo(
+        split, tab.walkthrough_button.rect().topRight()).x()
+
+    tab.resize(560, 700)
+    QApplication.processEvents()
+    assert split.stacked
+    assert split._summary.geometry().top() >= split._start.geometry().bottom()
+    # Stacked, each column keeps its own height: nothing in the summary is cut off.
+    assert split._summary.height() >= split._summary.sizeHint().height()
+    assert split.width() <= tab.width()
+
+
 def test_each_agent_says_whether_the_last_scan_found_it(tab):
     tab.agent_choices[MeetingAgentCore.CLAUDE_CODE].show_found(None)
     assert tab.agent_choices[MeetingAgentCore.CLAUDE_CODE].status_label.text() == "Not installed"
