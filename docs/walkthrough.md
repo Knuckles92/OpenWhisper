@@ -61,7 +61,9 @@ any app, and **Open PDF**. It is the same editor as Saved Walkthroughs (see
 [Review](#review-recovery-and-storage)). A walkthrough that finishes shows
 there unless you have unsaved edits to another. With a walkthrough to show,
 the copy choice, **Minimize to tray** and the AI write-up card fold away under
-**Setup**, which says what's chosen; with none yet, they show as before.
+the **Setup** bar, which says what's chosen. Click anywhere on it (**Change**)
+to open them and again (**Done**) to fold them away; with no walkthrough yet,
+they show as before.
 
 The window widens for the storyboard (to about 930 pixels, or as far as the
 screen allows) and gives the width back when you switch to another tab; a

@@ -54,7 +54,7 @@ from services.walkthrough.write_up import (
 from ui_qt.dialogs.settings_destinations import WALKTHROUGHS
 from ui_qt.widgets.agent_picker import FOUND, AgentMark, describe_agent
 from ui_qt.widgets.buttons import PrimaryButton, WarningButton
-from ui_qt.widgets.collapsible_header import CollapsibleSectionToggle
+from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.feature_badge import FeatureBadge
 from ui_qt.widgets.no_wheel import NoWheelComboBox
 from ui_qt.widgets.segmented_bar import SegmentedBar
@@ -127,13 +127,43 @@ _STYLE = """
         border-color: @accent;
         image: url(ui_qt/assets/check.svg);
     }
-    QWidget#walkthroughSetupRow, QWidget#walkthroughCopyArea,
-    QToolButton#walkthroughSetupToggle {
+    QWidget#walkthroughCopyArea {
+        background: transparent;
+    }
+    QPushButton#walkthroughSetupBar {
+        background-color: @slate-field;
+        border: 1px solid @slate-border;
+        border-radius: 10px;
+        padding: 0;
+        min-height: 0;
+        text-align: left;
+    }
+    QPushButton#walkthroughSetupBar:hover {
+        background-color: @slate-raised;
+        border-color: @slate-border-hover;
+    }
+    QPushButton#walkthroughSetupBar:checked {
+        background-color: @accent-tint;
+        border-color: @accent-tint-border;
+    }
+    QPushButton#walkthroughSetupBar:focus {
+        border-color: @accent;
+    }
+    QLabel#walkthroughSetupTitle {
+        color: @text;
+        font-size: 13px;
+        font-weight: 700;
         background: transparent;
     }
     QLabel#walkthroughSetupSummary {
-        color: @text-muted;
+        color: @text-secondary;
         font-size: 12px;
+        background: transparent;
+    }
+    QLabel#walkthroughSetupAction {
+        color: @accent;
+        font-size: 12px;
+        font-weight: 600;
         background: transparent;
     }
     QLabel#walkthroughSectionTitle {
@@ -263,6 +293,51 @@ class AgentChoice(QPushButton):
         self.setToolTip(state.detail or state.pill)
 
 
+class SetupBar(QPushButton):
+    """The bar the choices fold under: what's chosen, and what a click does.
+
+    The whole bar is the click target, and its right end names the click
+    (Change, Done) so it reads as a control whether the choices are folded or
+    open below it.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("walkthroughSetupBar")
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAccessibleName("Setup")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(12, 8, 12, 8)
+        row.setSpacing(10)
+        title = QLabel("Setup")
+        title.setObjectName("walkthroughSetupTitle")
+        row.addWidget(title)
+        self.summary = ElidingLabel()
+        self.summary.setObjectName("walkthroughSetupSummary")
+        row.addWidget(self.summary, 1)
+        self.action = QLabel()
+        self.action.setObjectName("walkthroughSetupAction")
+        row.addWidget(self.action)
+        for child in (title, self.summary, self.action):
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.toggled.connect(self._show_state)
+        self._show_state(False)
+
+    def sizeHint(self) -> QSize:
+        return self.layout().sizeHint()
+
+    def set_summary(self, text: str) -> None:
+        self.summary.setText(text)
+        self.setAccessibleDescription(text)
+
+    def _show_state(self, expanded: bool) -> None:
+        self.action.setText("Done  ▴" if expanded else "Change  ▾")
+        self.setToolTip("Fold the choices away" if expanded
+                        else "Change what's copied and how it's written up")
+
+
 class WalkthroughTab(QWidget):
     """Start or finish a walkthrough, and set up what follows it."""
 
@@ -363,22 +438,10 @@ class WalkthroughTab(QWidget):
         body.addLayout(buttons)
 
         # Shown only with a walkthrough below: then the choices fold away.
-        self.setup_row = QWidget()
-        self.setup_row.setObjectName("walkthroughSetupRow")
-        setup = QHBoxLayout(self.setup_row)
-        setup.setContentsMargins(0, 0, 0, 0)
-        setup.setSpacing(10)
-        self.setup_toggle = CollapsibleSectionToggle(
-            "Setup", expand_tooltip="Show what's copied and how it's written up",
-            collapse_tooltip="Fold the choices away")
-        self.setup_toggle.setObjectName("walkthroughSetupToggle")
-        self.setup_toggle.toggled_expanded.connect(self._show_setup)
-        setup.addWidget(self.setup_toggle)
-        self.setup_summary = QLabel("")
-        self.setup_summary.setObjectName("walkthroughSetupSummary")
-        setup.addWidget(self.setup_summary, 1)
-        self.setup_row.hide()
-        body.addWidget(self.setup_row)
+        self.setup_bar = SetupBar()
+        self.setup_bar.toggled.connect(self._show_setup)
+        self.setup_bar.hide()
+        body.addWidget(self.setup_bar)
 
         # With or without a write-up, this is what lands on the clipboard. The
         # label sits above so the four choices keep one row at the minimum width.
@@ -659,8 +722,8 @@ class WalkthroughTab(QWidget):
         review.show_folder(folder)
         shown = folder is not None
         review.setVisible(shown)
-        self.setup_row.setVisible(shown)
-        self._show_setup(self.setup_toggle.is_expanded())
+        self.setup_bar.setVisible(shown)
+        self._show_setup(self.setup_bar.isChecked())
         return True
 
     def fills_height(self) -> bool:
@@ -685,4 +748,4 @@ class WalkthroughTab(QWidget):
         copy = COPY_CHOICES[self.copy_bar.currentIndex()][1]
         write_up = (f"AI write-up by {AGENT_SPECS[self._agent].name}"
                     if self.write_up_switch.isChecked() else "No AI write-up")
-        self.setup_summary.setText(f"Copies {copy}  ·  {write_up}")
+        self.setup_bar.set_summary(f"Copies {copy}  ·  {write_up}")
