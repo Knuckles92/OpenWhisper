@@ -57,21 +57,34 @@ class _RailItem(QWidget):
         self.icon_label.setFixedSize(18, 18)
         copy = QVBoxLayout()
         copy.setSpacing(2)
-        # Both kinds of row leave the value 47 px of margins, and a chapter's
-        # page lines its name up with the chapter's name.
+        # A chapter's page lines its name up with the chapter's name.
         if nested:
             # The guide runs the full row height, under the chapter's icon,
-            # so an open chapter's pages read as one connected group.
+            # so an open chapter's pages read as one connected group. The
+            # selection pill sits beside it, on ``pill``, so a selected page
+            # wears the same pill as Home.
             row.setContentsMargins(18, 0, 10, 0)
-            row.setSpacing(17)
+            row.setSpacing(6)
             self.guide = QFrame()
             self.guide.setObjectName("settingsRailGuide")
             self.guide.setFixedWidth(2)
             row.addWidget(self.guide)
-            copy.setContentsMargins(0, 7, 0, 7)
+            self.pill = QWidget(self)
+            self.pill.setObjectName("settingsRailPagePill")
+            self.pill.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            self.pill.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+            pill_row = QHBoxLayout(self.pill)
+            pill_row.setContentsMargins(10, 6, 10, 6)
+            pill_row.setSpacing(0)
+            pill_row.addLayout(copy, stretch=1)
+            row.addWidget(self.pill, stretch=1)
+            copy.setContentsMargins(0, 0, 0, 0)
+            self._value_margins = 58
             self.icon_label.hide()
         else:
             self.guide = None
+            self.pill = None
+            self._value_margins = 47
             row.setContentsMargins(10, 8, 10, 8)
             if icon is not None and not icon.isNull():
                 self.icon_label.setPixmap(icon.pixmap(16, 16))
@@ -88,7 +101,8 @@ class _RailItem(QWidget):
         copy.addWidget(self.value_label)
         # Shown with its first value, so a page without one stays one line.
         self.value_label.setVisible(False)
-        row.addLayout(copy, stretch=1)
+        if not nested:
+            row.addLayout(copy, stretch=1)
 
         self.set_selected(False)
 
@@ -105,7 +119,8 @@ class _RailItem(QWidget):
         item_width = self.width()
         if self.parentWidget() is not None:
             item_width = min(item_width, self.parentWidget().width())
-        available_width = item_width - 47 if item_width > 47 else self.VALUE_WIDTH
+        margins = self._value_margins
+        available_width = item_width - margins if item_width > margins else self.VALUE_WIDTH
         self.value_label.setText(
             metrics.elidedText(
                 self._value, Qt.TextElideMode.ElideRight, available_width
@@ -124,7 +139,7 @@ class _RailItem(QWidget):
         An item widget covers the view's own selection painting, so the state
         has to live on this widget for the stylesheet to see it.
         """
-        widgets = (self, self.name_label, self.value_label, self.guide)
+        widgets = (self, self.name_label, self.value_label, self.pill)
         for widget in filter(None, widgets):
             set_style_property(widget, "selected", selected)
 
@@ -132,8 +147,9 @@ class _RailItem(QWidget):
 class _ChapterRow(QWidget):
     """A chapter heading: its icon, its name, and whether its pages show.
 
-    It carries the selection pill while the current page is one of its own,
-    open or closed, so the top level of the rail always says where you are.
+    While the current page is one of its own, open or closed, its name is
+    brighter, so the top level of the rail says where you are. Only the page
+    itself wears the selection pill.
     """
 
     def __init__(self, title: str, icon: Optional[QIcon], parent=None):
@@ -259,6 +275,10 @@ class NavRail(QListWidget):
             # The row's nested layouts hear of the caption on the next event
             # loop pass; re-measure them now, or a closed chapter's pages
             # keep one line's height when it opens.
+            if row.pill is not None:
+                row.pill.layout().invalidate()
+                row.pill.layout().activate()
+                row.pill.updateGeometry()
             row.layout().invalidate()
             row.layout().activate()
             self._items[key].setSizeHint(QSize(0, row.sizeHint().height()))
