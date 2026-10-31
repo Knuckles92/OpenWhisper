@@ -193,6 +193,7 @@ from ui_qt.utils.app_icon import app_icon
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.restyle import set_style_property
+from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets import (
     Button,
     DangerButton,
@@ -354,7 +355,7 @@ _CHAPTERS = (
     ("Personalize", "wand-purple.svg", (
         (DICTIONARY, "Dictionary", _PAGE_MODULE_ICONS[DICTIONARY]),
         (SNIPPETS, "Snippets", _PAGE_MODULE_ICONS[SNIPPETS]),
-        (STYLES, "Styles", _PAGE_MODULE_ICONS[STYLES]),
+        (STYLES, "Apps & styles", _PAGE_MODULE_ICONS[STYLES]),
         (CLEANUP_RULES, "Learned rules", "stack-slate.svg"),
         (CLEANUP_PROFILES, "Profiles", "typography-blue.svg"),
         (COMMANDS, "Commands", _PAGE_MODULE_ICONS[COMMANDS]),
@@ -915,6 +916,13 @@ class SettingsDialog(QDialog):
         heading.addWidget(self.page_title)
         heading.addSpacing(2)
         heading.addWidget(self.page_subtitle)
+        # A hairline closes the heading, so a scrolled page slides under a
+        # clean edge rather than being sliced off mid-card.
+        heading.addSpacing(6)
+        header_divider = QFrame()
+        header_divider.setObjectName("settingsPageHeaderDivider")
+        header_divider.setFixedHeight(1)
+        heading.addWidget(header_divider)
         layout.addLayout(heading)
 
         # Shared by every page, so model and download messages land in one
@@ -979,7 +987,7 @@ class SettingsDialog(QDialog):
         )
         self._add_page(
             CLEANUP,
-            "AI transcript cleanup",
+            "AI cleanup",
             "Rewrite a finished dictation with a language model, together with "
             "your learned rules.",
             self._build_cleanup_page,
@@ -993,7 +1001,7 @@ class SettingsDialog(QDialog):
         )
         self._add_page(
             CLEANUP_PROFILES,
-            "Cleanup profiles",
+            "Profiles",
             "Turn a recording into a support ticket, email, or your own format.",
             self._build_cleanup_profiles_page,
         )
@@ -1007,14 +1015,14 @@ class SettingsDialog(QDialog):
             )
         self._add_page(
             MEETING_VOICE,
-            "Meeting voice & speakers",
+            "Voice & speakers",
             "Choose local or remote speech for live captions and the optional "
             "end-of-meeting re-transcription. Applies to your next meeting.",
             self.models.build_meeting_voice_page,
         )
         self._add_page(
             MEETING_INTELLIGENCE,
-            "Meeting intelligence",
+            "Intelligence",
             "Pi or a coding agent you already use runs every Meeting Mode "
             "pass. Nothing is sent until you turn on "
             "AI insights for a meeting.",
@@ -1034,7 +1042,7 @@ class SettingsDialog(QDialog):
         )
         self._add_page(
             MEETING_DASHBOARD,
-            "Dashboard access",
+            "Dashboard",
             "Who can open the live meeting dashboard, and on which port.",
             self._build_meeting_dashboard_page,
         )
@@ -1406,7 +1414,7 @@ class SettingsDialog(QDialog):
             "Puts back what you had copied once a paste lands, including "
             "Command Mode rewrites. Turn off to keep the pasted text on the "
             "clipboard.",
-            design_icon("refresh-blue.svg"),
+            design_icon("arrow-back-up-gray.svg"),
         )
         self.restore_clipboard_check = self.restore_clipboard_tile.checkbox
 
@@ -1446,7 +1454,7 @@ class SettingsDialog(QDialog):
             "Notify me about updates",
             "Shows an Update button in the title bar and the tray menu when "
             "a newer release is found. Requires automatic checks.",
-            design_icon("info-blue.svg"),
+            design_icon("bell-amber.svg"),
         )
         self.update_notify_check = self.update_notify_tile.checkbox
         self.update_notify_check.setObjectName("updateNotifyEnabledCheck")
@@ -1456,7 +1464,7 @@ class SettingsDialog(QDialog):
             "When OpenWhisper is updated while it is running, offers to "
             "restart so the update finishes. Turn off if you chose "
             "\"Don't show this again\" and changed your mind.",
-            design_icon("refresh-blue.svg"),
+            design_icon("download-blue.svg"),
         )
         self.update_restart_prompt_check = self.update_restart_prompt_tile.checkbox
         self.update_restart_prompt_check.setObjectName("updateRestartPromptCheck")
@@ -1907,16 +1915,15 @@ class SettingsDialog(QDialog):
             "limit is passed; the newest recording is always kept. "
             "Transcription history text is kept separately.",
             self.recording_retention_combo,
-            design_icon("box-blue.svg"),
+            design_icon("file-music-blue.svg"),
         )
 
-        self.max_recordings_label = QLabel("Number to keep:")
+        self.max_recordings_label = QLabel("Number to keep")
         self.max_recordings_spinbox = NoWheelSpinBox()
         self.max_recordings_spinbox.setMinimum(1)
         self.max_recordings_spinbox.setMaximum(1000)
         self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
         self.max_recordings_spinbox.setMinimumHeight(40)
-        self.max_recordings_spinbox.setMinimumWidth(120)
         # Retention deletes audio, so typed digits commit on Enter or
         # focus-out: tracking every keystroke once applied "1" on the way
         # from 20 to 100 and pruned all but one recording.
@@ -1927,7 +1934,7 @@ class SettingsDialog(QDialog):
         self.max_recordings_spinbox.editingFinished.connect(
             self._commit_retention
         )
-        self.max_recordings_mb_label = QLabel("Folder size limit:")
+        self.max_recordings_mb_label = QLabel("Folder size limit")
         self.max_recordings_mb_label.setObjectName("settingsTileFieldLabel")
         self.max_recordings_mb_spinbox = NoWheelSpinBox()
         self.max_recordings_mb_spinbox.setMinimum(10)
@@ -1936,7 +1943,10 @@ class SettingsDialog(QDialog):
         self.max_recordings_mb_spinbox.setSuffix(" MB")
         self.max_recordings_mb_spinbox.setValue(config.MAX_SAVED_RECORDINGS_MB)
         self.max_recordings_mb_spinbox.setMinimumHeight(40)
-        self.max_recordings_mb_spinbox.setMinimumWidth(140)
+        # One width for both limits, wide enough for the largest folder size.
+        retention_width = round(156 * current_ui_font_scale())
+        self.max_recordings_spinbox.setFixedWidth(retention_width)
+        self.max_recordings_mb_spinbox.setFixedWidth(retention_width)
         self.max_recordings_mb_spinbox.setKeyboardTracking(False)
         self.max_recordings_mb_spinbox.valueChanged.connect(
             self._schedule_retention_commit
@@ -1965,7 +1975,7 @@ class SettingsDialog(QDialog):
             "The final transcript uses your selected model and follows the "
             "General paste and clipboard settings. Its text size is under "
             "Appearance.",
-            design_icon("bolt-green.svg"),
+            design_icon("typography-blue.svg"),
         )
         self.streaming_enabled_check = self.streaming_enabled_tile.checkbox
         self.streaming_enabled_check.toggled.connect(
@@ -2268,12 +2278,7 @@ class SettingsDialog(QDialog):
         tile.setProperty("kind", "notice")
         button = compact_primary_button(Button("Turn on"))
         button.clicked.connect(self.turn_on_cleanup)
-        # Under the text rather than beside it, so it fits a narrow window.
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(button)
-        row.addStretch(1)
-        tile.add_body_layout(row)
+        tile.add_actions(button)
         self._cleanup_gates.append((tile, button))
         if needed is not None:
             self._cleanup_gate_needed[tile] = needed
@@ -2417,14 +2422,10 @@ class SettingsDialog(QDialog):
         self.cleanup_rules_library_tile.add_body(self.cleanup_rules_list)
         self._rule_glow = ItemGlow(self.cleanup_rules_list)
 
-        self.cleanup_rules_empty = QLabel(
-            "No rules yet\n\nAdd your first instruction above to start "
-            "building a personal cleanup profile."
+        self.cleanup_rules_empty = EmptyState(
+            "No rules yet",
+            "Add your first instruction above to start building a personal cleanup profile.",
         )
-        self.cleanup_rules_empty.setObjectName("cleanupRulesEmpty")
-        self.cleanup_rules_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cleanup_rules_empty.setWordWrap(True)
-        self.cleanup_rules_empty.setMinimumHeight(88)
         self.cleanup_rules_library_tile.add_body(self.cleanup_rules_empty)
 
         rule_btn_row = QHBoxLayout()
@@ -2529,10 +2530,8 @@ class SettingsDialog(QDialog):
             design_icon("info-warning.svg"),
         )
         self.typesafe_key_notice.setProperty("kind", "notice")
-        self.open_typesafe_key_btn = QPushButton("Add a key")
+        self.open_typesafe_key_btn = compact_primary_button(Button("Add a key"))
         self.open_typesafe_key_btn.setObjectName("typesafeKeyNoticeLink")
-        self.open_typesafe_key_btn.setFlat(True)
-        self.open_typesafe_key_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.open_typesafe_key_btn.setToolTip(
             "Open API keys with the TypeSafe credential selected"
         )
@@ -2542,11 +2541,11 @@ class SettingsDialog(QDialog):
         # The quickest fix when the other route already has a key: one click
         # moves Fast judgments onto it. Shown only in that case.
         self.typesafe_switch_route_btn = compact_primary_button(Button("Use OpenRouter"))
-        self.typesafe_switch_route_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.typesafe_switch_route_btn.clicked.connect(self._switch_typesafe_route)
         self.typesafe_switch_route_btn.hide()
-        self.typesafe_key_notice.add_trailing(self.typesafe_switch_route_btn)
-        self.typesafe_key_notice.add_trailing(self.open_typesafe_key_btn)
+        self.typesafe_key_notice.add_actions(
+            self.typesafe_switch_route_btn, self.open_typesafe_key_btn
+        )
         layout.addWidget(self.typesafe_key_notice)
 
         # Jev either way for the first two, the choice being whose key pays
@@ -2586,21 +2585,23 @@ class SettingsDialog(QDialog):
         self._tile_group(layout, "", [self.typesafe_route_tile], columns=1)
 
         self.typesafe_enabled_tile = SettingTile(
-            "Fast judgments (Experimental)",
+            "Live checks",
             "Answers narrow yes/no questions about a minute of transcript: "
             "about 0.2 s with Jev, seconds with a text model. It never writes text.",
             design_icon("bolt-green.svg"),
         )
+        self.typesafe_enabled_tile.add_title_badge("Experimental")
         self.typesafe_enabled_check = self.typesafe_enabled_tile.checkbox
         self.typesafe_enabled_check.setObjectName("typesafeEnabledCheck")
         self.typesafe_enabled_check.toggled.connect(self._on_typesafe_enabled_changed)
 
         self.typesafe_topic_shift_tile = SettingTile(
-            "Semantic topic changes (Experimental)",
+            "Semantic topic changes",
             "Fires early checkpoints on a judged topic change instead of word "
             "overlap, and falls back to word overlap if no answer arrives.",
             design_icon("stack-purple.svg"),
         )
+        self.typesafe_topic_shift_tile.add_title_badge("Experimental")
         self.typesafe_topic_shift_check = self.typesafe_topic_shift_tile.checkbox
         self.typesafe_topic_shift_check.setObjectName("typesafeTopicShiftCheck")
         self._meeting_bindings.checkbox(
@@ -2610,12 +2611,13 @@ class SettingsDialog(QDialog):
         )
 
         self.typesafe_voice_commands_tile = SettingTile(
-            "Spoken instructions (Experimental)",
+            "Spoken instructions",
             "Say “Note taker, mark that as a decision”, “…add an action item” or "
             "“…new topic: budget”. Only segments naming the assistant are judged. "
             "“Replace X with Y” applies a reversible transcript correction.",
             design_icon("stack-slate.svg"),
         )
+        self.typesafe_voice_commands_tile.add_title_badge("Experimental")
         self.typesafe_voice_commands_check = (
             self.typesafe_voice_commands_tile.checkbox
         )
@@ -2652,7 +2654,7 @@ class SettingsDialog(QDialog):
             self.typesafe_feature_tiles[feature] = tile
         _caption, self.typesafe_destination_label = self._tile_group(
             layout,
-            "Fast judgments",
+            "Features",
             [
                 self.typesafe_enabled_tile,
                 self.typesafe_topic_shift_tile,
@@ -2702,12 +2704,13 @@ class SettingsDialog(QDialog):
         )
 
         self.meeting_review_tile = SettingTile(
-            "Review uncertain insights at the end (Experimental)",
+            "Review uncertain insights at the end",
             "For new meetings. Gives the Fast judgments judge relevant excerpts, speaker "
             "names and insights to find ambiguities, and asks the three highest-priority "
             "questions first. No audio is sent. Needs AI insights and Fast judgments.",
             design_icon("check-green.svg"),
         )
+        self.meeting_review_tile.add_title_badge("Experimental")
         self.meeting_review_check = self.meeting_review_tile.checkbox
         self.meeting_review_check.toggled.connect(self._on_meeting_review_toggled)
         review_row = QHBoxLayout()
@@ -2748,12 +2751,12 @@ class SettingsDialog(QDialog):
         self.meeting_report_brief_tile = SettingTile(
             "Brief",
             "One-page editorial summary. Reuses the same cards as Signal.",
-            design_icon("box-blue.svg"),
+            design_icon("notes-blue.svg"),
         )
         self.meeting_report_signal_tile = SettingTile(
             "Signal",
             "One-screen glance. Reuses the same cards as Brief.",
-            design_icon("bolt-green.svg"),
+            design_icon("broadcast-green.svg"),
         )
         self.meeting_report_ribbon_check = self.meeting_report_ribbon_tile.checkbox
         self.meeting_report_brief_check = self.meeting_report_brief_tile.checkbox
@@ -2809,7 +2812,7 @@ class SettingsDialog(QDialog):
             "Localhost keeps the live dashboard on this computer. Sharing "
             "serves it to other devices on your local network.",
             self.meeting_bind_combo,
-            design_icon("box-blue.svg"),
+            design_icon("world-blue.svg"),
         )
 
         self.meeting_bind_warning = WrappedLabel(
@@ -2841,7 +2844,7 @@ class SettingsDialog(QDialog):
             "Automatic lets the meeting server pick a free port each session. "
             "Pick a fixed port only if you need a stable link.",
             self.meeting_port_spinbox,
-            design_icon("bolt-green.svg"),
+            design_icon("server-blue.svg"),
             compact=True,
         )
         self._tile_group(layout, "Port", [self.meeting_port_tile])
@@ -2885,6 +2888,7 @@ class SettingsDialog(QDialog):
             design_icon("plus-blue.svg"),
         )
         self.api_key_store_caption = self.api_key_entry_tile.description_label
+        self.api_key_store_caption.setToolTip(self._api_key_store_detail())
 
         # Password echo also makes Qt refuse copy/cut from the field, and the
         # input-method hints keep IMEs and predictive text from retaining it.
@@ -2900,6 +2904,11 @@ class SettingsDialog(QDialog):
             | Qt.InputMethodHint.ImhNoPredictiveText
         )
         self.api_key_edit.setMinimumHeight(40)
+        # The key itself is set in a spaced monospace; the placeholder keeps
+        # the normal field font (QSS can't style a placeholder on its own).
+        self.api_key_edit.textChanged.connect(
+            lambda text: set_style_property(self.api_key_edit, "hasText", bool(text))
+        )
         self.api_key_edit.textChanged.connect(self._update_api_key_controls)
         self.api_key_edit.returnPressed.connect(self._save_api_key)
         self.api_key_show_button = neutral_button(Button("Show"))
@@ -2921,8 +2930,10 @@ class SettingsDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(8)
-        self.api_key_save_button = compact_primary_button(PrimaryButton("Save key"))
+        # A plain Button: PrimaryButton's own padding would make it taller than Test.
+        self.api_key_save_button = Button("Save key")
         self.api_key_save_button.setObjectName("apiKeySaveButton")
+        compact_primary_button(self.api_key_save_button)
         fit_compact_button(self.api_key_save_button, 120)
         self.api_key_save_button.clicked.connect(self._save_api_key)
         self.api_key_test_button = neutral_button(Button("Test"))
@@ -2944,11 +2955,12 @@ class SettingsDialog(QDialog):
     def _api_key_store_copy() -> str:
         status = credential_store().status()
         if not status.available:
+            # The error itself goes in the tooltip (_api_key_store_detail).
             return (
-                f"{status.backend_name} isn't available on this computer "
-                f"({status.reason}), so keys can't be saved from here. Set the "
-                "variable in your environment or a .env file instead; "
-                "OpenWhisper never falls back to an unprotected file."
+                f"{status.backend_name} isn't available on this computer, so "
+                "keys can't be saved from here. Set the variable in your "
+                "environment or a .env file instead; OpenWhisper never falls "
+                "back to an unprotected file."
             )
         copy = (
             f"Encrypted by {status.backend_name} for your account. "
@@ -2962,6 +2974,14 @@ class SettingsDialog(QDialog):
                 "it doesn't ask every launch."
             )
         return copy
+
+    @staticmethod
+    def _api_key_store_detail() -> str:
+        """The store's own error, for the caption's tooltip; "" when it works."""
+        status = credential_store().status()
+        if status.available or not status.reason:
+            return ""
+        return f"Details: {status.reason}"
 
     @staticmethod
     def _api_key_entries(settings: dict) -> list:
@@ -2993,6 +3013,7 @@ class SettingsDialog(QDialog):
         self.api_key_combo.blockSignals(False)
         self._clear_api_key_input()
         self.api_key_store_caption.setText(self._api_key_store_copy())
+        self.api_key_store_caption.setToolTip(self._api_key_store_detail())
         self._render_api_key_status()
 
     def focus_api_keys(self, env_name: Optional[str] = None) -> None:
@@ -3559,14 +3580,20 @@ class SettingsDialog(QDialog):
         field.setMaximumWidth(220)
         card.add_control(field)
 
+        # Every row gets a Clear, so the shortcut column lines up. A required
+        # shortcut's stays disabled: it can be changed but never left empty.
+        button = Button("Clear")
+        button.setObjectName("hotkeyClearButton")
+        button.setAccessibleName(f"Clear {title} shortcut")
+        fit_compact_button(button, 68)
+        card.add_control(button)
         clear_button = None
         if optional:
-            clear_button = Button("Clear")
-            clear_button.setObjectName("hotkeyClearButton")
-            clear_button.setAccessibleName(f"Clear {title} shortcut")
-            fit_compact_button(clear_button, 68)
+            clear_button = button
             clear_button.clicked.connect(lambda _checked=False, key=key: self._clear_hotkey(key))
-            card.add_control(clear_button)
+        else:
+            button.setEnabled(False)
+            button.setToolTip(f"{title} can't be empty. Click its shortcut to change it.")
         self._shortcut_rows.append(_ShortcutRow(key, page, field, clear_button, note))
         if page == HOTKEYS:
             self.hotkey_inputs[key] = field
@@ -4683,6 +4710,10 @@ class SettingsDialog(QDialog):
         master_on = self.typesafe_enabled_check.isChecked()
         self.typesafe_key_notice.setVisible(not present)
         self.typesafe_switch_route_btn.setVisible(other_present)
+        # One blue action per banner: switching routes leads when it can.
+        set_style_property(
+            self.open_typesafe_key_btn, "tone", "neutral" if other_present else "primary"
+        )
         if other is not None:
             self.typesafe_switch_route_btn.setText(f"Use {other.name}")
         self.open_typesafe_key_btn.setToolTip(

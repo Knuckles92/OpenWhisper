@@ -4,7 +4,7 @@ import logging
 
 from PyQt6.QtCore import QTimer, QUrl, Qt
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import QDialog, QHBoxLayout, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout
 
 from services._hotkey_pynput import accessibility_app_bundle
 from services.hotkey_manager import (
@@ -13,6 +13,7 @@ from services.hotkey_manager import (
     request_accessibility_trust,
 )
 from services.settings import SettingsKey, settings_manager
+from ui_qt.widgets.buttons import Button, compact_primary_button, neutral_button
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
@@ -21,20 +22,24 @@ logger = logging.getLogger(__name__)
 class AccessibilityDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("accessibilityDialog")
         self.setWindowTitle("Set up auto-paste")
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setMinimumWidth(520)
-        self.resize(560, 400)
+        # As short as the copy allows; the labels raise the floor as they wrap.
+        self.resize(560, 1)
         layout = QVBoxLayout(self)
-        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
 
-        def paragraph(text):
+        def paragraph(text, name="consentBodyLabel"):
             label = WrappedLabel(text)
+            label.setObjectName(name)
             label.setTextFormat(Qt.TextFormat.PlainText)
             layout.addWidget(label)
             return label
 
-        paragraph("Paste transcriptions into the app you’re using")
+        paragraph("Paste transcriptions into the app you’re using", "headerLabel")
         paragraph(
             "Auto-paste needs Accessibility access. Recording and global hotkeys "
             "work without it, and you can paste copied text with ⌘V."
@@ -49,10 +54,25 @@ class AccessibilityDialog(QDialog):
             )
         else:
             instructions = accessibility_permission_instructions()
-        paragraph(instructions)
+        # Empty off macOS, where there is no Accessibility pane to describe.
+        paragraph(instructions).setVisible(bool(instructions))
         if self.bundle:
-            path_label = paragraph(f"App to allow: {self.bundle}")
+            path_label = paragraph(f"App to allow: {self.bundle}", "infoLabel")
             path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        # Secondary helpers sit with the steps; the footer holds the choice.
+        helpers = QHBoxLayout()
+        helpers.setSpacing(8)
+        if self.bundle:
+            self.finder_button = neutral_button(Button("Show App in Finder"))
+            self.finder_button.clicked.connect(self._reveal_app)
+            helpers.addWidget(self.finder_button)
+        help_button = neutral_button(Button("Already enabled or missing from the list?"))
+        help_button.setCheckable(True)
+        help_button.setAutoDefault(False)
+        helpers.addWidget(help_button)
+        helpers.addStretch()
+        layout.addLayout(helpers)
         self.recovery = paragraph(
             "Use + to add the app "
             f"shown above. If an older {name} entry is enabled but access still "
@@ -60,24 +80,30 @@ class AccessibilityDialog(QDialog):
             "If access still isn’t detected, quit and reopen OpenWhisper."
         )
         self.recovery.setVisible(False)
-        help_button = QPushButton("Already enabled or missing from the list?")
-        help_button.setCheckable(True)
         help_button.toggled.connect(self.recovery.setVisible)
-        layout.addWidget(help_button)
         self.status = paragraph("")
+        paragraph(
+            "We won’t ask again at launch. Set up auto-paste anytime in Settings → General.",
+            "infoLabel",
+        )
+
+        layout.addStretch(1)
+        layout.addSpacing(4)
         actions = QHBoxLayout()
-        self.open_button = QPushButton("Open Accessibility Settings")
+        actions.setSpacing(8)
+        actions.addStretch()
+        self.done_button = neutral_button(Button("Continue with clipboard"))
+        self.done_button.clicked.connect(self.close)
+        actions.addWidget(self.done_button)
+        self.open_button = compact_primary_button(Button("Open Accessibility Settings"))
         self.open_button.clicked.connect(self._open_settings)
         actions.addWidget(self.open_button)
-        if self.bundle:
-            self.finder_button = QPushButton("Show App in Finder")
-            self.finder_button.clicked.connect(self._reveal_app)
-            actions.addWidget(self.finder_button)
         layout.addLayout(actions)
-        self.done_button = QPushButton("Continue with clipboard")
-        self.done_button.clicked.connect(self.close)
-        layout.addWidget(self.done_button)
-        paragraph("We won’t ask again at launch. Set up auto-paste anytime in Settings → General.")
+        self.open_button.setDefault(True)
+        # Otherwise the first helper takes focus, and Enter would click it.
+        self.open_button.setFocus()
+        if self.bundle:
+            self.finder_button.setAutoDefault(False)
 
         self.timer = QTimer(self)
         self.timer.setInterval(1000)

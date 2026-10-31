@@ -46,6 +46,7 @@ from ui_qt.widgets import (
     WrappedLabel,
 )
 from ui_qt.widgets.engine_field import EngineStatus, StatusDot
+from ui_qt.widgets.setting_tile import TileBase
 from ui_qt.widgets.segmented_bar import SegmentButton, SegmentedBar
 
 # Stands in for the access token in the on-screen preview; copies get the real one.
@@ -608,17 +609,18 @@ class McpSettingsPage(QWidget):
         layout = QVBoxLayout(card)
         layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(12)
+        # The standard Settings card heading: a bare icon beside a small
+        # bold title, as on every other page's tiles.
         header = QHBoxLayout()
         header.setSpacing(12)
-        tile = QLabel()
-        tile.setObjectName("mcpCardIcon")
-        tile.setFixedSize(34, 34)
-        tile.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tile.setPixmap(design_icon(icon).pixmap(20, 20))
-        header.addWidget(tile, alignment=Qt.AlignmentFlag.AlignTop)
+        glyph = QLabel()
+        glyph.setObjectName("settingsTileIcon")
+        glyph.setFixedSize(TileBase.ICON_SIZE, TileBase.ICON_SIZE)
+        glyph.setPixmap(design_icon(icon).pixmap(TileBase.ICON_SIZE, TileBase.ICON_SIZE))
+        header.addWidget(glyph, alignment=Qt.AlignmentFlag.AlignTop)
         titles = QVBoxLayout()
-        titles.setSpacing(1)
-        titles.addWidget(cls._label(title, "mcpCardTitle"))
+        titles.setSpacing(3)
+        titles.addWidget(cls._label(title, "settingsTileTitle"))
         titles.addWidget(cls._detail(description))
         header.addLayout(titles, 1)
         layout.addLayout(header)

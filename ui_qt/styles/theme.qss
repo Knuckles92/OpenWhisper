@@ -124,6 +124,32 @@ QPushButton[tone="primary"]:disabled {
     border-color: @slate-border;
 }
 
+QPushButton[tone="danger"] {
+    color: @on-accent;
+    background-color: @danger;
+    border: 1px solid @danger;
+    border-radius: 8px;
+    padding: 6px 16px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QPushButton[tone="danger"]:hover {
+    background-color: @danger-hover;
+    border-color: @danger-hover;
+}
+
+QPushButton[tone="danger"]:pressed {
+    background-color: @danger-pressed;
+    border-color: @danger-pressed;
+}
+
+QPushButton[tone="danger"]:disabled {
+    color: @slate-text-disabled;
+    background-color: @slate-disabled;
+    border-color: @slate-border;
+}
+
 /* Danger buttons (for cancel/stop) */
 QPushButton#dangerButton {
     background-color: @danger; /* Apple System Red */
@@ -181,23 +207,6 @@ QPushButton#dangerButton[inactive="true"]:pressed,
 QPushButton#warningButton[inactive="true"],
 QPushButton#warningButton[inactive="true"]:hover,
 QPushButton#warningButton[inactive="true"]:pressed {
-    background-color: @surface;
-    color: @text-muted;
-    border: 1px solid @border;
-}
-
-/* Start Walkthrough sits with the record controls (quick_record_tab.py):
-   their size and weight with the accent fill, and their outline while a
-   dictation records and it can't start. */
-QPushButton#primaryButton[buttonId="walkthrough"] {
-    font-size: 14px;
-    font-weight: 600;
-    padding: 10px 20px;
-}
-
-QPushButton#primaryButton[buttonId="walkthrough"][inactive="true"],
-QPushButton#primaryButton[buttonId="walkthrough"][inactive="true"]:hover,
-QPushButton#primaryButton[buttonId="walkthrough"][inactive="true"]:pressed {
     background-color: @surface;
     color: @text-muted;
     border: 1px solid @border;
@@ -443,6 +452,11 @@ QLabel#localModelPickerCaption {
     font-size: 12px;
 }
 
+/* The Settings field look. `SettingsDialog QComboBox` is the default for every
+   dropdown in Settings (a type selector, so it outranks the main window's bare
+   QComboBox but not any #name rule); without it a combo with no styled name
+   fell back to the main window's grey fill. The names keep the look elsewhere. */
+SettingsDialog QComboBox,
 QComboBox#localModelPickerCombo,
 QComboBox#ondemandEngineCombo,
 QComboBox#meetingLanguageCombo,
@@ -497,6 +511,12 @@ QLabel#modelManagerSubtitle {
     color: @slate-text-3;
     font-size: 13px;
     background-color: transparent;
+    border: none;
+}
+
+/* Under every Settings page heading; pages scroll beneath it. */
+QFrame#settingsPageHeaderDivider {
+    background-color: @slate-border-subtle;
     border: none;
 }
 
@@ -579,7 +599,8 @@ QLabel#apiKeyStatus[tone="success"] {
     color: @success-text;
 }
 
-QLineEdit#apiKeyInput {
+/* Only the key itself; the placeholder keeps the normal field font. */
+QLineEdit#apiKeyInput[hasText="true"] {
     font-family: "Cascadia Mono", "Consolas", "Menlo", monospace;
     letter-spacing: 1px;
 }
@@ -631,20 +652,6 @@ QFrame#textModelGroupSeparator {
     background-color: transparent;
     border: none;
     border-top: 1px solid @slate-border-subtle;
-}
-
-QPushButton#textModelRefreshButton {
-    color: @accent-soft;
-    background-color: @slate-surface;
-    border: 1px solid @accent-border;
-    border-radius: 9px;
-    padding: 6px 12px;
-}
-
-QPushButton#textModelRefreshButton:hover {
-    color: @accent-soft;
-    background-color: @accent-tint;
-    border-color: @accent-soft;
 }
 
 QFrame#textModelFootnoteCard {
@@ -908,8 +915,8 @@ QLabel#batchDestPath {
 }
 
 /* Settings > General: one rounded tile per on/off setting. The tile, not
-   just the indicator, is the click target, so hover and the checked tint tell
-   the user the whole card reacts. */
+   just the indicator, is the click target, so hover tells the user the whole
+   card reacts. The switch alone shows on/off; the card keeps its colour. */
 QLabel#settingsTileGroupTitle {
     color: @slate-text-2;
     background-color: transparent;
@@ -928,16 +935,6 @@ QFrame#settingsTile {
 QFrame#settingsTile:hover {
     background-color: @slate-surface-hover;
     border-color: @slate-border-strong;
-}
-
-QFrame#settingsTile[checked="true"] {
-    background-color: @accent-tint;
-    border-color: @accent-tint-border;
-}
-
-QFrame#settingsTile[checked="true"]:hover {
-    background-color: @accent-tint-strong;
-    border-color: @accent-tint-border-strong;
 }
 
 /* Value tiles are not click targets, so they keep the resting colors. */
@@ -1093,11 +1090,6 @@ QFrame#mcpGate QLabel {
 QWidget#mcpSettingsPage QLabel#mcpStatusText {
     color: @slate-text-2;
     font-size: 14px;
-}
-
-QWidget#mcpSettingsPage QLabel#mcpCardIcon {
-    background-color: rgba(@accent-rgb, 0.14);
-    border-radius: 9px;
 }
 
 QLabel#mcpCardTitle {
@@ -1330,9 +1322,10 @@ QWidget#backupSettingsPage QFrame#settingsTile[backupCard="create"] {
     border-color: @accent-tint-border;
 }
 
+/* Restates the standard card title over the page's caption rule above. */
 QWidget#backupSettingsPage QLabel#settingsTileTitle {
     color: @slate-text;
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 600;
 }
 
@@ -1518,26 +1511,6 @@ QPushButton#agentTileLink {
 QPushButton#agentTileLink:hover {
     color: @accent-hover;
     text-decoration: underline;
-}
-
-QPushButton#agentLookAgainButton {
-    color: @accent-soft;
-    background-color: transparent;
-    border: 1px solid @slate-border;
-    border-radius: 9px;
-    padding: 4px 12px;
-    font-size: 12px;
-    font-weight: 600;
-}
-
-QPushButton#agentLookAgainButton:hover {
-    background-color: @accent-tint;
-    border-color: @accent-tint-border;
-}
-
-QPushButton#agentLookAgainButton:disabled {
-    color: @slate-text-4;
-    border-color: @slate-border-subtle;
 }
 
 /* Integrated Hotkeys destination */
@@ -1731,12 +1704,15 @@ QToolButton#spinStepDown {
     color: @slate-text-2;
 }
 
+/* Theme-coloured Tabler chevrons, small enough to read as a slim rail. */
 QToolButton#spinStepUp {
     border-top-right-radius: 7px;
+    qproperty-icon: url(ui_qt/assets/tabler/chevron-up-gray@icon-suffix.svg);
 }
 
 QToolButton#spinStepDown {
     border-bottom-right-radius: 7px;
+    qproperty-icon: url(ui_qt/assets/tabler/chevron-down-gray@icon-suffix.svg);
 }
 
 QToolButton#spinStepUp:hover,
@@ -2259,9 +2235,10 @@ QCheckBox {
     outline: none;
 }
 
+/* One checkbox size everywhere: the compact Quick Record box. */
 QCheckBox::indicator {
-    width: 20px;
-    height: 20px;
+    width: 15px;
+    height: 15px;
     background-color: @surface;
     border: 1px solid @border-strong;
     border-radius: 4px;
@@ -2720,13 +2697,29 @@ QListWidget#cleanupRulesList::item:selected {
     border: 1px solid @accent;
 }
 
-QLabel#cleanupRulesEmpty {
-    color: @slate-text-4;
+/* Empty lists (ui_qt/widgets/empty_state.py): one look on every page. */
+QFrame#emptyState {
     background-color: @slate-disabled;
     border: 1px dashed @slate-border-strong;
     border-radius: 10px;
-    padding: 22px;
+}
+
+QLabel#emptyStateTitle {
+    color: @slate-text;
+    background-color: transparent;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#emptyStateHint {
+    color: @slate-text-3;
+    background-color: transparent;
     font-size: 12px;
+}
+
+QLabel#emptyStateTitle:disabled,
+QLabel#emptyStateHint:disabled {
+    color: @slate-text-4;
 }
 
 /* Learned Rule review dialog */
@@ -2799,30 +2792,25 @@ QWidget#meetingModeScrollHost {
     background-color: transparent;
 }
 
-QLabel#meetingBetaBadge {
-    color: @warning-text;
-    background-color: rgba(@warning-rgb, 0.12);
-    border: 1px solid rgba(@warning-rgb, 0.3);
-    border-radius: 8px;
-    padding: 2px 8px;
-    font-size: 11px;
-    font-weight: 600;
-}
-
-QLabel#meetingBetaNotice {
-    color: @text-body;
-    background-color: transparent;
-    font-size: 12px;
-}
-
-QLabel#meetingModeSubtitle {
+QLabel#meetingIntroText {
     color: @text-secondary;
     background-color: transparent;
+    font-size: 13px;
 }
 
 QLabel#meetingModePlatformHint {
+    color: @text-secondary;
+    background-color: @surface-sunken;
+    border: 1px solid @border;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+}
+
+QLabel#meetingModePlatformHint[tone="warning"] {
     color: @warning-text;
-    background-color: transparent;
+    background-color: @warning-tint;
+    border-color: @warning-tint-border;
 }
 
 QLabel#meetingStatusPill {
@@ -2844,26 +2832,6 @@ QLabel#meetingElapsedLabel {
     padding: 0 4px;
 }
 
-/* Start and End keep the accent colors their SuccessButton / DangerButton
-   classes imply; the meeting-specific object names replace the class ones. */
-QPushButton#meetingStartButton {
-    background-color: @success;
-    color: @on-accent;
-    padding: 12px 28px;
-    font-size: 15px;
-    font-weight: 600;
-    border-radius: 10px;
-    min-width: 220px;
-}
-
-QPushButton#meetingStartButton:hover {
-    background-color: @success-hover;
-}
-
-QPushButton#meetingStartButton:pressed {
-    background-color: @success-pressed;
-}
-
 QPushButton#meetingPauseButton,
 QPushButton#meetingDashboardButton,
 QPushButton#meetingGuestLinkButton {
@@ -2872,6 +2840,8 @@ QPushButton#meetingGuestLinkButton {
     border-radius: 8px;
 }
 
+/* End keeps the danger fill its DangerButton class implies; the meeting
+   object name replaces the class one. */
 QPushButton#meetingEndButton {
     background-color: @danger;
     color: @on-accent;
@@ -2986,15 +2956,24 @@ QCheckBox#meetingAiInsightsCheckbox::indicator:focus {
    the content rectangle of compact buttons and links. Text fields retain
    their normal one-pixel focus border. */
 QWidget#meetingModeTab QPushButton:focus,
-QWidget#meetingModeTab QToolButton:focus,
+QWidget#meetingModeTab QToolButton:focus {
+    text-decoration: underline;
+}
+
+/* Dialog footers: focus recolours the button's own one-pixel edge, so the
+   size stays put and the label is never underlined. The default button
+   holds focus when a dialog opens, and an underline read as a link. */
 QDialog#meetingIntroDialog QPushButton:focus,
 QDialog#meetingConsentDialog QPushButton:focus,
 QDialog#meetingAudioConsentDialog QPushButton:focus,
 QDialog#meetingUnsupportedDialog QPushButton:focus,
 QDialog#meetingSystemAudioDialog QPushButton:focus,
 QDialog#meetingLinuxAudioDialog QPushButton:focus,
-QDialog#meetingRecoveryDialog QPushButton:focus {
-    text-decoration: underline;
+QDialog#meetingRecoveryDialog QPushButton:focus,
+QDialog#meetingDeleteDialog QPushButton:focus,
+QDialog#textEndpointDialog QPushButton:focus,
+QDialog#accessibilityDialog QPushButton:focus {
+    border: 1px solid @accent-soft;
 }
 
 QWidget#meetingFinalizationCard {
@@ -3029,34 +3008,6 @@ QLabel#meetingFinalizationIdentityMeta {
     font-size: 12px;
 }
 
-QLabel#meetingFinalizationIdentityPill {
-    color: @text-secondary-strong;
-    background-color: rgba(@overlay-rgb, 0.08);
-    border: 1px solid rgba(@overlay-rgb, 0.12);
-    border-radius: 10px;
-    padding: 2px 8px;
-    font-size: 10px;
-    font-weight: 600;
-}
-
-QLabel#meetingFinalizationIdentityPill[pillTone="warning"] {
-    color: @warning-text;
-    background-color: rgba(@warning-rgb, 0.15);
-    border: 1px solid rgba(@warning-rgb, 0.35);
-}
-
-QLabel#meetingFinalizationIdentityPill[pillTone="success"] {
-    color: @success-text;
-    background-color: rgba(@success-rgb, 0.15);
-    border: 1px solid rgba(@success-rgb, 0.35);
-}
-
-QLabel#meetingFinalizationIdentityPill[pillTone="neutral"] {
-    color: @text-secondary-strong;
-    background-color: rgba(@overlay-rgb, 0.08);
-    border: 1px solid rgba(@overlay-rgb, 0.12);
-}
-
 QLabel#meetingFinalizationTitle {
     color: @text;
     background-color: transparent;
@@ -3064,26 +3015,43 @@ QLabel#meetingFinalizationTitle {
     font-weight: 600;
 }
 
+/* Meeting badges share one pill: 20px tall (set in code), fully rounded, a
+   tinted fill and coloured text, no outline. Tones: neutral (default for the
+   identity pill), accent (default for the step badge), success, warning. The
+   Past Meetings card pills use the same values in their own stylesheet. */
+QLabel#meetingBetaBadge,
+QLabel#meetingFinalizationIdentityPill,
 QLabel#meetingFinalizationStepBadge {
-    color: @accent;
-    background-color: rgba(@accent-rgb, 0.15);
-    border: 1px solid rgba(@accent-rgb, 0.35);
+    border: none;
     border-radius: 10px;
-    padding: 2px 8px;
+    padding: 0px 8px;
     font-size: 11px;
     font-weight: 600;
 }
 
+QLabel#meetingFinalizationIdentityPill,
+QLabel#meetingFinalizationIdentityPill[pillTone="neutral"],
+QLabel#meetingFinalizationStepBadge[badgeTone="neutral"] {
+    color: @text-secondary-strong;
+    background-color: rgba(@overlay-rgb, 0.08);
+}
+
+QLabel#meetingFinalizationStepBadge {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.15);
+}
+
+QLabel#meetingFinalizationIdentityPill[pillTone="success"],
 QLabel#meetingFinalizationStepBadge[badgeTone="success"] {
     color: @success-text;
     background-color: rgba(@success-rgb, 0.15);
-    border: 1px solid rgba(@success-rgb, 0.35);
 }
 
+QLabel#meetingBetaBadge,
+QLabel#meetingFinalizationIdentityPill[pillTone="warning"],
 QLabel#meetingFinalizationStepBadge[badgeTone="warning"] {
     color: @warning-text;
     background-color: rgba(@warning-rgb, 0.15);
-    border: 1px solid rgba(@warning-rgb, 0.35);
 }
 
 QWidget#meetingFinalizationActiveBox {
@@ -3497,9 +3465,7 @@ QLabel#meetingRecoveryRowLabel {
 
 /* By dialog, not by button name: the primary and danger buttons here keep
    their class object names, which is what gives them their colour. */
-QDialog#meetingConsentDialog QPushButton,
-QDialog#meetingRecoveryDialog QPushButton,
-QDialog#meetingIntroDialog QPushButton {
+QDialog#meetingRecoveryDialog QPushButton {
     padding: 8px 16px;
     font-size: 13px;
 }
@@ -4836,14 +4802,6 @@ QPushButton#dictionaryStar[starred="true"] {
     qproperty-icon: url(ui_qt/assets/tabler/star-filled-amber@icon-suffix.svg);
 }
 
-QLabel#dictionaryEmpty {
-    color: @slate-text-4;
-    background-color: @slate-disabled;
-    border: 1px dashed @slate-border-strong;
-    border-radius: 10px;
-    padding: 18px;
-    font-size: 12px;
-}
 /* personalize:S4 end */
 
 /* personalize:S5 begin (snippets) */
@@ -5609,11 +5567,6 @@ QFrame#settingsTile[tileId="actionAgentCard"]:hover {
     border-radius: 14px;
 }
 
-QFrame#settingsTile[tileId="actionAgentCard"][checked="true"],
-QFrame#settingsTile[tileId="actionAgentCard"][checked="true"]:hover {
-    border-color: rgba(@purple-rgb, 0.48);
-}
-
 QFrame#settingsTile[tileId="actionAgentCard"][searchHit="true"] {
     background-color: @accent-tint;
     border-color: @accent-border;
@@ -5751,27 +5704,6 @@ QLabel#actionChip[tone="muted"] {
     font-weight: 400;
 }
 
-/* No actions yet. */
-QFrame#actionsEmpty {
-    background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 rgba(@accent-rgb, 0.07), stop: 1 @slate-disabled);
-    border: 1px dashed @slate-border-strong;
-    border-radius: 12px;
-}
-
-QLabel#actionsEmptyTitle {
-    color: @slate-text;
-    background-color: transparent;
-    font-size: 14px;
-    font-weight: 600;
-}
-
-QLabel#actionsEmptyText {
-    color: @slate-text-3;
-    background-color: transparent;
-    font-size: 12px;
-}
-
 /* Add action: each starting point is a card you can click or tab to. */
 QFrame#settingsTile[tileId="actionPreset"]:focus {
     border-color: @accent;
@@ -5900,18 +5832,6 @@ QLabel#hooksRowDetail {
 
 QFrame#hooksRow[off="true"] QLabel#hooksRowName {
     color: @slate-text-3;
-}
-
-QFrame#hooksEmpty {
-    background-color: @slate-disabled;
-    border: 1px dashed @slate-border-strong;
-    border-radius: 10px;
-}
-
-QLabel#hooksEmptyText {
-    color: @slate-text-2;
-    background-color: transparent;
-    font-size: 13px;
 }
 
 QFrame#hooksEditor {
@@ -6097,11 +6017,6 @@ QWidget#mcpLiveRow,
 QWidget#mcpEndpoints {
     background-color: transparent;
     border: none;
-}
-
-QWidget#mcpLiveSection QLabel#mcpCardIcon {
-    background-color: rgba(@accent-rgb, 0.14);
-    border-radius: 9px;
 }
 
 QWidget#mcpLiveSection QLineEdit,

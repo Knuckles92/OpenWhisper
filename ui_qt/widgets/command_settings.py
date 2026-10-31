@@ -46,8 +46,9 @@ from ui_qt.widgets.wrapped_label import WrappedLabel
 COMMAND_ACTION = "command_mode"
 #: The transforms list's width beside the editor, unless its buttons need more.
 LIBRARY_WIDTH = 210
-#: The Command Mode shortcut box's narrowest width beside its buttons, at 100%.
-INPUT_MIN_WIDTH = 140
+#: The Command Mode shortcut box's narrowest width beside its buttons, at 100%:
+#: room for the whole "Click to set hotkey" placeholder.
+INPUT_MIN_WIDTH = 160
 _CAPTURE_TIP = "Click, then press a shortcut. Escape cancels."
 
 
@@ -285,11 +286,11 @@ class TransformsPanel(QWidget):
         for transform in STARTER_TRANSFORMS:
             button = neutral_button(Button(transform.name))
             # The page lays out at its minimum height, so the floor is the label's.
-            fit_compact_button(button, 0)
+            fit_compact_button(button)
             button.setToolTip(transform.instruction)
             button.clicked.connect(lambda _checked=False, t=transform: self.use_starter(t))
             starters.append(button)
-        self.starter_row = ButtonRow(starters)
+        self.starter_row = ButtonRow(starters, stretch=False)
         self.starter_row.setProperty("tileId", "transformStarters")
         layout.addWidget(self.starter_row)
 

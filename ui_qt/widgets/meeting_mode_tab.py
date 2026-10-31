@@ -37,7 +37,7 @@ from PyQt6.QtWidgets import (
 from meeting.platform import meeting_mode_supported, meeting_unsupported_os_name
 from meeting.time_utils import format_meeting_identity_meta
 from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
-from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton
+from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton, start_row
 from ui_qt.widgets.cards import Card
 from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.wrapped_label import WrappedLabel
@@ -64,10 +64,9 @@ def meeting_audio_support_copy(platform: Optional[str] = None) -> tuple[str, str
         from meeting.platform import linux_meeting_implementation_ready
         if linux_meeting_implementation_ready():
             hint = (
-                "Linux system-audio capture is implemented (PulseAudio / "
-                "PipeWire-Pulse) but not yet publicly promoted. After the "
-                "Linux preview acknowledgement, OpenWhisper can enable "
-                "the default output monitor or continue microphone-only."
+                "Meeting Mode on Linux is a preview. System audio comes "
+                "through PulseAudio or PipeWire, or you can continue with "
+                "the microphone only."
             )
         else:
             os_name = meeting_unsupported_os_name(platform)
@@ -187,6 +186,16 @@ def installed_agent_destination(
     return where, "your agent receives transcript text, never audio"
 
 
+def meeting_audio_platform_tone(platform: Optional[str] = None) -> str:
+    """``"note"`` for Linux's preview line, ``"warning"`` for unsupported ones."""
+    platform = platform or sys.platform
+    if platform.startswith("linux"):
+        from meeting.platform import linux_meeting_implementation_ready
+        if linux_meeting_implementation_ready():
+            return "note"
+    return "warning"
+
+
 def meeting_audio_shows_platform_warning(platform: Optional[str] = None) -> bool:
     """True when the idle platform sentence should stay visible as a warning."""
     platform = platform or sys.platform
@@ -294,8 +303,8 @@ def _step_icon(step_status) -> Tuple[str, str]:
     return "○", "@text-muted"
 
 
-def _step_detail_text(step_status, detail_text: str) -> str:
-    if detail_text and step_status == "running":
+def _step_detail_text(step_status) -> str:
+    if step_status == "running":
         return "In progress"
     if step_status == "completed":
         return "Done"
@@ -517,36 +526,40 @@ class MeetingModeTab(QWidget):
         beta_badge = QLabel("Beta")
         beta_badge.setObjectName("meetingBetaBadge")
         beta_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        beta_badge.setFixedHeight(20)
         beta_badge.setAccessibleName("Meeting Mode is in beta")
         title_row.addWidget(beta_badge, 0, Qt.AlignmentFlag.AlignVCenter)
         title_row.addStretch()
         intro_card.layout.addLayout(title_row)
 
+        # One body style for the intro lines (theme.qss: meetingIntroText);
+        # the platform line below is a quiet note box, not more body text.
+        intro_text = QVBoxLayout()
+        intro_text.setSpacing(4)
+        subtitle_copy, platform_copy = meeting_audio_support_copy()
+        self.subtitle = WrappedLabel(subtitle_copy)
+        self.subtitle.setObjectName("meetingIntroText")
+        self.subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.subtitle.setToolTip(platform_copy)
+        intro_text.addWidget(self.subtitle)
+        self.speech_destination = WrappedLabel("")
+        self.speech_destination.setObjectName("meetingIntroText")
+        self.speech_destination.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        intro_text.addWidget(self.speech_destination)
         beta_notice = WrappedLabel(
             "Meeting Mode is in beta. Transcripts and insights may be inaccurate."
         )
-        beta_notice.setObjectName("meetingBetaNotice")
+        beta_notice.setObjectName("meetingIntroText")
         beta_notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        intro_card.layout.addWidget(beta_notice)
-
-        subtitle_copy, platform_copy = meeting_audio_support_copy()
-        self.subtitle = WrappedLabel(subtitle_copy)
-        self.subtitle.setObjectName("meetingModeSubtitle")
-        self.subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.subtitle.setFont(QFont("Segoe UI", 11))
-        self.subtitle.setToolTip(platform_copy)
-        intro_card.layout.addWidget(self.subtitle)
+        intro_text.addWidget(beta_notice)
+        intro_card.layout.addLayout(intro_text)
         self.platform_hint = WrappedLabel(platform_copy, intro_card)
         self.platform_hint.setObjectName("meetingModePlatformHint")
+        self.platform_hint.setProperty("tone", meeting_audio_platform_tone())
         self.platform_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.platform_hint.setFont(QFont("Segoe UI", 10))
         self.platform_hint.setAccessibleName("Meeting platform notice")
         self.platform_hint.setVisible(meeting_audio_shows_platform_warning())
         intro_card.layout.addWidget(self.platform_hint)
-        self.speech_destination = WrappedLabel("")
-        self.speech_destination.setObjectName("meetingSpeechDestination")
-        self.speech_destination.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        intro_card.layout.addWidget(self.speech_destination)
         content_layout.addWidget(intro_card)
 
         # Active session card. It comes before the AI insights panel so the
@@ -629,14 +642,12 @@ class MeetingModeTab(QWidget):
         idle_layout.addWidget(self._build_brief_panel())
 
         self.start_button = SuccessButton("Start Meeting")
-        self.start_button.setObjectName("meetingStartButton")
-        self.start_button.setMinimumHeight(48)
-        self.start_button.setMaximumWidth(320)
+        self.start_button.setProperty("buttonId", "meetingStart")
         self.start_button.setAccessibleDescription(
             "Begin microphone and supported system-audio capture."
         )
         self.start_button.clicked.connect(self._on_start_clicked)
-        idle_layout.addWidget(self.start_button, alignment=Qt.AlignmentFlag.AlignCenter)
+        idle_layout.addLayout(start_row(self.start_button))
 
         self.demo_button = Button("Load demo meeting")
         self.demo_button.setObjectName("meetingDemoButton")
@@ -695,6 +706,7 @@ class MeetingModeTab(QWidget):
         self.identity_pill = QLabel("")
         self.identity_pill.setObjectName("meetingFinalizationIdentityPill")
         self.identity_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.identity_pill.setFixedHeight(20)
         self.identity_pill.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
         identity_meta_row.addWidget(self.identity_pill)
         identity_meta_row.addStretch()
@@ -724,6 +736,7 @@ class MeetingModeTab(QWidget):
         self.finalization_step_badge = QLabel("")
         self.finalization_step_badge.setObjectName("meetingFinalizationStepBadge")
         self.finalization_step_badge.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
+        self.finalization_step_badge.setFixedHeight(20)
         self.finalization_step_badge.setProperty("badgeTone", "neutral")
         self.finalization_step_badge.hide()
         fin_header_layout.addWidget(self.finalization_step_badge)
@@ -896,8 +909,8 @@ class MeetingModeTab(QWidget):
         content_layout.addStretch()
 
     #: Lines the AI insights details up with the checkbox text: the
-    #: indicator's 20px plus the 8px ``spacing`` theme.qss gives the checkbox.
-    _AI_DETAIL_INDENT = 28
+    #: indicator's 15px plus the 8px ``spacing`` theme.qss gives the checkbox.
+    _AI_DETAIL_INDENT = 23
 
     def _build_ai_panel(self) -> QFrame:
         """Build the AI insights switch with what it does and where it runs.
@@ -1705,7 +1718,7 @@ class MeetingModeTab(QWidget):
 
         row_layout.addStretch()
 
-        detail_label = QLabel(_step_detail_text(step_status, detail_text))
+        detail_label = QLabel(_step_detail_text(step_status))
         detail_label.setObjectName("meetingFinalizationStepDetail")
         detail_label.setFont(QFont("Segoe UI", 10))
         row_layout.addWidget(detail_label)

@@ -268,6 +268,8 @@ class TestModelRows(_DialogTestCase):
         assert row.download_button.isVisibleTo(dialog)
         assert not row.delete_button.isVisibleTo(dialog)
         assert row.badge.text() == "Not downloaded"
+        # The Download button already says so; the chip would only repeat it.
+        assert not row.badge.isVisibleTo(dialog)
         assert row.size_label.text() == "~76 MB"
 
     def test_cached_row_shows_real_size_and_delete(self):
@@ -278,6 +280,7 @@ class TestModelRows(_DialogTestCase):
         assert not row.download_button.isVisibleTo(dialog)
         assert row.delete_button.isEnabled()
         assert row.badge.text() == "Downloaded"
+        assert row.badge.isVisibleTo(dialog)
         assert row.size_label.text() == "76 MB"
 
     def test_assignment_is_reported_but_not_offered(self):
@@ -611,9 +614,10 @@ class TestInspector(_DialogTestCase):
 
     def test_inspector_is_empty_until_a_model_is_selected(self):
         dialog, _values = self._make_dialog()
-        assert dialog.inspector_name.text() == "—"
+        assert dialog.inspector_empty.isVisibleTo(dialog)
+        assert not dialog.inspector_name.isVisibleTo(dialog)
         assert not dialog.inspector_repo_button.isVisibleTo(dialog)
-        assert "Select a model" in dialog.inspector_description.text()
+        assert "Select a model" in dialog.inspector_empty.text()
 
     def test_selecting_a_row_shows_its_bundled_profile(self):
         dialog, _values = self._make_dialog()
@@ -708,7 +712,8 @@ class TestInspector(_DialogTestCase):
     def test_auto_has_no_profile_to_show(self):
         dialog, _values = self._make_dialog()
         dialog.select_model("auto")
-        assert dialog.inspector_name.text() == "—"
+        assert dialog.inspector_empty.isVisibleTo(dialog)
+        assert not dialog.inspector_name.isVisibleTo(dialog)
 
     def test_inspector_reports_the_selected_model_usage(self):
         dialog, _values = self._make_dialog(

@@ -113,31 +113,68 @@ def test_the_button_leaves_its_explanation_to_the_badge(tab):
     # Its own hover shows the shortcut pill, as the Quick Record buttons do.
     assert tab.walkthrough_button.toolTip() == ""
     assert "screenshots" in tab.walkthrough_badge.toolTip()
-    assert tab.walkthrough_badge.parent() is tab.walkthrough_button
 
 
-def test_the_badge_sits_on_the_buttons_right_side_clear_of_its_label(tab):
-    # A hidden widget gets its resize event only once shown.
+def test_the_badge_leads_the_shortcut_row_not_the_button(tab):
+    # Off the button, so Start Walkthrough matches the other tabs' Start buttons.
     tab.show()
-    tab.walkthrough_button.resize(360, 48)
-
-    badge = tab.walkthrough_badge.geometry()
-    assert 360 - 20 < badge.right() < 360
-    assert abs(badge.center().y() - 24) <= 1
-    label = tab.walkthrough_button.fontMetrics().horizontalAdvance("Start Walkthrough")
-    assert badge.left() > (360 + label) / 2
-    assert not tab.walkthrough_badge.is_compact()
-
-
-def test_in_a_narrow_button_new_folds_to_its_sparkle(tab):
-    tab.show()
-    tab.walkthrough_button.resize(220, 48)
+    QApplication.processEvents()
 
     badge = tab.walkthrough_badge
-    assert badge.is_compact()
-    assert badge.width() == badge.height()
-    label = tab.walkthrough_button.fontMetrics().horizontalAdvance("Start Walkthrough")
-    assert badge.geometry().left() > (220 + label) / 2
+    assert not tab.walkthrough_button.isAncestorOf(badge)
+    assert badge.geometry().right() < tab.start_key.geometry().left()
+    assert abs(badge.geometry().center().y() - tab.start_key.geometry().center().y()) <= 1
+    assert not badge.is_compact()
+
+
+def test_start_walkthrough_matches_the_other_start_buttons(tab):
+    from ui_qt.widgets.buttons import START_BUTTON_WIDTH, SuccessButton
+
+    tab.resize(640, 600)
+    tab.show()
+    QApplication.processEvents()
+
+    assert isinstance(tab.walkthrough_button, SuccessButton)
+    assert tab.walkthrough_button.width() == START_BUTTON_WIDTH
+    # Centred in the card.
+    hero = tab.walkthrough_button.parentWidget().parentWidget()
+    box = tab.walkthrough_button.parentWidget().geometry()
+    assert abs(box.left() - (hero.width() - box.right() - 1)) <= 1
+
+
+def _button_with_badge(width):
+    from PyQt6.QtWidgets import QPushButton
+    from ui_qt.widgets.feature_badge import FeatureBadge
+
+    button = QPushButton("Start Walkthrough")
+    badge = FeatureBadge(button, "What it does.")
+    button.show()
+    button.resize(width, 48)
+    return button, badge
+
+
+def test_on_a_button_the_badge_sits_on_its_right_side_clear_of_its_label():
+    button, badge = _button_with_badge(360)
+    try:
+        box = badge.geometry()
+        assert 360 - 20 < box.right() < 360
+        assert abs(box.center().y() - 24) <= 1
+        label = button.fontMetrics().horizontalAdvance("Start Walkthrough")
+        assert box.left() > (360 + label) / 2
+        assert not badge.is_compact()
+    finally:
+        button.close()
+
+
+def test_in_a_narrow_button_new_folds_to_its_sparkle():
+    button, badge = _button_with_badge(220)
+    try:
+        assert badge.is_compact()
+        assert badge.width() == badge.height()
+        label = button.fontMetrics().horizontalAdvance("Start Walkthrough")
+        assert badge.geometry().left() > (220 + label) / 2
+    finally:
+        button.close()
 
 
 def test_clicking_the_badge_never_starts_a_walkthrough(tab):

@@ -277,8 +277,10 @@ class PastWalkthroughsPanel(QWidget):
         column.setContentsMargins(0, 0, 6, 0)
         column.setSpacing(12)
         column.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.count_header = QLabel("WALKTHROUGHS")
+        # The page title already says Walkthroughs; this line only counts.
+        self.count_header = QLabel("")
         self.count_header.setObjectName("sectionHeader")
+        self.count_header.hide()
         self.count_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
         column.addWidget(self.count_header)
         self.card_layout = QVBoxLayout()
@@ -416,7 +418,8 @@ class PastWalkthroughsPanel(QWidget):
             return
         more = "+" if total > len(self.cards) else ""
         self.count_header.setText(
-            f"WALKTHROUGHS ({shown}{more})" if shown else "WALKTHROUGHS")
+            f"{shown}{more} {'walkthrough' if shown == 1 and not more else 'walkthroughs'}")
+        self.count_header.setVisible(bool(shown))
         if not self.cards:
             message = ("Nothing yet. Your walkthroughs show up here, newest first, "
                        "with their first screenshot.")

@@ -1,7 +1,7 @@
 """A row of buttons that wraps into balanced rows instead of painting over each other."""
 from math import lcm
 
-from PyQt6.QtCore import QEvent, QTimer
+from PyQt6.QtCore import QEvent, Qt, QTimer
 from PyQt6.QtWidgets import QGridLayout, QSizePolicy, QWidget
 
 
@@ -13,12 +13,16 @@ class ButtonRow(QWidget):
     over it. Here every button keeps its own label width as a floor and the row count
     grows until each row fits. The short row goes first, so three links wrap as 1 + 2
     with the main link on top, and each row's buttons share its full width.
+
+    With ``stretch=False`` the buttons keep their own width and sit at the left,
+    like chips, and still wrap onto more rows when the column is narrow.
     """
 
-    def __init__(self, buttons, *, spacing=8, parent=None):
+    def __init__(self, buttons, *, spacing=8, stretch=True, parent=None):
         super().__init__(parent)
         self._buttons = list(buttons)
         self._spacing = spacing
+        self._stretch = stretch
         self._shape = None
         # Width comes from the column this sits in; rows are chosen to fit it.
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -51,6 +55,20 @@ class ButtonRow(QWidget):
         layout = self.layout()
         for button in self._buttons:
             layout.removeWidget(button)
+        if not self._stretch:
+            # Chips: natural widths from the left, the spare width after them.
+            placed = 0
+            for row, size in enumerate(sizes):
+                for slot in range(size):
+                    layout.addWidget(
+                        visible[placed], row, slot, Qt.AlignmentFlag.AlignLeft
+                    )
+                    placed += 1
+            columns = max(sizes, default=0)
+            for column in range(max(columns + 1, layout.columnCount())):
+                layout.setColumnStretch(column, 1 if column == columns else 0)
+            self.updateGeometry()
+            return
         # Every row spans the same grid, so a row of one is as wide as a row of three.
         columns = lcm(*sizes)
         placed = 0

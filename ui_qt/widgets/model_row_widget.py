@@ -306,6 +306,9 @@ class ModelRowWidget(DownloadRow):
                 self._set_badge("Downloaded", "downloaded")
             else:
                 self._set_badge("Not downloaded", "idle")
+        # The Download button already says a model isn't here; the chip only
+        # adds something for the other states.
+        self.badge.setVisible(downloading or queued or cached)
 
         self.select_checkbox.setVisible(not cached)
         self.select_checkbox.setEnabled(selection_enabled and not downloading)

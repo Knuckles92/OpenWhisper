@@ -9,7 +9,9 @@ from typing import Final
 
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QVBoxLayout
 
-from ui_qt.widgets import Button, PrimaryButton
+from ui_qt.widgets.buttons import Button, compact_primary_button, neutral_button
+from ui_qt.widgets.scrolling_body import ScrollingBody
+from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +33,16 @@ class MeetingAudioConsentDialog(QDialog):
         )
         self.setMinimumWidth(480)
         self.setModal(True)
+        self._fitted = False
 
         self._setup_ui()
+
+    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt API
+        if visible and not self._fitted:
+            # Before QDialog centers itself, so it centers the final size.
+            self._fitted = True
+            self.body_scroll.fit_dialog(self)
+        super().setVisible(visible)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -41,9 +51,13 @@ class MeetingAudioConsentDialog(QDialog):
 
         title = QLabel("Send system audio to OpenAI after each meeting?")
         title.setObjectName("headerLabel")
+        title.setWordWrap(True)
         layout.addWidget(title)
 
-        body = QLabel(
+        self.body_scroll = ScrollingBody()
+        layout.addWidget(self.body_scroll, 1)
+
+        body = WrappedLabel(
             "OpenAI speaker identification uploads the system-audio "
             "recording — the \"Others\" channel, other participants' "
             "voices — to OpenAI after the meeting ends. OpenAI labels "
@@ -59,20 +73,20 @@ class MeetingAudioConsentDialog(QDialog):
             "on-device speaker labels in Settings at any time."
         )
         body.setObjectName("consentBodyLabel")
-        body.setWordWrap(True)
-        layout.addWidget(body)
+        self.body_scroll.add_widget(body)
 
         layout.addSpacing(8)
         button_layout = QHBoxLayout()
         button_layout.setSpacing(8)
         button_layout.addStretch()
 
-        not_now_btn = Button("Not now")
+        not_now_btn = neutral_button(Button("Not now"))
         not_now_btn.setObjectName("meetingAudioConsentNotNowButton")
         not_now_btn.clicked.connect(self.reject)
         button_layout.addWidget(not_now_btn)
 
-        enable_btn = PrimaryButton("Allow audio upload")
+        enable_btn = compact_primary_button(Button("Allow audio upload"))
+        enable_btn.setObjectName("meetingAudioConsentEnableButton")
         enable_btn.setProperty("buttonId", "meetingAudioConsentEnableButton")
         enable_btn.clicked.connect(lambda: self._finish(self.RESULT_ENABLE))
         button_layout.addWidget(enable_btn)

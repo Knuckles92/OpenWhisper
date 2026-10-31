@@ -72,6 +72,7 @@ from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.palette import token_color
 from ui_qt.widgets.buttons import Button, fit_compact_button, neutral_button
+from ui_qt.widgets.command_settings import INPUT_MIN_WIDTH
 from ui_qt.widgets.hotkey_capture import mouse_shortcut_note
 from ui_qt.widgets.no_wheel import ElidingComboBox
 from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
@@ -508,8 +509,9 @@ class HomePage(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
         self.shortcut = ProfileHotkeyInput()
-        self.shortcut.setMinimumWidth(110)
-        self.shortcut.setMaximumWidth(190)
+        # As wide as the Command Mode shortcut below it, which fits its placeholder.
+        self.shortcut.setMinimumWidth(round(INPUT_MIN_WIDTH * current_ui_font_scale()))
+        self.shortcut.setMaximumWidth(210)
         self.shortcut.setAccessibleName("Recording shortcut")
         self.shortcut.capture_changed.connect(self.dialog._on_profile_capture)
         self.shortcut.captured.connect(

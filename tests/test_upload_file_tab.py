@@ -1450,7 +1450,7 @@ class TestEngineCard:
         assert tab.resolved_label.text() == "turbo | cuda (float16)"
 
         tab.set_device_info("")
-        assert tab.resolved_label.text() == ""
+        assert tab.resolved_label.text() == "Ready to transcribe"
 
     def test_backend_reflects_selection_without_emitting(self):
         tab = UploadFileTab()

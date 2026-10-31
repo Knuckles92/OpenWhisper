@@ -3,15 +3,19 @@
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
-    QDialogButtonBox,
+    QHBoxLayout,
     QLabel,
     QVBoxLayout,
+    QWidget,
 )
+
+from ui_qt.widgets.buttons import Button, compact_danger_button, neutral_button
 
 
 class MeetingDeleteDialog(QDialog):
     def __init__(self, parent=None, *, has_audio=False):
         super().__init__(parent)
+        self.setObjectName("meetingDeleteDialog")
         self.setWindowTitle("Delete Meeting")
 
         layout = QVBoxLayout(self)
@@ -32,16 +36,21 @@ class MeetingDeleteDialog(QDialog):
         self.dont_ask_again = QCheckBox("Don't ask me again", self)
         layout.addWidget(self.dont_ask_again)
 
-        self.buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
-        )
-        delete_button = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
-        delete_button.setText("Delete")
-        delete_button.setAutoDefault(False)
-        cancel_button = self.buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        cancel_button.setDefault(True)
-        cancel_button.setFocus()
-        self.buttons.accepted.connect(self.accept)
-        self.buttons.rejected.connect(self.reject)
+        # Cancel, then the action on the right, as in the app's other dialogs;
+        # a platform button box put Delete first on some desktops.
+        self.buttons = QWidget(self)
+        row = QHBoxLayout(self.buttons)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addStretch()
+        self.cancel_button = neutral_button(Button("Cancel"))
+        self.cancel_button.clicked.connect(self.reject)
+        row.addWidget(self.cancel_button)
+        self.delete_button = compact_danger_button(Button("Delete"))
+        self.delete_button.setAutoDefault(False)
+        self.delete_button.clicked.connect(self.accept)
+        row.addWidget(self.delete_button)
         layout.addWidget(self.buttons)
+        # Enter keeps the harmless choice.
+        self.cancel_button.setDefault(True)
+        self.cancel_button.setFocus()

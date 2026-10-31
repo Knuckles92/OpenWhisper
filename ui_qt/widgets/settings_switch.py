@@ -35,9 +35,10 @@ class SettingsSwitch(QAbstractButton):
             painter.setOpacity(0.45)
         rect = QRectF(self.rect()).adjusted(2, 2, -2, -2)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(
-            token_color("accent" if self.isChecked() else "slate-border-strong")
-        )
+        # A disabled switch keeps its knob position but never shows the accent
+        # track, so a feature that can't run doesn't read as "on".
+        on_track = self.isChecked() and self.isEnabled()
+        painter.setBrush(token_color("accent" if on_track else "slate-border-strong"))
         painter.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
         diameter = rect.height() - 6
         x = rect.right() - diameter - 3 if self.isChecked() else rect.left() + 3

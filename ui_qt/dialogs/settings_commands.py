@@ -78,6 +78,7 @@ def build(dialog, layout) -> None:
         ShowWatcher,
         TransformsPanel,
     )
+    from ui_qt.widgets.buttons import Button, compact_primary_button
     from ui_qt.widgets.setting_tile import InfoTile, SettingTile
     from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -88,10 +89,10 @@ def build(dialog, layout) -> None:
         design_icon("info-warning.svg"),
     )
     dialog.commands_gate_tile.setProperty("kind", "notice")
-    dialog.commands_gate_tile.add_trailing(_link(
-        "Open AI cleanup", "Choose a provider and model for AI cleanup",
-        dialog.focus_cleanup_model,
-    ))
+    open_cleanup = compact_primary_button(Button("Open AI cleanup"))
+    open_cleanup.setToolTip("Choose a provider and model for AI cleanup")
+    open_cleanup.clicked.connect(dialog.focus_cleanup_model)
+    dialog.commands_gate_tile.add_actions(open_cleanup)
     dialog.commands_gate_tile.hide()
     layout.addWidget(dialog.commands_gate_tile)
 

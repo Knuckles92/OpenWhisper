@@ -282,6 +282,10 @@ class StatsDialog(QDialog):
         self.pages.addWidget(self.loading_label)
         self.pages.addWidget(self._build_empty())
         self.pages.addWidget(self._build_content())
+        # A stack is as tall as its tallest page, so the short loading and
+        # empty pages sat centred in the content page's height, below the fold.
+        self.pages.currentChanged.connect(self._fit_pages_to_current)
+        self._fit_pages_to_current(self.pages.currentIndex())
         column.addWidget(self.pages, 1)
         scroll.setWidget(body)
         outer.addWidget(scroll, 1)
@@ -304,6 +308,18 @@ class StatsDialog(QDialog):
         # Without a default, QDialog makes the first button in the focus chain,
         # Reset, the one that Enter clicks. Set once the button is in the dialog.
         close.setDefault(True)
+
+    def _fit_pages_to_current(self, index: int) -> None:
+        """Size the stack to the page on show; the hidden pages ask for no room."""
+        for page_index in range(self.pages.count()):
+            page = self.pages.widget(page_index)
+            policy = (
+                QSizePolicy.Policy.Preferred if page_index == index
+                else QSizePolicy.Policy.Ignored
+            )
+            page.setSizePolicy(policy, policy)
+            page.adjustSize()
+        self.pages.adjustSize()
 
     def _build_empty(self) -> QWidget:
         page = QFrame()

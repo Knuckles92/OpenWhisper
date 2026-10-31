@@ -207,8 +207,13 @@ class TestApiKeysSettingsPage(unittest.TestCase):
             self.assertFalse(self.dialog.api_key_save_button.isEnabled())
             self.assertFalse(self.dialog.api_key_remove_button.isEnabled())
             caption = self.dialog.api_key_store_caption.text()
-            self.assertIn("no keyring daemon", caption)
+            # The raw error stays out of the sentence and in the tooltip.
+            self.assertNotIn("no keyring daemon", caption)
+            self.assertIn("isn't available on this computer", caption)
             self.assertIn("never falls back to an unprotected file", caption)
+            self.assertIn(
+                "no keyring daemon", self.dialog.api_key_store_caption.toolTip()
+            )
         finally:
             credentials.set_store(previous)
 

@@ -24,7 +24,7 @@ from meeting.platform import (
     system_audio_permission_granted,
     system_audio_permission_required,
 )
-from ui_qt.widgets import Button, PrimaryButton
+from ui_qt.widgets.buttons import Button, compact_primary_button, neutral_button
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class MeetingSystemAudioPermissionDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.setSpacing(8)
 
-        settings_btn = Button("Open System Settings")
+        settings_btn = neutral_button(Button("Open System Settings"))
         settings_btn.setObjectName("meetingSystemAudioSettingsButton")
         settings_btn.setAutoDefault(False)
         settings_btn.clicked.connect(self._open_settings)
@@ -84,13 +84,14 @@ class MeetingSystemAudioPermissionDialog(QDialog):
 
         button_layout.addStretch()
 
-        continue_btn = Button("Record microphone only")
+        continue_btn = neutral_button(Button("Record microphone only"))
         continue_btn.setObjectName("meetingSystemAudioContinueButton")
         continue_btn.setAutoDefault(False)
         continue_btn.clicked.connect(lambda: self._finish(self.RESULT_CONTINUE))
         button_layout.addWidget(continue_btn)
 
-        cancel_btn = PrimaryButton("Go back")
+        cancel_btn = compact_primary_button(Button("Go back"))
+        cancel_btn.setObjectName("meetingSystemAudioGoBackButton")
         cancel_btn.setProperty("buttonId", "meetingSystemAudioGoBackButton")
         cancel_btn.setDefault(True)
         cancel_btn.clicked.connect(self.reject)

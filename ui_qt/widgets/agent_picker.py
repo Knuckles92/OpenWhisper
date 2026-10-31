@@ -68,7 +68,7 @@ from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.palette import current_palette, token_color
 from ui_qt.utils.restyle import set_style_property
-from ui_qt.widgets.buttons import Button
+from ui_qt.widgets.buttons import Button, neutral_button
 from ui_qt.widgets.no_wheel import ElidingComboBox
 from ui_qt.widgets.searchable_combo import SearchableComboBox
 from ui_qt.widgets.wrapped_label import WrappedLabel
@@ -290,7 +290,11 @@ def _ring_color(accent: QColor) -> QColor:
 
 
 class AgentMark(QWidget):
-    """The rounded monogram square; warms from muted to the agent's colour."""
+    """The rounded monogram square, tinted with the agent's colour.
+
+    ``warmth`` and ``missing`` still track the card's state for callers, but
+    the tile looks the same in every state so all agent tiles match.
+    """
 
     def __init__(self, monogram: str, accent: str, pixmap: Optional[QPixmap] = None,
                  parent=None):
@@ -358,34 +362,17 @@ class AgentMark(QWidget):
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
             painter.drawPixmap(rect.toRect(), self._pixmap)
             return
-        warmth = self._warmth
-        missing = self._missing
-        fill = _mix(token_color("slate-raised"), self._accent, warmth)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(_mix(fill, token_color("slate-field"), missing))
+        # One tile for every agent and every state: a soft tint of the
+        # agent's colour with the monogram in that colour. Whether it is
+        # installed or chosen is the card's badge and ring, not the tile.
+        painter.setPen(QPen(_alpha(self._accent, 0.40), 1.0))
+        painter.setBrush(_alpha(self._accent, 0.20 if _dark() else 0.14))
         painter.drawRoundedRect(rect, radius, radius)
-        if missing > 0.0:
-            # An empty slot: the agent could go here once it is installed.
-            pen = QPen(_alpha(token_color("slate-border-strong"), missing), 1.0)
-            pen.setStyle(Qt.PenStyle.DashLine)
-            painter.setPen(pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(rect, radius, radius)
-        if warmth > 0.0:
-            # A soft top light, so a lit mark reads as a glossy tile.
-            shine = QLinearGradient(rect.topLeft(), rect.bottomLeft())
-            shine.setColorAt(0.0, QColor(255, 255, 255, round(60 * warmth)))
-            shine.setColorAt(0.55, QColor(255, 255, 255, 0))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(shine)
-            painter.drawRoundedRect(rect, radius, radius)
-        ink = _mix(token_color("slate-text-3"), QColor("#ffffff"), warmth)
-        ink = _mix(ink, token_color("slate-text-4"), missing)
         font = QFont(self.font())
         font.setPixelSize(max(9, round(side * 0.38)))
         font.setWeight(QFont.Weight.Bold)
         painter.setFont(font)
-        painter.setPen(ink)
+        painter.setPen(_ring_color(self._accent))
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._monogram)
 
 
@@ -1160,14 +1147,14 @@ class AgentPicker(QWidget):
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(12)
-        heading = QLabel(f"Who runs {purpose}".upper(), self)
+        heading = QLabel(f"Who runs {purpose}", self)
         heading.setObjectName("settingsTileGroupTitle")
         header.addWidget(heading, alignment=Qt.AlignmentFlag.AlignBottom)
         header.addStretch(1)
-        self.look_again_button = Button("Look again")
+        self.look_again_button = neutral_button(Button("Look again"))
         self.look_again_button.setObjectName("agentLookAgainButton")
         self.look_again_button.setIcon(design_icon("refresh-blue.svg"))
-        self.look_again_button.set_base_minimum_size(0, 32)
+        self.look_again_button.setIconSize(QSize(16, 16))
         self.look_again_button.setToolTip(
             "Check this computer again, for example after installing an agent"
         )

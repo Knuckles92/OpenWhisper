@@ -5,10 +5,13 @@
 active theme's value for each token. Painted widgets read the same roles as
 ``QColor`` through :func:`current_palette`.
 
-Two neutral families exist because the product does. The main window and its
-dialogs use Apple's system greys; the Settings window (with its Downloads page) and the
-export dialogs use a cooler slate. Each family has its own light values so the
-two keep their distinct character in both themes.
+Every window uses one neutral family, Apple's system greys. The ``slate-*``
+roles are the ones the Settings window (with its Downloads page), Stats and
+the export dialogs are styled with; their values are the matching greys
+(``slate-bg`` is ``bg``, ``slate-surface`` is ``surface``, ``slate-field`` is
+the inset field colour), so opening Settings from the main window keeps the
+same colour temperature in both themes. Only ``slate-rail`` has no direct
+counterpart: it sits one shade below ``bg`` so the Settings rail reads as chrome.
 
 Colour tokens ending in ``-rgb`` are bare ``"r, g, b"`` triples for use inside
 ``rgba(@accent-rgb, 0.12)``, where the alpha stays in the stylesheet.
@@ -119,26 +122,28 @@ _DARK_TOKENS: Final[Dict[str, str]] = {
     "overlay-text": "#f5f5f7",
     "splash-bg": "#1c1c1e",
     "splash-border": "#1e293b",
-    # Slate family (Settings and its Downloads page, export dialogs)
-    "slate-bg": "#10161c",
-    "slate-rail": "#0c1116",
-    "slate-rail-hover": "#141d26",
-    "slate-surface": "#141b22",
-    "slate-surface-hover": "#182028",
-    "slate-field": "#161e26",
-    "slate-raised": "#1b252e",
-    "slate-disabled": "#12181e",
-    "slate-border": "#303b45",
-    "slate-border-subtle": "#232d36",
-    "slate-border-strong": "#3b4752",
-    "slate-border-hover": "#4b5966",
-    "slate-text": "#e8edf2",
-    "slate-text-2": "#c7d0d9",
-    "slate-text-3": "#98a3b0",
-    "slate-text-4": "#6b7885",
-    "slate-text-disabled": "#5d6873",
-    "slate-text-3-rgb": "141, 154, 167",
-    "slate-check-disabled": "#1c242c",
+    # Slate roles (Settings and its Downloads page, Stats, export dialogs).
+    # The names stay, but every value is the matching neutral grey, so these
+    # windows read as the same family as the main window.
+    "slate-bg": "#1c1c1e",
+    "slate-rail": "#161618",
+    "slate-rail-hover": "#2c2c2e",
+    "slate-surface": "#2c2c2e",
+    "slate-surface-hover": "#323234",
+    "slate-field": "#1c1c1e",
+    "slate-raised": "#3a3a3c",
+    "slate-disabled": "#232325",
+    "slate-border": "#3a3a3c",
+    "slate-border-subtle": "#2c2c2e",
+    "slate-border-strong": "#48484a",
+    "slate-border-hover": "#545456",
+    "slate-text": "#f5f5f7",
+    "slate-text-2": "#d1d1d6",
+    "slate-text-3": "#98989d",
+    "slate-text-4": "#757579",
+    "slate-text-disabled": "#636366",
+    "slate-text-3-rgb": "152, 152, 157",
+    "slate-check-disabled": "#232325",
 }
 
 _LIGHT_TOKENS: Final[Dict[str, str]] = {
@@ -219,25 +224,25 @@ _LIGHT_TOKENS: Final[Dict[str, str]] = {
     "overlay-text": "#1d1d1f",
     "splash-bg": "#f7f7fa",
     "splash-border": "#cfd8e3",
-    "slate-bg": "#f3f5f8",
-    "slate-rail": "#e9edf2",
-    "slate-rail-hover": "#dde3ea",
+    "slate-bg": "#f2f2f7",
+    "slate-rail": "#e9e9ee",
+    "slate-rail-hover": "#dcdce1",
     "slate-surface": "#ffffff",
-    "slate-surface-hover": "#f7f9fb",
-    "slate-field": "#f4f6f9",
-    "slate-raised": "#e8ecf1",
-    "slate-disabled": "#eef1f4",
-    "slate-border": "#dbe1e7",
-    "slate-border-subtle": "#e6ebf0",
-    "slate-border-strong": "#c9d2db",
-    "slate-border-hover": "#a9b5c0",
-    "slate-text": "#1b232c",
-    "slate-text-2": "#46525e",
-    "slate-text-3": "#66727e",
-    "slate-text-4": "#8a959f",
-    "slate-text-disabled": "#a3adb7",
-    "slate-text-3-rgb": "102, 114, 126",
-    "slate-check-disabled": "#e6ebf0",
+    "slate-surface-hover": "#f7f7f9",
+    "slate-field": "#f2f2f7",
+    "slate-raised": "#e9e9ee",
+    "slate-disabled": "#f0f0f3",
+    "slate-border": "#d9d9de",
+    "slate-border-subtle": "#e5e5ea",
+    "slate-border-strong": "#c7c7cc",
+    "slate-border-hover": "#b4b4b9",
+    "slate-text": "#1d1d1f",
+    "slate-text-2": "#48484a",
+    "slate-text-3": "#6e6e73",
+    "slate-text-4": "#8e8e93",
+    "slate-text-disabled": "#aeaeb2",
+    "slate-text-3-rgb": "110, 110, 115",
+    "slate-check-disabled": "#e5e5ea",
 }
 
 

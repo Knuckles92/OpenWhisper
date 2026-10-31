@@ -347,6 +347,49 @@ def compact_primary_button(button: Button) -> Button:
     return button
 
 
+def compact_danger_button(button: Button) -> Button:
+    """The danger fill at the compact size, for a destructive dialog action.
+
+    Sized like ``neutral_button`` and ``compact_primary_button``, so a
+    Cancel beside it shares its height.
+    """
+    set_style_property(button, "tone", "danger")
+    button.set_base_minimum_size(0, 34)
+    return button
+
+
+#: Width of the Start button that leads Quick Record, Walkthrough and
+#: Meeting Mode (a green ``SuccessButton``, centred), so the same action looks
+#: the same on every tab. Paired controls under or beside it share this width.
+START_BUTTON_WIDTH = 340
+
+
+def fit_start_width(widget: QWidget) -> QWidget:
+    """Give ``widget`` the Start button's width, narrower only in a narrower column.
+
+    Add it with stretch 1 between two plain stretches (``start_row`` does):
+    it takes ``START_BUTTON_WIDTH`` when there is room, centred, and never
+    forces a horizontal scroll when there is not. An alignment flag would
+    pin it to its size hint instead.
+    """
+    widget.setMaximumWidth(START_BUTTON_WIDTH)
+    policy = widget.sizePolicy()
+    policy.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+    widget.setSizePolicy(policy)
+    return widget
+
+
+def start_row(widget: QWidget) -> QHBoxLayout:
+    """A row that centres ``widget`` at the Start button's width."""
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(0)
+    row.addStretch()
+    row.addWidget(fit_start_width(widget), 1)
+    row.addStretch()
+    return row
+
+
 # The theme styles the classes below by object name ("primaryButton",
 # "dangerButton", ...). Give an instance an identifier with
 # setProperty("buttonId", ...), not setObjectName, or it loses its colours.

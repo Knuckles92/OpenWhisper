@@ -7,6 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtWidgets import (
     QApplication,
+    QLabel,
     QPlainTextEdit,
     QPushButton,
     QToolButton,
@@ -331,9 +332,10 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertIn("when supported", subtitle)
         self.assertIn("PulseAudio", linux_hint)
         self.assertTrue(
-            "not yet publicly promoted" in linux_hint
+            "is a preview" in linux_hint
             or "not a supported" in linux_hint
         )
+        self.assertNotIn("publicly promoted", linux_hint)
         self.assertIn("WASAPI", win_hint)
         # macOS captures system audio, but only once the user grants it, so
         # the copy must name the permission rather than promise the channel.
@@ -931,6 +933,28 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertEqual(self.tab.finalization_detail.text(), "Polishing block 1 of 2 (40 segments)...")
         self.assertFalse(self.tab.finalization_steps_widget.isHidden())
         self.assertEqual(self.tab.finalization_steps_layout.count(), 4)
+
+    def test_running_step_without_detail_reads_in_progress(self):
+        """The blue running dot and the row's label agree even with no detail."""
+        steps = [
+            {"id": "redecode", "name": "Audio Re-transcription", "status": "completed"},
+            {"id": "consolidation", "name": "Summary & Action Items", "status": "running"},
+            {"id": "finalize", "name": "State Finalization", "status": "pending"},
+        ]
+        self.tab.set_meeting_state({
+            "active": False,
+            "status": "ended",
+            "finalization": {"status": "running", "steps": steps},
+            "dashboard_available": True,
+        })
+        self.app.processEvents()
+
+        details = [
+            label.text()
+            for label in self.tab.finalization_steps_widget.findChildren(QLabel)
+            if label.objectName() == "meetingFinalizationStepDetail"
+        ]
+        self.assertEqual(details, ["Done", "In progress", "Queued"])
 
     def test_completed_hides_recap_and_keeps_checklist(self):
         """Completed finalization keeps the checklist and hides the recap boxes."""

@@ -46,6 +46,7 @@ from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.buttons import Button, compact_primary_button, neutral_button
 from ui_qt.widgets.eliding_label import ElidingLabel
+from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets.engine_field import EngineStatus, StatusDot
 from ui_qt.widgets.no_wheel import NoWheelSpinBox
 from ui_qt.widgets.segmented_bar import SegmentedBar
@@ -1188,7 +1189,8 @@ class HookSection(QWidget):
 
     NOUN = "item"
     MAXIMUM = 0
-    EMPTY_TEXT = ""
+    EMPTY_TITLE = ""
+    EMPTY_HINT = ""
     EDITOR = _Editor
     #: Rows show a dot for the last delivery or run.
     SHOWS_RESULTS = True
@@ -1215,13 +1217,7 @@ class HookSection(QWidget):
         self._list.setSpacing(6)
         root.addWidget(self.list_area)
 
-        self.empty_state = QFrame()
-        self.empty_state.setObjectName("hooksEmpty")
-        empty = QVBoxLayout(self.empty_state)
-        empty.setContentsMargins(14, 12, 14, 12)
-        empty_label = WrappedLabel(self.EMPTY_TEXT)
-        empty_label.setObjectName("hooksEmptyText")
-        empty.addWidget(empty_label)
+        self.empty_state = EmptyState(self.EMPTY_TITLE, self.EMPTY_HINT)
         root.addWidget(self.empty_state)
 
         self.editor = self.EDITOR()
@@ -1543,7 +1539,8 @@ def _host(url: str) -> str:
 class WebhookSection(HookSection):
     NOUN = "webhook"
     MAXIMUM = models.MAX_WEBHOOKS
-    EMPTY_TEXT = "No webhooks yet. Add one to send finished dictations to a web address."
+    EMPTY_TITLE = "No webhooks yet"
+    EMPTY_HINT = "Add one to send finished dictations to a web address."
     EDITOR = WebhookEditor
 
     def _load(self, settings):
@@ -1597,7 +1594,8 @@ class WebhookSection(HookSection):
 class ProgramSection(HookSection):
     NOUN = "program"
     MAXIMUM = models.MAX_PROGRAMS
-    EMPTY_TEXT = "No programs yet. Add one to run your own script when you dictate."
+    EMPTY_TITLE = "No programs yet"
+    EMPTY_HINT = "Add one to run your own script when you dictate."
     EDITOR = ProgramEditor
 
     def _load(self, settings):
@@ -1719,7 +1717,8 @@ class FilterSection(HookSection):
     NOUN = "filter"
     MAXIMUM = models.MAX_FILTERS
     SHOWS_RESULTS = False
-    EMPTY_TEXT = "No text filters yet. Add one to let your own tool fix words before they're pasted."
+    EMPTY_TITLE = "No text filters yet"
+    EMPTY_HINT = "Add one to let your own tool fix words before they're pasted."
     EDITOR = FilterEditor
 
     def _build_extra(self, root):
