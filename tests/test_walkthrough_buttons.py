@@ -130,16 +130,22 @@ def test_the_badge_leads_the_shortcut_row_not_the_button(tab):
 def test_start_walkthrough_matches_the_other_start_buttons(tab):
     from ui_qt.widgets.buttons import START_BUTTON_WIDTH, SuccessButton
 
-    tab.resize(640, 600)
+    tab.resize(930, 600)
     tab.show()
     QApplication.processEvents()
 
     assert isinstance(tab.walkthrough_button, SuccessButton)
     assert tab.walkthrough_button.width() == START_BUTTON_WIDTH
-    # Centred in the card.
-    hero = tab.walkthrough_button.parentWidget().parentWidget()
+    # Centred in its column, beside the summary.
+    column = tab.walkthrough_button.parentWidget().parentWidget()
     box = tab.walkthrough_button.parentWidget().geometry()
-    assert abs(box.left() - (hero.width() - box.right() - 1)) <= 1
+    assert abs(box.left() - (column.width() - box.right() - 1)) <= 1
+
+    # In a narrower window it gives up width rather than pushing the summary down.
+    tab.resize(640, 600)
+    QApplication.processEvents()
+    assert not tab.split.stacked
+    assert tab.walkthrough_button.width() <= START_BUTTON_WIDTH
 
 
 def _button_with_badge(width):
@@ -285,22 +291,67 @@ def test_the_summary_beside_start_says_what_happens_when_it_finishes(tab):
 
 
 def test_the_summary_sits_beside_start_and_moves_under_it_when_narrow(tab):
-    tab.set_hotkeys("Ctrl+Alt+Shift+W", "Ctrl+Alt+Shift+S")
+    tab.set_hotkeys("Ctrl+Alt+W", "Ctrl+Alt+S")
     tab.show()
     tab.resize(930, 700)
     QApplication.processEvents()
     split = tab.split
     assert not split.stacked
+    assert not tab.keys.stacked
     assert split._summary.geometry().left() > tab.walkthrough_button.mapTo(
         split, tab.walkthrough_button.rect().topRight()).x()
 
+    # Turning the write-up on lengthens the summary, which wraps instead of
+    # pushing itself under Start.
+    tab.agent_choices[MeetingAgentCore.CLAUDE_CODE].click()
+    QApplication.processEvents()
+    assert not split.stacked
+
+    # Long shortcuts take a line each before the summary gives up its column.
+    tab.set_hotkeys("Ctrl+Alt+Shift+W", "Ctrl+Alt+Shift+S")
     tab.resize(560, 700)
     QApplication.processEvents()
-    assert split.stacked
-    assert split._summary.geometry().top() >= split._start.geometry().bottom()
-    # Stacked, each column keeps its own height: nothing in the summary is cut off.
-    assert split._summary.height() >= split._summary.sizeHint().height()
-    assert split.width() <= tab.width()
+    assert tab.keys.stacked
+    assert not split.stacked
+
+
+def _column(width, height):
+    from PyQt6.QtWidgets import QVBoxLayout
+
+    column = QWidget()
+    inside = QWidget()
+    inside.setFixedSize(width, height)
+    QVBoxLayout(column).addWidget(inside)
+    return column
+
+
+def test_too_narrow_for_both_columns_the_summary_goes_under_start():
+    # The tab's own choices hold it wider than this; a large font can't.
+    from PyQt6.QtWidgets import QVBoxLayout
+    from ui_qt.widgets.walkthrough_tab import StartSplit
+
+    start, summary = _column(200, 60), _column(180, 90)
+    split = StartSplit(start, summary)
+    host = QWidget()
+    QVBoxLayout(host).addWidget(split)
+    try:
+        host.resize(600, 300)
+        host.show()
+        QApplication.processEvents()
+        assert not split.stacked
+
+        host.resize(380, 300)
+        QApplication.processEvents()
+        assert split.stacked
+        # Stacked, each keeps its own height: nothing in the summary is cut off.
+        assert summary.geometry().top() >= start.geometry().bottom()
+        assert summary.height() >= summary.minimumSizeHint().height()
+
+        host.resize(600, 300)
+        QApplication.processEvents()
+        assert not split.stacked
+    finally:
+        host.close()
 
 
 def test_each_agent_says_whether_the_last_scan_found_it(tab):

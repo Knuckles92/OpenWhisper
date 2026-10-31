@@ -137,6 +137,8 @@ _STYLE = """
         background: transparent;
     }
     QWidget#walkthroughSplit,
+    QWidget#walkthroughKeys,
+    QWidget#walkthroughKeyPair,
     QWidget#walkthroughStartColumn,
     QWidget#walkthroughSummary,
     QWidget#walkthroughSetupPanel,
@@ -313,6 +315,55 @@ def _rule(vertical: bool = False) -> QFrame:
     return rule
 
 
+class _Flip(QWidget):
+    """Widgets side by side and centred while they fit, else one a line.
+
+    Like ``Reflow``, its own minimum width is ignored: the width comes from
+    the column, so a long shortcut can't hold the page wider than its window.
+    """
+
+    def __init__(self, items, gap: int, parent=None):
+        super().__init__(parent)
+        self.setObjectName("walkthroughKeys")
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._items = list(items)
+        self._gap = gap
+        self._box = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
+        self._box.setContentsMargins(0, 0, 0, 0)
+        self._stacked = None
+        self._place(False)
+
+    @property
+    def stacked(self) -> bool:
+        return bool(self._stacked)
+
+    def _place(self, stacked: bool) -> None:
+        if stacked == self._stacked:
+            return
+        self._stacked = stacked
+        while self._box.count():
+            self._box.takeAt(0)
+        if stacked:
+            self._box.setDirection(QBoxLayout.Direction.TopToBottom)
+            self._box.setSpacing(6)
+            for item in self._items:
+                self._box.addWidget(item, 0, Qt.AlignmentFlag.AlignHCenter)
+        else:
+            self._box.setDirection(QBoxLayout.Direction.LeftToRight)
+            self._box.setSpacing(self._gap)
+            self._box.addStretch(1)
+            for item in self._items:
+                self._box.addWidget(item)
+            self._box.addStretch(1)
+        self.updateGeometry()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        needed = (sum(item.sizeHint().width() for item in self._items)
+                  + self._gap * (len(self._items) - 1))
+        self._place(self.width() < needed)
+
+
 class StartSplit(QWidget):
     """Start on the left and what happens when it finishes on the right.
 
@@ -359,11 +410,15 @@ class StartSplit(QWidget):
         self._under.setVisible(stacked)
         self.updateGeometry()
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
+    def refit(self) -> None:
+        """Side by side or stacked for the width it has now (after its text changed)."""
         needed = (self._start.minimumSizeHint().width() + 1
                   + self._summary.minimumSizeHint().width())
         self._place(self.width() < needed)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.refit()
 
 
 class WalkthroughTab(QWidget):
@@ -461,9 +516,6 @@ class WalkthroughTab(QWidget):
         buttons.addWidget(self.cancel_button, 1)
         body.addLayout(start_row(button_box))
 
-        keys = QHBoxLayout()
-        keys.setSpacing(6)
-        keys.addStretch(1)
         # Leads the shortcut row rather than sitting on the Start button, so
         # the button matches the other tabs' Start buttons.
         self.walkthrough_badge = FeatureBadge(
@@ -474,20 +526,26 @@ class WalkthroughTab(QWidget):
         )
         self.walkthrough_badge.set_new(
             not resolve_walkthrough_intro_seen(settings_manager.load_all_settings()))
-        keys.addWidget(self.walkthrough_badge, 0, Qt.AlignmentFlag.AlignVCenter)
         self.start_key = _key_chip("")
         self.snap_key = _key_chip("")
-        for index, (name, chip) in enumerate(
-            (("Start / finish", self.start_key), ("Screenshot", self.snap_key))
-        ):
-            if index:
-                keys.addSpacing(10)
+        pairs = []
+        for lead, name, chip in ((self.walkthrough_badge, "Start / finish", self.start_key),
+                                 (None, "Screenshot", self.snap_key)):
+            pair = QWidget()
+            pair.setObjectName("walkthroughKeyPair")
+            row = QHBoxLayout(pair)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(6)
+            if lead is not None:
+                row.addWidget(lead, 0, Qt.AlignmentFlag.AlignVCenter)
             label = QLabel(name)
             label.setObjectName("walkthroughKeyName")
-            keys.addWidget(label)
-            keys.addWidget(chip)
-        keys.addStretch(1)
-        body.addLayout(keys)
+            row.addWidget(label)
+            row.addWidget(chip)
+            pairs.append(pair)
+        # One row under Start while it fits; in a narrow column, one pair a line.
+        self.keys = _Flip(pairs, gap=16)
+        body.addWidget(self.keys)
         body.addStretch(1)
         return column
 
@@ -538,6 +596,9 @@ class WalkthroughTab(QWidget):
         line = QLabel()
         line.setObjectName("walkthroughSummaryLine")
         line.setTextFormat(Qt.TextFormat.RichText)
+        # Wraps rather than widening the column: a long agent name shouldn't
+        # push the summary under Start.
+        line.setWordWrap(True)
         return line
 
     def _setup_panel(self) -> QWidget:
@@ -937,3 +998,4 @@ class WalkthroughTab(QWidget):
         self.write_up_summary.style().polish(self.write_up_summary)
         # Unticked is the usual case: only say so when it will happen.
         self.minimize_summary.setVisible(self.minimize_check.isChecked())
+        self.split.refit()
