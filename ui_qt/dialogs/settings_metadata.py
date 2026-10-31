@@ -297,16 +297,16 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                    'this computer with Ollama, LM Studio, vLLM, llama.cpp or LocalAI. Test sends one tiny '
                    'judgment.'),
                   ('typesafe_enabled_tile',
-                   'Fast judgments (Experimental)',
-                   'Off by default. Answers narrow yes/no questions about a minute of transcript '
+                   'Live checks',
+                   'Experimental, off by default. Answers narrow yes/no questions about a minute of transcript '
                    'in about 0.2 s with Jev, seconds with a text model; never writes text.'),
                   ('typesafe_topic_shift_tile',
-                   'Semantic topic changes (Experimental)',
+                   'Semantic topic changes',
                    'Fire early checkpoints on a judged topic change instead of word overlap. '
                    'Doubled precision on human-labelled meetings; falls back to word overlap when '
                    'no answer arrives.'),
                   ('typesafe_voice_commands_tile',
-                   'Spoken instructions (Experimental)',
+                   'Spoken instructions',
                    '"Note taker, mark that as a decision", "…add an action item", "…put that in '
                    'the notes", "…new topic: budget". Only segments naming the assistant are '
                    'judged. Recap updates notes; "replace X with Y" applies a reversible '
@@ -324,7 +324,7 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                     'Topic, summary, and cards, generated once live captions finish. Needs AI '
                     'insights on for the meeting.'),
                    ('meeting_review_tile',
-                    'Review uncertain insights at the end (Experimental)',
+                    'Review uncertain insights at the end',
                     'Optional, for new meetings. Gives the Fast judgments judge relevant transcript '
                     'excerpts, speaker names, and insights to identify ambiguities. Start with the '
                     'three highest-priority questions, then choose Review more to see the rest. No '

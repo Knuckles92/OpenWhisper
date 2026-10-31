@@ -83,6 +83,24 @@ class TileBase(QFrame):
     def set_description(self, text: str) -> None:
         self.description_label.setText(text)
 
+    def add_title_badge(self, text: str, object_name: str = "meetingBetaBadge") -> QLabel:
+        """Put a small pill, such as "Experimental", right after the title."""
+        text_layout = self.title_label.parentWidget().layout()
+        index = text_layout.indexOf(self.title_label)
+        text_layout.removeWidget(self.title_label)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(self.title_label)
+        badge = QLabel(text)
+        badge.setObjectName(object_name)
+        badge.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        row.addWidget(badge, alignment=Qt.AlignmentFlag.AlignVCenter)
+        row.addStretch(1)
+        text_layout.insertLayout(index, row)
+        self.title_badge = badge
+        return badge
+
     def add_trailing(self, widget: QWidget) -> None:
         self._row.addWidget(widget, alignment=Qt.AlignmentFlag.AlignVCenter)
 

@@ -2585,21 +2585,23 @@ class SettingsDialog(QDialog):
         self._tile_group(layout, "", [self.typesafe_route_tile], columns=1)
 
         self.typesafe_enabled_tile = SettingTile(
-            "Fast judgments (Experimental)",
+            "Live checks",
             "Answers narrow yes/no questions about a minute of transcript: "
             "about 0.2 s with Jev, seconds with a text model. It never writes text.",
             design_icon("bolt-green.svg"),
         )
+        self.typesafe_enabled_tile.add_title_badge("Experimental")
         self.typesafe_enabled_check = self.typesafe_enabled_tile.checkbox
         self.typesafe_enabled_check.setObjectName("typesafeEnabledCheck")
         self.typesafe_enabled_check.toggled.connect(self._on_typesafe_enabled_changed)
 
         self.typesafe_topic_shift_tile = SettingTile(
-            "Semantic topic changes (Experimental)",
+            "Semantic topic changes",
             "Fires early checkpoints on a judged topic change instead of word "
             "overlap, and falls back to word overlap if no answer arrives.",
             design_icon("stack-purple.svg"),
         )
+        self.typesafe_topic_shift_tile.add_title_badge("Experimental")
         self.typesafe_topic_shift_check = self.typesafe_topic_shift_tile.checkbox
         self.typesafe_topic_shift_check.setObjectName("typesafeTopicShiftCheck")
         self._meeting_bindings.checkbox(
@@ -2609,12 +2611,13 @@ class SettingsDialog(QDialog):
         )
 
         self.typesafe_voice_commands_tile = SettingTile(
-            "Spoken instructions (Experimental)",
+            "Spoken instructions",
             "Say “Note taker, mark that as a decision”, “…add an action item” or "
             "“…new topic: budget”. Only segments naming the assistant are judged. "
             "“Replace X with Y” applies a reversible transcript correction.",
             design_icon("stack-slate.svg"),
         )
+        self.typesafe_voice_commands_tile.add_title_badge("Experimental")
         self.typesafe_voice_commands_check = (
             self.typesafe_voice_commands_tile.checkbox
         )
@@ -2651,7 +2654,7 @@ class SettingsDialog(QDialog):
             self.typesafe_feature_tiles[feature] = tile
         _caption, self.typesafe_destination_label = self._tile_group(
             layout,
-            "Fast judgments",
+            "Features",
             [
                 self.typesafe_enabled_tile,
                 self.typesafe_topic_shift_tile,
@@ -2701,12 +2704,13 @@ class SettingsDialog(QDialog):
         )
 
         self.meeting_review_tile = SettingTile(
-            "Review uncertain insights at the end (Experimental)",
+            "Review uncertain insights at the end",
             "For new meetings. Gives the Fast judgments judge relevant excerpts, speaker "
             "names and insights to find ambiguities, and asks the three highest-priority "
             "questions first. No audio is sent. Needs AI insights and Fast judgments.",
             design_icon("check-green.svg"),
         )
+        self.meeting_review_tile.add_title_badge("Experimental")
         self.meeting_review_check = self.meeting_review_tile.checkbox
         self.meeting_review_check.toggled.connect(self._on_meeting_review_toggled)
         review_row = QHBoxLayout()
