@@ -398,9 +398,10 @@ class WalkthroughTab(QWidget):
         column.setSpacing(12)
         column.addWidget(self._hero())
         column.addWidget(self._write_up_card())
-        self.review = WalkthroughReview()
+        self.review = WalkthroughReview(closable=True)
         self.review.setMinimumHeight(REVIEW_MIN_HEIGHT)
         self.review.changed.connect(self._on_review_changed)
+        self.review.close_requested.connect(self.close_walkthrough)
         self.review.hide()
         column.addWidget(self.review, 1)
         column.addStretch()
@@ -785,17 +786,32 @@ class WalkthroughTab(QWidget):
     # ---- the storyboard ----
 
     def show_walkthrough(self, folder=None, *, ask: bool = False) -> bool:
-        """Show ``folder``, or the newest walkthrough, as the storyboard.
+        """Show ``folder``, or the newest walkthrough unless it was closed, as the storyboard.
 
         Unsaved edits stay unless ``ask`` is set and the user lets them go;
         False when they stayed, or while the storyboard is saving.
         """
+        if folder is None:
+            newest = self._newest()
+            closed = settings_manager.load_all_settings().get(SettingsKey.WALKTHROUGH_CLOSED)
+            folder = newest if newest is not None and newest.name != closed else None
+        return self._show(folder, ask=ask)
+
+    def close_walkthrough(self) -> None:
+        """Put the storyboard away until a newer walkthrough finishes."""
+        newest = self._newest()
+        if self._show(None, ask=True) and newest is not None:
+            settings_manager.save_setting(SettingsKey.WALKTHROUGH_CLOSED, newest.name)
+
+    @staticmethod
+    def _newest():
+        folders = library.entries(captures_root())
+        return folders[0] if folders else None
+
+    def _show(self, folder, *, ask: bool) -> bool:
         review = self.review
         if review._busy or (review._dirty and not (ask and review.discard_changes())):
             return False
-        if folder is None:
-            folders = library.entries(captures_root())
-            folder = folders[0] if folders else None
         review.show_folder(folder)
         shown = folder is not None
         review.setVisible(shown)

@@ -43,12 +43,17 @@ def _icon_path(name: str) -> QPainterPath:
         path.addRoundedRect(QRectF(14, 5, 4, 14), 1, 1)
     elif name == "play":
         line((8, 5), (19, 12), (8, 19), (8, 5))
+    elif name == "copy":
+        path.addRoundedRect(QRectF(8, 8, 12, 12), 2.5, 2.5)
+        line((5, 16), (4, 16), (4, 6))
+        path.arcTo(QRectF(4, 4, 4, 4), 180, -90)
+        path.lineTo(16, 4)
     return path
 
 
 #: Stroke width of each icon, in grid units.
 _STROKE = {"camera": 2.0, "up": 2.4, "down": 2.4, "x": 2.4, "undo": 2.0, "check": 2.8,
-           "note": 2.2, "pause": 0.0, "play": 1.5}
+           "note": 2.2, "pause": 0.0, "play": 1.5, "copy": 2.0}
 #: Icons drawn solid rather than as lines.
 _FILLED = {"pause", "play"}
 

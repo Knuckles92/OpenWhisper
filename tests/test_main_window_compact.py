@@ -316,11 +316,32 @@ class TestMainWindowCompactMode:
         tab = self.window.walkthrough_tab
         assert tab.walkthrough_button.text() == "Finish Walkthrough"
 
+        # The walkthrough ends before the window hears the recording stopped
+        # (the order the controller's handlers run in); it stays on its tab.
+        self.window.set_walkthrough_active(False)
+        assert tabs.current_index() == TabbedContentWidget.TAB_WALKTHROUGH
+        self.window.is_recording = False
+        self.window._update_recording_state()
+        assert tabs.current_index() == TabbedContentWidget.TAB_WALKTHROUGH
+        assert all(tabs.tab_bar.isTabEnabled(i) for i in range(tabs.tab_bar.count()))
+        assert tab.walkthrough_button.text() == "Start Walkthrough"
+
+    def test_a_walkthrough_ended_in_the_tray_reopens_on_its_tab(self):
+        from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+        tabs = self.window.tabbed_content
+        self.window.show()
+        self.window.is_recording = True
+        self.window._update_recording_state()
+        self.window.set_walkthrough_active(True)
+        self.window.hide()  # "Minimize the window during walkthroughs"
+
         self.window.set_walkthrough_active(False)
         self.window.is_recording = False
         self.window._update_recording_state()
-        assert all(tabs.tab_bar.isTabEnabled(i) for i in range(tabs.tab_bar.count()))
-        assert tab.walkthrough_button.text() == "Start Walkthrough"
+        self.window.restore_from_tray()
+
+        assert tabs.current_index() == TabbedContentWidget.TAB_WALKTHROUGH
 
     def test_compact_mode_keeps_a_walkthrough_on_quick_record(self):
         from ui_qt.widgets.tabbed_content import TabbedContentWidget

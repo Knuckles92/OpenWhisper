@@ -17,8 +17,10 @@ from pathlib import Path
 
 from PyQt6.QtCore import QMimeData, QPoint, QPointF, QRectF, QSize, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import (
+    QColor,
     QDesktopServices,
     QDrag,
+    QImage,
     QImageReader,
     QPainter,
     QPainterPath,
@@ -54,6 +56,7 @@ from ui_qt.widgets.context_menu import context_menu
 from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.settings_switch import SettingsSwitch
+from ui_qt.widgets.walkthrough_icons import paint_icon
 from ui_qt.widgets.walkthrough_ready import FileChip
 
 #: The largest a screenshot shows beside its words, in logical pixels; it
@@ -71,6 +74,8 @@ WRITE_UP_HINT = ("Fix the write-up's words or drag a row to move a screenshot. "
 VERSIONS = (("AI write-up", "What the agent wrote: what's copied when it finishes"),
             ("As spoken", "Your words as you said them, a section per screenshot"))
 VERSION_BAR_WIDTH = 250
+#: The copy button in a screenshot's corner: its size, and its inset from the corner.
+SHOT_COPY_SIZE, SHOT_COPY_INSET = 28, 6
 _ROW_MIME = "application/x-openwhisper-walkthrough-row"
 _COPIED = {
     WalkthroughCopyFormat.PDF: "PDF copied.",
@@ -406,12 +411,42 @@ class _Grip(QWidget):
         self._press = None
 
 
+class _CopyCorner(QToolButton):
+    """The copy button in a screenshot's corner: a dark chip, so it reads on any picture."""
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setObjectName("wlShotCopy")
+        self.setFixedSize(SHOT_COPY_SIZE, SHOT_COPY_SIZE)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
+        # Repaint on hover, so the chip darkens under the pointer.
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setToolTip("Copy this screenshot")
+        self.setAccessibleName("Copy screenshot")
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        hot = self.underMouse() or self.isDown() or self.hasFocus()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 190 if hot else 120))
+        painter.drawRoundedRect(QRectF(self.rect()), 7, 7)
+        paint_icon(painter, "copy", QRectF(self.rect()).center(), 16,
+                   QColor(255, 255, 255, 255 if hot else 215))
+        painter.end()
+
+
 class _Preview(QWidget):
     """A row's screenshot, as large as its row has room for; clicking it opens the full picture.
 
     ``picture`` is decoded once at the largest size it shows and drawn
     smaller as the row narrows, faded while the screenshot is left out.
+    The button in its top-right corner copies the screenshot instead.
     """
+
+    #: The corner button was clicked: copy this screenshot.
+    copy_requested = pyqtSignal(object)
 
     def __init__(self, image: Path, picture: QPixmap, included: bool):
         super().__init__()
@@ -431,6 +466,18 @@ class _Preview(QWidget):
         policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         policy.setHeightForWidth(True)
         self.setSizePolicy(policy)
+        self.copy_button = _CopyCorner(self)
+        self.copy_button.clicked.connect(lambda: self.copy_requested.emit(self.image))
+        self._place_copy_button()
+
+    def _place_copy_button(self) -> None:
+        # In the corner of the picture as drawn, which stops at its decoded width.
+        shown = min(self.width(), self._widest)
+        self.copy_button.move(max(0, shown - SHOT_COPY_SIZE - SHOT_COPY_INSET), SHOT_COPY_INSET)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._place_copy_button()
 
     @property
     def included(self) -> bool:
@@ -630,9 +677,11 @@ class WalkthroughReview(QWidget):
     changed = pyqtSignal(object)
     #: Work started or ended off the UI thread; hosts hold their own controls meanwhile.
     busy_changed = pyqtSignal(bool)
+    #: The user is done with this walkthrough here; it stays in the library.
+    close_requested = pyqtSignal()
 
     def __init__(self, parent=None, *, copy_files=None, recover=None,
-                 acquire=None, release=None, submit=None):
+                 acquire=None, release=None, submit=None, closable: bool = False):
         super().__init__(parent)
         self.setObjectName("walkthroughReview")
         self.setStyleSheet(_STYLE)
@@ -656,6 +705,7 @@ class WalkthroughReview(QWidget):
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(6)
         column.addLayout(self._header())
+        self.close_button.setVisible(closable)
         column.addWidget(self._actions())
         status = QHBoxLayout()
         self.notice = QLabel(SPOKEN_HINT)
@@ -678,7 +728,7 @@ class WalkthroughReview(QWidget):
                         self.pdf_button, self.markdown_button, self.copy_word_button,
                         self.open_button, self.open_word_button, self.folder_button,
                         self.retry_button, self.style_button, self.prompt_button,
-                        self.delete_button, self.recover_button,
+                        self.delete_button, self.recover_button, self.close_button,
                         self.version_bar]
         self.show_folder(None)
 
@@ -720,6 +770,10 @@ class WalkthroughReview(QWidget):
         self.version_bar.setAccessibleName("Which version of the walkthrough shows")
         self.version_bar.activated.connect(self._on_version_chosen)
         head.addWidget(self.version_bar, 0, Qt.AlignmentFlag.AlignTop)
+        self.close_button = self._icon_button("x-gray.svg", "Close walkthrough")
+        self.close_button.setToolTip("Close. It stays under Walkthroughs in the side panel.")
+        self.close_button.clicked.connect(self.close_requested)
+        head.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
         return head
 
     def _actions(self) -> Reflow:
@@ -924,6 +978,8 @@ class WalkthroughReview(QWidget):
         row.editor.nudged.connect(lambda step, r=row: self._nudge(r, step))
         row.check.toggled.connect(row.show_included)
         row.check.toggled.connect(self._changed)
+        if row.preview is not None:
+            row.preview.copy_requested.connect(self._copy_screenshot)
 
     def _show_header(self, walkthrough, draft: bool) -> None:
         folder = self._folder
@@ -1172,6 +1228,26 @@ class WalkthroughReview(QWidget):
                 self.notice.setText("Copying failed. Drag the file instead, or show it in its folder.")
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.notice.setText(str(exc))
+
+    def _copy_screenshot(self, path: Path) -> None:
+        """Copy one screenshot as a fresh snap is copied: the picture, its file and its path.
+
+        Screenshots are never rewritten by a save, so unsaved edits don't hold this up.
+        """
+        image = QImage(str(path))
+        if image.isNull():
+            self.notice.setText(f"Couldn't read {path.name}.")
+            return
+        if self._copy_files is not None:
+            ok = self._copy_files([path], text=str(path), image=image)
+        else:
+            data = QMimeData()
+            data.setUrls([QUrl.fromLocalFile(str(path))])
+            data.setText(str(path))
+            data.setImageData(image)
+            QApplication.clipboard().setMimeData(data)
+            ok = True
+        self.notice.setText("Screenshot copied." if ok else "Couldn't copy the screenshot.")
 
     def _retry(self):
         self._redo(None)

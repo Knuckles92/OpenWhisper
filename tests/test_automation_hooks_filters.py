@@ -14,7 +14,7 @@ import pytest
 
 from services import settings as settings_module
 from services.automation import events, filters
-from services.automation.models import AFTER_CLEANUP, BEFORE_CLEANUP
+from services.automation.models import AFTER_CLEANUP, BEFORE_CLEANUP, url_is_private
 from services.dictation_pipeline import DictationJob, JobMode
 from services.focus_context import AppIdentity, FocusSnapshot
 from services.recognition_context import RecognitionContext
@@ -291,6 +291,9 @@ def test_the_stage_budget_holds_and_skips_what_is_left(receiver, failures):
     receiver.answer("/hang", Answer(delay=10))
     settings = settings_with(*(http_filter(name, receiver.url("/hang"), timeout_ms=2000)
                                for name in ("one", "two", "three")))
+    # The first HTTP client is built before the stage's clock starts (a few
+    # hundred ms, more on a busy runner); build it now so only the budget is timed.
+    filters._client(url_is_private(receiver.url("/hang")))
     started = time.monotonic()
     outcome = filters.apply(BEFORE_CLEANUP, TEXT, job(), settings)
     elapsed = time.monotonic() - started

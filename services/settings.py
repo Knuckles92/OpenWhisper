@@ -355,6 +355,9 @@ class SettingsKey:
     # What a walkthrough's Snap takes, as last picked from the column's Snap
     # menu: the Snap button and the Screenshot shortcut repeat it.
     WALKTHROUGH_SNAP_MODE: Final[str] = "walkthrough_snap_mode"
+    # The capture folder name of the walkthrough last closed on the Walkthrough
+    # tab: while it is still the newest, the tab opens without one.
+    WALKTHROUGH_CLOSED: Final[str] = "walkthrough_closed"
 
 
 #: Keys the single live-preview toggle replaced. Dropped whenever that toggle
@@ -875,6 +878,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS: "",
     SettingsKey.WALKTHROUGH_WRITE_UP_NOTES: False,
     SettingsKey.WALKTHROUGH_SNAP_MODE: WalkthroughSnapMode.REGION,
+    SettingsKey.WALKTHROUGH_CLOSED: "",
 })
 
 
