@@ -46,8 +46,9 @@ from ui_qt.widgets.wrapped_label import WrappedLabel
 COMMAND_ACTION = "command_mode"
 #: The transforms list's width beside the editor, unless its buttons need more.
 LIBRARY_WIDTH = 210
-#: The Command Mode shortcut box's narrowest width beside its buttons, at 100%.
-INPUT_MIN_WIDTH = 140
+#: The Command Mode shortcut box's narrowest width beside its buttons, at 100%:
+#: room for the whole "Click to set hotkey" placeholder.
+INPUT_MIN_WIDTH = 160
 _CAPTURE_TIP = "Click, then press a shortcut. Escape cancels."
 
 
