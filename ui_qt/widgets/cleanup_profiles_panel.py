@@ -30,10 +30,11 @@ from services.cleanup_profiles import (
 )
 from services.hotkey_manager import format_hotkey_display
 from services.settings import settings_manager
+from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.buttons import (
     Button,
-    PrimaryButton,
     compact_primary_button,
+    fit_compact_button,
     neutral_button,
 )
 from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
@@ -139,19 +140,21 @@ class CleanupProfilesPanel(QWidget):
         label.setBuddy(self.instructions_edit)
         layout.addWidget(label)
         layout.addWidget(self.instructions_edit, 1)
-        templates = QHBoxLayout()
         start_from = QLabel("Start from")
         start_from.setObjectName("textModelFieldLabel")
-        templates.addWidget(start_from)
+        layout.addWidget(start_from)
+        templates = []
         for profile in STARTER_PROFILES:
             button = neutral_button(Button(profile.name))
-            button.set_base_minimum_size(0, 30)
+            fit_compact_button(button)
             button.clicked.connect(
                 lambda _checked=False, p=profile: self.use_template(p)
             )
-            templates.addWidget(button)
-        templates.addStretch()
-        layout.addLayout(templates)
+            templates.append(button)
+        # The same chip row as the transform editor's starters.
+        self.template_row = ButtonRow(templates, stretch=False)
+        self.template_row.setProperty("tileId", "transformStarters")
+        layout.addWidget(self.template_row)
         self.rules_check = QCheckBox("Also apply my learned rules")
         layout.addWidget(self.rules_check)
 
@@ -183,8 +186,8 @@ class CleanupProfilesPanel(QWidget):
         model.clicked.connect(self.model_requested)
         footer.addWidget(model)
         footer.addStretch()
-        self.save_button = compact_primary_button(PrimaryButton("Save profile"))
-        self.save_button.set_base_minimum_size(120, 36)
+        self.save_button = compact_primary_button(Button("Save profile"))
+        fit_compact_button(self.save_button, 132)
         self.save_button.clicked.connect(self.save_profile)
         footer.addWidget(self.save_button)
         root.addLayout(footer)
