@@ -236,6 +236,36 @@ def test_with_no_walkthrough_the_choices_show_as_before(tmp_path):
     tab.close()
 
 
+def test_closing_the_walkthrough_puts_the_tab_back_until_one_is_chosen(tab, capture):
+    from ui_qt.widgets import walkthrough_tab
+
+    assert tab.review.close_button.isVisibleTo(tab)
+    tab.review.close_button.click()
+    assert tab.review.isHidden()
+    assert not tab.fills_height()
+    assert not tab.setup_bar.isVisibleTo(tab)
+    assert tab.copy_area.isVisibleTo(tab)
+    # Still the newest, so the next launch opens without it too.
+    with patch.object(walkthrough_tab, "captures_root", return_value=capture.root):
+        relaunched = walkthrough_tab.WalkthroughTab()
+    assert relaunched.review.isHidden()
+    relaunched.close()
+    assert tab.show_walkthrough(capture.folder)
+    assert tab.review.folder == capture.folder
+
+
+def test_closing_asks_before_letting_unsaved_edits_go(tab):
+    tab.review.rows[0].editor.setPlainText("mine")
+    with patch.object(tab.review, "discard_changes", return_value=False):
+        tab.review.close_button.click()
+    assert not tab.review.isHidden()
+    assert tab.review.rows[0].editor.toPlainText() == "mine"
+
+
+def test_only_the_tab_offers_to_close_its_walkthrough():
+    assert WalkthroughReview().close_button.isHidden()
+
+
 def test_a_finished_walkthrough_never_replaces_unsaved_edits(tab, capture):
     tab.review.rows[0].editor.setPlainText("mine")
     assert not tab.show_walkthrough(capture.folder)

@@ -630,9 +630,11 @@ class WalkthroughReview(QWidget):
     changed = pyqtSignal(object)
     #: Work started or ended off the UI thread; hosts hold their own controls meanwhile.
     busy_changed = pyqtSignal(bool)
+    #: The user is done with this walkthrough here; it stays in the library.
+    close_requested = pyqtSignal()
 
     def __init__(self, parent=None, *, copy_files=None, recover=None,
-                 acquire=None, release=None, submit=None):
+                 acquire=None, release=None, submit=None, closable: bool = False):
         super().__init__(parent)
         self.setObjectName("walkthroughReview")
         self.setStyleSheet(_STYLE)
@@ -656,6 +658,7 @@ class WalkthroughReview(QWidget):
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(6)
         column.addLayout(self._header())
+        self.close_button.setVisible(closable)
         column.addWidget(self._actions())
         status = QHBoxLayout()
         self.notice = QLabel(SPOKEN_HINT)
@@ -678,7 +681,7 @@ class WalkthroughReview(QWidget):
                         self.pdf_button, self.markdown_button, self.copy_word_button,
                         self.open_button, self.open_word_button, self.folder_button,
                         self.retry_button, self.style_button, self.prompt_button,
-                        self.delete_button, self.recover_button,
+                        self.delete_button, self.recover_button, self.close_button,
                         self.version_bar]
         self.show_folder(None)
 
@@ -720,6 +723,10 @@ class WalkthroughReview(QWidget):
         self.version_bar.setAccessibleName("Which version of the walkthrough shows")
         self.version_bar.activated.connect(self._on_version_chosen)
         head.addWidget(self.version_bar, 0, Qt.AlignmentFlag.AlignTop)
+        self.close_button = self._icon_button("x-gray.svg", "Close walkthrough")
+        self.close_button.setToolTip("Close. It stays under Walkthroughs in the side panel.")
+        self.close_button.clicked.connect(self.close_requested)
+        head.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
         return head
 
     def _actions(self) -> Reflow:
