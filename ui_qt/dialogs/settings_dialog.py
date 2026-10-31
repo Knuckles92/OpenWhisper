@@ -2885,6 +2885,7 @@ class SettingsDialog(QDialog):
             design_icon("plus-blue.svg"),
         )
         self.api_key_store_caption = self.api_key_entry_tile.description_label
+        self.api_key_store_caption.setToolTip(self._api_key_store_detail())
 
         # Password echo also makes Qt refuse copy/cut from the field, and the
         # input-method hints keep IMEs and predictive text from retaining it.
@@ -2944,11 +2945,12 @@ class SettingsDialog(QDialog):
     def _api_key_store_copy() -> str:
         status = credential_store().status()
         if not status.available:
+            # The error itself goes in the tooltip (_api_key_store_detail).
             return (
-                f"{status.backend_name} isn't available on this computer "
-                f"({status.reason}), so keys can't be saved from here. Set the "
-                "variable in your environment or a .env file instead; "
-                "OpenWhisper never falls back to an unprotected file."
+                f"{status.backend_name} isn't available on this computer, so "
+                "keys can't be saved from here. Set the variable in your "
+                "environment or a .env file instead; OpenWhisper never falls "
+                "back to an unprotected file."
             )
         copy = (
             f"Encrypted by {status.backend_name} for your account. "
@@ -2962,6 +2964,14 @@ class SettingsDialog(QDialog):
                 "it doesn't ask every launch."
             )
         return copy
+
+    @staticmethod
+    def _api_key_store_detail() -> str:
+        """The store's own error, for the caption's tooltip; "" when it works."""
+        status = credential_store().status()
+        if status.available or not status.reason:
+            return ""
+        return f"Details: {status.reason}"
 
     @staticmethod
     def _api_key_entries(settings: dict) -> list:
@@ -2993,6 +3003,7 @@ class SettingsDialog(QDialog):
         self.api_key_combo.blockSignals(False)
         self._clear_api_key_input()
         self.api_key_store_caption.setText(self._api_key_store_copy())
+        self.api_key_store_caption.setToolTip(self._api_key_store_detail())
         self._render_api_key_status()
 
     def focus_api_keys(self, env_name: Optional[str] = None) -> None:
