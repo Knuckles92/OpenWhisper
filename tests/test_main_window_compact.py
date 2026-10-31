@@ -278,7 +278,7 @@ class TestMainWindowCompactMode:
         """Record, Stop and Cancel fit unscrolled at the window's floor height."""
         tab = self.window.quick_record_tab
         # Tallest resting layout: AI cleanup shows the profile card, and the
-        # Command Mode link row sits between the cards and the buttons.
+        # Command Mode link row sits under the buttons.
         tab.cleanup_check.setChecked(True)
         tab.profile_card.setVisible(True)
         tab.command_link.setVisible(True)
