@@ -67,6 +67,7 @@ from ui_qt.widgets import Button, ElidingComboBox, ElidingLabel, PrimaryButton
 from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.buttons import fit_compact_button
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
+from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.model_row_widget import ModelRowWidget
 from ui_qt.widgets.wrapped_label import WrappedLabel
@@ -282,6 +283,7 @@ class DownloadsPage(QWidget):
         'components_scroll',
         'inspector_best_for_heading',
         'inspector_detail_scroll',
+        'inspector_empty',
         '_inspector_open',
         'policy_row',
         'inspector_source_note',
@@ -722,9 +724,18 @@ class DownloadsPage(QWidget):
         eyebrow_row.addWidget(self.inspector_close_button)
         outer.addLayout(eyebrow_row)
 
-        self.inspector_name = ElidingLabel("—")
+        self.inspector_name = ElidingLabel("")
         self.inspector_name.setObjectName("downloadsInspectorName")
         outer.addWidget(self.inspector_name)
+
+        # Shown instead of the profile until a row is picked.
+        self.inspector_empty = EmptyState(
+            "No model selected", "Select a model to see its technical profile."
+        )
+        self.inspector_empty.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+        )
+        outer.addWidget(self.inspector_empty)
 
         self.inspector_tags = ElidingLabel("")
         self.inspector_tags.setObjectName("downloadsInspectorTags")
@@ -828,6 +839,9 @@ class DownloadsPage(QWidget):
             )
         )
         outer.addWidget(self.inspector_links)
+        # Takes the spare height only while the profile (stretch 1) is hidden,
+        # so the empty state stays at the top.
+        outer.addStretch(0)
 
         self._details: Optional[ModelDetails] = None
         self._set_inspector_enabled(False)
@@ -1006,13 +1020,14 @@ class DownloadsPage(QWidget):
 
     def _set_inspector_enabled(self, enabled: bool) -> None:
         if not enabled:
-            self.inspector_name.setText("—")
-            self.inspector_description.setText(
-                "Select a model to see its technical profile."
-            )
+            self.inspector_name.setText("")
+            self.inspector_description.setText("")
             self.inspector_tags.setVisible(False)
             self.inspector_best_for.setText("")
             self.inspector_tradeoffs.setText("")
+        self.inspector_empty.setVisible(not enabled)
+        self.inspector_name.setVisible(enabled)
+        self.inspector_detail_scroll.setVisible(enabled)
         for widget in (
             self.inspector_best_for_heading,
             self.inspector_best_for,
