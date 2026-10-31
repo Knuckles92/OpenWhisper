@@ -443,6 +443,11 @@ QLabel#localModelPickerCaption {
     font-size: 12px;
 }
 
+/* The Settings field look. `SettingsDialog QComboBox` is the default for every
+   dropdown in Settings (a type selector, so it outranks the main window's bare
+   QComboBox but not any #name rule); without it a combo with no styled name
+   fell back to the main window's grey fill. The names keep the look elsewhere. */
+SettingsDialog QComboBox,
 QComboBox#localModelPickerCombo,
 QComboBox#ondemandEngineCombo,
 QComboBox#meetingLanguageCombo,
