@@ -106,8 +106,9 @@ class TileBase(QFrame):
 class SettingTile(TileBase):
     """Tile for an on/off setting; the whole card toggles its checkbox.
 
-    The ``checked`` dynamic property mirrors the checkbox so the theme can
-    tint enabled tiles.
+    The ``checked`` dynamic property mirrors the checkbox for callers and
+    tests; the theme leaves the card's colour alone, so only the switch shows
+    on/off.
     """
 
     def __init__(

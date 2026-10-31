@@ -922,8 +922,8 @@ QLabel#batchDestPath {
 }
 
 /* Settings > General: one rounded tile per on/off setting. The tile, not
-   just the indicator, is the click target, so hover and the checked tint tell
-   the user the whole card reacts. */
+   just the indicator, is the click target, so hover tells the user the whole
+   card reacts. The switch alone shows on/off; the card keeps its colour. */
 QLabel#settingsTileGroupTitle {
     color: @slate-text-2;
     background-color: transparent;
@@ -942,16 +942,6 @@ QFrame#settingsTile {
 QFrame#settingsTile:hover {
     background-color: @slate-surface-hover;
     border-color: @slate-border-strong;
-}
-
-QFrame#settingsTile[checked="true"] {
-    background-color: @accent-tint;
-    border-color: @accent-tint-border;
-}
-
-QFrame#settingsTile[checked="true"]:hover {
-    background-color: @accent-tint-strong;
-    border-color: @accent-tint-border-strong;
 }
 
 /* Value tiles are not click targets, so they keep the resting colors. */
@@ -5595,11 +5585,6 @@ QFrame#settingsTile[tileId="actionAgentCard"]:hover {
         stop: 0 rgba(@purple-rgb, 0.11), stop: 0.55 @slate-surface, stop: 1 @slate-surface);
     border: 1px solid rgba(@purple-rgb, 0.30);
     border-radius: 14px;
-}
-
-QFrame#settingsTile[tileId="actionAgentCard"][checked="true"],
-QFrame#settingsTile[tileId="actionAgentCard"][checked="true"]:hover {
-    border-color: rgba(@purple-rgb, 0.48);
 }
 
 QFrame#settingsTile[tileId="actionAgentCard"][searchHit="true"] {
