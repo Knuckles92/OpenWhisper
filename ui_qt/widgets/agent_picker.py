@@ -68,7 +68,7 @@ from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.palette import current_palette, token_color
 from ui_qt.utils.restyle import set_style_property
-from ui_qt.widgets.buttons import Button
+from ui_qt.widgets.buttons import Button, neutral_button
 from ui_qt.widgets.no_wheel import ElidingComboBox
 from ui_qt.widgets.searchable_combo import SearchableComboBox
 from ui_qt.widgets.wrapped_label import WrappedLabel
@@ -1164,10 +1164,10 @@ class AgentPicker(QWidget):
         heading.setObjectName("settingsTileGroupTitle")
         header.addWidget(heading, alignment=Qt.AlignmentFlag.AlignBottom)
         header.addStretch(1)
-        self.look_again_button = Button("Look again")
+        self.look_again_button = neutral_button(Button("Look again"))
         self.look_again_button.setObjectName("agentLookAgainButton")
         self.look_again_button.setIcon(design_icon("refresh-blue.svg"))
-        self.look_again_button.set_base_minimum_size(0, 32)
+        self.look_again_button.setIconSize(QSize(16, 16))
         self.look_again_button.setToolTip(
             "Check this computer again, for example after installing an agent"
         )

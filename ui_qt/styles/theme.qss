@@ -647,20 +647,6 @@ QFrame#textModelGroupSeparator {
     border-top: 1px solid @slate-border-subtle;
 }
 
-QPushButton#textModelRefreshButton {
-    color: @accent-soft;
-    background-color: @slate-surface;
-    border: 1px solid @accent-border;
-    border-radius: 9px;
-    padding: 6px 12px;
-}
-
-QPushButton#textModelRefreshButton:hover {
-    color: @accent-soft;
-    background-color: @accent-tint;
-    border-color: @accent-soft;
-}
-
 QFrame#textModelFootnoteCard {
     background-color: @slate-surface;
     border: 1px solid @slate-border;
@@ -1522,26 +1508,6 @@ QPushButton#agentTileLink {
 QPushButton#agentTileLink:hover {
     color: @accent-hover;
     text-decoration: underline;
-}
-
-QPushButton#agentLookAgainButton {
-    color: @accent-soft;
-    background-color: transparent;
-    border: 1px solid @slate-border;
-    border-radius: 9px;
-    padding: 4px 12px;
-    font-size: 12px;
-    font-weight: 600;
-}
-
-QPushButton#agentLookAgainButton:hover {
-    background-color: @accent-tint;
-    border-color: @accent-tint-border;
-}
-
-QPushButton#agentLookAgainButton:disabled {
-    color: @slate-text-4;
-    border-color: @slate-border-subtle;
 }
 
 /* Integrated Hotkeys destination */

@@ -40,7 +40,7 @@ from services.text_llm import (
 )
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.restyle import set_style_property
-from ui_qt.widgets.buttons import Button
+from ui_qt.widgets.buttons import Button, neutral_button
 from ui_qt.widgets.no_wheel import ElidingComboBox
 from ui_qt.widgets.searchable_combo import SearchableComboBox
 
@@ -191,7 +191,7 @@ class TextModelPicker(QWidget):
         model_line_edit.editingFinished.connect(self._on_model_editing_finished)
         model_row.addWidget(self.model_combo, stretch=1)
 
-        self.refresh_button = Button("Refresh")
+        self.refresh_button = neutral_button(Button("Refresh"))
         self.refresh_button.setObjectName("textModelRefreshButton")
         self.refresh_button.setIcon(design_icon("refresh-blue.svg"))
         self.refresh_button.setIconSize(QSize(16, 16))

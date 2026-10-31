@@ -81,6 +81,8 @@ class LocalModelPicker(QWidget):
         self.custom_button = QPushButton("Add custom models…")
         self.custom_button.setFlat(True)
         set_style_property(self.custom_button, "tone", "neutral")
+        self.custom_button.setMinimumHeight(34)
+        self.custom_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.custom_button.clicked.connect(self.custom_models_requested)
         layout.addWidget(self.custom_button, alignment=Qt.AlignmentFlag.AlignLeft)
 

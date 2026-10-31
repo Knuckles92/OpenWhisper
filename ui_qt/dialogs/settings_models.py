@@ -101,6 +101,7 @@ from ui_qt.dialogs.settings_fields import (
 )
 from ui_qt.utils.icons import design_icon as _design_icon
 from ui_qt.widgets import Button, ElidingComboBox, InfoTile
+from ui_qt.widgets.buttons import neutral_button
 from ui_qt.widgets.agent_picker import BUILTIN, AgentPicker
 from ui_qt.widgets.local_model_picker import LocalModelPicker
 from ui_qt.widgets.nav_rail import NavRail
@@ -426,9 +427,8 @@ class ModelAssignments(QObject):
         self.engine_inventory_label = self._caption("")
         self.engine_inventory_label.setObjectName("engineInventoryLabel")
         row.addWidget(self.engine_inventory_label, stretch=1)
-        self.speech_download_button = Button("Get models and runtimes")
+        self.speech_download_button = neutral_button(Button("Get models and runtimes"))
         self.speech_download_button.setObjectName("engineInventoryButton")
-        self.speech_download_button.set_base_minimum_size(0, 34)
         self.speech_download_button.clicked.connect(
             lambda: self.downloads_requested.emit(self._engine_filter())
         )
@@ -569,7 +569,7 @@ class ModelAssignments(QObject):
         )
         self.speaker_id_status = self._caption("")
         card.addWidget(self.speaker_id_status)
-        self.speaker_model_download = Button("Download now")
+        self.speaker_model_download = neutral_button(Button("Download now"))
         self.speaker_model_download.setObjectName("speakerModelDownloadButton")
         self.speaker_model_download.clicked.connect(self._download_speaker_model)
         download_row = QHBoxLayout()
