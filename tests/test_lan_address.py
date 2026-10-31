@@ -97,6 +97,15 @@ def test_without_an_interface_list_the_route_probe_still_answers(machine):
     assert module.discover_lan_ipv4() == "192.168.1.44"
 
 
+def test_a_listed_computer_never_resolves_its_host_name(machine, monkeypatch):
+    # The lookup stalled pairing and the Remote page's refresh on macOS 15
+    # CI runners; the listing already holds every address it could add.
+    machine(ARCH_LAPTOP, route="10.2.0.2")
+    monkeypatch.setattr(module, "_hostname_addresses", lambda: pytest.fail("resolved the host name"))
+
+    assert module.discover_lan_ipv4() == "192.168.0.118"
+
+
 def test_loopback_host_names_are_skipped(machine):
     machine([], route="127.0.0.1", hostname=["127.0.1.1", "10.0.0.8"])
 
