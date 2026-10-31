@@ -432,15 +432,19 @@ class WalkthroughTab(QWidget):
         self.walkthrough_badge.set_new(
             not resolve_walkthrough_intro_seen(settings_manager.load_all_settings()))
         keys.addWidget(self.walkthrough_badge, 0, Qt.AlignmentFlag.AlignVCenter)
-        keys.addSpacing(4)
         self.start_key = _key_chip("")
         self.snap_key = _key_chip("")
-        for name, chip in (("Start / finish", self.start_key), ("Screenshot", self.snap_key)):
+        # Gaps only between the pairs: the stretch already separates the last
+        # chip from the link, and the row has to fit the window's minimum width.
+        for index, (name, chip) in enumerate(
+            (("Start / finish", self.start_key), ("Screenshot", self.snap_key))
+        ):
+            if index:
+                keys.addSpacing(10)
             label = QLabel(name)
             label.setObjectName("walkthroughKeyName")
             keys.addWidget(label)
             keys.addWidget(chip)
-            keys.addSpacing(10)
         keys.addStretch(1)
         self.settings_link = QPushButton("Walkthrough settings  →")
         self.settings_link.setObjectName("walkthroughSettingsLink")
