@@ -7,7 +7,6 @@ from typing import Optional
 from PyQt6.QtCore import QEvent, QSignalBlocker, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QBoxLayout,
-    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -28,7 +27,6 @@ from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.setting_tile import InfoTile
 from ui_qt.widgets.settings_switch import SettingsSwitch
-from ui_qt.widgets.wrapped_label import WrappedLabel
 
 #: Cards sit two to a row from this page width (at 100% font scale).
 TWO_COLUMNS_FROM = 640
