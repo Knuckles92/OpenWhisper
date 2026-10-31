@@ -1092,11 +1092,6 @@ QWidget#mcpSettingsPage QLabel#mcpStatusText {
     font-size: 14px;
 }
 
-QWidget#mcpSettingsPage QLabel#mcpCardIcon {
-    background-color: rgba(@accent-rgb, 0.14);
-    border-radius: 9px;
-}
-
 QLabel#mcpCardTitle {
     color: @slate-text;
     font-size: 16px;
@@ -1327,9 +1322,10 @@ QWidget#backupSettingsPage QFrame#settingsTile[backupCard="create"] {
     border-color: @accent-tint-border;
 }
 
+/* Restates the standard card title over the page's caption rule above. */
 QWidget#backupSettingsPage QLabel#settingsTileTitle {
     color: @slate-text;
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 600;
 }
 
@@ -6024,11 +6020,6 @@ QWidget#mcpLiveRow,
 QWidget#mcpEndpoints {
     background-color: transparent;
     border: none;
-}
-
-QWidget#mcpLiveSection QLabel#mcpCardIcon {
-    background-color: rgba(@accent-rgb, 0.14);
-    border-radius: 9px;
 }
 
 QWidget#mcpLiveSection QLineEdit,
