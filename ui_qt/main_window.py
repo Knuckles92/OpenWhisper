@@ -721,8 +721,11 @@ class MainWindow(QMainWindow):
         }
     """
 
-    _TRAY_BUTTON_STYLE = """
-        QPushButton#trayButton {
+    # Minimize, Stats and Settings share one neutral look; only Quit stands out.
+    _FOOTER_BUTTON_STYLE = """
+        QPushButton#trayButton,
+        QPushButton#statsButton,
+        QPushButton#settingsButton {
             background-color: @surface;
             color: @text-body;
             border: 1px solid @border;
@@ -731,53 +734,15 @@ class MainWindow(QMainWindow):
             font-weight: 600;
             font-size: 13px;
         }
-        QPushButton#trayButton:hover {
-            background-color: @accent;
-            color: @on-accent;
-            border: 1px solid @accent;
-        }
-        QPushButton#trayButton:pressed {
-            background-color: @accent-pressed;
-            color: @on-accent;
-        }
-    """
-
-    _STATS_BUTTON_STYLE = """
-        QPushButton#statsButton {
-            background-color: @surface;
-            color: @purple-text;
-            border: 1px solid @border;
-            border-radius: 8px;
-            padding: 6px 18px;
-            font-weight: 600;
-            font-size: 13px;
-        }
-        QPushButton#statsButton:hover {
-            background-color: @purple;
-            color: @on-accent;
-            border: 1px solid @purple;
-        }
-        QPushButton#statsButton:pressed {
-            background-color: rgba(@purple-rgb, 0.8);
-            color: @on-accent;
-        }
-    """
-
-    _SETTINGS_BUTTON_STYLE = """
-        QPushButton#settingsButton {
-            background-color: @surface;
-            color: @accent-cyan;
-            border: 1px solid @border;
-            border-radius: 8px;
-            padding: 6px 18px;
-            font-weight: 600;
-            font-size: 13px;
-        }
+        QPushButton#trayButton:hover,
+        QPushButton#statsButton:hover,
         QPushButton#settingsButton:hover {
             background-color: @accent;
             color: @on-accent;
             border: 1px solid @accent;
         }
+        QPushButton#trayButton:pressed,
+        QPushButton#statsButton:pressed,
         QPushButton#settingsButton:pressed {
             background-color: @accent-pressed;
             color: @on-accent;
@@ -822,7 +787,7 @@ class MainWindow(QMainWindow):
         self.tray_button.setFixedHeight(34)
         self.tray_button.setMinimumWidth(60 if self._compositor_managed else 140)
         self.tray_button.setToolTip("Hide OpenWhisper in the system tray")
-        self.tray_button.setStyleSheet(self._TRAY_BUTTON_STYLE)
+        self.tray_button.setStyleSheet(self._FOOTER_BUTTON_STYLE)
         self.tray_button.set_hotkey(
             format_hotkey_display(config.DEFAULT_HOTKEYS["minimize_tray"])
         )
@@ -836,7 +801,7 @@ class MainWindow(QMainWindow):
         self.stats_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.stats_button.setFixedHeight(34)
         self.stats_button.setMinimumWidth(80)
-        self.stats_button.setStyleSheet(self._STATS_BUTTON_STYLE)
+        self.stats_button.setStyleSheet(self._FOOTER_BUTTON_STYLE)
         self.stats_button.setToolTip("Your words, pace, streak and favorite apps")
         self.stats_button.clicked.connect(self.stats_requested.emit)
         footer_layout.addWidget(self.stats_button)
@@ -848,7 +813,7 @@ class MainWindow(QMainWindow):
         self.settings_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.settings_button.setFixedHeight(34)
         self.settings_button.setMinimumWidth(100)
-        self.settings_button.setStyleSheet(self._SETTINGS_BUTTON_STYLE)
+        self.settings_button.setStyleSheet(self._FOOTER_BUTTON_STYLE)
         self.settings_button.setToolTip(
             "Settings, models, and downloads (starts on the Overview)"
         )
