@@ -12,7 +12,7 @@ from typing import Final, Optional
 
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QVBoxLayout
 
-from ui_qt.widgets import Button, PrimaryButton
+from ui_qt.widgets.buttons import Button, compact_primary_button, neutral_button
 from ui_qt.widgets.scrolling_body import ScrollingBody
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -229,12 +229,13 @@ class MeetingConsentDialog(QDialog):
         button_layout.setSpacing(8)
         button_layout.addStretch()
 
-        not_now_btn = Button("Not now")
+        not_now_btn = neutral_button(Button("Not now"))
         not_now_btn.setObjectName("meetingConsentNotNowButton")
         not_now_btn.clicked.connect(self.reject)
         button_layout.addWidget(not_now_btn)
 
-        enable_btn = PrimaryButton("Turn on AI insights")
+        enable_btn = compact_primary_button(Button("Turn on AI insights"))
+        enable_btn.setObjectName("meetingConsentEnableButton")
         enable_btn.setProperty("buttonId", "meetingConsentEnableButton")
         enable_btn.clicked.connect(lambda: self._finish(self.RESULT_ENABLE))
         button_layout.addWidget(enable_btn)

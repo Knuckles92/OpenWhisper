@@ -25,7 +25,7 @@ from services.settings import (
     settings_manager,
 )
 from ui_qt.widgets import Button
-from ui_qt.widgets.buttons import compact_primary_button
+from ui_qt.widgets.buttons import compact_primary_button, neutral_button
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class MeetingModeIntroDialog(QDialog):
         button_layout.setSpacing(8)
         button_layout.addStretch()
 
-        skip_btn = Button("Skip")
+        skip_btn = neutral_button(Button("Skip"))
         skip_btn.setObjectName("meetingIntroSkipButton")
         skip_btn.setAutoDefault(False)
         skip_btn.setDefault(False)

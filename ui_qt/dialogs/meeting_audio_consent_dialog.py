@@ -9,7 +9,7 @@ from typing import Final
 
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QVBoxLayout
 
-from ui_qt.widgets import Button, PrimaryButton
+from ui_qt.widgets.buttons import Button, compact_primary_button, neutral_button
 from ui_qt.widgets.scrolling_body import ScrollingBody
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -80,12 +80,13 @@ class MeetingAudioConsentDialog(QDialog):
         button_layout.setSpacing(8)
         button_layout.addStretch()
 
-        not_now_btn = Button("Not now")
+        not_now_btn = neutral_button(Button("Not now"))
         not_now_btn.setObjectName("meetingAudioConsentNotNowButton")
         not_now_btn.clicked.connect(self.reject)
         button_layout.addWidget(not_now_btn)
 
-        enable_btn = PrimaryButton("Allow audio upload")
+        enable_btn = compact_primary_button(Button("Allow audio upload"))
+        enable_btn.setObjectName("meetingAudioConsentEnableButton")
         enable_btn.setProperty("buttonId", "meetingAudioConsentEnableButton")
         enable_btn.clicked.connect(lambda: self._finish(self.RESULT_ENABLE))
         button_layout.addWidget(enable_btn)

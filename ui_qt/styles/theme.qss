@@ -3008,15 +3008,23 @@ QCheckBox#meetingAiInsightsCheckbox::indicator:focus {
    the content rectangle of compact buttons and links. Text fields retain
    their normal one-pixel focus border. */
 QWidget#meetingModeTab QPushButton:focus,
-QWidget#meetingModeTab QToolButton:focus,
+QWidget#meetingModeTab QToolButton:focus {
+    text-decoration: underline;
+}
+
+/* Dialog footers: focus recolours the button's own one-pixel edge, so the
+   size stays put and the label is never underlined. The default button
+   holds focus when a dialog opens, and an underline read as a link. */
 QDialog#meetingIntroDialog QPushButton:focus,
 QDialog#meetingConsentDialog QPushButton:focus,
 QDialog#meetingAudioConsentDialog QPushButton:focus,
 QDialog#meetingUnsupportedDialog QPushButton:focus,
 QDialog#meetingSystemAudioDialog QPushButton:focus,
 QDialog#meetingLinuxAudioDialog QPushButton:focus,
-QDialog#meetingRecoveryDialog QPushButton:focus {
-    text-decoration: underline;
+QDialog#meetingRecoveryDialog QPushButton:focus,
+QDialog#meetingDeleteDialog QPushButton:focus,
+QDialog#textEndpointDialog QPushButton:focus {
+    border: 1px solid @accent-soft;
 }
 
 QWidget#meetingFinalizationCard {
@@ -3508,9 +3516,7 @@ QLabel#meetingRecoveryRowLabel {
 
 /* By dialog, not by button name: the primary and danger buttons here keep
    their class object names, which is what gives them their colour. */
-QDialog#meetingConsentDialog QPushButton,
-QDialog#meetingRecoveryDialog QPushButton,
-QDialog#meetingIntroDialog QPushButton {
+QDialog#meetingRecoveryDialog QPushButton {
     padding: 8px 16px;
     font-size: 13px;
 }

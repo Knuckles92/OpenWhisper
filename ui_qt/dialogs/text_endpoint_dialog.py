@@ -23,7 +23,8 @@ from services.text_llm import (
     validate_text_protocol,
 )
 from ui_qt.utils.app_icon import app_icon
-from ui_qt.widgets import Button, NoWheelComboBox, PrimaryButton
+from ui_qt.widgets import Button, NoWheelComboBox
+from ui_qt.widgets.buttons import compact_primary_button, neutral_button
 
 
 class TextEndpointDialog(QDialog):
@@ -135,11 +136,15 @@ class TextEndpointDialog(QDialog):
         layout.addWidget(self.error_label)
 
         buttons = QHBoxLayout()
+        buttons.setSpacing(8)
         buttons.addStretch()
-        cancel = Button("Cancel")
+        cancel = neutral_button(Button("Cancel"))
         cancel.setObjectName("textEndpointCancelButton")
         cancel.clicked.connect(self.reject)
-        save = PrimaryButton("Save server" if self._preset else "Save endpoint")
+        save = compact_primary_button(
+            Button("Save server" if self._preset else "Save endpoint")
+        )
+        save.setObjectName("textEndpointSaveButton")
         save.setProperty("buttonId", "textEndpointSaveButton")
         save.clicked.connect(self._save)
         buttons.addWidget(cancel)
