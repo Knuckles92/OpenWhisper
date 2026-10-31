@@ -2891,6 +2891,11 @@ class SettingsDialog(QDialog):
             | Qt.InputMethodHint.ImhNoPredictiveText
         )
         self.api_key_edit.setMinimumHeight(40)
+        # The key itself is set in a spaced monospace; the placeholder keeps
+        # the normal field font (QSS can't style a placeholder on its own).
+        self.api_key_edit.textChanged.connect(
+            lambda text: set_style_property(self.api_key_edit, "hasText", bool(text))
+        )
         self.api_key_edit.textChanged.connect(self._update_api_key_controls)
         self.api_key_edit.returnPressed.connect(self._save_api_key)
         self.api_key_show_button = neutral_button(Button("Show"))
@@ -2912,8 +2917,10 @@ class SettingsDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(8)
-        self.api_key_save_button = compact_primary_button(PrimaryButton("Save key"))
+        # A plain Button: PrimaryButton's own padding would make it taller than Test.
+        self.api_key_save_button = Button("Save key")
         self.api_key_save_button.setObjectName("apiKeySaveButton")
+        compact_primary_button(self.api_key_save_button)
         fit_compact_button(self.api_key_save_button, 120)
         self.api_key_save_button.clicked.connect(self._save_api_key)
         self.api_key_test_button = neutral_button(Button("Test"))

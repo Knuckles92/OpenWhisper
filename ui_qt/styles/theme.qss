@@ -593,7 +593,8 @@ QLabel#apiKeyStatus[tone="success"] {
     color: @success-text;
 }
 
-QLineEdit#apiKeyInput {
+/* Only the key itself; the placeholder keeps the normal field font. */
+QLineEdit#apiKeyInput[hasText="true"] {
     font-family: "Cascadia Mono", "Consolas", "Menlo", monospace;
     letter-spacing: 1px;
 }
