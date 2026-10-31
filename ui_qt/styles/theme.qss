@@ -2691,13 +2691,29 @@ QListWidget#cleanupRulesList::item:selected {
     border: 1px solid @accent;
 }
 
-QLabel#cleanupRulesEmpty {
-    color: @slate-text-4;
+/* Empty lists (ui_qt/widgets/empty_state.py): one look on every page. */
+QFrame#emptyState {
     background-color: @slate-disabled;
     border: 1px dashed @slate-border-strong;
     border-radius: 10px;
-    padding: 22px;
+}
+
+QLabel#emptyStateTitle {
+    color: @slate-text;
+    background-color: transparent;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#emptyStateHint {
+    color: @slate-text-3;
+    background-color: transparent;
     font-size: 12px;
+}
+
+QLabel#emptyStateTitle:disabled,
+QLabel#emptyStateHint:disabled {
+    color: @slate-text-4;
 }
 
 /* Learned Rule review dialog */
@@ -4780,14 +4796,6 @@ QPushButton#dictionaryStar[starred="true"] {
     qproperty-icon: url(ui_qt/assets/tabler/star-filled-amber@icon-suffix.svg);
 }
 
-QLabel#dictionaryEmpty {
-    color: @slate-text-4;
-    background-color: @slate-disabled;
-    border: 1px dashed @slate-border-strong;
-    border-radius: 10px;
-    padding: 18px;
-    font-size: 12px;
-}
 /* personalize:S4 end */
 
 /* personalize:S5 begin (snippets) */
@@ -5690,27 +5698,6 @@ QLabel#actionChip[tone="muted"] {
     font-weight: 400;
 }
 
-/* No actions yet. */
-QFrame#actionsEmpty {
-    background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0,
-        stop: 0 rgba(@accent-rgb, 0.07), stop: 1 @slate-disabled);
-    border: 1px dashed @slate-border-strong;
-    border-radius: 12px;
-}
-
-QLabel#actionsEmptyTitle {
-    color: @slate-text;
-    background-color: transparent;
-    font-size: 14px;
-    font-weight: 600;
-}
-
-QLabel#actionsEmptyText {
-    color: @slate-text-3;
-    background-color: transparent;
-    font-size: 12px;
-}
-
 /* Add action: each starting point is a card you can click or tab to. */
 QFrame#settingsTile[tileId="actionPreset"]:focus {
     border-color: @accent;
@@ -5839,18 +5826,6 @@ QLabel#hooksRowDetail {
 
 QFrame#hooksRow[off="true"] QLabel#hooksRowName {
     color: @slate-text-3;
-}
-
-QFrame#hooksEmpty {
-    background-color: @slate-disabled;
-    border: 1px dashed @slate-border-strong;
-    border-radius: 10px;
-}
-
-QLabel#hooksEmptyText {
-    color: @slate-text-2;
-    background-color: transparent;
-    font-size: 13px;
 }
 
 QFrame#hooksEditor {

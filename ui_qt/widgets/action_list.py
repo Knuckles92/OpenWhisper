@@ -24,6 +24,7 @@ from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.action_copy import KIND_ICONS, spoken_hint, summary
 from ui_qt.widgets.action_fields import page_link, tint_icon
 from ui_qt.widgets.buttons import Button, compact_primary_button, fit_compact_button
+from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.setting_tile import InfoTile
 from ui_qt.widgets.settings_switch import SettingsSwitch
@@ -136,24 +137,15 @@ class ActionList(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self.empty = QFrame()
-        self.empty.setObjectName("actionsEmpty")
-        empty = QVBoxLayout(self.empty)
-        empty.setContentsMargins(20, 18, 20, 18)
-        empty.setSpacing(6)
-        title = WrappedLabel("No actions yet")
-        title.setObjectName("actionsEmptyTitle")
-        empty.addWidget(title)
-        text = WrappedLabel(
+        self.empty = EmptyState(
+            "No actions yet",
             "Send what you say to a chat, a webhook or your own program, "
-            "with its own shortcut or by name.")
-        text.setObjectName("actionsEmptyText")
-        empty.addWidget(text)
-        empty.addSpacing(6)
+            "with its own shortcut or by name.",
+        )
         self.empty_add = compact_primary_button(Button("Add an action"))
         fit_compact_button(self.empty_add)
         self.empty_add.clicked.connect(self.add_requested)
-        empty.addWidget(self.empty_add, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.empty.add_action(self.empty_add)
         layout.addWidget(self.empty)
 
         self.grid_box = QWidget()

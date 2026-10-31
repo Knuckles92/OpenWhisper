@@ -18,6 +18,7 @@ from services.dictionary import DictionaryTerm
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.buttons import Button, fit_compact_button, neutral_button
 from ui_qt.widgets.eliding_label import ElidingLabel
+from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets.reflow import Reflow  # noqa: F401  (rows and the page use it)
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -183,9 +184,7 @@ class DictionaryLibrary(QWidget):
         self._list_layout.setSpacing(6)
         layout.addWidget(self._list)
 
-        self.empty = WrappedLabel("")
-        self.empty.setObjectName("dictionaryEmpty")
-        self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty = EmptyState()
         layout.addWidget(self.empty)
 
         self.more = WrappedLabel("")
@@ -282,11 +281,15 @@ class DictionaryLibrary(QWidget):
             row.deleteLater()
         self._list.setVisible(bool(shown))
         if not self._terms:
-            self.empty.setText(
-                "No words yet. Add names, product terms, or anything dictation tends to get wrong."
+            self.empty.set_text(
+                "No words yet",
+                "Add names, product terms, or anything dictation tends to get wrong.",
             )
         elif not matching:
-            self.empty.setText(f"No words match “{self.search.text().strip()}”.")
+            self.empty.set_text(
+                f"No words match “{self.search.text().strip()}”",
+                "Try a shorter search.",
+            )
         self.empty.setVisible(not shown)
         hidden = len(matching) - len(shown)
         self.more.setText(

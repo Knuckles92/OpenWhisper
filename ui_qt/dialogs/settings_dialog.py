@@ -193,6 +193,7 @@ from ui_qt.utils.app_icon import app_icon
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.restyle import set_style_property
+from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets import (
     Button,
     DangerButton,
@@ -2412,14 +2413,10 @@ class SettingsDialog(QDialog):
         self.cleanup_rules_library_tile.add_body(self.cleanup_rules_list)
         self._rule_glow = ItemGlow(self.cleanup_rules_list)
 
-        self.cleanup_rules_empty = QLabel(
-            "No rules yet\n\nAdd your first instruction above to start "
-            "building a personal cleanup profile."
+        self.cleanup_rules_empty = EmptyState(
+            "No rules yet",
+            "Add your first instruction above to start building a personal cleanup profile.",
         )
-        self.cleanup_rules_empty.setObjectName("cleanupRulesEmpty")
-        self.cleanup_rules_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cleanup_rules_empty.setWordWrap(True)
-        self.cleanup_rules_empty.setMinimumHeight(88)
         self.cleanup_rules_library_tile.add_body(self.cleanup_rules_empty)
 
         rule_btn_row = QHBoxLayout()
