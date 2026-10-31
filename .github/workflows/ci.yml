@@ -64,7 +64,7 @@ jobs:
     # The full suite on Apple Silicon. Mac-only failures used to surface only
     # in the release build, costing a whole rebuild; here they show on push.
     name: macOS tests
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -153,13 +153,13 @@ jobs:
           - os: windows-2022
             dependencies: release
             python: "3.12"
-          - os: macos-14
+          - os: macos-15
             dependencies: release
             python: "3.12"
           - os: windows-2022
             dependencies: source
             python: "3.11"
-          - os: macos-14
+          - os: macos-15
             dependencies: source
             python: "3.12"
     runs-on: ${{ matrix.os }}

@@ -340,9 +340,9 @@ def _hostname_addresses() -> List[str]:
 def local_ipv4_addresses() -> List[LocalAddress]:
     """This computer's usable IPv4 addresses, classified, best LAN first.
 
-    Addresses the interface listing didn't cover (it failed, or this
-    platform has none) come from the route probe and the host name, judged
-    by address alone.
+    The route probe adds an address the interface listing missed. Without a
+    listing (it failed, or this platform has none) the host name's addresses
+    are added too. Both are judged by address alone.
     """
     listed = _interfaces()
     route = _route_address()
@@ -352,7 +352,10 @@ def local_ipv4_addresses() -> List[LocalAddress]:
         if _usable(interface.address) and interface.address not in seen:
             seen.add(interface.address)
             addresses.append(classify(interface))
-    for address in [route, *_hostname_addresses()]:
+    # A listing already holds every address the host name could resolve to,
+    # and resolving it can block for seconds (mDNS, an unreachable DNS
+    # server), on the Qt thread when Settings refreshes the Remote page.
+    for address in [route, *(() if listed else _hostname_addresses())]:
         if address and _usable(address) and address not in seen:
             seen.add(address)
             kind = TAILSCALE if ipaddress.ip_address(address) in _TAILSCALE_NETWORK else LAN

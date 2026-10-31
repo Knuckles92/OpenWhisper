@@ -65,6 +65,25 @@ format_size() {
     printf '%s bytes' "$bytes"
 }
 
+# The macOS release an arm64 slice needs before it will load: LC_BUILD_VERSION
+# minos, or LC_VERSION_MIN_MACOSX for binaries linked before Xcode 10.
+arm64_minos() {
+    { otool -arch arm64 -l "$1" 2>/dev/null || true; } | awk '
+        $1 == "cmd" { cmd = $2 }
+        cmd == "LC_BUILD_VERSION" && $1 == "minos" { print $2; exit }
+        cmd == "LC_VERSION_MIN_MACOSX" && $1 == "version" { print $2; exit }'
+}
+
+# Succeeds when dotted version $1 is newer than $2 (14.2 > 14.0, 15 > 14.6).
+version_newer() {
+    awk -v a="$1" -v b="$2" 'BEGIN {
+        n = split(a, x, "."); m = split(b, y, ".")
+        for (i = 1; i <= (n > m ? n : m); i++)
+            if (x[i] + 0 != y[i] + 0) exit !(x[i] + 0 > y[i] + 0)
+        exit 1
+    }'
+}
+
 cleanup() {
     local status=$?
     if [[ -n "$MOUNT_POINT" ]]; then
@@ -285,11 +304,14 @@ else
     fi
 fi
 
-step "Auditing Mach-O architecture and linkage"
+step "Auditing Mach-O architecture, deployment target and linkage"
 ARCH_FAILURES="$WORKDIR/arch-failures.txt"
+MINOS_FAILURES="$WORKDIR/minos-failures.txt"
 LINK_FAILURES="$WORKDIR/link-failures.txt"
 : >"$ARCH_FAILURES"
+: >"$MINOS_FAILURES"
 : >"$LINK_FAILURES"
+NEWEST_MINOS="0"
 
 while IFS= read -r -d '' candidate; do
     file_desc="$(file -b "$candidate" 2>/dev/null || true)"
@@ -303,6 +325,16 @@ while IFS= read -r -d '' candidate; do
             "${candidate#"$DIST_APP/"}" \
             "$(lipo -archs "$candidate" 2>/dev/null || echo unknown)" \
             >>"$ARCH_FAILURES"
+    fi
+
+    # Every arm64 slice must load on LSMinimumSystemVersion. Wheels resolved on
+    # a newer runner image can need a newer macOS without any pin changing.
+    minos="$(arm64_minos "$candidate")"
+    if [[ -n "$minos" ]]; then
+        if version_newer "$minos" "$NEWEST_MINOS"; then NEWEST_MINOS="$minos"; fi
+        if version_newer "$minos" "$MIN_OS"; then
+            printf '%s\n  minos: %s\n' "${candidate#"$DIST_APP/"}" "$minos" >>"$MINOS_FAILURES"
+        fi
     fi
 
     # Reject absolute build-host library paths that would not exist on users'
@@ -325,11 +357,16 @@ if [[ -s "$ARCH_FAILURES" ]]; then
     cat "$ARCH_FAILURES" >&2
     fail "one or more bundled Mach-O files lack an arm64 slice"
 fi
+if [[ -s "$MINOS_FAILURES" ]]; then
+    cat "$MINOS_FAILURES" >&2
+    fail "one or more bundled Mach-O files need a newer macOS than LSMinimumSystemVersion $MIN_OS"
+fi
 if [[ -s "$LINK_FAILURES" ]]; then
     cat "$LINK_FAILURES" >&2
     fail "one or more bundled Mach-O files link absolute build-host paths"
 fi
-echo "    all Mach-O files include arm64; no absolute host library paths"
+echo "    all Mach-O files include arm64 and load on macOS $MIN_OS (newest minimum $NEWEST_MINOS)"
+echo "    no absolute host library paths"
 
 app_bytes="$(du -sk "$DIST_APP" | awk '{print $1 * 1024}')"
 echo "    app size: $(format_size "$app_bytes")"
