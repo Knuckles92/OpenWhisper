@@ -13,7 +13,8 @@ and **Email** are included as editable starters.
    profile or a standard action cannot be saved.
 4. Click **Save profile**. Choose it on Quick Record and click **Start Recording**,
    or press its shortcut from another app. Press the profile shortcut again to
-   stop. **Settings → Hotkeys → Profile recording shortcuts…** opens the editor too.
+   stop. **Settings → Hotkeys** lists every profile too: set or clear its shortcut
+   there, or use **Open Profiles** for the editor.
 
 Profile shortcuts always toggle recording. The standard record shortcut and tray
 action use standard dictation, including its existing toggle or push-and-hold mode.

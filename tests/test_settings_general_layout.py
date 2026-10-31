@@ -183,9 +183,10 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             notes = dialog.walkthrough_write_up_notes_tile
             self.assertTrue(walkthroughs.isAncestorOf(notes))
             self.assertEqual(notes.isEnabled(), dialog.walkthrough_write_up_check.isChecked())
+            # Their shortcuts are on Hotkeys too, with every other shortcut.
             for key in ("walkthrough", "screenshot"):
-                self.assertTrue(walkthroughs.isAncestorOf(dialog.hotkey_inputs[key]))
-                self.assertFalse(dialog._pages[HOTKEYS].isAncestorOf(dialog.hotkey_inputs[key]))
+                self.assertTrue(walkthroughs.isAncestorOf(dialog.shortcut_input(key, WALKTHROUGHS)))
+                self.assertTrue(dialog._pages[HOTKEYS].isAncestorOf(dialog.hotkey_inputs[key]))
             # Every visual setting lives on Appearance.
             appearance = dialog._pages[APPEARANCE]
             self.assertEqual(
@@ -340,7 +341,9 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 for card in hotkeys.findChildren(QFrame)
                 if card.objectName() == "hotkeyShortcutCard"
             ]
-            self.assertEqual(len(shortcut_cards), 10)
+            # One per standard shortcut; rows for profiles, transforms and
+            # actions come with the settings, which this test doesn't load.
+            self.assertEqual(len(shortcut_cards), 12)
             self.assertEqual(
                 set(dialog.hotkey_inputs),
                 {

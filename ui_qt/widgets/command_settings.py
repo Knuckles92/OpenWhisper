@@ -1,5 +1,6 @@
 """Controls for Settings → Commands: the Command Mode shortcut and the transforms library."""
 
+from dataclasses import replace
 from uuid import uuid4
 
 from PyQt6.QtCore import QEvent, QObject, QSize, Qt, pyqtSignal
@@ -26,6 +27,7 @@ from services.text_transforms import (
     STARTER_TRANSFORMS,
     Transform,
     delete_transform,
+    find_transform,
     load_transforms,
     save_transform,
     transform_hotkey_conflict,
@@ -401,6 +403,7 @@ class TransformsPanel(QWidget):
     def refresh(self, selected_id=None) -> None:
         # Coming back to Settings must not throw away a draft in progress.
         if selected_id is None and self.has_unsaved_changes():
+            self._follow_saved_hotkey()
             return
         selected_id = self._transform_id if selected_id is None else selected_id
         self._loading = True
@@ -426,6 +429,15 @@ class TransformsPanel(QWidget):
                 self._show(Transform(uuid4().hex, "", ""))
         finally:
             self._loading = False
+
+    def _follow_saved_hotkey(self) -> None:
+        """Take a shortcut saved elsewhere (the Hotkeys page) into the draft, unless you changed it."""
+        saved = find_transform(self._settings(), self._transform_id)
+        if saved is None or saved.hotkey == self._saved.hotkey:
+            return
+        if self.hotkey_input.hotkey == self._saved.hotkey:
+            self.hotkey_input.set_hotkey(saved.hotkey)
+        self._saved = replace(self._saved, hotkey=saved.hotkey)
 
     def _show(self, transform: Transform) -> None:
         self.hotkey_input.cancel_capture()

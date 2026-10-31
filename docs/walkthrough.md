@@ -189,7 +189,8 @@ folder (next to `meetings`):
 | `write-up.pdf`, `write-up.md`, `write-up.docx` | Your agent's write-up, when it is turned on (see below). |
 
 **Settings → Dictation → Walkthroughs** holds everything about walkthroughs:
-its two shortcuts, and under **Document** how the PDF, Word document and Markdown look:
+its two shortcuts (also on **Settings → Hotkeys**), and under **Document** how the
+PDF, Word document and Markdown look:
 the title (empty for none), the line with the date, length and screenshot
 count, the note on how to read the document, the screenshot captions, and
 the paper size of the PDF and Word document (Letter or A4 by your region unless you choose).

@@ -6,7 +6,8 @@ import sys
 import tempfile
 import threading
 from contextlib import contextmanager
-from typing import Callable, Dict, Optional
+from dataclasses import dataclass
+from typing import Callable, Dict, List, Optional
 
 from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
@@ -216,10 +217,16 @@ from ui_qt.widgets.hotkey_capture import (
     is_escape_key,
     mouse_shortcut_note,
 )
+from ui_qt.widgets.hotkey_bindings import BindingShortcuts
 from ui_qt.widgets.hotkey_row import ReflowCard
-from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.settings_switch import SettingsSwitch
-from services.hotkey_conflicts import STANDARD, STANDARD_LABELS, hotkey_conflict
+from services.hotkey_conflicts import (
+    PROFILE,
+    STANDARD,
+    STANDARD_LABELS,
+    TRANSFORM,
+    hotkey_conflict,
+)
 from services.settings import (
     resolve_recording_hands_free_latch,
     resolve_walkthrough_copy_format,
@@ -274,7 +281,7 @@ _HF_POLICY_LABELS = {
 _SEARCH_ALIASES = {
     WALKTHROUGHS: (
         "Walkthrough and screenshot settings",
-        "Dictation › Walkthroughs (moved from General and Hotkeys)",
+        "Dictation › Walkthroughs (moved from General)",
         "walkthrough screenshot snap capture pdf document title captions paper "
         "letter a4 ai write-up claude code agent instructions prompt",
     ),
@@ -299,10 +306,12 @@ _SEARCH_ALIASES = {
         "rewrite polish formatting",
     ),
     HOTKEYS: (
-        "Command Mode, Scratchpad and hands-free shortcuts",
+        "Every shortcut: Command Mode, Scratchpad, walkthroughs, profiles, actions",
         "App › Hotkeys",
         "command mode scratchpad switch language paste original hands-free double tap "
-        "latch mouse side button back forward mouse 4 mouse 5",
+        "latch mouse side button back forward mouse 4 mouse 5 walkthrough screenshot "
+        "profile shortcut transform shortcut action shortcut agent hotkey keyboard "
+        "shortcuts all shortcuts",
     ),
     DOWNLOADS: (
         "Download models and components",
@@ -378,6 +387,17 @@ _CHAPTERS = (
 
 #: How a hotkey message names each standard action.
 _HOTKEY_LABELS = STANDARD_LABELS
+
+
+@dataclass(frozen=True)
+class _ShortcutRow:
+    """A standard shortcut's box on one page; Hotkeys and its feature's page may both show one."""
+
+    key: str
+    page: str
+    field: HotkeyCaptureInput
+    clear: Optional[QPushButton]
+    note: WrappedLabel
 
 
 class _ThreadRelay(QObject):
@@ -641,6 +661,9 @@ class SettingsDialog(QDialog):
         self.capturing: Optional[str] = None
         self.capture_thread: Optional[HotkeyCaptureThread] = None
         self.current_hotkey_input: Optional[HotkeyCaptureInput] = None
+        # Every standard shortcut's box, on whichever page shows it.
+        self._shortcut_rows: List[_ShortcutRow] = []
+        # The Hotkeys page's own rows, by shortcut.
         self.hotkey_inputs: Dict[str, HotkeyCaptureInput] = {}
         self.hotkey_row_descriptions: Dict[str, WrappedLabel] = {}
         self.hotkey_row_notes: Dict[str, WrappedLabel] = {}
@@ -1052,8 +1075,8 @@ class SettingsDialog(QDialog):
         self._add_page(
             HOTKEYS,
             "Hotkeys",
-            "Global shortcuts for recording, Command Mode, and dictation "
-            "tools.",
+            "Every global shortcut in one place, including the ones you give "
+            "your profiles, transforms and actions.",
             self._build_hotkeys_page,
         )
         self._add_page(
@@ -1506,10 +1529,14 @@ class SettingsDialog(QDialog):
     def _build_walkthroughs_page(self, layout: QVBoxLayout) -> None:
         """Everything about walkthroughs: shortcuts, the document, the write-up.
 
-        The shortcut rows are the same ones Hotkeys used to show; they share
-        its capture, conflict checks and Reset to defaults.
+        The shortcut rows are the ones Hotkeys shows too; they share its
+        capture, conflict checks and Reset to defaults.
         """
         layout.addWidget(self._hotkey_group_title("Shortcuts"))
+        self._add_walkthrough_shortcut_rows(layout, WALKTHROUGHS)
+        self._build_walkthrough_group(layout)
+
+    def _add_walkthrough_shortcut_rows(self, layout: QVBoxLayout, page: str) -> None:
         layout.addWidget(
             self._hotkey_shortcut_row(
                 "walkthrough",
@@ -1517,6 +1544,7 @@ class SettingsDialog(QDialog):
                 "Talk while you take screenshots. Press again for one file with "
                 "your words and pictures, copied to paste into an agent.",
                 optional=True,
+                page=page,
             )
         )
         layout.addWidget(
@@ -1526,9 +1554,9 @@ class SettingsDialog(QDialog):
                 "Freeze the screen and mark it up. During a walkthrough it joins "
                 "the walkthrough; otherwise it's copied.",
                 optional=True,
+                page=page,
             )
         )
-        self._build_walkthrough_group(layout)
 
     def _build_walkthrough_group(self, layout: QVBoxLayout) -> None:
         """What a walkthrough's PDF and Markdown show besides your words and screenshots."""
@@ -3341,6 +3369,9 @@ class SettingsDialog(QDialog):
             )
         )
 
+        layout.addWidget(self._hotkey_group_title("Walkthroughs"))
+        self._add_walkthrough_shortcut_rows(layout, HOTKEYS)
+
         layout.addWidget(self._hotkey_group_title("OpenWhisper"))
         layout.addWidget(
             self._hotkey_shortcut_row(
@@ -3356,25 +3387,20 @@ class SettingsDialog(QDialog):
                 "Hide the main window in the system tray.",
             )
         )
-
-        profile_link = neutral_button(Button("Profile recording shortcuts…"))
-        profile_link.clicked.connect(lambda: self.select_destination(CLEANUP_PROFILES))
-        fit_compact_button(profile_link, 0)
-        actions_link = neutral_button(Button("Action shortcuts…"))
-        actions_link.clicked.connect(lambda: self.select_destination(ACTIONS))
-        fit_compact_button(actions_link, 0)
-        walkthrough_link = neutral_button(Button("Walkthrough shortcuts…"))
-        walkthrough_link.clicked.connect(lambda: self.select_destination(WALKTHROUGHS))
-        fit_compact_button(walkthrough_link, 0)
         reset_button = neutral_button(Button("Reset to defaults"))
         reset_button.setObjectName("hotkeyResetButton")
+        reset_button.setToolTip("Put the shortcuts above back to the platform defaults")
         fit_compact_button(reset_button, 150)
         reset_button.clicked.connect(self._confirm_reset_hotkeys)
-        # The links keep their labels' widths and wrap; Reset moves under
-        # them when they don't fit side by side.
-        profile_row = ButtonRow((profile_link, actions_link, walkthrough_link))
-        layout.addSpacing(4)
-        layout.addWidget(Reflow(profile_row, reset_button))
+        layout.addWidget(reset_button, alignment=Qt.AlignmentFlag.AlignRight)
+
+        # The shortcuts you give your own profiles, transforms and actions,
+        # changed here or on their own pages.
+        self.hotkey_bindings = BindingShortcuts(manager=settings_manager)
+        self.hotkey_bindings.capture_changed.connect(self._on_binding_capture_changed)
+        self.hotkey_bindings.saved.connect(self._on_binding_shortcut_saved)
+        self.hotkey_bindings.open_requested.connect(self.select_destination)
+        layout.addWidget(self.hotkey_bindings)
 
     def _build_recording_trigger_mode_row(self) -> QWidget:
         self.record_mode_combo = ElidingComboBox()
@@ -3492,6 +3518,7 @@ class SettingsDialog(QDialog):
         description: str,
         *,
         optional: bool = False,
+        page: str = HOTKEYS,
     ) -> QFrame:
         card = ReflowCard()
         card.setObjectName("hotkeyShortcutCard")
@@ -3501,12 +3528,10 @@ class SettingsDialog(QDialog):
         detail = WrappedLabel(description)
         detail.setObjectName("hotkeyShortcutDescription")
         card.copy.addWidget(detail)
-        self.hotkey_row_descriptions[key] = detail
         note = WrappedLabel("")
         note.setObjectName("hotkeyShortcutNote")
         note.setVisible(False)
         card.copy.addWidget(note)
-        self.hotkey_row_notes[key] = note
 
         if self._native_wayland:
             from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
@@ -3532,26 +3557,67 @@ class SettingsDialog(QDialog):
         field.setProperty("optional", optional)
         field.setMinimumWidth(190)
         field.setMaximumWidth(220)
-        self.hotkey_inputs[key] = field
         card.add_control(field)
 
+        clear_button = None
         if optional:
             clear_button = Button("Clear")
             clear_button.setObjectName("hotkeyClearButton")
             clear_button.setAccessibleName(f"Clear {title} shortcut")
             fit_compact_button(clear_button, 68)
             clear_button.clicked.connect(lambda _checked=False, key=key: self._clear_hotkey(key))
-            self.hotkey_clear_buttons[key] = clear_button
             card.add_control(clear_button)
+        self._shortcut_rows.append(_ShortcutRow(key, page, field, clear_button, note))
+        if page == HOTKEYS:
+            self.hotkey_inputs[key] = field
+            self.hotkey_row_descriptions[key] = detail
+            self.hotkey_row_notes[key] = note
+            if clear_button is not None:
+                self.hotkey_clear_buttons[key] = clear_button
         return card
 
+    def shortcut_input(self, key: str, page: str = HOTKEYS) -> Optional[HotkeyCaptureInput]:
+        """The box for standard shortcut ``key`` on ``page``, once that page is built."""
+        return next(
+            (row.field for row in self._shortcut_rows if row.key == key and row.page == page),
+            None,
+        )
+
     def _show_hotkey_note(self, key: str, text: str, *, warning: bool = False) -> None:
-        note = self.hotkey_row_notes.get(key)
-        if note is None:
-            return
-        note.setText(text)
-        set_style_property(note, "tone", "warning" if warning else "info")
-        note.setVisible(bool(text))
+        for row in self._shortcut_rows:
+            if row.key == key:
+                self._set_row_note(row, text, warning=warning)
+
+    @staticmethod
+    def _set_row_note(row: _ShortcutRow, text: str, *, warning: bool = False) -> None:
+        row.note.setText(text)
+        set_style_property(row.note, "tone", "warning" if warning else "info")
+        row.note.setVisible(bool(text))
+
+    def _on_binding_capture_changed(self, capturing: bool) -> None:
+        if capturing:
+            # A standard row's capture would take the same keys.
+            self._cancel_hotkey_capture()
+        self.set_hotkey_capture_suspended(capturing)
+
+    def _on_binding_shortcut_saved(self, kind: str, message: str) -> None:
+        """A profile's, transform's or action's shortcut changed on the Hotkeys page."""
+        self.message_label.setText(message)
+        if kind == PROFILE:
+            if CLEANUP_PROFILES in self._built_pages:
+                self.cleanup_profiles_panel.refresh()
+            self._on_profiles_saved()
+        elif kind == TRANSFORM:
+            self.refresh_page(COMMANDS)
+            self.notify_changed("transforms")
+        else:
+            self.refresh_page(ACTIONS)
+            self.notify_changed("actions")
+
+    def _refresh_binding_shortcuts(self) -> None:
+        bindings = self.__dict__.get("hotkey_bindings")
+        if bindings is not None:
+            bindings.load(self._settings_snapshot())
 
     def _build_advanced_page(self, layout: QVBoxLayout) -> None:
         self.meeting_redecode_coverage_guard_tile = SettingTile(
@@ -5162,6 +5228,9 @@ class SettingsDialog(QDialog):
         self, key: str, input_field: HotkeyCaptureInput
     ) -> None:
         self._cancel_hotkey_capture()
+        bindings = self.__dict__.get("hotkey_bindings")
+        if bindings is not None:
+            bindings.cancel_capture()
         self.capturing = key
         self.current_hotkey_input = input_field
         input_field.setText(CAPTURE_HINT)
@@ -5283,7 +5352,7 @@ class SettingsDialog(QDialog):
         self.capturing = None
         self.current_hotkey_input = None
         self._suspend_hotkeys_for_capture(False)
-        if self.hotkey_inputs:
+        if self._shortcut_rows:
             self._update_hotkey_displays()
 
     def _apply_hotkey_settings(
@@ -5319,6 +5388,8 @@ class SettingsDialog(QDialog):
             return error
         self.current_hotkeys = updated
         self._update_hotkey_displays()
+        # A profile's, transform's or action's shortcut may now clash with one.
+        self._refresh_binding_shortcuts()
         self.message_label.setText(message)
         self._refresh_rail_values()
         return ""
@@ -5335,7 +5406,8 @@ class SettingsDialog(QDialog):
         answer = QMessageBox.question(
             self,
             "Reset hotkeys?",
-            "Replace every shortcut with the platform defaults?",
+            "Put OpenWhisper's own shortcuts back to the platform defaults? "
+            "Profile, transform and action shortcuts stay as they are.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
@@ -5357,15 +5429,15 @@ class SettingsDialog(QDialog):
     def _update_hotkey_displays(self) -> None:
         if self.home is not None:
             self.home.refresh_shortcut()
-        for key, input_field in self.hotkey_inputs.items():
-            hotkey = self.current_hotkeys.get(key, "")
+        for row in self._shortcut_rows:
+            hotkey = self.current_hotkeys.get(row.key, "")
             if self._native_wayland:
-                input_field.set_hotkey(hotkey)
+                row.field.set_hotkey(hotkey)
             else:
-                input_field.setText(format_hotkey_display(hotkey))
-            self._show_hotkey_note(key, mouse_shortcut_note(hotkey))
-        for key, button in self.hotkey_clear_buttons.items():
-            button.setEnabled(bool(self.current_hotkeys.get(key)))
+                row.field.setText(format_hotkey_display(hotkey))
+            self._set_row_note(row, mouse_shortcut_note(hotkey))
+            if row.clear is not None:
+                row.clear.setEnabled(bool(hotkey))
 
     def _load_settings(self) -> None:
         settings = self._settings_snapshot()
@@ -5394,6 +5466,7 @@ class SettingsDialog(QDialog):
             trigger_mode = resolve_recording_trigger_mode(settings)
             _select_combo_data(self.record_mode_combo, trigger_mode)
             self._load_hands_free_latch(settings)
+            self.hotkey_bindings.load(settings)
         self._load_page_modules(settings)
 
     def _load_cleanup_pages(self, settings: dict) -> None:

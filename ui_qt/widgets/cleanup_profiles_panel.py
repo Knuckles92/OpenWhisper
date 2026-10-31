@@ -1,5 +1,6 @@
 """A reusable library and editor for on-demand cleanup profiles."""
 
+from dataclasses import replace
 from uuid import uuid4
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -23,6 +24,7 @@ from services.cleanup_profiles import (
     STARTER_PROFILES,
     CleanupProfile,
     delete_cleanup_profile,
+    find_cleanup_profile,
     load_cleanup_profiles,
     save_cleanup_profile,
 )
@@ -232,6 +234,7 @@ class CleanupProfilesPanel(QWidget):
             and self._saved is not None
             and self._draft() != self._saved
         ):
+            self._follow_saved_hotkey()
             return
         selected_id = self._profile_id if selected_id is None else selected_id
         self._loading = True
@@ -255,6 +258,15 @@ class CleanupProfilesPanel(QWidget):
         else:
             self._show_profile(CleanupProfile(uuid4().hex, "", ""))
         self._loading = False
+
+    def _follow_saved_hotkey(self) -> None:
+        """Take a shortcut saved elsewhere (the Hotkeys page) into the draft, unless you changed it."""
+        saved = find_cleanup_profile(self.manager.load_all_settings(), self._profile_id)
+        if saved is None or saved.hotkey == self._saved.hotkey:
+            return
+        if self.hotkey_input.hotkey == self._saved.hotkey:
+            self.hotkey_input.set_hotkey(saved.hotkey)
+        self._saved = replace(self._saved, hotkey=saved.hotkey)
 
     def _show_profile(self, profile: CleanupProfile) -> None:
         self.hotkey_input.cancel_capture()

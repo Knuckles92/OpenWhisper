@@ -17,6 +17,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **Edit an AI write-up** — a written-up walkthrough opens on its write-up, cut into rows at its screenshots, with a switch to **As spoken**. Edit or reorder the write-up and save to rebuild its PDF and Word document; Copy and Open use the version shown. Saving edits to the words as spoken offers **Save and redo write-up**.
 
 ### Changed
+- **Every shortcut on the Hotkeys page** — **Settings → Hotkeys** now lists all of them: the Walkthrough and Screenshot shortcuts, and every profile, transform and action (the Agent hotkey too) with its shortcut. Click a box to set one or **Clear** to remove it, with the same checks as its own page; a row says when its shortcut does nothing because something else uses it or the action is off. Each group links to its own page, and those pages still change their shortcuts too. **Reset to defaults** sits under OpenWhisper's own shortcuts and leaves yours alone.
 - **No recording pill beside the walkthrough column** — while the column shows a walkthrough, recording or being written, the recording overlay stays hidden, since it only repeated it; notices still appear. On Wayland, which has no column, the overlay keeps its Snap and Done.
 - **Saved Walkthroughs uses the same storyboard** — screenshots now sit beside their words instead of below them, and clicking one opens the full picture.
 

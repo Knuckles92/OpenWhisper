@@ -258,7 +258,7 @@ def test_escape_cancels_capture_without_binding_a_global_shortcut(make_dialog, p
     dialog, store = make_dialog({SettingsKey.HOTKEYS: {"walkthrough": "ctrl+alt+w"}})
     dialog.select_destination(page)
     dialog.show()
-    field = dialog.hotkey_inputs[key]
+    field = dialog.shortcut_input(key, page)
     previous = dialog.current_hotkeys[key]
     QTest.mouseClick(field, Qt.MouseButton.LeftButton)
     assert dialog.capturing == key
@@ -280,7 +280,7 @@ def test_escape_cancels_capture_without_binding_a_global_shortcut(make_dialog, p
 def test_captured_escape_from_the_listener_is_not_saved(make_dialog):
     dialog, store = make_dialog()
     dialog.select_destination(WALKTHROUGHS)
-    field = dialog.hotkey_inputs["screenshot"]
+    field = dialog.shortcut_input("screenshot", WALKTHROUGHS)
     QTest.mouseClick(field, Qt.MouseButton.LeftButton)
     thread = dialog.capture_thread
     assert dialog.capturing == "screenshot"
@@ -297,7 +297,7 @@ def test_escape_with_modifiers_is_still_a_shortcut(make_dialog):
     # macOS's default Cancel is ctrl+alt+escape; only Esc alone backs out.
     dialog, store = make_dialog()
     dialog.select_destination(WALKTHROUGHS)
-    field = dialog.hotkey_inputs["screenshot"]
+    field = dialog.shortcut_input("screenshot", WALKTHROUGHS)
     QTest.mouseClick(field, Qt.MouseButton.LeftButton)
     QTest.keyClick(field, Qt.Key.Key_Escape,
                    Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
@@ -535,6 +535,7 @@ def test_windows_capture_treats_escape_as_cancel(_session_qt_application):
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 720), ("omarchy", 460)])
 def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch, ui_mode, width):
     from PyQt6.QtWidgets import QAbstractButton, QLabel, QLineEdit
+    from ui_qt.widgets.hotkey_bindings import bindings
     from ui_qt.widgets.hotkey_row import ReflowCard
     from ui_qt.utils.font_scale import apply_ui_font_scale
     from ui_qt.utils.theme_manager import ThemeManager
@@ -548,7 +549,7 @@ def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch
     dialog = None
     try:
         apply_ui_font_scale(130, app=app, theme_manager=manager)
-        dialog, _store = make_dialog({
+        dialog, store = make_dialog({
             SettingsKey.RECORDING_TRIGGER_MODE: RecordingTriggerMode.PUSH_HOLD,
             SettingsKey.HOTKEYS: {"command_mode": "ctrl+alt+shift+mouse4"},
         })
@@ -563,7 +564,11 @@ def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch
         # Below the classic minimum width only the Advanced rail is too wide;
         # the cards themselves must still hold their controls.
         cards = [card for card in page.findChildren(ReflowCard) if card.isVisible()]
-        assert len(cards) == 11
+        # Twelve standard shortcuts and the record mode, then the starter
+        # profiles and transforms.
+        starters = sum(len(items) for items in bindings(store.load_all_settings()).values())
+        assert starters
+        assert len(cards) == 13 + starters
         for card in cards:
             controls = card.findChildren(QAbstractButton) + card.findChildren(QLineEdit)
             rects = sorted(
