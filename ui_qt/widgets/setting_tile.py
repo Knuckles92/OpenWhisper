@@ -102,6 +102,20 @@ class TileBase(QFrame):
         self._body_layout.addLayout(layout)
         self.body.show()
 
+    def add_actions(self, *buttons: QWidget) -> None:
+        """Put buttons in a left-aligned row under the text.
+
+        Notice banners all place their action here, so it fits a narrow
+        window and every banner reads the same way.
+        """
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        for button in buttons:
+            row.addWidget(button)
+        row.addStretch(1)
+        self.add_body_layout(row)
+
 
 class SettingTile(TileBase):
     """Tile for an on/off setting; the whole card toggles its checkbox.

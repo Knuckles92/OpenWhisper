@@ -2268,12 +2268,7 @@ class SettingsDialog(QDialog):
         tile.setProperty("kind", "notice")
         button = compact_primary_button(Button("Turn on"))
         button.clicked.connect(self.turn_on_cleanup)
-        # Under the text rather than beside it, so it fits a narrow window.
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(button)
-        row.addStretch(1)
-        tile.add_body_layout(row)
+        tile.add_actions(button)
         self._cleanup_gates.append((tile, button))
         if needed is not None:
             self._cleanup_gate_needed[tile] = needed
@@ -2529,10 +2524,8 @@ class SettingsDialog(QDialog):
             design_icon("info-warning.svg"),
         )
         self.typesafe_key_notice.setProperty("kind", "notice")
-        self.open_typesafe_key_btn = QPushButton("Add a key")
+        self.open_typesafe_key_btn = compact_primary_button(Button("Add a key"))
         self.open_typesafe_key_btn.setObjectName("typesafeKeyNoticeLink")
-        self.open_typesafe_key_btn.setFlat(True)
-        self.open_typesafe_key_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.open_typesafe_key_btn.setToolTip(
             "Open API keys with the TypeSafe credential selected"
         )
@@ -2542,11 +2535,11 @@ class SettingsDialog(QDialog):
         # The quickest fix when the other route already has a key: one click
         # moves Fast judgments onto it. Shown only in that case.
         self.typesafe_switch_route_btn = compact_primary_button(Button("Use OpenRouter"))
-        self.typesafe_switch_route_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.typesafe_switch_route_btn.clicked.connect(self._switch_typesafe_route)
         self.typesafe_switch_route_btn.hide()
-        self.typesafe_key_notice.add_trailing(self.typesafe_switch_route_btn)
-        self.typesafe_key_notice.add_trailing(self.open_typesafe_key_btn)
+        self.typesafe_key_notice.add_actions(
+            self.typesafe_switch_route_btn, self.open_typesafe_key_btn
+        )
         layout.addWidget(self.typesafe_key_notice)
 
         # Jev either way for the first two, the choice being whose key pays
@@ -4694,6 +4687,10 @@ class SettingsDialog(QDialog):
         master_on = self.typesafe_enabled_check.isChecked()
         self.typesafe_key_notice.setVisible(not present)
         self.typesafe_switch_route_btn.setVisible(other_present)
+        # One blue action per banner: switching routes leads when it can.
+        set_style_property(
+            self.open_typesafe_key_btn, "tone", "neutral" if other_present else "primary"
+        )
         if other is not None:
             self.typesafe_switch_route_btn.setText(f"Use {other.name}")
         self.open_typesafe_key_btn.setToolTip(
