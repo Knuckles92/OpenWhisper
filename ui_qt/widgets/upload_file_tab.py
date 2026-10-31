@@ -1022,6 +1022,7 @@ class UploadFileTab(TranscriptionTabBase):
     copy_requested = pyqtSignal(str)
 
     CONTENT_OBJECT_NAME = "uploadFileContent"
+    INITIAL_STATUS = "Ready to transcribe"
     TRANSCRIPT_PLACEHOLDER = (
         "Transcription will appear here...\n"
         "Upload an audio file to begin."
