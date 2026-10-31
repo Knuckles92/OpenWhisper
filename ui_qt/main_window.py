@@ -1126,7 +1126,10 @@ class MainWindow(QMainWindow):
         self.update_screen(
             "walkthrough", "set_recording_state", self.is_recording, self.walkthrough_active
         )
-        if self.is_recording:
+        # Only a walkthrough starting moves the tab. One ends just as its
+        # recording stops, before is_recording catches up; moving then would
+        # leave the window on Quick Record instead of the walkthrough.
+        if self.is_recording and self.walkthrough_active:
             self.tabbed_content.set_recording_state(True, self._recording_tab())
 
     def set_status(self, status_text: str):
