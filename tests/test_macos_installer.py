@@ -86,6 +86,53 @@ def test_create_dmg_retries_only_a_busy_volume(errors, succeeds, calls, sleeps):
     assert completed.stdout.rstrip("\n") == f"calls={calls} slept={sleeps}"
 
 
+@pytest.mark.parametrize(
+    ("load_commands", "verdict"),
+    [
+        ("      cmd LC_BUILD_VERSION\n platform 1\n    minos 14.0\n      sdk 15.2", "14.0 loads"),
+        ("      cmd LC_BUILD_VERSION\n    minos 15.0", "15.0 too new"),
+        ("      cmd LC_BUILD_VERSION\n    minos 14.2", "14.2 too new"),
+        # LC_SOURCE_VERSION also prints a "version" line; only the minimum counts.
+        ("      cmd LC_SOURCE_VERSION\n  version 15.0\n      cmd LC_VERSION_MIN_MACOSX\n"
+         "  version 10.13\n      sdk 10.15", "10.13 loads"),
+    ],
+    ids=["build-version", "next-major", "point-release", "pre-xcode10"],
+)
+def test_deployment_target_audit_reads_the_arm64_minimum(load_commands, verdict):
+    script = BUILD_SCRIPT.read_text(encoding="utf-8").replace("\r\n", "\n")
+    functions = "".join(
+        re.search(rf"^{name}\(\) \{{\n.*?^\}}\n", script, re.S | re.M).group(0)
+        for name in ("arm64_minos", "version_newer")
+    )
+    # otool answers only for the arm64 slice, as on a universal binary.
+    harness = "\n".join([
+        "set -Eeuo pipefail",
+        'otool() { [[ "$1 $2 $3" == "-arch arm64 -l" ]] || return 1; printf "%s\\n" "$LOAD"; }',
+        functions,
+        'minos="$(arm64_minos binary)"',
+        'if version_newer "$minos" 14.0; then echo "$minos too new"; else echo "$minos loads"; fi',
+    ])
+    completed = subprocess.run(
+        [_bash(), "-c", harness], capture_output=True, text=True, check=False, timeout=10,
+        env={**os.environ, "LOAD": load_commands},
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.rstrip("\n") == verdict
+
+
+def test_version_newer_compares_dotted_releases():
+    script = BUILD_SCRIPT.read_text(encoding="utf-8").replace("\r\n", "\n")
+    function = re.search(r"^version_newer\(\) \{\n.*?^\}\n", script, re.S | re.M).group(0)
+    pairs = [("15", "14.6", 1), ("14.0.1", "14.0", 1), ("14", "14.0", 0), ("13.5", "14.0", 0), ("0", "11.0", 0)]
+    harness = "\n".join([function] + [
+        f'version_newer {a} {b} && echo {a}:1 || echo {a}:0' for a, b, _ in pairs
+    ])
+    completed = subprocess.run(
+        [_bash(), "-c", harness], capture_output=True, text=True, check=False, timeout=10
+    )
+    assert completed.stdout.split() == [f"{a}:{newer}" for a, _, newer in pairs], completed.stderr
+
+
 def test_spec_builds_macos_app_bundle_with_stable_identity():
     spec = SPEC.read_text(encoding="utf-8")
     assert 'MACOS_BUNDLE_IDENTIFIER = "tech.fiorilabs.openwhisper"' in spec
@@ -197,6 +244,7 @@ def test_macos_build_script_enforces_host_and_artifact_contract():
     assert not re.search(r"(^|\n)\s*spctl\b", outside)
     assert sum("spctl --assess" in block for block in notarized) == 2
     assert "lipo -archs" in script
+    assert 'version_newer "$minos" "$MIN_OS"' in script
     assert "otool -L" in script
     assert "hdiutil create" in script
     assert "-format UDZO" in script
@@ -209,7 +257,7 @@ def test_macos_build_script_enforces_host_and_artifact_contract():
 
 def test_release_workflow_includes_macos_arm64_dmg():
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert "runs-on: macos-14" in workflow
+    assert "runs-on: macos-15" in workflow
     assert 'test "$(uname -m)" = "arm64"' in workflow
     assert "./scripts/build_installer_macos.sh --clean" in workflow
     assert "OpenWhisper-*-macos-arm64.dmg" in workflow

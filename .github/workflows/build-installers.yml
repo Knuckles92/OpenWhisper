@@ -265,7 +265,7 @@ jobs:
   macos:
     name: macOS DMG (Apple Silicon)
     needs: [source, qualification]
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 150
     env:
       # Optional. With all five set the DMG is Developer ID signed, notarized
