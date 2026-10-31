@@ -8,6 +8,7 @@ import pytest
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QColor, QImage
 
+from services.hotkey_manager import format_hotkey_display
 from services.runtime import walkthrough as walkthrough_module
 from services.runtime.walkthrough import (
     FINISH_RECORDING_FIRST,
@@ -530,7 +531,8 @@ def test_the_columns_snap_means_the_window_in_front_not_the_column(h):
 def test_a_pick_from_the_menu_is_taken_now_and_remembered(h):
     session = _begin(h)
     panel = h.ui.walkthrough_panel
-    assert (panel.snap_mode, panel.shortcut) == ("region", "Ctrl+Alt+S")
+    shown = format_hotkey_display("ctrl+alt+s")  # ⌃⌥S on macOS
+    assert (panel.snap_mode, panel.shortcut) == ("region", shown)
 
     panel.snap_mode_chosen.emit(WalkthroughSnapMode.WINDOW)
 
