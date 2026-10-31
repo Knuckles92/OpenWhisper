@@ -13,6 +13,8 @@ from typing import Final, Optional
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QVBoxLayout
 
 from ui_qt.widgets import Button, PrimaryButton
+from ui_qt.widgets.scrolling_body import ScrollingBody
+from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +101,16 @@ class MeetingConsentDialog(QDialog):
         )
         self.setMinimumWidth(480)
         self.setModal(True)
+        self._fitted = False
 
         self._setup_ui()
+
+    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt API
+        if visible and not self._fitted:
+            # Before QDialog centers itself, so it centers the final size.
+            self._fitted = True
+            self.body_scroll.fit_dialog(self)
+        super().setVisible(visible)
 
     @staticmethod
     def _resolve_destination(
@@ -180,9 +190,15 @@ class MeetingConsentDialog(QDialog):
 
         title = QLabel("Turn on AI insights for meetings?")
         title.setObjectName("headerLabel")
+        title.setWordWrap(True)
         layout.addWidget(title)
 
-        body = QLabel(
+        # The copy scrolls past a comfortable height; the title and the
+        # choices stay put.
+        self.body_scroll = ScrollingBody()
+        layout.addWidget(self.body_scroll, 1)
+
+        body = WrappedLabel(
             "AI insights keep the meeting's topic, key points, decisions, "
             "action items, and questions updated on the dashboard while you "
             "talk.\n\n"
@@ -198,17 +214,15 @@ class MeetingConsentDialog(QDialog):
             "be sent so the agent can recall prior names and decisions."
         )
         body.setObjectName("consentBodyLabel")
-        body.setWordWrap(True)
-        layout.addWidget(body)
+        self.body_scroll.add_widget(body)
 
-        toggle_note = QLabel(
+        toggle_note = WrappedLabel(
             "You can turn this on or off for each meeting with the "
             '"AI insights" switch. Without it, meetings are '
             "transcript-only."
         )
         toggle_note.setObjectName("infoLabel")
-        toggle_note.setWordWrap(True)
-        layout.addWidget(toggle_note)
+        self.body_scroll.add_widget(toggle_note)
 
         layout.addSpacing(8)
         button_layout = QHBoxLayout()
