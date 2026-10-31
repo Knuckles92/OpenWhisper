@@ -5,8 +5,8 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QFrame, QPushButton
 )
-from PyQt6.QtCore import Qt, QObject, QTimer, pyqtSignal, QEvent, QPropertyAnimation, QRect
-from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtCore import Qt, QObject, QTimer, pyqtSignal, QEvent, QPropertyAnimation, QPointF, QRect, QRectF
+from PyQt6.QtGui import QAction, QKeySequence, QPainter, QPen
 
 from config import config
 from services.hotkey_manager import format_hotkey_display
@@ -23,8 +23,68 @@ from ui_qt.utils.collapse_animation import (
     UNLIMITED_HEIGHT,
 )
 from ui_qt.utils.desktop import compositor_managed, without_window_buttons
+from ui_qt.utils.palette import token_color
 
 logger = logging.getLogger(__name__)
+
+
+class WindowGlyphButton(QPushButton):
+    """A title-bar button that paints its glyph instead of drawing a character.
+
+    Text glyphs (─ □ ❐ ✕) come from whatever font the platform falls back to,
+    so they render at different sizes and weights, and □ can turn into "=".
+    Painted lines look the same on every platform.
+    """
+
+    MINIMIZE = "minimize"
+    MAXIMIZE = "maximize"
+    RESTORE = "restore"
+    CLOSE = "close"
+    _SIZE = 10  # the glyph's box, in pixels
+
+    def __init__(self, glyph: str, hover_token: str = "text-heading", parent=None):
+        super().__init__(parent)
+        self._glyph = glyph
+        self._hover_token = hover_token
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+
+    @property
+    def glyph(self) -> str:
+        return self._glyph
+
+    def set_glyph(self, glyph: str) -> None:
+        self._glyph = glyph
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)  # the stylesheet's hover background
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = token_color(self._hover_token if self.underMouse() else "text-secondary")
+        pen = QPen(color, 1.0)
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        size = self._SIZE
+        # A whole-pixel origin plus half a pixel keeps 1px lines crisp.
+        left = (self.width() - size) // 2 + 0.5
+        top = (self.height() - size) // 2 + 0.5
+        right, bottom = left + size - 1, top + size - 1
+        if self._glyph == self.MINIMIZE:
+            y = top + (size - 1) // 2
+            painter.drawLine(QPointF(left, y), QPointF(right, y))
+        elif self._glyph == self.MAXIMIZE:
+            painter.drawRect(QRectF(left, top, size - 1, size - 1))
+        elif self._glyph == self.RESTORE:
+            # The front window, and the edges of the one behind that show
+            # above and to its right.
+            painter.drawRect(QRectF(left, top + 2, size - 3, size - 3))
+            painter.drawLine(QPointF(left + 2, top), QPointF(right, top))
+            painter.drawLine(QPointF(right, top), QPointF(right, bottom - 2))
+        elif self._glyph == self.CLOSE:
+            painter.drawLine(QPointF(left, top), QPointF(right, bottom))
+            painter.drawLine(QPointF(right, top), QPointF(left, bottom))
+        painter.end()
 
 
 class CustomTitleBar(QFrame):
@@ -144,21 +204,21 @@ class CustomTitleBar(QFrame):
         layout.addWidget(self.title_label)
 
     def _build_window_buttons(self, layout: QHBoxLayout) -> None:
-        self.minimize_btn = QPushButton("─")
+        self.minimize_btn = WindowGlyphButton(WindowGlyphButton.MINIMIZE)
         self.minimize_btn.setFixedSize(46, self.BASE_HEIGHT)
         self.minimize_btn.setStyleSheet(self._WINDOW_BUTTON_STYLE)
         self.minimize_btn.setToolTip("Minimize")
         self.minimize_btn.setAccessibleName("Minimize window")
         self.minimize_btn.clicked.connect(self._minimize)
 
-        self.maximize_btn = QPushButton("□")
+        self.maximize_btn = WindowGlyphButton(WindowGlyphButton.MAXIMIZE)
         self.maximize_btn.setFixedSize(46, self.BASE_HEIGHT)
         self.maximize_btn.setStyleSheet(self._WINDOW_BUTTON_STYLE)
         self.maximize_btn.setToolTip("Maximize")
         self.maximize_btn.setAccessibleName("Maximize window")
         self.maximize_btn.clicked.connect(self._toggle_maximize)
 
-        self.close_btn = QPushButton("✕")
+        self.close_btn = WindowGlyphButton(WindowGlyphButton.CLOSE, hover_token="on-accent")
         self.close_btn.setFixedSize(46, self.BASE_HEIGHT)
         self.close_btn.setStyleSheet(self._CLOSE_BUTTON_STYLE)
         self.close_btn.setToolTip("Close")
@@ -203,13 +263,13 @@ class CustomTitleBar(QFrame):
             if self._is_maximized:
                 if self._normal_geometry:
                     self.parent_window.setGeometry(self._normal_geometry)
-                self.maximize_btn.setText("□")
+                self.maximize_btn.set_glyph(WindowGlyphButton.MAXIMIZE)
                 self.maximize_btn.setToolTip("Maximize")
                 self.maximize_btn.setAccessibleName("Maximize window")
             else:
                 self._normal_geometry = self.parent_window.geometry()
                 self.parent_window.showMaximized()
-                self.maximize_btn.setText("❐")
+                self.maximize_btn.set_glyph(WindowGlyphButton.RESTORE)
                 self.maximize_btn.setToolTip("Restore")
                 self.maximize_btn.setAccessibleName("Restore window")
             self._is_maximized = not self._is_maximized

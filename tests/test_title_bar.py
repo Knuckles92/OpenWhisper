@@ -75,3 +75,21 @@ def test_larger_scale_does_not_shrink_the_bar(app, title_bar):
 
     assert title_bar.height() >= default_height
     assert _menu_items_visible(title_bar)
+
+
+def test_window_buttons_paint_their_glyphs_not_font_characters(app, title_bar):
+    # A text glyph depends on the platform's fallback font; "□" drew as "=".
+    buttons = (title_bar.minimize_btn, title_bar.maximize_btn, title_bar.close_btn)
+    assert [button.text() for button in buttons] == ["", "", ""]
+    assert [button.glyph for button in buttons] == ["minimize", "maximize", "close"]
+    for button in buttons:
+        assert not button.grab().isNull()
+
+
+def test_maximize_turns_into_restore_and_back(app, title_bar):
+    title_bar._toggle_maximize()
+    assert title_bar.maximize_btn.glyph == "restore"
+    assert title_bar.maximize_btn.toolTip() == "Restore"
+    title_bar._toggle_maximize()
+    assert title_bar.maximize_btn.glyph == "maximize"
+    assert title_bar.maximize_btn.toolTip() == "Maximize"
