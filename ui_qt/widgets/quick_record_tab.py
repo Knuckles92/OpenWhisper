@@ -7,7 +7,7 @@ from ui_qt.dialogs.settings_destinations import COMMANDS
 from ui_qt.utils.agent_lookup import lookup_relay
 from ui_qt.utils.icons import tabler_icon
 from ui_qt.widgets.cards import ControlPanel
-from ui_qt.widgets.buttons import START_BUTTON_WIDTH, SuccessButton, DangerButton, WarningButton
+from ui_qt.widgets.buttons import SuccessButton, DangerButton, WarningButton, fit_start_width
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.engine_field import engine_combo
@@ -275,10 +275,10 @@ class QuickRecordTab(TranscriptionTabBase):
         buttons_layout.addLayout(top_row)
         buttons_layout.addLayout(bottom_row)
         buttons_layout.addWidget(self.command_row)
-        buttons_widget.setFixedWidth(START_BUTTON_WIDTH)
+        fit_start_width(buttons_widget)
 
         control_panel.layout.addStretch()
-        control_panel.layout.addWidget(buttons_widget)
+        control_panel.layout.addWidget(buttons_widget, 1)
         control_panel.layout.addStretch()
 
         layout.addWidget(control_panel)

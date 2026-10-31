@@ -130,11 +130,16 @@ def test_the_badge_leads_the_shortcut_row_not_the_button(tab):
 def test_start_walkthrough_matches_the_other_start_buttons(tab):
     from ui_qt.widgets.buttons import START_BUTTON_WIDTH, SuccessButton
 
+    tab.resize(640, 600)
     tab.show()
     QApplication.processEvents()
 
     assert isinstance(tab.walkthrough_button, SuccessButton)
     assert tab.walkthrough_button.width() == START_BUTTON_WIDTH
+    # Centred in the card.
+    hero = tab.walkthrough_button.parentWidget().parentWidget()
+    box = tab.walkthrough_button.parentWidget().geometry()
+    assert abs(box.left() - (hero.width() - box.right() - 1)) <= 1
 
 
 def _button_with_badge(width):

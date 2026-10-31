@@ -364,6 +364,32 @@ def compact_danger_button(button: Button) -> Button:
 START_BUTTON_WIDTH = 340
 
 
+def fit_start_width(widget: QWidget) -> QWidget:
+    """Give ``widget`` the Start button's width, narrower only in a narrower column.
+
+    Add it with stretch 1 between two plain stretches (``start_row`` does):
+    it takes ``START_BUTTON_WIDTH`` when there is room, centred, and never
+    forces a horizontal scroll when there is not. An alignment flag would
+    pin it to its size hint instead.
+    """
+    widget.setMaximumWidth(START_BUTTON_WIDTH)
+    policy = widget.sizePolicy()
+    policy.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+    widget.setSizePolicy(policy)
+    return widget
+
+
+def start_row(widget: QWidget) -> QHBoxLayout:
+    """A row that centres ``widget`` at the Start button's width."""
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(0)
+    row.addStretch()
+    row.addWidget(fit_start_width(widget), 1)
+    row.addStretch()
+    return row
+
+
 # The theme styles the classes below by object name ("primaryButton",
 # "dangerButton", ...). Give an instance an identifier with
 # setProperty("buttonId", ...), not setObjectName, or it loses its colours.

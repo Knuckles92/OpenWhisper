@@ -57,7 +57,7 @@ from services.walkthrough.styles import (
 from services.walkthrough.write_up import AGENTS, DEFAULT_INSTRUCTIONS
 from ui_qt.dialogs.settings_destinations import WALKTHROUGHS
 from ui_qt.widgets.agent_picker import FOUND, AgentMark, describe_agent
-from ui_qt.widgets.buttons import START_BUTTON_WIDTH, SuccessButton, WarningButton
+from ui_qt.widgets.buttons import SuccessButton, WarningButton, start_row
 from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.feature_badge import FeatureBadge
 from ui_qt.widgets.no_wheel import NoWheelComboBox
@@ -449,9 +449,8 @@ class WalkthroughTab(QWidget):
         body.addLayout(keys)
 
         # Start fills the shared Start width; while a walkthrough runs, Finish
-        # and Cancel split it (growing only if their labels need more).
+        # and Cancel split it.
         button_box = QWidget()
-        button_box.setMinimumWidth(START_BUTTON_WIDTH)
         buttons = QHBoxLayout(button_box)
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.setSpacing(12)
@@ -463,7 +462,7 @@ class WalkthroughTab(QWidget):
         self.cancel_button.clicked.connect(self.cancel_requested)
         self.cancel_button.hide()
         buttons.addWidget(self.cancel_button, 1)
-        body.addWidget(button_box, 0, Qt.AlignmentFlag.AlignHCenter)
+        body.addLayout(start_row(button_box))
 
         # Shown only with a walkthrough below: then the choices fold away.
         self.setup_bar = SetupBar()

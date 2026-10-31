@@ -37,7 +37,7 @@ from PyQt6.QtWidgets import (
 from meeting.platform import meeting_mode_supported, meeting_unsupported_os_name
 from meeting.time_utils import format_meeting_identity_meta
 from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
-from ui_qt.widgets.buttons import START_BUTTON_WIDTH, Button, DangerButton, SuccessButton
+from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton, start_row
 from ui_qt.widgets.cards import Card
 from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.wrapped_label import WrappedLabel
@@ -643,12 +643,11 @@ class MeetingModeTab(QWidget):
 
         self.start_button = SuccessButton("Start Meeting")
         self.start_button.setProperty("buttonId", "meetingStart")
-        self.start_button.setFixedWidth(START_BUTTON_WIDTH)
         self.start_button.setAccessibleDescription(
             "Begin microphone and supported system-audio capture."
         )
         self.start_button.clicked.connect(self._on_start_clicked)
-        idle_layout.addWidget(self.start_button, alignment=Qt.AlignmentFlag.AlignCenter)
+        idle_layout.addLayout(start_row(self.start_button))
 
         self.demo_button = Button("Load demo meeting")
         self.demo_button.setObjectName("meetingDemoButton")
