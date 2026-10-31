@@ -245,7 +245,6 @@ class SnippetsPanel(QWidget):
         self.format_switch = SettingsSwitch()
         self.format_switch.setAccessibleName("Keep formatting")
         self.format_switch.toggled.connect(self._update_hints)
-        row.addWidget(self.format_switch, alignment=Qt.AlignmentFlag.AlignTop)
         copy = QVBoxLayout()
         copy.setContentsMargins(0, 0, 0, 0)
         copy.setSpacing(2)
@@ -260,6 +259,8 @@ class SnippetsPanel(QWidget):
         format_hint.setTextFormat(Qt.TextFormat.PlainText)
         copy.addWidget(format_hint)
         row.addLayout(copy, 1)
+        # At the right edge, beside the title, like every other Settings switch.
+        row.addWidget(self.format_switch, alignment=Qt.AlignmentFlag.AlignTop)
         column.addWidget(format_row)
         column.addSpacing(4)
 
