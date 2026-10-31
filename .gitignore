@@ -100,6 +100,10 @@ sidecar-opencode/dist/
 # Design mockups (local planning artifacts, not shipped)
 mockups/
 webui/mocks/
+docs/design/settings-basic-advanced-v1/
+docs/design/settings-simplification-v2/
+# Marketing drafts and their reference images (third-party wallpapers included)
+docs/marketing/
 
 # Agent instruction files (kept local by preference)
 CLAUDE.md
@@ -107,5 +111,17 @@ AGENTS.md
 docs/screenshots/full_suite/*
 specs/local-asr-backends-plan.md
 
-# Local diagnostic captures
+# Local diagnostic captures, renders, ad cuts and other scratch media.
+# Anything made for one-off use goes in artifacts/<name>/, never the repo root.
 /artifacts/
+# Stray renders and screenshots dropped at the repo root. Media the repo ships
+# lives in demo/, docs/ or ui_qt/assets/ and is added deliberately.
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.webp
+/*.mp4
+/*.webm
+/*.mov
+/*.mkv
