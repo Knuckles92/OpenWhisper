@@ -1147,7 +1147,7 @@ class AgentPicker(QWidget):
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(12)
-        heading = QLabel(f"Who runs {purpose}".upper(), self)
+        heading = QLabel(f"Who runs {purpose}", self)
         heading.setObjectName("settingsTileGroupTitle")
         header.addWidget(heading, alignment=Qt.AlignmentFlag.AlignBottom)
         header.addStretch(1)

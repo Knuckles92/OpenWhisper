@@ -709,8 +709,8 @@ class DownloadsPage(QWidget):
 
         eyebrow_row = QHBoxLayout()
         eyebrow_row.setContentsMargins(0, 0, 0, 0)
-        eyebrow = QLabel("SELECTED MODEL")
-        eyebrow.setObjectName("downloadsEyebrow")
+        eyebrow = QLabel("Selected model")
+        eyebrow.setObjectName("settingsTileGroupTitle")
         eyebrow_row.addWidget(eyebrow)
         eyebrow_row.addStretch()
         # Only shown while the profile floats over the catalog.
