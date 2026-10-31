@@ -294,8 +294,8 @@ def _step_icon(step_status) -> Tuple[str, str]:
     return "○", "@text-muted"
 
 
-def _step_detail_text(step_status, detail_text: str) -> str:
-    if detail_text and step_status == "running":
+def _step_detail_text(step_status) -> str:
+    if step_status == "running":
         return "In progress"
     if step_status == "completed":
         return "Done"
@@ -1708,7 +1708,7 @@ class MeetingModeTab(QWidget):
 
         row_layout.addStretch()
 
-        detail_label = QLabel(_step_detail_text(step_status, detail_text))
+        detail_label = QLabel(_step_detail_text(step_status))
         detail_label.setObjectName("meetingFinalizationStepDetail")
         detail_label.setFont(QFont("Segoe UI", 10))
         row_layout.addWidget(detail_label)
