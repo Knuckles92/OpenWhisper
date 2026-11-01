@@ -183,6 +183,71 @@ def test_editing_the_words_as_spoken_offers_to_redo_the_write_up(review, capture
     assert library.load_document(capture.folder).sections[0].text == "first, fixed"
 
 
+def _agent_says(text):
+    from types import SimpleNamespace
+
+    from services.walkthrough import write_up
+
+    def write(folder, *, instructions=None, cancel_event=None):
+        return write_up.write_up(
+            library.load_result(folder, spoken=True), [],
+            run=lambda *args, **kwargs: SimpleNamespace(
+                canceled=False, ok=True, error="", text=text))
+    return write
+
+
+def test_writing_it_up_from_the_menu_leaves_the_version_switch_working(
+        review, capture, monkeypatch):
+    # It finished as spoken, then More → Write up with AI.
+    monkeypatch.setattr(library, "retry_write_up", _agent_says("# Written\n\nWords."))
+    review.retry_button.trigger()
+    _wait(review)
+    assert review.version_bar.isVisibleTo(review)
+    assert not review._spoken
+    for widget in (review.version_bar, review.close_button, review.retry_button,
+                   review.pdf_button, review.save_redo_button):
+        assert widget.isEnabled(), widget
+    review._on_version_chosen(1)
+    assert [row.editor.toPlainText() for row in review.rows] == ["first", "second", "last"]
+    review._on_version_chosen(0)
+    assert review.rows[0].editor.toPlainText() == "# Written\n\nWords."
+
+
+def test_writing_it_up_again_keeps_the_one_before_under_a_version_picker(
+        review, capture, monkeypatch):
+    monkeypatch.setattr(library, "retry_write_up", _agent_says("# First"))
+    review.retry_button.trigger()
+    _wait(review)
+    assert not review.version_picker.isVisibleTo(review)
+    monkeypatch.setattr(library, "retry_write_up", _agent_says("# Second"))
+    review.retry_button.trigger()
+    _wait(review)
+    assert review.version_picker.isVisibleTo(review)
+    assert review.version_picker.isEnabled()
+    assert review.version_picker.text().startswith("Version 2 of 2")
+    actions = review.version_menu.actions()
+    assert [a.text().split(" ·")[0] for a in actions] == ["Version 2", "Version 1"]
+    assert actions[0].isChecked() and actions[0].text().endswith("(latest)")
+    assert review.rows[0].editor.toPlainText() == "# Second"
+    actions[1].trigger()
+    assert review.rows[0].editor.toPlainText() == "# First"
+    assert review.chip.name.text() == "write-up-1.pdf"
+    assert review.version_picker.text().startswith("Version 1 of 2")
+    review.pdf_button.click()
+    args, _kwargs = review._copy_files.call_args
+    assert args == ([capture.folder / "write-up-1.pdf"],)
+    # Saving an earlier one keeps it in place, and keeps it showing.
+    review.rows[0].editor.setPlainText("# First, fixed")
+    review.save_button.click()
+    _wait(review)
+    assert review._version == 1
+    assert review.rows[0].editor.toPlainText() == "# First, fixed"
+    assert (capture.folder / "write-up.md").read_text(encoding="utf-8").startswith("# Second")
+    # The words as spoken have no versions.
+    review._on_version_chosen(1)
+    assert not review.version_picker.isVisibleTo(review)
+
+
 def test_copying_waits_for_saved_edits_and_copies_the_version_shown(review, capture):
     review.rows[0].editor.setPlainText("unsaved")
     review.pdf_button.click()

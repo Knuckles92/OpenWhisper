@@ -6,8 +6,9 @@ a section: its screenshot, then its words, edited in place, with a switch to
 leave the screenshot out. Dragging a row's grip (or Alt+Up/Down in its words)
 moves the section, words and screenshot together. A walkthrough an agent wrote
 up shows the write-up the same way, cut at its screenshots, with a switch to
-the words as spoken. Save rebuilds the documents off the UI thread; copying
-and opening wait until edits are saved.
+the words as spoken. Each time it is written up again the one before is kept,
+and a picker beside the date opens any of them. Save rebuilds the documents
+off the UI thread; copying and opening wait until edits are saved.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QMimeData, QPoint, QPointF, QRectF, QSize, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import (
+    QActionGroup,
     QColor,
     QDesktopServices,
     QDrag,
@@ -128,9 +130,25 @@ _STYLE = """
     QToolButton#wlIconButton:hover, QToolButton#wlIconButton:pressed {
         background-color: rgba(@overlay-rgb, 0.07);
     }
-    QToolButton#wlIconButton::menu-indicator {
+    QToolButton#wlIconButton::menu-indicator, QToolButton#wlVersionPicker::menu-indicator {
         image: none;
         width: 0px;
+    }
+    QToolButton#wlVersionPicker {
+        color: @accent-soft;
+        background-color: rgba(@accent-rgb, 0.12);
+        border: none;
+        border-radius: 8px;
+        padding: 1px 8px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    QToolButton#wlVersionPicker:hover {
+        background-color: rgba(@accent-rgb, 0.2);
+    }
+    QToolButton#wlVersionPicker:disabled {
+        color: @text-muted;
+        background-color: rgba(@overlay-rgb, 0.07);
     }
     QPushButton#wlPrimary {
         background-color: @accent;
@@ -693,6 +711,15 @@ class WalkthroughReview(QWidget):
         self._written = False
         #: Whether the words as spoken show, rather than the AI write-up.
         self._spoken = True
+        #: The earlier write-up that shows, or None for the latest.
+        self._version: int | None = None
+        #: The earlier write-ups kept, oldest first.
+        self._earlier: list[int] = []
+        #: What to show of a folder once the work in progress is done, as
+        #: ``(folder, spoken, version)``, or None for what it opens on; it
+        #: moves to ``_next`` when the work succeeds, for the host's show_folder.
+        self._then: tuple | None = None
+        self._next: tuple | None = None
         self._cancel = threading.Event()
         self._enabled: list[bool] = []
         self.board: _Board | None = None
@@ -729,7 +756,7 @@ class WalkthroughReview(QWidget):
                         self.open_button, self.open_word_button, self.folder_button,
                         self.retry_button, self.style_button, self.prompt_button,
                         self.delete_button, self.recover_button, self.close_button,
-                        self.version_bar]
+                        self.version_bar, self.version_picker]
         self.show_folder(None)
 
     def bind(self, *, copy_files=None, recover=None, acquire=None, release=None, submit=None):
@@ -758,6 +785,17 @@ class WalkthroughReview(QWidget):
         meta.addWidget(self.meta)
         self.kind = _pill("")
         meta.addWidget(self.kind)
+        # Once it has been written up more than once: which of them shows.
+        self.version_picker = QToolButton()
+        self.version_picker.setObjectName("wlVersionPicker")
+        self.version_picker.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.version_picker.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.version_picker.setAccessibleName("Which write-up shows")
+        self.version_picker.setToolTip("Each time it's written up again, the one before is "
+                                       "kept here")
+        self.version_menu = context_menu(self)
+        self.version_picker.setMenu(self.version_menu)
+        meta.addWidget(self.version_picker)
         meta.addStretch(1)
         titles.addLayout(meta)
         head.addLayout(titles, 1)
@@ -899,16 +937,25 @@ class WalkthroughReview(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
 
-    def show_folder(self, folder, *, spoken: bool | None = None) -> None:
+    def show_folder(self, folder, *, spoken: bool | None = None,
+                    version: int | None = None) -> None:
         """Show the walkthrough in ``folder`` (None: none), dropping unsaved edits.
 
-        A written-up walkthrough opens on its write-up, which is what was
-        copied, unless ``spoken`` asks for the words as spoken.
+        A written-up walkthrough opens on its latest write-up, which is what
+        was copied, unless ``spoken`` asks for the words as spoken or
+        ``version`` for an earlier write-up.
         """
+        then, self._next = self._next, None
+        if then is not None and spoken is None and version is None and folder is not None \
+                and Path(folder) == then[0]:
+            # Saved here: stay on the version that was saved.
+            _folder, spoken, version = then
         self._set_dirty(False)
         self._folder = Path(folder) if folder else None
         self._written = bool(self._folder and library.written_up(self._folder))
         self._spoken = not self._written or bool(spoken)
+        self._earlier = library.earlier_write_ups(self._folder) if self._written else []
+        self._version = version if version in self._earlier and not self._spoken else None
         self.recover_button.hide()
         self.recover_button.setParent(self)
         board = _Board()
@@ -963,7 +1010,8 @@ class WalkthroughReview(QWidget):
         return rows
 
     def _write_up_rows(self) -> list[_Row]:
-        text = library.local_file(self._folder, "write-up.md").read_text(encoding="utf-8")
+        name = library.write_up_names(self._version)[0]
+        text = library.local_file(self._folder, name).read_text(encoding="utf-8")
         rows = []
         for index, (words, line) in enumerate(library.write_up_parts(text)):
             image = library.write_up_shot(self._folder, line) if line else None
@@ -1000,6 +1048,7 @@ class WalkthroughReview(QWidget):
         self.kind.setVisible(has and (draft or not self._written))
         self.version_bar.setVisible(self._written and walkthrough is not None)
         self.version_bar.setCurrentIndex(1 if self._spoken else 0)
+        self._show_versions(walkthrough is not None)
         redo = "Redo" if self._written else "Write up"
         self.retry_button.setText("Redo AI write-up" if self._written else "Write up with AI")
         self.style_menu.setTitle(f"{redo} as")
@@ -1008,8 +1057,49 @@ class WalkthroughReview(QWidget):
         if not self._busy:
             self.notice.setText(SPOKEN_HINT if self._spoken else WRITE_UP_HINT)
 
+    def _show_versions(self, loaded: bool) -> None:
+        """The picker of write-ups, when there is more than one and one shows."""
+        self.version_menu.clear()
+        shown = loaded and not self._spoken and bool(self._earlier)
+        self.version_picker.setVisible(shown)
+        if not shown:
+            return
+        latest = self._earlier[-1] + 1
+        current = self._version or latest
+        self.version_picker.setText(f"Version {current} of {latest}  ▾")
+        group = QActionGroup(self.version_menu)
+        for version in [None, *reversed(self._earlier)]:
+            number = version or latest
+            label = f"Version {number}"
+            when = self._written_at(version)
+            if when:
+                label += f" · {when}"
+            if version is None:
+                label += " (latest)"
+            action = self.version_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(version == self._version)
+            group.addAction(action)
+            action.triggered.connect(
+                lambda _checked=False, chosen=version: self._on_write_up_chosen(chosen))
+
+    def _written_at(self, version: int | None) -> str:
+        """When write-up ``version`` was last written, as the picker says it, or ""."""
+        try:
+            stamp = (self._folder / library.write_up_names(version)[0]).stat().st_mtime
+        except OSError:
+            return ""
+        when = datetime.fromtimestamp(stamp)
+        if when.date() == date.today():
+            return _time(when)
+        return f"{when:%b} {when.day}, {_time(when)}"
+
     def _show_actions(self, ready: bool, draft: bool) -> None:
         folder = self._folder
+        # Work off the UI thread turned everything off; what follows turns
+        # back off only what this walkthrough can't use.
+        for widget in self.actions:
+            widget.setEnabled(True)
         for button in (self.save_button, self.discard_button, self.pdf_button,
                        self.markdown_button, self.retry_button, self.style_button,
                        self.prompt_button, self.open_button):
@@ -1031,7 +1121,9 @@ class WalkthroughReview(QWidget):
         self.more_button.setVisible(folder is not None)
 
     def _result_pdf(self) -> Path:
-        return self._folder / ("walkthrough.pdf" if self._spoken else "write-up.pdf")
+        if self._spoken:
+            return self._folder / "walkthrough.pdf"
+        return self._folder / library.write_up_names(self._version)[1]
 
     def _result_docx(self) -> Path:
         return self._result_pdf().with_suffix(".docx")
@@ -1086,7 +1178,10 @@ class WalkthroughReview(QWidget):
         self._dirty = dirty
         # Saving the words as spoken replaces the write-up that came from them.
         redo = dirty and self._spoken and self._written
-        if redo:
+        if redo and self._earlier:
+            self.save_text.setText("Saving rebuilds the PDF. Every AI write-up came from the "
+                                   "old words, so they're all dropped or redone as one.")
+        elif redo:
             self.save_text.setText("Saving rebuilds the PDF. The AI write-up came from the "
                                    "old words, so it's redone or dropped.")
         else:
@@ -1099,7 +1194,7 @@ class WalkthroughReview(QWidget):
         self.save_bar.setVisible(dirty)
 
     def _discard(self):
-        self.show_folder(self._folder, spoken=self._spoken)
+        self.show_folder(self._folder, spoken=self._spoken, version=self._version)
 
     def _move(self, start: int, end: int) -> None:
         board = self.board
@@ -1131,12 +1226,25 @@ class WalkthroughReview(QWidget):
             return
         self.show_folder(self._folder, spoken=spoken)
 
+    def _on_write_up_chosen(self, version: int | None) -> None:
+        if version == self._version and not self._spoken:
+            return
+        if not self.discard_changes():
+            self._show_versions(True)
+            return
+        self.show_folder(self._folder, spoken=False, version=version)
+
     # ---- work off the UI thread ----
 
-    def run(self, operation) -> None:
-        """Run ``operation`` on a worker behind the app's gate, then show what it left."""
+    def run(self, operation, *, then: tuple | None = None) -> None:
+        """Run ``operation`` on a worker behind the app's gate, then show what it left.
+
+        ``then`` is ``(spoken, version)`` to show of this folder afterwards,
+        when not what it opens on.
+        """
         if self._busy:
             return
+        self._then = (self._folder, *then) if then is not None and self._folder else None
         error = self._acquire()
         if error:
             self.notice.setText(error)
@@ -1174,6 +1282,7 @@ class WalkthroughReview(QWidget):
         self.cancel_button.hide()
         self.busy_changed.emit(False)
         if error:
+            self._then = None
             # Preserve unsaved editor contents after a failed regeneration.
             for button, enabled in zip(self.actions, self._enabled, strict=True):
                 button.setEnabled(enabled)
@@ -1181,6 +1290,7 @@ class WalkthroughReview(QWidget):
             return
         folder = getattr(result, "folder", self._folder)
         shown = Path(folder) if folder is not None and Path(folder).is_dir() else None
+        self._next, self._then = self._then, None
         self._set_dirty(False)
         # The host shows what to see next: this folder, or another once it's gone.
         self.changed.emit(shown)
@@ -1200,7 +1310,10 @@ class WalkthroughReview(QWidget):
         folder = self._folder
         if not self._spoken:
             parts = [(row.editor.toPlainText(), row.line) for row in self.rows]
-            self.run(lambda: library.save_write_up(folder, library.join_write_up(parts)))
+            version = self._version
+            self.run(lambda: library.save_write_up(
+                folder, library.join_write_up(parts), version=version),
+                then=(False, version))
             return
         texts = [row.editor.toPlainText() for row in self.rows]
         keep = [row.check.isChecked() for row in self.rows]
@@ -1219,7 +1332,8 @@ class WalkthroughReview(QWidget):
             self.notice.setText("Save your changes before copying.")
             return
         try:
-            result = library.load_result(self._folder, spoken=self._spoken)
+            result = library.load_result(self._folder, spoken=self._spoken,
+                                         version=self._version)
             files, text = result.clipboard(copy_format)
             ok = self._copy_files(files, text=text)
             if ok:
