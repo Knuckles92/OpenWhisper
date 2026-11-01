@@ -18,6 +18,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **Write-up styles** — the AI write-up's starting points (**Walkthrough**, **Step-by-step guide**, **Bug report**, **Design feedback**, **Task for an agent**) are now styles you keep. Type your own prompt on the Walkthrough tab and **Save as style…** to add it to the list; pick a style and **Delete style** to remove it (its words stay in the box). Saving under a name you already have replaces it, and **Walkthrough** is always there.
 - **Redo a write-up another way** — the storyboard's **⋯** menu has **Redo as**, listing every style, and **Redo with a new prompt…**, where you type what this write-up should be, start from any style, and optionally name it to keep it as a style. Either one writes up only this walkthrough; your prompt for new walkthroughs doesn't change. A walkthrough not yet written up offers **Write up as** and **Write up with a new prompt…**.
 - **Edit an AI write-up** — a written-up walkthrough opens on its write-up, cut into rows at its screenshots, with a switch to **As spoken**. Edit or reorder the write-up and save to rebuild its PDF and Word document; Copy and Open use the version shown. Saving edits to the words as spoken offers **Save and redo write-up**.
+- **Every write-up is kept** — redoing a walkthrough's write-up, from the More menu or after saving edits to the words as spoken, keeps the one before it, and saving the words as spoken never deletes a write-up. Once there's more than one, a **Version 3 of 3 ▾** picker under the date opens any of them; Copy, Open and Save use the version shown, and the newest is what the side panel copies.
 - **Copy one screenshot from a walkthrough** — each screenshot in the storyboard has a copy button in its top-right corner. It copies just that screenshot, as a fresh snap is copied: the picture for apps that take images, the file for chat apps and file managers, and its path for a terminal. Clicking the screenshot itself still opens it, and copying one doesn't wait for unsaved edits.
 
 ### Changed
@@ -28,6 +29,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **Saved Walkthroughs uses the same storyboard** — screenshots now sit beside their words instead of below them, and clicking one opens the full picture.
 
 ### Fixed
+- **The AI write-up / As spoken switch no longer greys out** — after writing a walkthrough up from the More menu, or any save, the switch, the close button and **Save and redo write-up** stayed disabled until the walkthrough was opened again.
 - **Dictation works while an AI write-up runs** — redoing a write-up, or saving and redoing one, no longer turns the dictation shortcut away ("Wait for backup or restore preparation to finish") or greys out the window. Neither does the write-up that follows a walkthrough: the walkthrough's job ends once its words are saved, and the document is copied when the agent is done. **Cancel** during that write-up now keeps the walkthrough as spoken instead of deleting it, since its words are already in History.
 
 ## [2.8.3] - 2026-10-28

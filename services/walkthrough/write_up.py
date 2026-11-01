@@ -199,7 +199,8 @@ def write_up(
     text, look = document_text(outcome.text, names)
     if not text:
         raise WriteUpFailed(f"{name} sent back no document")
-    return _write(result, text, look)
+    # A write-up done again is a new version; the one it follows is kept.
+    return _write(result, text, look, keep_latest=True)
 
 
 def agent_name(agent: str) -> str:
@@ -301,30 +302,52 @@ def _split_look(text: str) -> tuple["Look", str]:
     return Look(**values), text[block.end():].strip()
 
 
-def _write(result: WalkthroughResult, text: str, look: "Look") -> WalkthroughResult:
+def _write(result: WalkthroughResult, text: str, look: "Look", *,
+           version: int | None = None, keep_latest: bool = False) -> WalkthroughResult:
+    """Publish ``text`` as write-up ``version`` (None: the latest).
+
+    With ``keep_latest``, the latest write-up there already becomes the
+    newest earlier version in the same publication, so none is lost.
+    """
+    import shutil
     import tempfile
 
     from services.walkthrough.document import TITLE, _image_target, write_markdown_pdf
     from services.walkthrough.finish import document_settings
-    from services.walkthrough.library import publish_files
+    from services.walkthrough.library import (
+        earlier_write_ups,
+        local_file,
+        publish_files,
+        write_up_names,
+        written_up,
+    )
     from services.walkthrough.word import write_markdown_docx
 
     folder = result.folder
-    markdown_path = folder / MARKDOWN_NAME
-    pdf = folder / PDF_NAME
+    md_name, pdf_name, docx_name = write_up_names(version)
+    markdown_path = folder / md_name
+    pdf = folder / pdf_name
     heading = _HEADING.search(text)
     title = heading[1] if heading else TITLE
     _format, page_size = document_settings()
     try:
         with tempfile.TemporaryDirectory(prefix=".write-up-", dir=folder) as staging:
             stage = Path(staging)
-            (stage / MARKDOWN_NAME).write_text(text + "\n", encoding="utf-8", newline="\n")
-            write_markdown_pdf(text, stage / PDF_NAME, folder=folder, title=title,
+            names = []
+            if keep_latest and version is None and written_up(folder):
+                kept = (earlier_write_ups(folder) or [0])[-1] + 1
+                for latest, earlier in zip(write_up_names(), write_up_names(kept), strict=True):
+                    if (folder / latest).is_file():
+                        # copy2 keeps when it was written, which its version shows.
+                        shutil.copy2(local_file(folder, latest), stage / earlier)
+                        names.append(earlier)
+            (stage / md_name).write_text(text + "\n", encoding="utf-8", newline="\n")
+            write_markdown_pdf(text, stage / pdf_name, folder=folder, title=title,
                                page_size=page_size, look=look)
-            write_markdown_docx(text, stage / DOCX_NAME, folder=folder, title=title,
+            write_markdown_docx(text, stage / docx_name, folder=folder, title=title,
                                 page_size=page_size, look=look)
-            publish_files(stage, folder, (PDF_NAME, DOCX_NAME, MARKDOWN_NAME))
-    except OSError as exc:
+            publish_files(stage, folder, (*names, pdf_name, docx_name, md_name))
+    except (OSError, ValueError) as exc:
         raise WriteUpFailed(f"could not write its documents: {exc}") from exc
     clipboard_text = _IMAGE.sub(
         lambda match: f"![{match[1]}]({_image_target(folder / match[2], folder, True)})", text,

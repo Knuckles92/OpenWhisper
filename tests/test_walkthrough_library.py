@@ -147,7 +147,7 @@ def test_failed_publication_rolls_back_documents_and_write_up(capture, monkeypat
         assert (capture.folder / name).read_bytes() == contents
 
 
-def test_review_invalidates_a_previous_write_up(capture):
+def test_review_keeps_a_previous_write_up(capture):
     from docx import Document
 
     (capture.folder / "write-up.md").write_text("old write-up")
@@ -155,11 +155,12 @@ def test_review_invalidates_a_previous_write_up(capture):
     (capture.folder / "write-up.docx").write_bytes(b"old Word document")
     result = library.save_review(capture.folder, ["new", "next", "last"], [True] * 3)
     assert not result.written_up
-    assert not (capture.folder / "write-up.pdf").exists()
-    assert not (capture.folder / "write-up.docx").exists()
     assert result.docx == capture.folder / "walkthrough.docx"
     assert "new" in [paragraph.text for paragraph in Document(str(result.docx)).paragraphs]
-    assert library.word_document(capture.folder) == result.docx
+    assert (capture.folder / "write-up.md").read_text() == "old write-up"
+    assert (capture.folder / "write-up.pdf").read_bytes() == b"old PDF"
+    assert (capture.folder / "write-up.docx").read_bytes() == b"old Word document"
+    assert library.written_up(capture.folder)
 
 
 def test_review_rejects_stale_editor_shape(capture):
@@ -255,6 +256,52 @@ def test_retry_render_failure_does_not_replace_existing_write_up(capture, monkey
             canceled=False, ok=True, error="", text="# New write-up"))
     assert (capture.folder / "write-up.md").read_text() == "old Markdown"
     assert (capture.folder / "write-up.pdf").read_bytes() == b"old PDF"
+    assert not list(capture.folder.glob("write-up-*"))
+
+
+def _agent_says(text):
+    return lambda *args, **kwargs: SimpleNamespace(canceled=False, ok=True, error="", text=text)
+
+
+def test_writing_up_again_keeps_each_earlier_write_up(capture):
+    shots = [capture.folder / "shot-1.png"]
+    write_up.write_up(capture.result, shots, run=_agent_says("# First\n\n![a](shot-1.png)"))
+    assert library.earlier_write_ups(capture.folder) == []
+    write_up.write_up(capture.result, shots, run=_agent_says("# Second"))
+    write_up.write_up(capture.result, shots, run=_agent_says("# Third"))
+    assert library.earlier_write_ups(capture.folder) == [1, 2]
+    assert (capture.folder / "write-up-1.md").read_text().startswith("# First")
+    assert (capture.folder / "write-up-2.md").read_text().startswith("# Second")
+    assert (capture.folder / "write-up-1.docx").is_file()
+    assert library.load_result(capture.folder).clipboard_text.startswith("# Third")
+    earlier = library.load_result(capture.folder, version=1)
+    assert earlier.written_up and earlier.pdf == capture.folder / "write-up-1.pdf"
+    assert "shot-1.png" in earlier.clipboard_text
+    assert library.load_result(capture.folder, spoken=True, version=1).pdf == (
+        capture.folder / "walkthrough.pdf")
+
+
+def test_an_earlier_write_up_saves_in_place(capture):
+    write_up.write_up(capture.result, [], run=_agent_says("# First"))
+    write_up.write_up(capture.result, [], run=_agent_says("# Second"))
+    library.save_write_up(capture.folder, "# First, fixed", version=1)
+    assert (capture.folder / "write-up-1.md").read_text().startswith("# First, fixed")
+    assert (capture.folder / "write-up.md").read_text().startswith("# Second")
+    assert library.earlier_write_ups(capture.folder) == [1]
+    with pytest.raises(ValueError):
+        library.save_write_up(capture.folder, "# Nowhere", version=7)
+
+
+def test_review_keeps_every_write_up_and_deleting_takes_them_along(capture):
+    write_up.write_up(capture.result, [], run=_agent_says("# First"))
+    write_up.write_up(capture.result, [], run=_agent_says("# Second"))
+    library.save_review(capture.folder, ["new", "next", "last"], [True] * 3)
+    assert library.earlier_write_ups(capture.folder) == [1]
+    assert (capture.folder / "write-up.md").read_text().startswith("# Second")
+    write_up.write_up(capture.result, [], run=_agent_says("# Again"))
+    assert library.earlier_write_ups(capture.folder) == [1, 2]
+    library.delete_entry(capture.folder)
+    assert not capture.folder.exists()
 
 
 def test_checkpoint_survives_session_recreation_and_keeps_audio(tmp_path):

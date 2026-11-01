@@ -28,6 +28,8 @@ AUDIO_NAME = "audio.wav"
 PREFERENCES_NAME = "retention.json"
 _FOLDER = re.compile(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:-\d+)?\Z")
 _SHOT = re.compile(r"shot-[1-9]\d*\.png\Z")
+#: An earlier write-up, kept when a newer one took its place: write-up-1.md is the first.
+_EARLIER = re.compile(r"write-up-([1-9]\d*)\.(?:md|pdf|docx)\Z")
 _FIXED = {DRAFT_NAME, AUDIO_NAME, "walkthrough.json", "walkthrough.md", "walkthrough.pdf",
           "walkthrough.docx", "write-up.md", "write-up.pdf", "write-up.docx",
           "walkthrough.original.json"}
@@ -153,20 +155,48 @@ def written_up(folder: Path) -> bool:
     return (folder / "write-up.pdf").is_file() and (folder / "write-up.md").is_file()
 
 
+def write_up_names(version: int | None = None) -> tuple[str, str, str]:
+    """The Markdown, PDF and Word names of write-up ``version``; None is the latest."""
+    stem = "write-up" if version is None else f"write-up-{int(version)}"
+    return f"{stem}.md", f"{stem}.pdf", f"{stem}.docx"
+
+
+def earlier_write_ups(folder: Path) -> list[int]:
+    """The earlier write-ups kept in ``folder``, oldest first.
+
+    The latest, write-up.md, is the one after the last of them.
+    """
+    if not written_up(folder):
+        return []
+    found = set()
+    for path in folder.iterdir():
+        match = _EARLIER.fullmatch(path.name)
+        if match and path.suffix == ".md":
+            version = int(match[1])
+            md, pdf, _docx = write_up_names(version)
+            if (folder / pdf).is_file() and (folder / md).is_file():
+                found.add(version)
+    return sorted(found)
+
+
 def word_document(folder: Path) -> Path:
     """The Word document ``load_result`` would give for ``folder``."""
     return folder / ("write-up.docx" if written_up(folder) else DOCX_NAME)
 
 
-def load_result(folder: Path, *, spoken: bool = False) -> WalkthroughResult:
+def load_result(folder: Path, *, spoken: bool = False,
+                version: int | None = None) -> WalkthroughResult:
+    """``folder``'s walkthrough: its latest write-up, an earlier ``version``, or as spoken."""
     from services.walkthrough import document
     from services.walkthrough.write_up import _IMAGE
 
     walkthrough = load_document(folder)
     shots = [section.shot for section in walkthrough.sections if section.shot]
     written = not spoken and written_up(folder)
-    pdf = local_file(folder, "write-up.pdf" if written else PDF_NAME)
-    md = local_file(folder, "write-up.md" if written else MARKDOWN_NAME)
+    md_name, pdf_name, _docx = write_up_names(version) if written else (
+        MARKDOWN_NAME, PDF_NAME, DOCX_NAME)
+    pdf = local_file(folder, pdf_name)
+    md = local_file(folder, md_name)
     # Normalize image paths from disk; never reuse another computer's paths.
     names = {shot.name for shot in shots}
     text = md.read_text(encoding="utf-8")
@@ -201,6 +231,9 @@ def entries(root: Path) -> list[Path]:
 def save_review(folder: Path, texts: list[str], keep: list[bool],
                 order: list[int] | None = None) -> WalkthroughResult:
     """Regenerate all four documents; keep omitted images and the original manifest.
+
+    Every write-up is kept as it is: one written from the old words is still
+    the user's, and Review offers to write it up again from the new ones.
 
     ``texts`` and ``keep`` follow the sections as Review shows them, and
     ``order`` names the saved section each one is (the saved order when None),
@@ -238,11 +271,7 @@ def save_review(folder: Path, texts: list[str], keep: list[bool],
         document.write_manifest(staged, stage)
         if not (folder / "walkthrough.original.json").exists():
             atomic_json(folder / "walkthrough.original.json", read_json(folder / MANIFEST_NAME))
-        # A previous write-up describes the old revision. Invalidate it in
-        # the same publication, before a new source document can be copied.
-        publish_files(stage, folder,
-                      (MARKDOWN_NAME, PDF_NAME, DOCX_NAME, MANIFEST_NAME),
-                      remove=("write-up.md", "write-up.pdf", "write-up.docx"))
+        publish_files(stage, folder, (MARKDOWN_NAME, PDF_NAME, DOCX_NAME, MANIFEST_NAME))
     return load_result(folder, spoken=True)
 
 
@@ -292,18 +321,20 @@ def write_up_shot(folder: Path, line: str) -> Path | None:
         return None  # not one of this walkthrough's screenshots
 
 
-def save_write_up(folder: Path, text: str) -> WalkthroughResult:
+def save_write_up(folder: Path, text: str, *, version: int | None = None) -> WalkthroughResult:
     """Rebuild a write-up's Markdown, PDF and Word document from edited Markdown.
 
+    ``version`` is an earlier write-up to save in place; None is the latest.
     The look a spoken note asked for is never saved with a write-up, so the
     rebuilt documents have the usual look.
     """
     from services.walkthrough.document import Look
     from services.walkthrough.write_up import _write
 
-    if not written_up(folder):
+    if not written_up(folder) or (version is not None
+                                  and version not in earlier_write_ups(folder)):
         raise ValueError("This walkthrough has no write-up to save")
-    return _write(load_result(folder), text.strip(), Look())
+    return _write(load_result(folder, version=version), text.strip(), Look(), version=version)
 
 
 def retry_write_up(folder: Path, *, instructions: str | None = None,
@@ -427,7 +458,8 @@ def delete_entry(folder: Path) -> None:
         raise ValueError("Not a walkthrough folder")
     files = list(folder.iterdir())
     if any(p.is_symlink() or not p.is_file()
-           or (p.name not in _FIXED and not _SHOT.fullmatch(p.name)) for p in files):
+           or (p.name not in _FIXED and not _SHOT.fullmatch(p.name)
+               and not _EARLIER.fullmatch(p.name)) for p in files):
         raise ValueError("Folder contains extra files; remove it in your file manager")
     for path in files:
         path.unlink()

@@ -41,7 +41,8 @@ class WriteUpPromptDialog(QDialog):
         layout.addWidget(title)
         info = QLabel(
             "The agent writes it up from your words as spoken, with this prompt"
-            + (" instead, and replaces the current write-up. " if written else ". ")
+            + (" instead. The current write-up is kept as an earlier version. "
+               if written else ". ")
             + "Your prompt for new walkthroughs doesn't change.")
         info.setObjectName("infoLabel")
         info.setWordWrap(True)
