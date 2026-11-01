@@ -279,8 +279,8 @@ for _id, _name, _source, _license, _description in _SPEECH_RUNTIMES:
     _CATALOG[_id] = ComponentDetails(
         component_id=_id, display_name=_name, summary=_description,
         description=_description + " Models download separately. Runs in a dedicated process.",
-        origin_name=_name, origin_url=_source, origin_label="Project",
-        source_name="Pinned upstream archives", source_url=_source, source_label="Project",
+        origin_name=_name, origin_url=_source, origin_label="Project ↗",
+        source_name="Pinned upstream archives", source_url=_source, source_label="Project ↗",
         maintainer="Upstream publishers; packaged by OpenWhisper", family="Speech runtime",
         requires=_SPEECH_RUNTIME_REQUIRES.get(_id, "Windows x64"),
         payload=_speech_runtime_payload(_id),

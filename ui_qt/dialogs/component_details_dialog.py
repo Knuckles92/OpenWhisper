@@ -147,6 +147,9 @@ class ComponentDetailsDialog(QDialog):
         self.source_note.setText(details.source_note)
         self.source_button.setToolTip(details.source_url)
         self.origin_button.setToolTip(details.origin_url)
+        # Speech runtimes publish one upstream project for both origin and
+        # source; a second button to the same page is just a duplicate.
+        self.origin_button.setHidden(details.origin_url == details.source_url)
 
         download = (
             format_size_bytes(info.download_bytes)

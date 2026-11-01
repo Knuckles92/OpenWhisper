@@ -1183,6 +1183,20 @@ class TestComponents(_DialogTestCase):
         assert opened == [details.source_url, PI_HOME_URL]
         popup.close()
 
+    def test_component_profile_hides_duplicate_link_button(self):
+        details = get_component_details("asr-qwen")
+        assert details.origin_url == details.source_url
+        popup = ComponentDetailsDialog("asr-qwen")
+
+        assert not popup.source_button.isHidden()
+        assert popup.origin_button.isHidden()
+        assert popup.source_button.toolTip() == details.source_url
+        popup.close()
+
+        distinct = ComponentDetailsDialog(ComponentId.MEETING_AGENT)
+        assert not distinct.origin_button.isHidden()
+        distinct.close()
+
 
 class TestSectionTabs(_DialogTestCase):
     """Models and components are separate tabs; components were six screens down."""
