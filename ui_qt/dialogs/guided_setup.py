@@ -54,6 +54,8 @@ from ui_qt.utils.app_icon import app_icon
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.restyle import set_style_property
+from ui_qt.widgets import Button
+from ui_qt.widgets.buttons import compact_primary_button, neutral_button
 from ui_qt.widgets.hotkey_capture import mouse_shortcut_note
 from ui_qt.widgets.no_wheel import ElidingComboBox
 from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
@@ -107,18 +109,6 @@ QPlainTextEdit#guidedTry:focus { border-color: @accent; }
 QPushButton#guidedLink { color: @accent; background: transparent; border: none; padding: 6px 8px; font-size: 13px; }
 QPushButton#guidedLink:hover { color: @accent-hover; text-decoration: underline; }
 QPushButton#guidedLink:focus { border: 1px solid @accent; border-radius: 5px; }
-QPushButton#guidedButton {
-    color: @slate-text; background: @slate-field; border: 1px solid @slate-border-strong;
-    border-radius: 8px; padding: 9px 18px; font-size: 13px;
-}
-QPushButton#guidedButton:hover { background: @slate-raised; }
-QPushButton#guidedButton:focus { border-color: @accent; }
-QPushButton#guidedPrimary {
-    color: @on-accent; background: @accent; border: 1px solid @accent; border-radius: 8px;
-    padding: 9px 22px; font-size: 13px; font-weight: 600;
-}
-QPushButton#guidedPrimary:hover { background: @accent-hover; }
-QPushButton#guidedPrimary:focus { border: 2px solid @slate-text; }
 QScrollArea#guidedScroll { background: transparent; border: none; }
 """
 
@@ -193,7 +183,12 @@ def _label(text, name="guidedDetail"):
 
 
 def _button(text, callback, name="guidedButton"):
-    button = QPushButton(text)
+    """A link, or a footer-style button in the shared Settings and dialog look."""
+    if name == "guidedLink":
+        button = QPushButton(text)
+    else:
+        styled = compact_primary_button if name == "guidedPrimary" else neutral_button
+        button = styled(Button(text))
     button.setObjectName(name)
     button.setCursor(Qt.CursorShape.PointingHandCursor)
     button.setAutoDefault(False)
