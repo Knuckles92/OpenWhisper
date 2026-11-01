@@ -80,7 +80,7 @@ def boost_phrases(family, phrases) -> list[str]:
 
 SAMPLE_RATE = 16000
 #: Families whose engines take a native language code and a samples array.
-NATIVE_FAMILIES = ("parakeet", "nemotron", "moonshine", "parakeet_mlx")
+NATIVE_FAMILIES = ("parakeet", "nemotron", "moonshine", "parakeet_mlx", "parakeet_unified")
 
 
 class WorkerState:
@@ -106,6 +106,8 @@ def load_engine(state, request):
     elif family in ("parakeet", "nemotron"):
         from services.local_asr.nvidia import NvidiaRecognizer
         state.engine = NvidiaRecognizer(request["runtime"], request["model_path"], state.device)
+    elif family == "parakeet_unified":
+        load_transcribe(state, request)
     elif family == "moonshine":
         use_runtime_packages(request.get("runtime"))
         from services.local_asr.moonshine import MoonshineRecognizer
@@ -119,6 +121,18 @@ def load_engine(state, request):
     if getattr(state.engine, "gpu_name", ""):
         result["gpu"] = state.engine.gpu_name
     return result
+
+
+def load_transcribe(state, request):
+    # Off Windows the binding is a wheel tree beside the native libraries.
+    use_runtime_packages(request.get("runtime"))
+    from services.local_asr.transcribe_engine import GpuUnavailable, TranscribeRecognizer
+    try:
+        state.engine = TranscribeRecognizer(request["runtime"], request["model_path"], state.device)
+    except GpuUnavailable as exc:
+        # Auto retries on the CPU, as for a GPU Qwen's PyTorch can't run.
+        raise UnsupportedGpu(str(exc)) from exc
+    state.device = state.engine.device
 
 
 def load_qwen(state, request):

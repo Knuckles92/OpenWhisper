@@ -105,6 +105,8 @@ def single_language_reason(settings: Mapping) -> str:
     backend = engine(settings)
     if backend == "moonshine":
         return "Moonshine understands English only."
+    if backend == "parakeet_unified":
+        return "Parakeet Unified understands English only."
     if backend == "parakeet_mlx":
         return "Parakeet MLX detects the language by itself."
     if backend == "local_whisper":

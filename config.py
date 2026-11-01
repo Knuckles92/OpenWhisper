@@ -283,7 +283,7 @@ class AppConfig:
         'Local Whisper',
         'API',
         'Parakeet', 'Qwen3-ASR', 'Nemotron Streaming', 'Moonshine',
-        'Parakeet MLX',
+        'Parakeet MLX', 'Parakeet Unified',
         # A paired computer's engine (services/remote_asr).
         'Remote computer',
     )
@@ -444,7 +444,9 @@ class AppConfig:
     # Nemotron returned a 3 s window in 52 / 60 ms median with lower drained
     # WER than tiny.en's 112 ms; Moonshine needed 547 ms per window on CPU and
     # Qwen was not measured, so they keep no dictation preview.
-    STREAMING_PREVIEW_BACKENDS: Tuple[str, ...] = ("parakeet", "nemotron", "parakeet_mlx")
+    STREAMING_PREVIEW_BACKENDS: Tuple[str, ...] = (
+        "parakeet", "nemotron", "parakeet_mlx", "parakeet_unified",
+    )
     # Engines in STREAMING_PREVIEW_BACKENDS whose selected model advertises
     # native streaming follow the worker's ``stream_audio`` session instead of
     # re-decoding 3 s windows. The same benchmark measured Nemotron's native
@@ -452,8 +454,12 @@ class AppConfig:
     # for its windows, because the decoder keeps state across updates and has
     # no seams to repeat words at. Updates are pushed every
     # STREAMING_NATIVE_UPDATE_SEC of new audio with no overlap and no silence
-    # skipping: the stream's endpointing needs the quiet too.
-    STREAMING_NATIVE_PREVIEW_BACKENDS: Tuple[str, ...] = ("nemotron",)
+    # skipping: the stream's endpointing needs the quiet too. Parakeet Unified
+    # streams the same way through transcribe.cpp; on a GTX 1050 Ti
+    # (2026-10-31) its live text had 15.8% of words wrong against 54.5% for
+    # Parakeet v3's windows, and it shows text after 2.1 s of speech where
+    # windows show none under 3 s.
+    STREAMING_NATIVE_PREVIEW_BACKENDS: Tuple[str, ...] = ("nemotron", "parakeet_unified")
     STREAMING_NATIVE_UPDATE_SEC: float = 0.75
     # A native stream cannot drop recorder blocks without losing words, and
     # the worker thread is blocked for the length of each push (60 ms warm on
@@ -478,7 +484,11 @@ class AppConfig:
     # noise input anyway. Qwen was not measured, so it stays out: its
     # autoregressive decoder has no fixed cost for a noise input, and it
     # would take seconds on CPU.
-    SPEECH_WARMUP_BACKENDS: Tuple[str, ...] = ("parakeet", "nemotron", "parakeet_mlx")
+    # Parakeet Unified on transcribe.cpp (Vulkan, RTX 2060, 2026-10-31): the
+    # first decode after a load took 95 ms against 47 ms warm.
+    SPEECH_WARMUP_BACKENDS: Tuple[str, ...] = (
+        "parakeet", "nemotron", "parakeet_mlx", "parakeet_unified",
+    )
     # Optional engines that decode a long dictation's completed 30 s windows
     # while it is still being recorded (services/incremental_dictation.py),
     # so the stop only waits for the last partial window. The saved file is
@@ -487,11 +497,26 @@ class AppConfig:
     # stop decodes the whole file as before whenever that cannot be verified.
     # About a quarter of dictations run past 30 s, and those spent 343-619 ms
     # decoding after stop at 37-88 s (September 2026, RTX 2060).
-    INCREMENTAL_DICTATION_BACKENDS: Tuple[str, ...] = ("parakeet", "nemotron", "parakeet_mlx")
+    INCREMENTAL_DICTATION_BACKENDS: Tuple[str, ...] = (
+        "parakeet", "nemotron", "parakeet_mlx", "parakeet_unified",
+    )
     # How often a session takes newly captured audio. Resampling it costs
     # under a millisecond per second of audio; the interval only bounds how
     # long a completed window waits before its decode starts.
     INCREMENTAL_DICTATION_POLL_SEC: float = 1.0
+    # A dictation at least this long on a model whose catalog entry has
+    # stream_final pastes its finished live-preview stream instead of
+    # decoding the saved file. The stream flushes at stop whatever the length
+    # (0.3 s on a GTX 1050 Ti, 50 ms on an RTX 2060), while the file decode
+    # grows with it: Parakeet Unified took 0.29 s for 39 s on the RTX 2060
+    # and about 1.1 s per 30 s window on the 1050 Ti. The stream's text had
+    # 1 point more words wrong (15.8% vs 14.8%, 2026-10-31), so shorter
+    # dictations, one window or less, keep the file decode.
+    STREAM_FINAL_MIN_SEC: float = 30.0
+    # How far the audio the stream's engine reports hearing may be from the
+    # recorded length. A recorder block is 23 ms; anything more means audio
+    # the stream never heard, and the file is decoded.
+    STREAM_FINAL_TOLERANCE_SEC: float = 0.1
 
     # Post-ASR transcript cleanup (OpenAI, OpenRouter, or a custom endpoint)
     TRANSCRIPT_CLEANUP_ENABLED: bool = False
@@ -769,7 +794,7 @@ class AppConfig:
                 'API': 'api',
                 'Parakeet': 'parakeet', 'Qwen3-ASR': 'qwen_asr',
                 'Nemotron Streaming': 'nemotron', 'Moonshine': 'moonshine',
-                'Parakeet MLX': 'parakeet_mlx',
+                'Parakeet MLX': 'parakeet_mlx', 'Parakeet Unified': 'parakeet_unified',
                 'Remote computer': 'remote',
             }
 

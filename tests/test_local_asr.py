@@ -36,7 +36,7 @@ def isolated_models(tmp_path, monkeypatch):
 
 
 def test_every_optional_artifact_is_pinned_and_has_integrity_metadata():
-    assert len(BACKENDS) == 5 and len(MODELS) == 8
+    assert len(BACKENDS) == 6 and len(MODELS) == 9
     assert "orukeet-v0.1" in MODELS
     for key in MODELS:
         spec = artifacts(key)
@@ -57,10 +57,10 @@ def test_every_optional_artifact_is_pinned_and_has_integrity_metadata():
                 )
 
 
-def test_linux_x86_64_offers_only_the_native_nvidia_runtimes():
+def test_linux_x86_64_offers_only_the_native_runtimes():
     catalog = runtime_catalog()
     linux = {key for key, runtime in catalog.items() if "linux_x86_64" in runtime["platforms"]}
-    assert linux == {"asr-nvidia-cpu", "asr-nvidia-cuda", "asr-nvidia-vulkan"}
+    assert linux == {"asr-nvidia-cpu", "asr-nvidia-cuda", "asr-nvidia-vulkan", "asr-transcribe"}
     assert set(catalog["asr-nvidia-vulkan"]["platforms"]) == {"linux_x86_64"}
     for key, flavor in (("asr-nvidia-cpu", "cpu"), ("asr-nvidia-cuda", "cuda"), ("asr-nvidia-vulkan", "vulkan")):
         (archive,) = catalog[key]["platforms"]["linux_x86_64"]["archives"]

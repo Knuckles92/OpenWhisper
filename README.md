@@ -185,6 +185,7 @@ Choose **Settings → App → Appearance → Theme → Omarchy desktop** to foll
 | Local Whisper | Standard Whisper sizes, turbo, Distil-Whisper | All platforms, CPU; NVIDIA CUDA on Windows/Linux | Dictation with preview, uploads, meetings |
 | Parakeet | TDT 0.6B v3; Orukeet TDT 0.6B community adaptation | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meeting chunks |
 | Parakeet MLX | TDT 0.6B v3, MLX Community weights | Apple Silicon, macOS 14+: Apple GPU through Metal or CPU | Dictation with preview, uploads, meeting chunks |
+| Parakeet Unified | Unified EN 0.6B, English | Windows x64 and Linux x86_64 CPU / GPU through Vulkan (NVIDIA, AMD, Intel) | Dictation with native preview, uploads |
 | Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (MPS) | Dictation, uploads |
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU; Apple Silicon CPU, macOS 15+ | Dictation, uploads, meetings with native preview |
@@ -192,7 +193,7 @@ Choose **Settings → App → Appearance → Theme → Omarchy desktop** to foll
 | Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads, meetings with a supported host model |
 
 - **Downloads:** Install both the model and its required runtime in **Settings → Models & storage → Downloads**. Each entry shows its size, publisher, license, and download checks.
-- **Languages:** Choose a supported language or **Auto** for detection. Coverage varies by engine; Moonshine is English-only. Language selection controls transcription, not translation.
+- **Languages:** Choose a supported language or **Auto** for detection. Coverage varies by engine; Moonshine and Parakeet Unified are English-only. Language selection controls transcription, not translation.
 - **Apple Silicon:** Choose **Auto** to use the Apple GPU where supported. See [GPU acceleration](#gpu-acceleration) for engine-specific support.
 
 See [speech model details](docs/speech-models.md) for language coverage, platform requirements, download verification, and Orukeet's license and validation status.

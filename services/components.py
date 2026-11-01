@@ -438,6 +438,7 @@ class ComponentId:
     ASR_QWEN: Final[str] = "asr-qwen"
     ASR_MOONSHINE: Final[str] = "asr-moonshine"
     ASR_PARAKEET_MLX: Final[str] = "asr-parakeet-mlx"
+    ASR_TRANSCRIBE: Final[str] = "asr-transcribe"
 
 
 class ComponentState:
@@ -593,6 +594,7 @@ def available_component_ids(
             ComponentId.MEETING_AGENT_OPENCODE,
             ComponentId.ASR_NVIDIA_CPU,
             ComponentId.ASR_NVIDIA_CUDA,
+            ComponentId.ASR_TRANSCRIBE,
         )
         if (is_installed(ComponentId.ASR_NVIDIA_VULKAN)
                 or nvidia_gpu_runtime() == ComponentId.ASR_NVIDIA_VULKAN):
@@ -1565,19 +1567,21 @@ def _safe_extract_node_tar(
             _unlink_if_exists(tmp_path)
 
 
-def _safe_extract_nemo_tar(
+def _safe_extract_native_tar(
     archive_path: str,
     target_dir: str,
     progress: ProgressCallback,
     cancel: threading.Event,
     root: str = "nemo-speech",
+    folder: str = "nemo-speech",
 ) -> None:
-    """Extract a NeMo-Speech.cpp release under ``nemo-speech/``.
+    """Extract a native speech release (NeMo-Speech.cpp, transcribe.cpp) under ``folder/``.
 
     ``root`` is the archive's own top folder: ``nemo-speech`` on macOS, a
-    versioned name such as ``nemo-speech-0.1.0-linux-x86_64-cpu`` on Linux.
-    It is renamed to ``nemo-speech`` so the library path is the same for
-    every release.
+    versioned name such as ``nemo-speech-0.1.0-linux-x86_64-cpu`` on Linux,
+    or a platform name such as ``transcribe-native-linux-x86_64-cpu-vulkan``.
+    It is renamed to ``folder`` so the library path is the same for every
+    release.
     """
     # The upstream libraries use relative symlinks. The data filter rejects
     # links outside staging, special files and unsafe permissions before
@@ -1590,14 +1594,14 @@ def _safe_extract_nemo_tar(
             parts = member.name.split("/")
             if parts[0] != root or ".." in parts:
                 raise ComponentError(f"Archive contains an unsafe path: {member.name}")
-            if root != "nemo-speech":
-                member.name = "/".join(["nemo-speech", *parts[1:]])
+            if root != folder:
+                member.name = "/".join([folder, *parts[1:]])
                 if member.islnk():
                     # Hard links name another member by its archive path.
                     link = member.linkname.split("/")
                     if link[0] != root or ".." in link:
                         raise ComponentError(f"Archive contains an unsafe link: {member.linkname}")
-                    member.linkname = "/".join(["nemo-speech", *link[1:]])
+                    member.linkname = "/".join([folder, *link[1:]])
             try:
                 archive.extract(member, target_dir, filter="data")
             except tarfile.FilterError as exc:
@@ -1621,6 +1625,12 @@ _MACOS_WHEEL_RUNTIME_FILES: Final[Mapping[str, Tuple[str, ...]]] = MappingProxyT
 
 
 _SPEECH_RUNTIME_INCOMPLETE: Final[str] = "The speech runtime is missing required files."
+#: transcribe.cpp's binding wheel tree and native release on Linux.
+_LINUX_TRANSCRIBE_FILES: Final[Tuple[str, ...]] = (
+    "site-packages/transcribe_cpp/__init__.py",
+    "transcribe-native/libtranscribe.so",
+    "transcribe-native/libggml-vulkan.so",
+)
 _MLX_RUNTIME_FILES: Final[Tuple[str, ...]] = (
     "parakeet_mlx/__init__.py",
     "mlx/nn/__init__.py",
@@ -1659,6 +1669,9 @@ def _validate_speech_runtime(component_id: str, target_dir: str) -> None:
         _validate_macos_speech_runtime(component_id, target_dir)
         return
     if tag == PLATFORM_LINUX_X86_64:
+        if component_id == ComponentId.ASR_TRANSCRIBE:
+            _require_files(target_dir, _LINUX_TRANSCRIBE_FILES, _SPEECH_RUNTIME_INCOMPLETE)
+            return
         library = os.path.join(target_dir, "nemo-speech", "lib", "libnemo_speech_asr_c.so")
         if not component_id.startswith("asr-nvidia") or not os.path.isfile(library):
             raise ComponentError(_SPEECH_RUNTIME_INCOMPLETE)
@@ -1695,6 +1708,9 @@ def _validate_windows_speech_runtime(component_id: str, target_dir: str) -> None
     required = ["python.exe", "python312.dll", "python312.zip"]
     if component_id.startswith("asr-nvidia"):
         required.append("bin/nemo_speech_asr_c.dll")
+    elif component_id == ComponentId.ASR_TRANSCRIBE:
+        required.extend(["transcribe_cpp/__init__.py", "transcribe-native/transcribe.dll",
+                         "transcribe-native/ggml-vulkan.dll"])
     elif component_id == "asr-qwen":
         required.extend(["qwen_asr/__init__.py", "torch/__init__.py"])
     else:
@@ -1936,6 +1952,13 @@ def _discard_cached_archives(archive_paths: list) -> None:
             pass
 
 
+#: Where each native release archive type extracts to, inside the component.
+_NATIVE_TAR_FOLDERS: Final[Mapping[str, str]] = MappingProxyType({
+    "nemo-tar": "nemo-speech",
+    "transcribe-tar": "transcribe-native",
+})
+
+
 def _extract_archive(
     archive: Mapping,
     archive_path: str,
@@ -1962,13 +1985,15 @@ def _extract_archive(
             cancel,
             member_name=str(archive.get("member") or ""),
         )
-    elif extract == "nemo-tar":
-        _safe_extract_nemo_tar(
+    elif extract in _NATIVE_TAR_FOLDERS:
+        folder = _NATIVE_TAR_FOLDERS[extract]
+        _safe_extract_native_tar(
             archive_path,
             staging,
             progress,
             cancel,
-            root=str(archive.get("root") or "nemo-speech"),
+            root=str(archive.get("root") or folder),
+            folder=folder,
         )
     else:
         _safe_extract(archive_path, staging, progress, cancel)

@@ -442,11 +442,13 @@ _SPEECH_PARAMETER_COUNTS: Final[Mapping[str, str]] = MappingProxyType({
     "moonshine-small": "123 million",
     "moonshine-medium": "245 million",
     "qwen-1.7b": "1.7 billion",
+    "parakeet-unified-en": "618 million",
 })
 _SPEECH_RUNTIME_FORMATS: Final[Mapping[str, str]] = MappingProxyType({
     "parakeet_mlx": "MLX Safetensors",
     **{backend: "GGUF Q8" for backend in _NATIVE_BACKENDS},
     "moonshine": "ORT quantized",
+    "parakeet_unified": "GGUF Q8",
 })
 #: What each backend needs installed before it can run.
 _SPEECH_RUNTIME_NOTES: Final[Mapping[str, str]] = MappingProxyType({
@@ -461,6 +463,9 @@ _SPEECH_RUNTIME_NOTES: Final[Mapping[str, str]] = MappingProxyType({
         )
         for backend in _NATIVE_BACKENDS
     },
+    "parakeet_unified": (
+        "Requires the transcribe.cpp runtime from Downloads (Windows x64 or Linux x86_64)."
+    ),
 })
 #: Where each backend runs, and what that costs.
 _SPEECH_DEVICE_NOTES: Final[Mapping[str, str]] = MappingProxyType({
@@ -473,11 +478,16 @@ _SPEECH_DEVICE_NOTES: Final[Mapping[str, str]] = MappingProxyType({
         "1.7B is best suited to a GPU."
     ),
     "moonshine": "English only; CPU execution.",
+    "parakeet_unified": (
+        "English only. Auto runs on a dedicated GPU through Vulkan (NVIDIA, AMD or Intel), "
+        "else on the CPU. Its live preview streams words as you speak."
+    ),
 })
 _SPEECH_UPSTREAM_URLS: Final[Mapping[str, str]] = MappingProxyType({
     "parakeet_mlx": "https://github.com/senstella/parakeet-mlx",
     **{backend: "https://github.com/NVIDIA/NeMo-Speech.cpp" for backend in _NATIVE_BACKENDS},
     "qwen_asr": "https://github.com/QwenLM/Qwen3-ASR",
+    "parakeet_unified": "https://github.com/handy-computer/transcribe.cpp",
 })
 
 

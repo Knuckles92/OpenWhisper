@@ -7,7 +7,7 @@ the preview can share the dictation engine.
 
 ``NativeStreamingTranscriber`` has the same surface but follows an engine's
 own streaming decoder through ``backend.stream_audio``, for engines whose
-catalog entry advertises streaming (Nemotron today).
+catalog entry advertises streaming (Nemotron and Parakeet Unified today).
 """
 import queue
 import math
@@ -16,7 +16,7 @@ import threading
 import logging
 import time
 import numpy as np
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, NamedTuple, Optional
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -114,6 +114,17 @@ def prepare_preview_audio(audio_array: np.ndarray, sample_rate: int) -> Optional
         audio_array = fft_resample(audio_array, num_samples)
 
     return audio_array
+
+
+class FinishedStream(NamedTuple):
+    """A native preview stream that heard every block and flushed at stop."""
+
+    backend: Any
+    #: ``backend.generation`` while it ran: a reload since means another worker.
+    generation: Any
+    text: str
+    #: Audio the engine reports this stream received, in seconds.
+    audio_sec: float
 
 
 class NativePreviewLedger:
@@ -542,6 +553,11 @@ class NativeStreamingTranscriber:
         # Set by the first failed push; later pushes are skipped so one broken
         # engine does not log once per update for the rest of the recording.
         self._failed = False
+        # Whether the recorder ever found the queue full, so the stream missed audio.
+        self._dropped = False
+        self._generation = None
+        # Audio the finish push reported, once it succeeded.
+        self._finished_audio_sec: Optional[float] = None
 
         logger.info(
             "NativeStreamingTranscriber initialized "
@@ -565,6 +581,9 @@ class NativeStreamingTranscriber:
         self._ledger = NativePreviewLedger()
         self._update_count = 0
         self._failed = False
+        self._dropped = False
+        self._generation = getattr(self.backend, "generation", None)
+        self._finished_audio_sec = None
 
         if self._session_open:
             # The previous session did not close; drop its handle before the
@@ -584,6 +603,7 @@ class NativeStreamingTranscriber:
             try:
                 self.audio_queue.put_nowait(audio_chunk.copy())
             except queue.Full:
+                self._dropped = True
                 logger.debug("Audio queue full, dropping native preview chunk")
 
     def stop_streaming(self) -> str:
@@ -617,6 +637,20 @@ class NativeStreamingTranscriber:
             worker = self.worker_thread
         if worker and worker.is_alive():
             _wake_worker(self.audio_queue)
+
+    def finished_stream(self) -> Optional[FinishedStream]:
+        """The stopped stream, when it heard every block and finished with text.
+
+        None while it runs, and after a failed or dropped push, a cancel, a
+        finish that timed out, or a stream that heard no words: the caller
+        then decodes the saved recording, as Hex does.
+        """
+        with self._state_lock:
+            if (self.is_streaming or self._discard_results or self._failed or self._dropped
+                    or self._finished_audio_sec is None or not self.preview_text):
+                return None
+            return FinishedStream(self.backend, self._generation, self.preview_text,
+                                  self._finished_audio_sec)
 
     def _worker_loop(self):
         logger.info("Native preview worker thread started")
@@ -681,6 +715,10 @@ class NativeStreamingTranscriber:
             with self._state_lock:
                 if self._discard_results:
                     return
+                if finish:
+                    self._finished_audio_sec = max(
+                        (float(event.get("end") or 0.) for event in events or ()), default=0.
+                    )
                 text = self._ledger.apply(events)
                 if text != self.preview_text:
                     self.preview_text = text

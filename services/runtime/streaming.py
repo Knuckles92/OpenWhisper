@@ -25,9 +25,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 PREVIEW_UNAVAILABLE_STATUS = (
-    "Live preview needs Local Whisper, Parakeet, or Nemotron Streaming"
+    "Live preview needs Local Whisper, Parakeet, Parakeet Unified, or Nemotron Streaming"
 )
-REMOTE_PREVIEW_UNAVAILABLE_STATUS = "Live preview needs Parakeet or Nemotron Streaming on {host}"
+REMOTE_PREVIEW_UNAVAILABLE_STATUS = (
+    "Live preview needs Parakeet, Parakeet Unified, or Nemotron Streaming on {host}"
+)
 
 
 def preview_unavailable_reason(backend_key: str, host: str = "", host_family: Optional[str] = None) -> str:
@@ -150,6 +152,15 @@ class StreamingRuntime:
             f"got {len(streaming_text)} chars"
         )
         return streaming_text
+
+    def finished_stream(self):
+        """The stopped native preview's ``FinishedStream``, or None.
+
+        Only a native stream that heard the whole recording and flushed at
+        stop has one; the window preview never does.
+        """
+        finished = getattr(self.controller.streaming_transcriber, "finished_stream", None)
+        return finished() if callable(finished) else None
 
     def finalize_streaming_text(self) -> Optional[str]:
         """Complete the stopped preview's text, decoding the tail it kept.

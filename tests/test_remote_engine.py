@@ -978,7 +978,7 @@ def test_a_host_without_a_preview_engine_says_so(paired_backend, engine):
     runtime.reconfigure_streaming()
     assert controller.streaming_transcriber is None
     controller.ui_controller.set_status.assert_called_once_with(
-        "Live preview needs Parakeet or Nemotron Streaming on devbox"
+        "Live preview needs Parakeet, Parakeet Unified, or Nemotron Streaming on devbox"
     )
     # The engine card grays out Live preview with the same words.
     from services.runtime.streaming import preview_unavailable_reason

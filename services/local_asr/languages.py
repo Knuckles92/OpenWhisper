@@ -14,6 +14,7 @@ _BACKEND_LANGUAGES = {
     "qwen_asr": tuple(LANGUAGE_LABELS),
     "nemotron": tuple(LANGUAGE_LABELS),
     "moonshine": ("en",),
+    "parakeet_unified": ("en",),
 }
 
 
@@ -23,7 +24,7 @@ def language_choices(backend: str) -> tuple[str, ...]:
 
 def selected_language(backend: str, stored: str | None) -> str:
     choices = language_choices(backend)
-    return stored if stored in choices else "en" if backend == "moonshine" else "auto"
+    return stored if stored in choices else "en" if choices == ("en",) else "auto"
 
 
 _QWEN_LANGUAGES = {
