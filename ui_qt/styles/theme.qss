@@ -2972,7 +2972,8 @@ QDialog#meetingLinuxAudioDialog QPushButton:focus,
 QDialog#meetingRecoveryDialog QPushButton:focus,
 QDialog#meetingDeleteDialog QPushButton:focus,
 QDialog#textEndpointDialog QPushButton:focus,
-QDialog#accessibilityDialog QPushButton:focus {
+QDialog#accessibilityDialog QPushButton:focus,
+QDialog#guidedSetupDialog QPushButton[tone]:focus {
     border: 1px solid @accent-soft;
 }
 
