@@ -174,13 +174,27 @@ def test_editing_the_words_as_spoken_offers_to_redo_the_write_up(review, capture
     review.show_folder(capture.folder, spoken=True)
     review.rows[0].editor.setPlainText("first, fixed")
     assert review.save_redo_button.isVisibleTo(review)
-    assert review.save_button.text() == "Save without write-up"
+    assert review.save_button.text() == "Save changes"
     redone = Mock(side_effect=lambda folder, cancel_event: library.load_result(folder))
     monkeypatch.setattr(library, "retry_write_up", redone)
     review.save_redo_button.click()
     _wait(review)
     redone.assert_called_once()
     assert library.load_document(capture.folder).sections[0].text == "first, fixed"
+
+
+def test_saving_the_words_as_spoken_keeps_the_write_up_and_stays_on_them(review, capture):
+    _written(capture)
+    review.show_folder(capture.folder, spoken=True)
+    review.rows[0].editor.setPlainText("first, fixed")
+    review.save_button.click()
+    _wait(review)
+    assert review._spoken and review.version_bar.isVisibleTo(review)
+    assert review.version_bar.isEnabled()
+    assert review.rows[0].editor.toPlainText() == "first, fixed"
+    assert (capture.folder / "write-up.md").read_text(encoding="utf-8") == WRITE_UP
+    review._on_version_chosen(0)
+    assert review.rows[1].editor.toPlainText() == "2. Invoices hang."
 
 
 def _agent_says(text):

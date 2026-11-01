@@ -6,7 +6,7 @@ a section: its screenshot, then its words, edited in place, with a switch to
 leave the screenshot out. Dragging a row's grip (or Alt+Up/Down in its words)
 moves the section, words and screenshot together. A walkthrough an agent wrote
 up shows the write-up the same way, cut at its screenshots, with a switch to
-the words as spoken. Each time it is written up again the one before is kept,
+the words as spoken. Every write-up is kept: each time it is written up again,
 and a picker beside the date opens any of them. Save rebuilds the documents
 off the UI thread; copying and opening wait until edits are saved.
 """
@@ -1176,17 +1176,13 @@ class WalkthroughReview(QWidget):
 
     def _set_dirty(self, dirty: bool) -> None:
         self._dirty = dirty
-        # Saving the words as spoken replaces the write-up that came from them.
+        # The write-ups came from the old words: they stay, and redoing adds one.
         redo = dirty and self._spoken and self._written
-        if redo and self._earlier:
-            self.save_text.setText("Saving rebuilds the PDF. Every AI write-up came from the "
-                                   "old words, so they're all dropped or redone as one.")
-        elif redo:
-            self.save_text.setText("Saving rebuilds the PDF. The AI write-up came from the "
-                                   "old words, so it's redone or dropped.")
+        if redo:
+            self.save_text.setText("Saving rebuilds the PDF. Your AI write-ups stay as they "
+                                   "are; redo it to write up the new words as well.")
         else:
             self.save_text.setText("You have unsaved edits. Saving rebuilds the PDF.")
-        self.save_button.setText("Save without write-up" if redo else "Save changes")
         self.save_button.setObjectName("wlSecondary" if redo else "wlPrimary")
         self.save_button.style().unpolish(self.save_button)
         self.save_button.style().polish(self.save_button)
@@ -1323,7 +1319,8 @@ class WalkthroughReview(QWidget):
             if redo:
                 return library.retry_write_up(folder, cancel_event=self._cancel)
             return result
-        self.run(save)
+        # Redone, the new write-up shows; otherwise the words just saved stay.
+        self.run(save, then=None if redo else (True, None))
 
     def _copy(self, copy_format):
         if self._busy or not self._folder or not self._copy_files:

@@ -179,10 +179,6 @@ def earlier_write_ups(folder: Path) -> list[int]:
     return sorted(found)
 
 
-def _earlier_files(folder: Path) -> tuple[str, ...]:
-    return tuple(p.name for p in folder.iterdir() if _EARLIER.fullmatch(p.name))
-
-
 def word_document(folder: Path) -> Path:
     """The Word document ``load_result`` would give for ``folder``."""
     return folder / ("write-up.docx" if written_up(folder) else DOCX_NAME)
@@ -236,6 +232,9 @@ def save_review(folder: Path, texts: list[str], keep: list[bool],
                 order: list[int] | None = None) -> WalkthroughResult:
     """Regenerate all four documents; keep omitted images and the original manifest.
 
+    Every write-up is kept as it is: one written from the old words is still
+    the user's, and Review offers to write it up again from the new ones.
+
     ``texts`` and ``keep`` follow the sections as Review shows them, and
     ``order`` names the saved section each one is (the saved order when None),
     so a moved screenshot takes the words that led to it along.
@@ -272,11 +271,7 @@ def save_review(folder: Path, texts: list[str], keep: list[bool],
         document.write_manifest(staged, stage)
         if not (folder / "walkthrough.original.json").exists():
             atomic_json(folder / "walkthrough.original.json", read_json(folder / MANIFEST_NAME))
-        # Every write-up so far describes the old revision. Invalidate them in
-        # the same publication, before a new source document can be copied.
-        publish_files(stage, folder,
-                      (MARKDOWN_NAME, PDF_NAME, DOCX_NAME, MANIFEST_NAME),
-                      remove=(*write_up_names(), *_earlier_files(folder)))
+        publish_files(stage, folder, (MARKDOWN_NAME, PDF_NAME, DOCX_NAME, MANIFEST_NAME))
     return load_result(folder, spoken=True)
 
 
