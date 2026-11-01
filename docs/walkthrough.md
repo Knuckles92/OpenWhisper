@@ -251,8 +251,15 @@ line; edit the words or drag rows, and **Save changes** rebuilds the
 write-up's PDF and Word document (a look asked for in a spoken note isn't
 kept, since it's never saved). Copy and Open use whichever version shows.
 Saving edits to the words as spoken offers **Save and redo write-up**, which
-writes it up again from the new words, or **Save without write-up**, which
-drops the old write-up because it described the old words.
+writes it up again from the new words, or **Save changes**, which leaves the
+write-ups as they are.
+
+Every write-up is kept. Writing a walkthrough up again saves the one it
+replaces as `write-up-1.md`, `write-up-2.md` and so on, each with its PDF and
+Word document, and nothing but deleting the walkthrough removes them. Once
+there's more than one, a **Version N of M** picker under the date opens any
+of them; Copy, Open and Save act on the version shown, and saving an earlier
+one keeps it in place. The newest is the one copied from the side panel.
 
 **Retry AI write-up** uses the saved as-spoken document, the notes you held
 for the agent, and your current agent and instructions, without recording or
