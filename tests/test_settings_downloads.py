@@ -562,7 +562,10 @@ class TestSorting(_DialogTestCase):
         dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("backend"))
         backends = [dialog.rows[name].backend for name in self._row_order(dialog)]
         first_seen = list(dict.fromkeys(backends))
-        assert first_seen == ["moonshine", "nemotron", "parakeet", "parakeet_mlx", "qwen_asr", "local_whisper"]
+        assert first_seen == [
+            "moonshine", "nemotron", "parakeet", "parakeet_mlx", "parakeet_unified", "qwen_asr",
+            "local_whisper",
+        ]
         assert backends == sorted(backends, key=first_seen.index)
         # Inside a family the recommended order still applies.
         whisper_order = [name for name in self._row_order(dialog) if dialog.rows[name].backend == "local_whisper"]

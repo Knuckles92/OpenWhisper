@@ -182,7 +182,7 @@ def test_metal_runtime_requires_the_metal_backend(monkeypatch, tmp_path):
     ):
         shutil.rmtree(stage, ignore_errors=True)
         archive = _nemo_tar(tmp_path / "metal.tar.gz", libraries)
-        components._safe_extract_nemo_tar(str(archive), str(stage), lambda *a: None, threading.Event())
+        components._safe_extract_native_tar(str(archive), str(stage), lambda *a: None, threading.Event())
         if ok:
             components._validate_component_payload(NVIDIA_METAL_RUNTIME, str(stage))
         else:

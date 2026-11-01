@@ -34,6 +34,8 @@ The additional Windows x64 backends are downloaded on demand; their model weight
 | Artifact | Upstream project / model card | License |
 | --- | --- | --- |
 | Native Parakeet/Nemotron runtime | [NVIDIA NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) | Apache-2.0; bundled third-party components retain their own notices |
+| transcribe.cpp runtime (Parakeet Unified) | [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) release libraries and Python binding, with [ggml](https://github.com/ggml-org/ggml) | MIT; upstream license files retained in `transcribe-native/licenses` |
+| Parakeet Unified EN 0.6B Q8 weights | [NVIDIA Parakeet Unified](https://huggingface.co/nvidia/parakeet-unified-en-0.6b), [GGUF conversion by handy-computer](https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf) | NVIDIA Open Model License; its text and NVIDIA's notice download with the weights |
 | Orukeet TDT 0.6B r3 Q8 weights | [Oruk AI Orukeet](https://huggingface.co/oruk/orukeet), adapted from NVIDIA Parakeet; [weight license and attribution](https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md) | CC-BY-SA-4.0; retain attribution and applicable ShareAlike terms |
 | Parakeet TDT 0.6B v3 weights | [NVIDIA Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | CC-BY-4.0 |
 | Parakeet TDT 0.6B v3 MLX weights | [MLX Community conversion](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3) | CC-BY-4.0 |

@@ -208,6 +208,7 @@ def test_available_component_ids_by_platform():
             ComponentId.MEETING_AGENT,
             ComponentId.ASR_NVIDIA_CPU,
             ComponentId.ASR_NVIDIA_CUDA,
+            ComponentId.ASR_TRANSCRIBE,
         )
 
     with patch.object(components.sys, "platform", "linux"), patch.object(
@@ -279,9 +280,10 @@ def test_linux_offers_the_vulkan_speech_runtime_only_where_it_is_needed(monkeypa
     monkeypatch.setattr(
         gpu_info, "nvidia_gpu", lambda: gpu_info.NvidiaGpu("NVIDIA GeForce GTX 1050 Ti", 4096, (6, 1))
     )
-    assert components.available_component_ids()[-3:] == (
+    assert components.available_component_ids()[-4:] == (
         ComponentId.ASR_NVIDIA_CPU,
         ComponentId.ASR_NVIDIA_CUDA,
+        ComponentId.ASR_TRANSCRIBE,
         ComponentId.ASR_NVIDIA_VULKAN,
     )
     # Once installed it stays listed, so it can be removed after a GPU upgrade.
@@ -1337,7 +1339,7 @@ def test_mac_archive_preserves_only_safe_library_links(tmp_path, target):
     destination = tmp_path / 'out'
     destination.mkdir()
     def extract():
-        components._safe_extract_nemo_tar(str(archive_path), str(destination), lambda *args: None, threading.Event())
+        components._safe_extract_native_tar(str(archive_path), str(destination), lambda *args: None, threading.Event())
     if target == 'libreal.dylib':
         extract()
         assert (destination / 'nemo-speech/lib/libalias.dylib').read_bytes() == b'test'
@@ -1374,7 +1376,7 @@ def test_linux_release_folder_is_renamed_to_nemo_speech(tmp_path):
     ])
     destination = tmp_path / 'out'
     destination.mkdir()
-    components._safe_extract_nemo_tar(
+    components._safe_extract_native_tar(
         str(archive_path), str(destination), lambda *args: None, threading.Event(), root=root,
     )
     lib = destination / 'nemo-speech' / 'lib'
@@ -1403,7 +1405,7 @@ def test_linux_release_rejects_anything_outside_its_folder(tmp_path, name, kind,
     destination = tmp_path / 'out'
     destination.mkdir()
     with pytest.raises(ComponentError):
-        components._safe_extract_nemo_tar(
+        components._safe_extract_native_tar(
             str(archive_path), str(destination), lambda *args: None, threading.Event(), root=root,
         )
 

@@ -16,6 +16,10 @@ class SpeechModel:
     languages: str
     streaming: bool = False
     meeting: bool = False
+    #: Whether a finished native stream's text is as good as decoding the
+    #: saved recording, so a long dictation may paste it instead of waiting
+    #: for the file decode (config.STREAM_FINAL_MIN_SEC).
+    stream_final: bool = False
 
 
 MODELS = {
@@ -53,6 +57,11 @@ MODELS = {
             "parakeet-v3-mlx", "parakeet_mlx", "Parakeet TDT 0.6B v3 (MLX)",
             "Apple Silicon dictation and files", "CC-BY-4.0", "25 European languages", meeting=True,
         ),
+        SpeechModel(
+            "parakeet-unified-en", "parakeet_unified", "Parakeet Unified EN 0.6B",
+            "English dictation with readable live text", "NVIDIA Open Model License", "English",
+            streaming=True, stream_final=True,
+        ),
     )
 }
 BACKENDS = {
@@ -61,6 +70,7 @@ BACKENDS = {
     "nemotron": "Nemotron Streaming",
     "moonshine": "Moonshine",
     "parakeet_mlx": "Parakeet MLX",
+    "parakeet_unified": "Parakeet Unified",
 }
 #: Backend id of the built-in faster-whisper family, which is not in MODELS.
 WHISPER_BACKEND = "local_whisper"
@@ -68,9 +78,13 @@ DEFAULT_MODELS = {key: next(m.key for m in MODELS.values() if m.backend == key) 
 MLX_RUNTIME = "asr-parakeet-mlx"
 #: NeMo-Speech.cpp's Metal release: Parakeet and Nemotron on the Apple GPU.
 NVIDIA_METAL_RUNTIME = "asr-nvidia-metal"
+#: transcribe.cpp's CPU + Vulkan release, the only engine that runs Parakeet
+#: Unified (NeMo-Speech.cpp has no such model through v0.3.0). One runtime
+#: serves both devices; the worker picks the GPU.
+TRANSCRIBE_RUNTIME = "asr-transcribe"
 RUNTIME_IDS = (
     "asr-nvidia-cpu", "asr-nvidia-cuda", "asr-nvidia-vulkan", NVIDIA_METAL_RUNTIME,
-    "asr-qwen", "asr-moonshine", MLX_RUNTIME,
+    "asr-qwen", "asr-moonshine", MLX_RUNTIME, TRANSCRIBE_RUNTIME,
 )
 #: NVIDIA's CUDA release of NeMo-Speech.cpp runs on Turing and newer. Older
 #: NVIDIA GPUs, such as the GTX 10 series, run its Vulkan release instead.
@@ -138,6 +152,8 @@ def apple_silicon() -> bool:
 def runtime_id(backend: str, device: str) -> str:
     if backend == "parakeet_mlx":
         return MLX_RUNTIME
+    if backend == "parakeet_unified":
+        return TRANSCRIBE_RUNTIME
     if backend == "qwen_asr":
         return "asr-qwen"
     if backend == "moonshine":
@@ -154,6 +170,10 @@ def resolve_runtime(backend: str, requested: str) -> tuple[str, str]:
         if requested not in ("auto", "cpu"):
             raise ValueError("Parakeet MLX supports Auto (Apple GPU) or CPU, not CUDA.")
         return MLX_RUNTIME, "cpu" if requested == "cpu" else "metal"
+    if backend == "parakeet_unified":
+        # The worker asks transcribe.cpp for a GPU; Auto falls back to the
+        # CPU there when none is listed.
+        return TRANSCRIBE_RUNTIME, requested
     if backend in ("qwen_asr", "parakeet", "nemotron") and apple_silicon():
         # A Mac's GPU is the Apple GPU: Metal for NeMo-Speech.cpp, MPS for
         # PyTorch. A saved "cuda" from another computer means that GPU too.
@@ -274,6 +294,8 @@ def runtime_catalog() -> dict:
         ("asr-nvidia-cpu", "linux_x86_64", "nvidia_linux_cpu_runtime.json"),
         ("asr-nvidia-cuda", "linux_x86_64", "nvidia_linux_cuda_runtime.json"),
         (NVIDIA_VULKAN_RUNTIME, "linux_x86_64", "nvidia_linux_vulkan_runtime.json"),
+        (TRANSCRIBE_RUNTIME, "win_amd64", "transcribe_windows_runtime.json"),
+        (TRANSCRIBE_RUNTIME, "linux_x86_64", "transcribe_linux_runtime.json"),
     ):
         with Path(__file__).with_name(filename).open(encoding="utf-8") as stream:
             entries.setdefault(key, {"platforms": {}})["platforms"][platform] = json.load(stream)

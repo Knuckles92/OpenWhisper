@@ -233,6 +233,12 @@ _SPEECH_RUNTIMES = (
         "Apache-2.0; MIT and bundled dependency licenses",
         "Parakeet MLX on Apple Silicon. Auto uses the Apple GPU; CPU is also available.",
     ),
+    (
+        "asr-transcribe", "transcribe.cpp runtime", "https://github.com/handy-computer/transcribe.cpp",
+        "MIT; Python PSF",
+        "Runs Parakeet Unified on the CPU or, through Vulkan, on a dedicated GPU from any "
+        "vendor. Auto uses the GPU when one is found.",
+    ),
 )
 _SPEECH_RUNTIME_REQUIRES = {
     "asr-parakeet-mlx": "Apple Silicon Mac, macOS 14 or newer, Python 3.12",
@@ -247,6 +253,9 @@ _SPEECH_RUNTIME_REQUIRES = {
     "asr-nvidia-metal": "Apple Silicon Mac, macOS 14 or newer",
     "asr-qwen": "Windows x64, or an Apple Silicon Mac with macOS 14 or newer",
     "asr-moonshine": "Windows x64, or an Apple Silicon Mac with macOS 15 or newer",
+    "asr-transcribe": (
+        "Windows x64 or Linux x86_64; a GPU with a Vulkan driver for GPU speed"
+    ),
 }
 _SPEECH_RUNTIME_SOURCE_NOTE = (
     _SOURCE_NOTE + " Speech runtimes install third-party executable software. Integrity "
@@ -259,6 +268,8 @@ def _speech_runtime_payload(component_id: str) -> str:
         return "Verified macOS arm64 Python wheels, MLX and Metal libraries"
     if component_id in ("asr-nvidia-vulkan", "asr-nvidia-metal"):
         return "Verified native libraries"
+    if component_id == "asr-transcribe":
+        return "Verified native libraries and Python binding; portable Python on Windows"
     if component_id.startswith("asr-nvidia"):
         return "Verified native libraries; portable Python on Windows"
     return "Portable Python 3.12 and verified runtime binaries on Windows; verified Python wheels on a Mac"

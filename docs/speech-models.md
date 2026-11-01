@@ -4,13 +4,22 @@ See the [speech model comparison](../README.md#speech-models) for supported back
 
 ## Languages
 
-Optional local engines offer English, Russian, Spanish, French, Portuguese, Mandarin, and **Auto** where supported. Parakeet and Orukeet omit Mandarin; Moonshine is English-only. Qwen supports all the listed presets. Nemotron includes Mandarin in its broader coverage tier, though accuracy may vary. **Auto** detects other languages supported by the selected model. Language selection transcribes speech; it does not translate it. Paired computers show the choices supported by the host engine.
+Optional local engines offer English, Russian, Spanish, French, Portuguese, Mandarin, and **Auto** where supported. Parakeet and Orukeet omit Mandarin; Moonshine and Parakeet Unified are English-only. Qwen supports all the listed presets. Nemotron includes Mandarin in its broader coverage tier, though accuracy may vary. **Auto** detects other languages supported by the selected model. Language selection transcribes speech; it does not translate it. Paired computers show the choices supported by the host engine.
 
 ## Downloads and platform notes
 
 Model weights and optional runtimes are separate downloads. **Settings → Downloads** shows each model's details and required components and verifies component archives before installation.
 
 On Apple Silicon, **Parakeet MLX** needs its runtime and roughly 2.5 GB of model weights. Choose **Auto** for the Apple GPU through Metal or **CPU** for the processor. Parakeet, Nemotron, Qwen3-ASR, and Moonshine also run on Apple Silicon; **Auto** uses the Apple GPU where supported. Moonshine requires macOS 15. Local Whisper uses the CPU on macOS; see [GPU acceleration](../README.md#gpu-acceleration) for Windows and Linux. Intel Macs running from source can use Parakeet and Nemotron on the CPU.
+
+## Parakeet Unified
+
+Parakeet Unified EN 0.6B is NVIDIA's English Parakeet trained to run both offline and as a stream. OpenWhisper runs it on [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp), installed from **Downloads** as the transcribe.cpp runtime (about 30 MB). NVIDIA's own runtime has no Unified model. Its 731 MB Q8 weights come from [handy-computer's GGUF conversion](https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf). They are licensed under the [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/), and its text and NVIDIA's notice are saved beside them.
+
+- **Device:** **Auto** uses a dedicated GPU from any vendor through Vulkan, else the CPU. Choosing the GPU also accepts an integrated one.
+- **Live preview:** with live preview on, the preview follows the model's own stream instead of re-decoding 3-second windows. Words appear about 2 seconds into speaking, short dictations included. In a 2026-10-31 test on a GTX 1050 Ti, 16% of the words in its live text were wrong, against 55% for Parakeet v3's preview.
+- **Final text:** the saved recording is decoded at the end, as with Parakeet v3. A dictation of 30 seconds or more pastes the stream's own final text instead, if the stream heard all of the recording. That text is ready about 0.3 seconds after you stop, however long you spoke.
+- **Validated:** Windows x64 on the CPU and on an RTX 2060 through Vulkan, and Linux x86_64 on the CPU. A Linux GPU through Vulkan has not been validated with the release libraries. Meetings use other models for now.
 
 ## Orukeet
 

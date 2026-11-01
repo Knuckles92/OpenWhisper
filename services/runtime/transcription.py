@@ -737,6 +737,10 @@ class TranscriptionRuntime:
                 self.controller._pending_streaming_text = (
                     self.controller.streaming_runtime.stop_streaming_session()
                 )
+                self._incremental.keep_stream_final(
+                    self.controller.streaming_runtime.finished_stream(),
+                    self.controller.recorder.get_recording_duration(),
+                )
 
             if self._cancel_requested.is_set():
                 # Cancel landed during post-roll: _cancel_recording discarded

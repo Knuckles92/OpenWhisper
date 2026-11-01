@@ -1,0 +1,23 @@
+{
+  "version": "0.4.1-linux",
+  "component_api": 1,
+  "platform": "linux_x86_64",
+  "install_bytes": 66773630,
+  "archives": [
+    {
+      "name": "transcribe_cpp-0.4.1-py3-none-any.whl",
+      "url": "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.1/transcribe_cpp-0.4.1-py3-none-any.whl",
+      "sha256": "f373b6e20a4d897ed0dcaa2fe7fae183379777432b3a76641c42506c77b442ad",
+      "size_bytes": 47639,
+      "extract": "python-wheel"
+    },
+    {
+      "name": "transcribe-native-0.4.1-linux-x86_64-cpu-vulkan.tar.gz",
+      "url": "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.1/transcribe-native-0.4.1-linux-x86_64-cpu-vulkan.tar.gz",
+      "sha256": "4b58e80c63d7f2b531b4e844b94c0703593f48a5be6afd829389cdda14a13edf",
+      "size_bytes": 22561707,
+      "extract": "transcribe-tar",
+      "root": "transcribe-native-linux-x86_64-cpu-vulkan"
+    }
+  ]
+}

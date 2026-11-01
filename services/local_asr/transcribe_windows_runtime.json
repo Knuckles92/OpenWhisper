@@ -1,0 +1,30 @@
+{
+  "version": "0.4.1-py312",
+  "component_api": 1,
+  "platform": "win_amd64",
+  "install_bytes": 78917203,
+  "archives": [
+    {
+      "name": "python-3.12.10-embed-amd64.zip",
+      "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip",
+      "sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3",
+      "size_bytes": 11133606,
+      "extract": "zip"
+    },
+    {
+      "name": "transcribe_cpp-0.4.1-py3-none-any.whl",
+      "url": "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.1/transcribe_cpp-0.4.1-py3-none-any.whl",
+      "sha256": "f373b6e20a4d897ed0dcaa2fe7fae183379777432b3a76641c42506c77b442ad",
+      "size_bytes": 47639,
+      "extract": "zip"
+    },
+    {
+      "name": "transcribe-native-0.4.1-windows-x86_64-cpu-vulkan.tar.gz",
+      "url": "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.4.1/transcribe-native-0.4.1-windows-x86_64-cpu-vulkan.tar.gz",
+      "sha256": "272eb97795048ccb557c85bb9dd44c9e530e1c928443114c39816a8a5f76269d",
+      "size_bytes": 18052295,
+      "extract": "transcribe-tar",
+      "root": "transcribe-native-windows-x86_64-cpu-vulkan"
+    }
+  ]
+}

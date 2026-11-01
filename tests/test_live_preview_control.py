@@ -147,7 +147,7 @@ class TestEngineSupport:
         assert not check.isEnabled()
         assert not check.isChecked()
         assert check.toolTip().startswith(
-            "Live preview needs Local Whisper, Parakeet, or Nemotron Streaming."
+            "Live preview needs Local Whisper, Parakeet, Parakeet Unified, or Nemotron Streaming."
         )
         assert "turns back on" in check.toolTip()
         manager.update_settings.assert_not_called()
@@ -174,7 +174,7 @@ class TestEngineSupport:
         assert not check.isEnabled()
         assert not check.isChecked()
         assert check.toolTip().startswith(
-            "Live preview needs Parakeet or Nemotron Streaming on jed."
+            "Live preview needs Parakeet, Parakeet Unified, or Nemotron Streaming on jed."
         )
 
     def test_remote_host_switching_to_parakeet_turns_it_back_on(self):

@@ -20,6 +20,12 @@ is always the one that path would produce.
 Early windows decode with the dictation's RecognitionContext from its start.
 The final pass reads the context again; a different one (the language was
 switched, the dictionary edited) means the early text cannot be reused.
+
+A native preview holds its own stream open instead, so no session follows
+it. For a model whose streamed text is as good as its file decode (the
+catalog's ``stream_final``), a long dictation pastes what that stream
+finished with at stop, provided the engine reports hearing as much audio as
+was recorded (``stream_final_text``).
 """
 from __future__ import annotations
 
@@ -368,12 +374,39 @@ def _context_key(recognition) -> tuple[str, tuple[str, ...]]:
     return recognition.language, tuple(recognition.phrases)
 
 
+def stream_final_text(backend, finished, recorded_sec: float) -> Optional[str]:
+    """A finished preview stream's text as the transcript, or None to decode the file.
+
+    Only for the stream's own engine, unreloaded, on a ``stream_final``
+    model, and only past ``config.STREAM_FINAL_MIN_SEC``: a shorter
+    dictation's file decode is quick and a little more accurate. The engine
+    must report the stream heard the recorded length, so a dropped block,
+    a microphone switch's gap or a restarted stream means the file decode.
+    """
+    from services.local_asr.catalog import MODELS
+
+    model = MODELS.get(getattr(backend, "model_name", None))
+    if (finished.backend is not backend or not (model and model.stream_final)
+            or finished.generation != getattr(backend, "generation", None)):
+        return None
+    if recorded_sec < config.STREAM_FINAL_MIN_SEC:
+        return None
+    if abs(recorded_sec - finished.audio_sec) > config.STREAM_FINAL_TOLERANCE_SEC:
+        logger.info("Live stream heard %.2f s of a %.2f s dictation; decoding the file",
+                    finished.audio_sec, recorded_sec)
+        return None
+    logger.info("Using the live stream's final text for a %.1f s dictation", recorded_sec)
+    return finished.text
+
+
 class IncrementalDictation:
     """The transcription runtime's slot for the dictation being recorded."""
 
     def __init__(self):
         self._lock = threading.Lock()
         self._session: Optional[DictationSession] = None
+        #: ``(FinishedStream, recorded seconds)`` of the stopped dictation.
+        self._stream_final: Optional[tuple] = None
 
     def start(self, controller, *, recognition=None) -> None:
         """Follow the recording that just started, where its engine allows.
@@ -388,6 +421,7 @@ class IncrementalDictation:
             session = None
         with self._lock:
             previous, self._session = self._session, session
+            self._stream_final = None
         if previous is not None:
             previous.discard("a new recording started")
         if session is not None:
@@ -397,8 +431,18 @@ class IncrementalDictation:
         """Drop the session of a canceled recording without waiting on it."""
         with self._lock:
             session, self._session = self._session, None
+            self._stream_final = None
         if session is not None:
             session.discard("the recording was canceled")
+
+    def keep_stream_final(self, finished, recorded_sec: float) -> None:
+        """Hold the stopped dictation's native preview stream for ``transcribe``.
+
+        ``finished`` is the preview's ``FinishedStream``, or None when it has
+        none; ``recorded_sec`` is the recorder's captured length.
+        """
+        with self._lock:
+            self._stream_final = None if finished is None else (finished, recorded_sec)
 
     def transcribe(self, backend, audio_path: str, *, recognition=None) -> str:
         """``backend.transcribe(audio_path)``, reusing this dictation's early windows.
@@ -409,6 +453,13 @@ class IncrementalDictation:
         """
         with self._lock:
             session, self._session = self._session, None
+            kept, self._stream_final = self._stream_final, None
+        if kept is not None and _same_file(audio_path, config.RECORDED_AUDIO_FILE):
+            # The preview's stream decoded the whole dictation already; its
+            # engine takes no vocabulary, so the context cannot change it.
+            text = stream_final_text(backend, *kept)
+            if text is not None:
+                return text
         if session is not None:
             if not (
                 session.backend is backend
