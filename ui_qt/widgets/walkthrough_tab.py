@@ -68,8 +68,12 @@ from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.walkthrough_review import WalkthroughReview
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
-#: The style menu's last item while the prompt is the user's own words.
+#: The style menu's item while the prompt is the user's own words.
 OWN_PROMPT = "Your own"
+#: The style menu's last item, which makes a style from scratch.
+NEW_STYLE = "New style…"
+#: Its item data: not a style id (hex or a slug) and not "", the user's own.
+_NEW_STYLE_DATA = ":new"
 #: The storyboard never shrinks below this, so a couple of rows always show.
 REVIEW_MIN_HEIGHT = 380
 #: How wide the page asks the window to be while a storyboard shows: room
@@ -848,17 +852,35 @@ class WalkthroughTab(QWidget):
             combo.addItem(each.name, each.id)
         if self._own_prompt:
             combo.addItem(OWN_PROMPT, "")
+        combo.insertSeparator(combo.count())
+        combo.addItem(NEW_STYLE, _NEW_STYLE_DATA)
         combo.setCurrentIndex(combo.findData(style.id if style else ""))
         self.save_style_button.setVisible(style is None and bool(text))
         self.delete_style_button.setVisible(style is not None and style != DEFAULT_STYLE)
 
     def _on_preset_chosen(self, index: int) -> None:
-        # The last item, past the styles, brings back the user's own words.
+        # Past the styles: the user's own words, then New style….
         style_id = self.preset_combo.itemData(index)
+        if style_id == _NEW_STYLE_DATA:
+            self._new_style()
+            return
         words = next((style.instructions for style in self._styles if style.id == style_id),
                      self._own_prompt)
         if words != self.prompt_edit.toPlainText().strip():
             self.prompt_edit.setPlainText(words)
+        self._save_prompt()
+
+    def _new_style(self) -> None:
+        """Make a style from scratch and use it; cancelled, the menu goes back."""
+        from ui_qt.dialogs.new_style_dialog import NewStyleDialog
+
+        dialog = NewStyleDialog(self)
+        if dialog.exec() != NewStyleDialog.DialogCode.Accepted:
+            self._show_preset()
+            return
+        self._styles = load_styles(settings_manager.load_all_settings())
+        # Its words fill the box, which points the menu at it, as picking a style does.
+        self.prompt_edit.setPlainText(dialog.saved.instructions)
         self._save_prompt()
 
     def _save_as_style(self) -> None:
