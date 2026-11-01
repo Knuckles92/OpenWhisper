@@ -604,14 +604,14 @@ def test_controls_preserve_whisper_and_other_speech_families(tmp_path, monkeypat
     widget = controls.LocalEngineControls()
     widget.set_backend("qwen_asr")
     widget.model_combo.setCurrentIndex(widget.model_combo.findData("qwen-1.7b"))
-    widget.device_combo.setCurrentText("cpu")
+    widget.device_combo.setCurrentText("CPU")
     widget.language_combo.setCurrentText("Auto")
     widget.set_backend("moonshine")
-    assert widget.device_combo.currentText() == "cpu" and not widget.device_combo.isEnabled()
+    assert widget.device_combo.currentData() == "cpu" and not widget.device_combo.isEnabled()
     widget.set_backend("qwen_asr")
     widget.set_values("base", "cuda", "int8")
     assert widget.model_combo.currentData() == "qwen-1.7b"
-    assert widget.device_combo.currentText() == "cpu"
+    assert widget.device_combo.currentData() == "cpu"
     assert widget.language_combo.currentText() == "Auto"
     widget.set_backend("local_whisper")
     assert widget.model_combo.currentText() == "turbo"

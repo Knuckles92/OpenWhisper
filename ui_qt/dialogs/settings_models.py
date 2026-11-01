@@ -102,6 +102,7 @@ from ui_qt.dialogs.settings_fields import (
 from ui_qt.utils.icons import design_icon as _design_icon
 from ui_qt.widgets import Button, ElidingComboBox, InfoTile
 from ui_qt.widgets.buttons import neutral_button
+from ui_qt.widgets.engine_field import DEVICE_LABELS, set_device_choices
 from ui_qt.widgets.agent_picker import BUILTIN, AgentPicker
 from ui_qt.widgets.local_model_picker import LocalModelPicker
 from ui_qt.widgets.nav_rail import NavRail
@@ -668,7 +669,7 @@ class ModelAssignments(QObject):
         )
         self.device_combo = ElidingComboBox()
         self.device_combo.setObjectName("libraryDeviceCombo")
-        self.device_combo.addItems(device_choices)
+        set_device_choices(self.device_combo, device_choices)
         self.device_combo.setMinimumHeight(40)
         self.device_combo.currentTextChanged.connect(self._on_runtime_changed)
         self.compute_combo = ElidingComboBox()
@@ -907,7 +908,7 @@ class ModelAssignments(QObject):
         """Persist shared device/quant and ask the controller to reload."""
         try:
             settings_manager.update_settings({
-                SettingsKey.WHISPER_DEVICE: self.device_combo.currentText(),
+                SettingsKey.WHISPER_DEVICE: self.device_combo.currentData(),
                 SettingsKey.WHISPER_COMPUTE_TYPE: (
                     self.compute_combo.currentText()
                 ),
@@ -1676,10 +1677,10 @@ class ModelAssignments(QObject):
         if self._page_is_loading(RUNTIME):
             device = setting_value(SettingsKey.WHISPER_DEVICE, settings)
             compute = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings)
-            if self.device_combo.findText(str(device)) < 0:
+            if self.device_combo.findData(str(device)) < 0:
                 device = "auto"
             blocker = self.device_combo.blockSignals(True)
-            self.device_combo.setCurrentText(str(device))
+            self.device_combo.setCurrentIndex(self.device_combo.findData(str(device)))
             self.device_combo.blockSignals(blocker)
             blocker = self.compute_combo.blockSignals(True)
             if self.compute_combo.findText(str(compute)) < 0:
@@ -1812,7 +1813,7 @@ class ModelAssignments(QObject):
         from services.local_asr.catalog import MODELS, selected_device
         model = resolve_meeting_whisper_model(self._settings_snapshot())
         if model in MODELS:
-            device = selected_device(MODELS[model].backend, self._settings_snapshot())
+            device = DEVICE_LABELS[selected_device(MODELS[model].backend, self._settings_snapshot())]
             self.meeting_runtime_label.setText(
                 f"Uses {MODELS[model].label} with its {device} device preference. "
                 "Set that engine's device on Dictation → Voice model. Install "
@@ -1821,6 +1822,7 @@ class ModelAssignments(QObject):
             return
         settings = self._settings_snapshot()
         device = str(setting_value(SettingsKey.WHISPER_DEVICE, settings))
+        device = DEVICE_LABELS.get(device, device)
         compute = str(setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings))
         self.meeting_runtime_label.setText(
             f"Device and quantization come from Models & storage → Runtime "
@@ -2210,6 +2212,7 @@ class ModelAssignments(QObject):
             compute = self.compute_combo.currentText()
         else:
             device = setting_value(SettingsKey.WHISPER_DEVICE, settings)
+            device = DEVICE_LABELS.get(device, device)
             compute = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings)
         return f"{device} · {compute}"
 

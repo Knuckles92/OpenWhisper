@@ -294,7 +294,7 @@ def test_card_uses_host_choices_and_locks_during_activity(engine):
     assert controls.isVisible() and controls.device_combo.isEnabled()
     assert controls.compute_combo.isVisible() and not controls.language_combo.isVisible()
     assert "4 GB VRAM" in tab.remote_runtime_label.text()
-    assert "NVIDIA GPU" in tab.remote_runtime_label.text()
+    assert "Running on devbox: GPU" in tab.remote_runtime_label.text()
     emitted = []
     tab.remote_runtime_selected.connect(lambda *args: emitted.append(args))
     controls.device_combo.activated.emit(controls.device_combo.findData("cuda"))

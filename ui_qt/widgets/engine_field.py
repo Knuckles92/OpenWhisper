@@ -167,6 +167,19 @@ def engine_combo(items: Iterable[str], primary: bool = False) -> QComboBox:
     return combo
 
 
+#: What Device fields show for each saved device. "cuda" is saved for the GPU
+#: whatever runs it: CUDA, Vulkan (Parakeet Unified on any vendor's card, or an
+#: NVIDIA card older than Turing) or the Apple GPU.
+DEVICE_LABELS = {"auto": "Auto", "cuda": "GPU", "cpu": "CPU"}
+
+
+def set_device_choices(combo: QComboBox, devices: Iterable[str]) -> None:
+    """Replace a Device field's choices: each shows its label and keeps the saved device as data."""
+    combo.clear()
+    for device in devices:
+        combo.addItem(DEVICE_LABELS.get(device, device), device)
+
+
 def engine_field(caption: str, field: QWidget, help_text="", links=(), on_help=None) -> QWidget:
     """Stack a dim caption above ``field`` as one column of the row."""
     wrapper = QWidget()

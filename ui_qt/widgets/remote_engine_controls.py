@@ -2,15 +2,15 @@
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QWidget
 
-from ui_qt.widgets.engine_field import engine_combo, engine_field
+from ui_qt.widgets.engine_field import DEVICE_LABELS, engine_combo, engine_field
 
 from services.local_asr.languages import LANGUAGE_LABELS
 
-_LABELS = {**LANGUAGE_LABELS, "cpu": "CPU", "cuda": "NVIDIA GPU"}
+_LABELS = {**LANGUAGE_LABELS, **DEVICE_LABELS}
 
 _DEVICE_TIP = (
     "Choose the hardware on the remote computer. Auto chooses an available device; "
-    "NVIDIA GPU uses its graphics card; CPU uses its processor."
+    "GPU uses its graphics card; CPU uses its processor."
 )
 _QUANT_TIP = (
     "Choose Whisper's precision on the remote computer. "

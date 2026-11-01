@@ -320,7 +320,7 @@ class TestRail(_DialogTestCase):
         assert dialog.rail.value(MEETING_TEXT) == (
             "OpenRouter · deepseek/test-model"
         )
-        assert dialog.rail.value(SHARED_RUNTIME) == "auto · auto"
+        assert dialog.rail.value(SHARED_RUNTIME) == "Auto · auto"
 
     def test_rail_value_follows_a_new_assignment(self):
         dialog, values = self._make_dialog(
@@ -1249,13 +1249,18 @@ class TestSharedRuntime(_DialogTestCase):
         dialog.compute_combo.setCurrentText("int8")
 
         assert values[SettingsKey.WHISPER_COMPUTE_TYPE] == "int8"
+        assert values[SettingsKey.WHISPER_DEVICE] == "auto"
         assert reloads == [True]
-        assert dialog.rail.value(SHARED_RUNTIME) == "auto · int8"
+        assert dialog.rail.value(SHARED_RUNTIME) == "Auto · int8"
+
+        dialog.device_combo.setCurrentText("CPU")
+        assert values[SettingsKey.WHISPER_DEVICE] == "cpu"
+        assert dialog.rail.value(SHARED_RUNTIME) == "CPU · int8"
 
     def test_meeting_voice_names_the_shared_runtime_destination(self):
         dialog, _values = self._make_dialog()
         assert "Models & storage → Runtime" in dialog.meeting_runtime_label.text()
-        assert "auto · auto" in dialog.meeting_runtime_label.text()
+        assert "Auto · auto" in dialog.meeting_runtime_label.text()
 
 
 class TestOnDemandEngine(_DialogTestCase):
