@@ -279,7 +279,7 @@ def test_mlx_controls_expose_auto_and_cpu_and_automatic_language():
     controls = LocalEngineControls()
     controls.set_backend("parakeet_mlx")
     assert [
-        controls.device_combo.itemText(i) for i in range(controls.device_combo.count())
+        controls.device_combo.itemData(i) for i in range(controls.device_combo.count())
     ] == ["auto", "cpu"]
     assert controls.language_combo.currentText() == "Auto"
     assert not controls.language_combo.isEnabled()

@@ -1538,15 +1538,15 @@ class TestLocalEngineFields:
         return controls
 
     @pytest.mark.parametrize(
-        "field, key, value",
+        "field, key, shown, value",
         [
-            ("model_combo", SettingsKey.WHISPER_MODEL, "large-v3"),
-            ("device_combo", SettingsKey.WHISPER_DEVICE, "cpu"),
-            ("compute_combo", SettingsKey.WHISPER_COMPUTE_TYPE, "int8"),
+            ("model_combo", SettingsKey.WHISPER_MODEL, "large-v3", "large-v3"),
+            ("device_combo", SettingsKey.WHISPER_DEVICE, "CPU", "cpu"),
+            ("compute_combo", SettingsKey.WHISPER_COMPUTE_TYPE, "int8", "int8"),
         ],
     )
     def test_changing_a_field_persists_it_and_asks_for_a_reload(
-        self, field, key, value
+        self, field, key, shown, value
     ):
         saved = []
         controls = self._controls(saved)
@@ -1560,7 +1560,7 @@ class TestLocalEngineFields:
             manager.update_settings.side_effect = (
                 lambda updates: saved.append(dict(updates)) or dict(updates)
             )
-            getattr(controls, field).setCurrentText(value)
+            getattr(controls, field).setCurrentText(shown)
 
         assert saved[-1][key] == value
         assert reloads == [True]
@@ -1594,7 +1594,7 @@ class TestLocalEngineFields:
         controls.set_values("small", "cpu", "float16")
         assert reloads == []
         assert controls.model_combo.currentText() == "small"
-        assert controls.device_combo.currentText() == "cpu"
+        assert controls.device_combo.currentData() == "cpu"
         assert controls.compute_combo.currentText() == "float16"
 
     def test_busy_locks_every_field(self):

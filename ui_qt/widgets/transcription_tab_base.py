@@ -30,6 +30,7 @@ from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.cards import HeaderCard
 from ui_qt.widgets.downloads_label import DownloadsLabel
 from ui_qt.widgets.engine_field import (
+    DEVICE_LABELS,
     EngineStatus,
     StatusDot,
     engine_combo,
@@ -761,7 +762,7 @@ class TranscriptionTabBase(QWidget):
         self.remote_runtime_label.setVisible(show)
         if not show:
             return
-        device = {"cuda": "NVIDIA GPU", "cpu": "CPU"}.get(link.device, link.device)
+        device = DEVICE_LABELS.get(link.device, link.device)
         parts = [f"Running on {link.host}: {device or 'device not reported'}"]
         if link.compute_type:
             parts.append(link.compute_type)

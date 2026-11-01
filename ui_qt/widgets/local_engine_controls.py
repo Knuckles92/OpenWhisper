@@ -25,7 +25,7 @@ from services.settings import SETTING_DEFAULTS, SettingsKey, setting_value, sett
 from services.local_asr.languages import LANGUAGE_LABELS, language_choices, selected_language
 from ui_qt.utils.icons import design_icon
 from ui_qt.widgets.buttons import Button, neutral_button
-from ui_qt.widgets.engine_field import engine_combo, engine_field
+from ui_qt.widgets.engine_field import engine_combo, engine_field, set_device_choices
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
@@ -36,8 +36,9 @@ _MODEL_HELP = (
 )
 _DEVICE_HELP = (
     "Choose the hardware used for transcription. Auto picks an available device; "
-    "Parakeet MLX uses the Apple GPU. CUDA uses a compatible NVIDIA graphics card; "
-    "CPU uses your main processor. Moonshine uses CPU only."
+    "Parakeet MLX uses the Apple GPU. GPU uses your graphics card: an NVIDIA card for "
+    "Local Whisper, Qwen3-ASR, Parakeet and Nemotron, a card from any vendor for Parakeet "
+    "Unified. CPU uses your main processor. Moonshine uses CPU only."
 )
 _QUANT_HELP = (
     "Controls how Whisper stores and calculates model numbers. Start with Auto. "
@@ -110,7 +111,8 @@ class LocalEngineControls(QWidget):
         device_choices = (
             ["auto", "cpu"] if sys.platform == "darwin" else ["auto", "cuda", "cpu"]
         )
-        self.device_combo = engine_combo(device_choices)
+        self.device_combo = engine_combo(())
+        set_device_choices(self.device_combo, device_choices)
         self.compute_combo = engine_combo(self.COMPUTE_CHOICES)
         self.language_combo = engine_combo(())
 
@@ -138,12 +140,11 @@ class LocalEngineControls(QWidget):
         from services.local_asr.catalog import MODELS, BACKENDS, selected_model, selected_device
         self._backend = backend
         self.device_combo.blockSignals(True)
-        self.device_combo.clear()
         # No CUDA on a Mac, nor for the Apple-only Parakeet MLX.
         if backend == "parakeet_mlx" or sys.platform == "darwin":
-            self.device_combo.addItems(["auto", "cpu"])
+            set_device_choices(self.device_combo, ["auto", "cpu"])
         else:
-            self.device_combo.addItems(["auto", "cuda", "cpu"])
+            set_device_choices(self.device_combo, ["auto", "cuda", "cpu"])
         self.device_combo.blockSignals(False)
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
@@ -154,7 +155,9 @@ class LocalEngineControls(QWidget):
             settings = settings_manager.load_all_settings()
             self.model_combo.setCurrentIndex(self.model_combo.findData(selected_model(backend, settings)))
             self.device_combo.blockSignals(True)
-            self.device_combo.setCurrentText(selected_device(backend, settings))
+            # A saved device this computer doesn't offer (CUDA on a Mac) shows Auto.
+            self.device_combo.setCurrentIndex(
+                max(0, self.device_combo.findData(selected_device(backend, settings))))
             self.device_combo.blockSignals(False)
         else:
             from services.whisper_sources import custom_models
@@ -201,7 +204,7 @@ class LocalEngineControls(QWidget):
             models = dict(settings.get(SettingsKey.LOCAL_ASR_MODELS) or {})
             devices = dict(settings.get(SettingsKey.LOCAL_ASR_DEVICES) or {})
             models[backend] = self.model_combo.currentData()
-            devices[backend] = self.device_combo.currentText()
+            devices[backend] = self.device_combo.currentData()
             lang_code = selected_language(backend, self.language_combo.currentData())
             settings_manager.update_settings({
                 SettingsKey.LOCAL_ASR_MODELS: models,
@@ -212,7 +215,7 @@ class LocalEngineControls(QWidget):
             return
         settings = settings_manager.update_settings({
             SettingsKey.WHISPER_MODEL: self.model_combo.currentText(),
-            SettingsKey.WHISPER_DEVICE: self.device_combo.currentText(),
+            SettingsKey.WHISPER_DEVICE: self.device_combo.currentData(),
             SettingsKey.WHISPER_COMPUTE_TYPE: self.compute_combo.currentText(),
         })
         logger.debug(
@@ -242,9 +245,13 @@ class LocalEngineControls(QWidget):
         if getattr(self, "_backend", "local_whisper") in BACKENDS:
             self.set_backend(self._backend)
             return
+        index = self.device_combo.findData(device or "auto")
+        if index >= 0:
+            blocked = self.device_combo.blockSignals(True)
+            self.device_combo.setCurrentIndex(index)
+            self.device_combo.blockSignals(blocked)
         for combo, value in (
             (self.model_combo, model or config.DEFAULT_WHISPER_MODEL),
-            (self.device_combo, device or "auto"),
             (self.compute_combo, compute or "auto"),
         ):
             combo.blockSignals(True)

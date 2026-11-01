@@ -24,8 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui_qt.widgets import Button, ElidingComboBox, PrimaryButton, WrappedLabel
-
-_DEVICE_LABELS = {"cpu": "CPU", "cuda": "NVIDIA GPU", "auto": "Auto"}
+from ui_qt.widgets.engine_field import DEVICE_LABELS as _DEVICE_LABELS
 
 
 class _RequestRelay(QObject):
