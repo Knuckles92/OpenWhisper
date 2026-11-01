@@ -283,9 +283,8 @@ class BackupCalendar(QWidget):
         self.grid.set_month(year, month, days={}, items={}, milestones={}, today=date.today(),
                             first_weekday=calendar.MONDAY, direction=direction)
         self.grid.set_selected(self._selected, animate=False)
-        title = date(year, month, 1).strftime("%B %Y")
-        self.title_button.setText(title)
-        self.title_button.setAccessibleName(title)
+        first = date(year, month, 1)
+        self.title_button.set_title(first.strftime("%B %Y"), first.strftime("%b %Y"))
         self._refresh_picker()
         self._update_detail()
 

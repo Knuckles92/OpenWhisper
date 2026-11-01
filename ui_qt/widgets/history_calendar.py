@@ -781,18 +781,56 @@ class MonthTitleButton(QPushButton):
     It reads as a heading until the pointer finds it: a faint chevron says it
     opens something, and a soft pill eases in on hover and stays while the
     picker is open.
+
+    Given a short form with ``set_title``, it shows that when the full one
+    doesn't fit, so a long month name ("September") can't hold a narrow
+    page wider than its window.
     """
 
     def __init__(self, text: str = "", parent=None):
         super().__init__(text, parent)
         self.setObjectName("calendarMonthTitle")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._full = self._short = ""
         self._open = False
         self._lift = 0.0
         self._lift_anim = QVariantAnimation(self)
         self._lift_anim.setDuration(150)
         self._lift_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._lift_anim.valueChanged.connect(self._on_lift)
+
+    def set_title(self, full: str, short: str) -> None:
+        self._full, self._short = full, short
+        self.setAccessibleName(full)
+        # A button's policy floors it at its size hint; this one may shrink to the short form.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, self.sizePolicy().verticalPolicy())
+        self.updateGeometry()
+        self._fit_title()
+
+    def _size_for(self, text: str) -> QSize:
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        option.text = text
+        metrics = self.fontMetrics()
+        contents = QSize(metrics.horizontalAdvance(text), metrics.height())
+        return self.style().sizeFromContents(QStyle.ContentsType.CT_PushButton, option, contents, self)
+
+    # The hints come from the stored titles, not the one showing, so swapping
+    # them never changes what the layout asks for.
+    def sizeHint(self) -> QSize:
+        return self._size_for(self._full) if self._full else super().sizeHint()
+
+    def minimumSizeHint(self) -> QSize:
+        return self._size_for(self._short) if self._short else super().minimumSizeHint()
+
+    def _fit_title(self) -> None:
+        if self._full:
+            fits = self.width() >= self._size_for(self._full).width()
+            self.setText(self._full if fits else self._short)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_title()
 
     def set_open(self, is_open: bool) -> None:
         self._open = is_open

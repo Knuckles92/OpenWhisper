@@ -253,7 +253,7 @@ def test_calendar_title_opens_picker_and_keys_move_the_month():
     picker.pick(2)
     assert not picker.isVisible()
     assert calendar.view == (2026, 3)
-    assert calendar.title_button.text() == "March 2026"
+    assert calendar.title_button.accessibleName() == "March 2026"
     assert calendar.previous_button.accessibleName() == "Previous month"
 
     QTest.keyClick(calendar.grid, Qt.Key.Key_PageDown)
@@ -296,17 +296,21 @@ def test_backup_card_text_has_no_opaque_background_and_controls_fit(
             point = label.mapTo(page, QPoint(label.width() - 2, 2))
             assert picture.pixelColor(point) == current_palette().color("slate-surface")
 
-        page.resize(360, 1500)
-        for _ in range(4):
+        # Every month, since the title is the month's name: "September" is
+        # far wider than "May".
+        for month in range(1, 13):
+            page.calendar.show_month((2026, month))
+            page.resize(360, 1500)
+            for _ in range(4):
+                app.processEvents()
+            page.resize(360, 1500)
             app.processEvents()
-        page.resize(360, 1500)
-        app.processEvents()
-        assert page.width() == 360
-        assert page.schedule_layout.direction() == QBoxLayout.Direction.TopToBottom
-        for control in (page.create_button, page.inspect_button, page.restore_button,
-                        page.save_schedule_button, page.destination_edit, page.calendar):
-            right = control.mapTo(page, QPoint(control.width(), 0)).x()
-            assert right <= page.width()
+            assert page.width() == 360, month
+            assert page.schedule_layout.direction() == QBoxLayout.Direction.TopToBottom
+            for control in (page.create_button, page.inspect_button, page.restore_button,
+                            page.save_schedule_button, page.destination_edit, page.calendar):
+                right = control.mapTo(page, QPoint(control.width(), 0)).x()
+                assert right <= page.width()
     finally:
         page.close()
         app.setStyleSheet(previous_style)
