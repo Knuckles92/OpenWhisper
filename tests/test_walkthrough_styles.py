@@ -18,9 +18,10 @@ from services.walkthrough.styles import (
     style_for,
 )
 from tests.test_walkthrough_library import capture as capture_fixture
+from ui_qt.dialogs.new_style_dialog import NewStyleDialog
 from ui_qt.dialogs.walkthrough_library import WalkthroughLibraryDialog
 from ui_qt.dialogs.write_up_prompt_dialog import OWN_WORDS, WriteUpPromptDialog
-from ui_qt.widgets.walkthrough_tab import OWN_PROMPT, WalkthroughTab
+from ui_qt.widgets.walkthrough_tab import NEW_STYLE, OWN_PROMPT, WalkthroughTab
 
 capture = capture_fixture
 STYLES = SettingsKey.WALKTHROUGH_WRITE_UP_STYLES
@@ -288,7 +289,59 @@ def test_your_own_words_can_be_saved_as_a_style(tab, monkeypatch):
 def test_a_style_saved_elsewhere_shows_on_return(tab):
     settings_manager.mutate_settings(lambda s: save_style(s, "From the storyboard", "Words."))
     tab.load_settings()
-    assert _names(tab)[-1] == "From the storyboard"
+    assert _names(tab)[-3:] == ["From the storyboard", "", NEW_STYLE]  # "" is the separator
+
+
+def _choose_new_style(tab, monkeypatch, fill=None) -> list:
+    """Pick New style… with the dialog filled by ``fill``; returns the dialogs shown."""
+    shown = []
+
+    def exec_(dialog):
+        shown.append(dialog)
+        if fill is None:
+            return NewStyleDialog.DialogCode.Rejected
+        fill(dialog)
+        dialog._save()
+        return dialog.result()
+
+    monkeypatch.setattr(NewStyleDialog, "exec", exec_)
+    tab.preset_combo.activated.emit(tab.preset_combo.findText(NEW_STYLE))
+    return shown
+
+
+def test_a_style_can_be_made_from_the_menu_and_is_used_at_once(tab, monkeypatch):
+    def fill(dialog):
+        dialog.name_edit.setText("Release notes")
+        dialog.prompt_edit.setPlainText("Short release-note bullets.")
+
+    _choose_new_style(tab, monkeypatch, fill)
+
+    assert _saved()[-1].name == "Release notes"
+    assert tab.prompt_edit.toPlainText() == "Short release-note bullets."
+    assert tab.preset_combo.currentText() == "Release notes"
+    assert settings_manager.load_all_settings()[
+        SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS] == "Short release-note bullets."
+    assert tab.delete_style_button.isVisibleTo(tab.prompt_area)
+
+
+def test_cancelling_a_new_style_leaves_the_prompt_and_menu_as_they_were(tab, monkeypatch):
+    before = tab.prompt_edit.toPlainText()
+
+    assert _choose_new_style(tab, monkeypatch)
+
+    assert tab.prompt_edit.toPlainText() == before
+    assert tab.preset_combo.currentText() == DEFAULT_STYLE.name
+    assert len(_saved()) == 1 + len(STARTER_STYLES)
+
+
+def test_a_new_style_that_cant_be_saved_says_why():
+    dialog = NewStyleDialog()
+    dialog.name_edit.setText("Notes")
+    dialog._save()
+    assert dialog.result() != NewStyleDialog.DialogCode.Accepted
+    assert "instructions" in dialog.error.text()
+    assert dialog.saved is None
+    dialog.close()
 
 
 def test_deleting_a_style_keeps_its_words_as_your_own(tab, monkeypatch):
