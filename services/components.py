@@ -982,6 +982,31 @@ def _verify_speaker_model(path: str) -> None:
         )
 
 
+def _quiet_hub_tqdm_class() -> type:
+    """A tqdm class that never paints a progress bar.
+
+    A windowed (PyInstaller) build has ``sys.stderr is None``, and the hub's
+    default progress bar writes there, so the first speaker-model download
+    dies with ``'NoneType' object has no attribute 'write'`` and every
+    meeting loses speaker separation. Downloads run unattended inside a
+    meeting, so the bar is disabled outright — the same guard the isolated
+    speech worker applies to its own streams.
+    """
+    try:
+        from faster_whisper.utils import disabled_tqdm
+
+        return disabled_tqdm
+    except ImportError:
+        from tqdm import tqdm
+
+        class _DisabledTqdm(tqdm):
+            def __init__(self, *args, **kwargs):
+                kwargs["disable"] = True
+                super().__init__(*args, **kwargs)
+
+        return _DisabledTqdm
+
+
 def _download_speaker_model() -> str:
     try:
         from huggingface_hub import hf_hub_download
@@ -1002,6 +1027,7 @@ def _download_speaker_model() -> str:
             filename=SPEAKER_MODEL_FILENAME,
             revision=SPEAKER_MODEL_REVISION,
             local_dir=cache_dir,
+            tqdm_class=_quiet_hub_tqdm_class(),
         )
     except Exception as exc:
         raise ComponentError(_describe_speaker_download_error(exc)) from exc

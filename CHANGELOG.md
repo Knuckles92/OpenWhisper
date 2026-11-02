@@ -31,6 +31,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Fixed
 - **The AI write-up / As spoken switch no longer greys out** — after writing a walkthrough up from the More menu, or any save, the switch, the close button and **Save and redo write-up** stayed disabled until the walkthrough was opened again.
 - **Dictation works while an AI write-up runs** — redoing a write-up, or saving and redoing one, no longer turns the dictation shortcut away ("Wait for backup or restore preparation to finish") or greys out the window. Neither does the write-up that follows a walkthrough: the walkthrough's job ends once its words are saved, and the document is copied when the agent is done. **Cancel** during that write-up now keeps the walkthrough as spoken instead of deleting it, since its words are already in History.
+- **Windows meetings keep speaker separation when no console is attached** — starting a meeting downloads the speaker model in the background, and that download's progress bar wrote to a console the windowed app doesn't have, so it always failed with "Could not download the speaker model: 'NoneType' object has no attribute 'write'." and meetings fell back to Me / Others while transcription waited behind it. The download now runs with its progress bar disabled, the same way the speech worker and the transcription-model downloads already do.
 
 ## [2.8.3] - 2026-10-28
 

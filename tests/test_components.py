@@ -756,6 +756,81 @@ def test_speaker_download_errors_read_as_one_sentence():
         "Could not download the speaker model: boom.")
 
 
+def test_speaker_model_download_survives_windowed_none_stderr(
+        component_root, tmp_path, monkeypatch):
+    """A windowed PyInstaller build has ``sys.stderr is None``.
+
+    huggingface_hub's default progress bar paints there, so the first
+    transfer dies with ``'NoneType' object has no attribute 'write'`` and
+    every meeting start loses speaker separation. The download must hand
+    the hub a disabled tqdm class so it never touches a stream.
+    """
+    import hashlib
+    import sys
+
+    import huggingface_hub
+    import tqdm as tqdm_module
+
+    dest = tmp_path / "speaker-models" / "voxceleb_resnet34_LM.onnx"
+    seen = {}
+
+    def fake_hf_hub_download(**kwargs):
+        # Behave like the hub: instantiate the caller's bar class (plain
+        # tqdm by default) and paint progress while streaming the file.
+        seen["tqdm_class"] = kwargs.get("tqdm_class")
+        bar = kwargs.get("tqdm_class") or tqdm_module.tqdm
+        instance = bar(total=2)
+        instance.update(1)
+        instance.close()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"onnx")
+        return str(dest)
+
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", fake_hf_hub_download)
+    monkeypatch.setattr(components, "SPEAKER_MODEL_SHA256",
+                        hashlib.sha256(b"onnx").hexdigest())
+    assert components._download_speaker_model() == str(dest.resolve())
+    assert seen["tqdm_class"] is not None
+    assert seen["tqdm_class"] is not tqdm_module.tqdm
+    assert seen["tqdm_class"](total=1).disable
+
+
+def test_speaker_model_download_without_tqdm_class_is_the_reported_failure(
+        component_root, tmp_path, monkeypatch):
+    """Pins the exact Windows v2.8.3 failure: the hub's vanilla bar paints
+    on the windowed build's missing stderr and the download dies with the
+    banner users saw ("Could not download the speaker model: 'NoneType'
+    object has no attribute 'write'."). Failure-mode mirror of the test
+    above; delete if huggingface_hub ever stops painting by default."""
+    import hashlib
+    import sys
+
+    import huggingface_hub
+    import pytest
+    import tqdm as tqdm_module
+
+    dest = tmp_path / "speaker-models" / "voxceleb_resnet34_LM.onnx"
+
+    def vanilla_hf_hub_download(**kwargs):
+        # The hub's default bar: plain tqdm, painting on sys.stderr. Used
+        # here regardless of what the caller passes, to pin the mechanism.
+        bar = tqdm_module.tqdm(total=1)
+        bar.close()
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"onnx")
+        return str(dest)
+
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", vanilla_hf_hub_download)
+    monkeypatch.setattr(components, "SPEAKER_MODEL_SHA256",
+                        hashlib.sha256(b"onnx").hexdigest())
+    with pytest.raises(components.ComponentError, match="NoneType"):
+        components._download_speaker_model()
+
+
 def test_gpu_runtime_probes_shared_objects_on_linux():
     """A Linux user with the pip wheels installed counts as GPU-capable."""
     loaded = []
