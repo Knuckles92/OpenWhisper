@@ -526,7 +526,7 @@ class TestDeferredProcessingStartup:
         assert engine._processing_thread is None
         assert fakes.asr == []
 
-    def test_end_during_speaker_resolution_prevents_model_and_agent_adoption(
+    def test_end_during_speaker_resolution_keeps_asr_and_never_adopts_late(
             self, make_engine, repo, fakes):
         entered, release = threading.Event(), threading.Event()
 
@@ -540,21 +540,68 @@ class TestDeferredProcessingStartup:
         try:
             assert engine.start()["url"]
             assert entered.wait(5)
-            assert all(source.is_active() for source in engine._sources)
+            # ASR and intelligence no longer queue behind the download.
+            assert engine._processing_complete.wait(5)
+            assert engine._asr_ready
+            assert engine._agent_core is not None
+            assert engine._scheduler is not None
             chunk = self._register(engine, repo, 0, 0.0)
             engine._on_chunk(chunk)
+            assert [c.chunk_id for c in fakes.asr[0].chunks] == [chunk.chunk_id]
             engine.end()
             engine._end_thread.join(5)
             assert not engine._end_thread.is_alive()
             assert repo.get_meeting(engine.meeting_id)["status"] == "needs_recovery"
             assert repo.get_pending_chunks(engine.meeting_id)[0]["id"] == chunk.chunk_id
             assert len(events_of(engine, "asr_released")) == 1
+            # The resolver finished only after End claimed the meeting; its
+            # result must never adopt or flip readiness on an ended meeting.
             release.set()
             assert engine.wait_for_processing(5)
-            assert fakes.asr == []
-            assert fakes.cores == []
             assert engine._diarizer is None
-            assert engine._scheduler is None
+            snapshot = engine.store.snapshot()
+            assert snapshot["diarization_available"] is False
+            assert snapshot["diarization_reason"] == ""
+        finally:
+            release.set()
+            engine.wait_for_processing(5)
+
+    def test_asr_and_intelligence_run_while_speaker_model_initializes(
+            self, make_engine, repo, fakes):
+        entered, release = threading.Event(), threading.Event()
+
+        def resolve():
+            entered.set()
+            assert release.wait(5)
+            return "/downloaded/speaker.onnx"
+
+        engine = make_engine(diarization_model_resolver=resolve)
+        self._async_start(engine)
+        try:
+            engine.start()
+            assert entered.wait(5)
+            assert engine._processing_complete.wait(5)
+            # The readiness row shows the honest in-progress state meanwhile.
+            snapshot = engine.store.snapshot()
+            assert snapshot["diarization_available"] is False
+            assert snapshot["diarization_reason"] == ""
+            statuses = events_of(engine, "status")
+            assert statuses and statuses[-1]["diarization_available"] is False
+            # Chunks route to ASR while the speaker model still downloads.
+            chunk = self._register(engine, repo, 0, 0.0)
+            engine._on_chunk(chunk)
+            assert engine._asr_ready
+            assert [c.chunk_id for c in fakes.asr[0].chunks] == [chunk.chunk_id]
+            assert snapshot["intelligence_online"] is True
+
+            release.set()
+            assert engine.wait_for_processing(5)
+            assert engine._diarizer is fakes.diarizer
+            snapshot = engine.store.snapshot()
+            assert snapshot["diarization_available"] is True
+            assert snapshot["diarization_reason"] == ""
+            assert [payload for payload in events_of(engine, "status")
+                    if payload["diarization_available"]]
         finally:
             release.set()
             engine.wait_for_processing(5)
@@ -1353,6 +1400,9 @@ class TestEndLifecycle:
         )
         engine = make_engine(cloud_enabled=False, end_redecode=True)
         engine.start()
+        # The live diarizer must have landed before End so the speaker pass
+        # never builds a second one behind its back.
+        assert engine.wait_for_processing(5)
         meeting_id = engine.meeting_id
         fakes.diarizer.next_participant = "p_guest"
         fakes.asr[0].offline_segments = [
@@ -1759,7 +1809,9 @@ class TestDiarizationDegradation:
         assert snapshot["diarization_reason"] == reason
         assert engine._diarizer is None
         statuses = [m for m in fakes.servers[0].messages if m.get("type") == "status"]
-        assert statuses[-1]["diarization_reason"] == reason
+        # The worker's own status and the init thread's can interleave; the
+        # reason reaches the dashboard as soon as the outcome lands.
+        assert any(m["diarization_reason"] == reason for m in statuses)
 
     @pytest.mark.parametrize("backend, expected", [
         ("off", "DIARIZATION_OFF"),
@@ -1780,6 +1832,7 @@ class TestDiarizationDegradation:
             self, make_engine, fakes, repo):
         engine = make_engine(cloud_enabled=False)
         engine.start()
+        assert engine.wait_for_processing(5)
         chunk_id = self._prime(engine, repo)
         fakes.diarizer.next_participant = None  # short segment: normal None
 
@@ -1794,6 +1847,7 @@ class TestDiarizationDegradation:
     def test_degradation_flips_availability_once(self, make_engine, fakes, repo):
         engine = make_engine(cloud_enabled=False)
         engine.start()
+        assert engine.wait_for_processing(5)
         chunk_id = self._prime(engine, repo)
         assert engine.store.with_state(lambda s: s.diarization_available) is True
         initial_events = len(engine.events)
@@ -1840,6 +1894,7 @@ class TestDiarizationDegradation:
     def test_pin_still_works_after_degradation(self, make_engine, fakes, repo):
         engine = make_engine(cloud_enabled=False)
         engine.start()
+        assert engine.wait_for_processing(5)
         chunk_id = self._prime(engine, repo)
         repo.add_segments([loopback_segment(engine.meeting_id, "sg_p")])
         fakes.diarizer.available = False

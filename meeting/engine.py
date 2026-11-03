@@ -278,6 +278,7 @@ class MeetingEngine:
         self._processing_complete.set()
         self._processing_stop = threading.Event()
         self._processing_thread: Optional[threading.Thread] = None
+        self._diarizer_thread: Optional[threading.Thread] = None
         self._asr_ready = False
         self._asr_release_emitted = False
         self._end_thread: Optional[threading.Thread] = None
@@ -776,12 +777,15 @@ class MeetingEngine:
             if self._processing_stop.is_set():
                 return
             if not self.options.demo_mode:
-                self._start_diarizer()
-                if self._processing_stop.is_set():
-                    self._diarizer = None
-                    return
+                # Transcription is the required feature and its model loads
+                # locally; speaker separation may sit minutes on a slow
+                # speaker-model download, so its initialization runs on its
+                # own thread and must never delay ASR or intelligence.
                 if self.options.asr_remote is None:
                     self._start_asr(defer_load=True)
+                if self._processing_stop.is_set():
+                    return
+                self._start_diarizer_background()
             if not self._processing_stop.is_set():
                 self._maybe_start_intelligence()
                 self._emit_status()
@@ -793,8 +797,40 @@ class MeetingEngine:
             self._processing_complete.set()
 
     def wait_for_processing(self, timeout_s: Optional[float] = None) -> bool:
-        """Wait for optional startup (for recovery/tests), never required by capture."""
-        return self._processing_complete.wait(timeout_s)
+        """Wait for optional startup (for recovery/tests), never required by capture.
+
+        Includes the background diarizer init so callers that read speaker
+        readiness observe its settled outcome.
+        """
+        ready = self._processing_complete.wait(timeout_s)
+        init = self._diarizer_thread
+        if init is not None and init is not threading.current_thread():
+            init.join(timeout_s)
+        return ready
+
+    def _start_diarizer_background(self) -> None:
+        """Move the (possibly slow) speaker-model work off the startup path."""
+        if self.options.speaker_id_backend == "off":
+            self._disable_diarizer()
+            return
+        worker = threading.Thread(target=self._diarizer_init_worker,
+                                  name="meeting-diarizer-start", daemon=True)
+        with self._lifecycle_lock:
+            if self._processing_stop.is_set():
+                return
+            self._diarizer_thread = worker
+        worker.start()
+
+    def _diarizer_init_worker(self) -> None:
+        try:
+            self._start_diarizer()
+        except Exception:
+            if not self._processing_stop.is_set():
+                logger.exception("Speaker separation initialization failed")
+        finally:
+            if not self._processing_stop.is_set():
+                # Readiness landed on its own thread; tell the dashboard.
+                self._emit_status()
 
     def _seed_demo_meeting(self) -> str:
         """Load canned transcript/cards and skip live capture.
@@ -1564,6 +1600,11 @@ class MeetingEngine:
         if (processing is not None and processing is not threading.current_thread()
                 and processing.is_alive()):
             processing.join(timeout=5.0)
+        diarizer_init = self._diarizer_thread
+        if (diarizer_init is not None
+                and diarizer_init is not threading.current_thread()
+                and diarizer_init.is_alive()):
+            diarizer_init.join(timeout=5.0)
         self._stop_heartbeat()
 
     def _interrupt_finalization_on_shutdown(self) -> None:
@@ -2635,6 +2676,7 @@ class MeetingEngine:
                 self.store.update_runtime_fields(
                     diarization_available=available, diarization_reason=reason,
                 )
+        self._emit_status()
 
     def _create_diarizer(self) -> Any:
         try:
