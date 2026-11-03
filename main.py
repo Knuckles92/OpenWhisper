@@ -302,6 +302,47 @@ from services.backup_startup import (
 )
 
 
+class _NullTextStream:
+    """A write-nowhere text stream standing in for a missing console."""
+
+    encoding = "utf-8"
+    name = "<null>"
+    mode = "w"
+
+    def write(self, text):
+        return len(text)
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
+    def isatty(self):
+        return False
+
+    def writable(self):
+        return True
+
+
+def _ensure_writable_stdio() -> None:
+    """Give the GUI writable stdout/stderr when the windowed build has none.
+
+    A windowed (PyInstaller) build launches without a console, so Python
+    exposes sys.stdout/sys.stderr as None and the first library print or
+    progress bar dies with "'NoneType' object has no attribute 'write'".
+    Every worker and CLI mode above has already dispatched — the channel
+    bridge and the speech workers treat a missing stream as their signal —
+    so only the desktop app is left to hand null streams to.
+    """
+    for name in ("stdout", "stderr"):
+        if getattr(sys, name, None) is None:
+            setattr(sys, name, _NullTextStream())
+
+
+_ensure_writable_stdio()
+
+
 def _show_startup_error(message: str) -> None:
     print(f"OpenWhisper: {message}", file=sys.stderr)
     if not getattr(sys, "frozen", False):
