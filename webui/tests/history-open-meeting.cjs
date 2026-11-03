@@ -166,10 +166,11 @@ test('the full view fills the pane with the picked meeting and steps back to the
 });
 
 test('the shelf groups meetings by week, filters them, and previews the pick', async () => {
+  // Stamp the recent meeting at the test's own "now": any fixed offset into the
+  // past (e.g. an hour ago) crosses into last week when CI runs early Monday.
   const now = new Date();
-  const hoursAgo = h => new Date(now.getTime() - h * 3600e3).toISOString();
   const rows = [
-    { id: 'm_today', title: 'Scope review', started_at: hoursAgo(1), status: 'ended', has_audio: false,
+    { id: 'm_today', title: 'Scope review', started_at: now.toISOString(), status: 'ended', has_audio: false,
       duration_s: 2820, insights_pill: 'Insights ready', insights_tone: 'success',
       digest: { decisions: 1, action_items: 3, risks: 0, open_questions: 0, participant_count: 2,
         participants: [{ id: 'me', display_name: 'Me', kind: 'me' }, { id: 'p2', display_name: 'Maya Chen', kind: 'guest' }] } },
