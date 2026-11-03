@@ -97,6 +97,43 @@ assert 'services.application_controller' not in sys.modules
     assert result.returncode == 0, result.stderr
 
 
+def test_windowed_missing_stdio_becomes_writable(monkeypatch):
+    # A windowed frozen build has no console: sys.stdout/sys.stderr are None
+    # and any library print or tqdm bar dies on "'NoneType' object has no
+    # attribute 'write'". The GUI startup guard must give them safe streams.
+    import main
+    from tqdm import tqdm
+
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+
+    main._ensure_writable_stdio()
+
+    assert sys.stdout is not None and sys.stderr is not None
+    print("a library print")  # noqa: T201 - must not raise
+    for _ in tqdm(range(3)):  # must not raise
+        pass
+
+
+def test_writable_stdio_guard_leaves_real_streams_untouched():
+    import main
+
+    stdout, stderr = sys.stdout, sys.stderr
+    main._ensure_writable_stdio()
+    assert sys.stdout is stdout
+    assert sys.stderr is stderr
+
+
+def test_stdio_guard_is_placed_after_every_cli_dispatch():
+    # The stdio-sensitive modes (--channel, --local-asr-worker,
+    # --isolated-worker) inspect a missing stream on purpose; the GUI guard
+    # must only run once all of them have dispatched and exited.
+    source = (PROJECT_ROOT / "main.py").read_text(encoding="utf-8")
+    guard_call = source.rindex("_ensure_writable_stdio()")
+    for dispatch in ("_handle_early_cli()", "_handle_package_self_test()"):
+        assert guard_call > source.index("\n" + dispatch), dispatch
+
+
 @pytest.mark.parametrize("activation_fails", [False, True])
 def test_source_startup_activates_components_before_backend_imports(activation_fails):
     code = """
