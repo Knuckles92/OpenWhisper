@@ -7,6 +7,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.4] - 2026-11-05
+
 ### Added
 - **Parakeet Unified, an English engine with readable live text** — pick **Parakeet Unified** as the engine, then download the model and the transcribe.cpp runtime in **Downloads**. It got fewer words wrong than Parakeet v3 in testing, and on Auto it runs on a dedicated GPU from any vendor through Vulkan, or else on the CPU. With live preview on, words appear about 2 seconds into speaking and follow the model's own stream, short dictations included. Parakeet v3's preview re-decodes 3-second windows, so it shows nothing for a dictation under 3 seconds and got over half the words wrong in testing. The final text still comes from decoding the saved recording. A dictation of 30 seconds or more pastes the stream's own final text instead, ready about 0.3 seconds after you stop, as long as the stream heard all of the recording. English only, on Windows x64 and Linux x86_64. Parakeet v3 stays the engine for other languages.
 - **Controls on the walkthrough column** — the column at the screen's edge now runs the walkthrough: **Snap**, **Hold for note**, **Undo** (takes the newest screenshot out; its words stay), **Pause**, **Cancel** and **Done**. Screenshots are numbered with when you took them (**2 · 0:35**), and what you're saying sits in an open slot until the next screenshot closes it. Hover a screenshot to move it up or down, or remove it: its words always go with it, and a removed screenshot's words join the section after it. The column never takes the focus from the app you're showing; drag it by anything that isn't a button, and scroll it to reach older screenshots.
