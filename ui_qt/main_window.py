@@ -1,5 +1,6 @@
 import logging
 import sys
+import time
 from typing import Optional, Callable
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -440,6 +441,9 @@ class MainWindow(QMainWindow):
         self._screen_widgets = {}
         self._screen_updates = {"upload": {}, "walkthrough": {}, "meeting": {}, "host": {}}
         self._shared_tab_updates = {}
+        # Meeting clock for a Meeting tab built mid-meeting: (seconds
+        # banked, monotonic instant it last started running or None).
+        self._meeting_clock = (0.0, None)
         self._host_service = None
         self._compact_mode = False
         self._full_geometry = None
@@ -739,21 +743,60 @@ class MainWindow(QMainWindow):
         for method, (args, kwargs) in self._screen_updates[key].items():
             if isinstance(method, tuple):
                 method = method[0]
+            if key == "meeting" and method == "set_meeting_state":
+                args = (self._meeting_replay_state(args[0]),)
             getattr(widget, method)(*args, **kwargs)
         self.screen_created.emit(key, widget)
         return widget
 
     def update_screen(self, key, method, *args, **kwargs):
         """Retain the latest runtime values until an inactive screen opens."""
+        cached = args
         if key == "meeting" and method == "set_meeting_state":
+            # Meeting updates are partial; the cache keeps their union for a
+            # tab built later. A built tab gets only this update: replaying
+            # the union re-sent the start's elapsed_s=0 with every status
+            # change and reset the timer.
+            self._track_meeting_clock(args[0])
             previous = self._screen_updates[key].get(method, (({},), {}))[0][0]
-            args = ({**previous, **args[0]},)
+            merged = {**previous, **args[0]}
+            merged.pop("elapsed_s", None)
+            cached = (merged,)
         cache_key = (method, args[0]) if method == "set_model_downloading" else method
         self._screen_updates[key].pop(cache_key, None)
-        self._screen_updates[key][cache_key] = (args, kwargs)
+        self._screen_updates[key][cache_key] = (cached, kwargs)
         widget = self._screen_widgets.get(key)
         if widget is not None:
             getattr(widget, method)(*args, **kwargs)
+
+    def _track_meeting_clock(self, payload):
+        """Mirror the Meeting tab's pause-aware clock while the tab is unbuilt."""
+        if not isinstance(payload, dict):
+            return
+        banked, since = self._meeting_clock
+        now = time.monotonic()
+        if "elapsed_s" in payload:
+            try:
+                banked = float(payload["elapsed_s"])
+            except (TypeError, ValueError):
+                banked = 0.0
+            since = now
+        if payload.get("paused") is True and since is not None:
+            banked, since = banked + now - since, None
+        elif payload.get("paused") is False and since is None:
+            since = now
+        if payload.get("active") is False:
+            banked, since = 0.0, None
+        self._meeting_clock = (banked, since)
+
+    def _meeting_replay_state(self, state):
+        """The cached meeting state, with the clock's current reading if live."""
+        if not (isinstance(state, dict) and state.get("active")):
+            return state
+        banked, since = self._meeting_clock
+        if since is not None:
+            banked += time.monotonic() - since
+        return {**state, "elapsed_s": banked}
 
     def update_transcription_tabs(self, method, *args, **kwargs):
         self._shared_tab_updates.pop(method, None)

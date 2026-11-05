@@ -64,3 +64,47 @@ def test_host_dashboard_materializes_once_and_receives_queued_values():
         assert "meeting" not in window._screen_widgets
     finally:
         controller.cleanup()
+
+
+def test_meeting_timer_survives_later_state_updates():
+    controller = UIController()
+    try:
+        window = controller.main_window
+        window.tabbed_content.set_current_index(TabbedContentWidget.TAB_MEETING_MODE)
+        meeting = window.meeting_mode_tab
+        controller.on_meeting_state_changed(
+            {"active": True, "paused": False, "status": "active", "elapsed_s": 0.0}
+        )
+        # Pretend the meeting has run for 45 seconds.
+        meeting._running_since -= 45
+        meeting._refresh_elapsed()
+        assert meeting.elapsed_label.text() == "00:45"
+
+        # Status notes, pause mirroring, and background readiness are all
+        # partial updates; none of them may restart the clock.
+        controller.on_meeting_state_changed({"status": "active", "paused": False})
+        controller.on_meeting_state_changed({"background_available": True})
+        meeting._refresh_elapsed()
+        assert meeting.elapsed_label.text() == "00:45"
+    finally:
+        controller.cleanup()
+
+
+def test_meeting_tab_built_mid_meeting_shows_elapsed_time():
+    controller = UIController()
+    try:
+        window = controller.main_window
+        # Straight to the window: the controller would open the tab now.
+        window.update_screen("meeting", "set_meeting_state", {
+            "active": True, "paused": False, "status": "active", "elapsed_s": 0.0,
+        })
+        window.update_screen("meeting", "set_meeting_state", {"status": "active"})
+        assert "meeting" not in window._screen_widgets
+        banked, since = window._meeting_clock
+        window._meeting_clock = (banked, since - 90)
+
+        meeting = window._ensure_screen("meeting")
+        assert meeting.is_meeting_active
+        assert meeting.elapsed_label.text() == "01:30"
+    finally:
+        controller.cleanup()
