@@ -4,7 +4,15 @@ use rune::{El, FileDialogOptions, TextEdit, TextStyle, Tx, col, el, icon, row, t
 use rune_kit::glyphs;
 use serde_json::{Value, json};
 
+mod calendar;
 mod demo;
+mod remote;
+pub use calendar::{calendar_refresh, calendar_response};
+
+pub fn calendar_demo(s: &mut State) {
+    s.page = crate::state::Page::History;
+    calendar::open(s);
+}
 pub use demo::{library_demo, library_demo_command};
 #[cfg(test)]
 mod tests;
@@ -160,6 +168,12 @@ pub(super) fn confirm_delete(s: &State, p: &Palette, scope: &'static str) -> El 
         return el();
     }
     let id = value(confirmation, "id", "").to_string();
+    let host = value(confirmation, "stored_on", "");
+    let explanation = if host.is_empty() {
+        "This removes the saved item from your library. This action cannot be undone.".to_string()
+    } else {
+        format!("This permanently removes the transcript from {host}.")
+    };
     card(p)
         .key(format!("{scope}-delete-confirmation"))
         .border(1., p.danger.alpha(0.45))
@@ -169,12 +183,7 @@ pub(super) fn confirm_delete(s: &State, p: &Palette, scope: &'static str) -> El 
             550.,
             p.ink,
         ))
-        .child(label(
-            "This removes the saved item from your library. This action cannot be undone.",
-            12.,
-            400.,
-            p.muted,
-        ))
+        .child(label(explanation, 12., 400., p.muted))
         .child(
             row()
                 .gap(8.)
@@ -233,6 +242,9 @@ fn search(s: &mut State) {
 }
 
 pub fn history(s: &State, p: &Palette, compact: bool) -> El {
+    if s.data["history.view"] == "calendar" {
+        return calendar::view(s, p, compact);
+    }
     let search_bar = row()
         .gap(8.)
         .center_y()
@@ -306,9 +318,13 @@ pub fn history(s: &State, p: &Palette, compact: bool) -> El {
         .filter(|e| {
             if result["items"].is_array() && result["query"].as_str() == Some(s.search.text.trim())
             {
-                return s.filter == "all" || e.kind == s.filter;
+                return s.filter == "all"
+                    || e.kind == s.filter
+                    || (s.filter == "dictation" && e.kind != "file");
             }
-            (s.filter == "all" || e.kind == s.filter)
+            (s.filter == "all"
+                || e.kind == s.filter
+                || (s.filter == "dictation" && e.kind != "file"))
                 && format!("{} {}", e.title, e.preview)
                     .to_lowercase()
                     .contains(&needle)
@@ -363,24 +379,36 @@ pub fn history(s: &State, p: &Palette, compact: bool) -> El {
         .gap(15.)
         .child(filters)
         .child(list)
-        .child(pagination);
+        .child(pagination)
+        .child(remote::view(s, p));
     let mut workspace = if compact { col() } else { row() }.gap(20.).child(list);
     if let Some(id) = &s.selected {
         let detail_result = &s.data["history.detail"];
         let matching = detail_result["id"].as_str() == Some(id.as_str());
         let editable = matching && detail_result["editable"].as_bool().unwrap_or(true);
+        let can_delete = matching && detail_result["can_delete"].as_bool().unwrap_or(editable);
         let detail = if s.show_raw { &s.detail_raw } else { &s.detail };
         let edit_id = id.clone();
         let delete_id = id.clone();
         let export_id = id.clone();
         let title = s.detail_title.clone();
-        let playback_path = if matching {
+        let stored_on = value(detail_result, "stored_on", "").to_string();
+        let delete_host = stored_on.clone();
+        let mut playback_path = if matching {
             value(detail_result, "playback_path", "").to_string()
         } else {
             String::new()
         };
+        let audio_ready = &s.data["events"]["history.audio.ready"];
+        if audio_ready["id"].as_str() == Some(id.as_str()) {
+            if let Some(path) = audio_ready["path"].as_str() {
+                playback_path = path.into();
+            }
+        }
         let playback_ready =
             !playback_path.is_empty() && std::path::Path::new(&playback_path).is_file();
+        let has_remote_audio =
+            matching && detail_result["remote"] == true && detail_result["audio_available"] == true;
         let mut pane = card(p)
             .key("history-detail")
             .gap(18.)
@@ -396,6 +424,7 @@ pub fn history(s: &State, p: &Palette, compact: bool) -> El {
                     })),
             )
             .child(label(&s.detail_title, 20., 500., p.ink))
+            .child(if stored_on.is_empty() {el()}else{label(format!("Kept on {stored_on}"),11.5,500.,p.accent)})
             .child(
                 row()
                     .gap(7.)
@@ -470,14 +499,72 @@ pub fn history(s: &State, p: &Palette, compact: bool) -> El {
                         "Delete",
                         p,
                         false,
-                        editable && !s.pending,
+                        can_delete && !s.pending,
                         move |s, _| {
                             s.confirmation =
-                                Some(json!({"scope":"history","id":delete_id,"title":title}))
+                                Some(json!({"scope":"history","id":delete_id,"title":title,"stored_on":delete_host}))
                         },
                     )),
             )
             .child(divider(p));
+        if has_remote_audio && !playback_ready {
+            let audio_id = id.clone();
+            pane = pane.child(btn(
+                "history-fetch-audio",
+                "Get recording from host",
+                p,
+                false,
+                !s.pending,
+                move |s, _| {
+                    s.command("history.audio.get", json!({"id":audio_id}));
+                    s.notice = Some("Getting the recording from your paired host…".into());
+                },
+            ));
+            if audio_ready["id"].as_str() == Some(id.as_str()) {
+                if let Some(error) = audio_ready["error"].as_str() {
+                    pane = pane.child(label(error, 11., 400., p.danger));
+                }
+            }
+        }
+        if playback_ready {
+            let retry_id = id.clone();
+            pane = pane.child(btn(
+                "history-retranscribe",
+                "Transcribe recording again",
+                p,
+                false,
+                s.available() && !s.working() && !s.pending,
+                move |s, _| {
+                    s.command("history.retranscribe", json!({"id":retry_id}));
+                },
+            ));
+        }
+        if editable
+            && detail_result["version"]
+                .as_str()
+                .is_some_and(|version| !version.is_empty())
+        {
+            let selected = detail_result["version"].as_str().unwrap_or("");
+            let mut versions =
+                row()
+                    .gap(7.)
+                    .flex_wrap()
+                    .child(label("Use in saved history:", 11., 400., p.muted));
+            for (version, title) in [("original", "As spoken"), ("ai", "AI cleaned")] {
+                let version_id = id.clone();
+                versions = versions.child(btn(
+                    format!("history-use-{version}"),
+                    title,
+                    p,
+                    selected == version,
+                    !s.pending && selected != version,
+                    move |s, _| {
+                        s.command("history.update", json!({"id":version_id,"version":version}))
+                    },
+                ));
+            }
+            pane = pane.child(versions);
+        }
         let mut formats = row().gap(7.).flex_wrap();
         for (format, title) in [("md", "Markdown"), ("json", "JSON"), ("srt", "Subtitles")] {
             let id = id.clone();
@@ -574,6 +661,9 @@ pub fn history(s: &State, p: &Palette, compact: bool) -> El {
                     )
                     .grow(1.),
                 )
+                .child(link("open-history-calendar", "Calendar", p, |s, _| {
+                    calendar::open(s)
+                }))
                 .child(link(
                     "export-history-library",
                     "Export library",

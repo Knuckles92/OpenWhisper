@@ -34,7 +34,7 @@ def test_edits_coalesce_on_background_writer_and_close_flushes_latest(tmp_path):
     assert store.close()
     assert writes == [("Newest notes 199 — 日本語", writes[0][1])]
     assert writes[0][1] != owner
-    assert path.read_text() == "Newest notes 199 — 日本語"
+    assert path.read_text(encoding="utf-8") == "Newest notes 199 — 日本語"
     assert not store.snapshot()["dirty"]
 
 

@@ -194,8 +194,10 @@ class WalkthroughSession:
     """The screenshots of a walkthrough being recorded; thread-safe."""
 
     def __init__(self, *, started_at: Optional[datetime] = None,
-                 make_folder: Callable[[datetime], Path] = _default_folder):
+                 make_folder: Callable[[datetime], Path] = _default_folder,
+                 preserve_on_cancel: bool = False):
         self.started_at = started_at or datetime.now()
+        self.preserve_on_cancel = preserve_on_cancel
         self._make_folder = make_folder
         self._lock = threading.Lock()
         self._folder: Optional[Path] = None
@@ -468,7 +470,13 @@ class WalkthroughSession:
         The user canceled while it was recorded or transcribed. A Cancel
         during the AI write-up, which runs after the job, keeps it as spoken.
         """
-        from services.walkthrough import document, write_up
+        from services.walkthrough.library import AUDIO_NAME, DRAFT_NAME, write_up_names
+        from services.walkthrough.storage import (
+            DOCX_NAME,
+            MANIFEST_NAME,
+            MARKDOWN_NAME,
+            PDF_NAME,
+        )
 
         self.close()
         with self._lock:
@@ -478,8 +486,8 @@ class WalkthroughSession:
             writer.shutdown(wait=True)
         if folder is None:
             return
-        names = (document.MARKDOWN_NAME, document.PDF_NAME, document.MANIFEST_NAME,
-                 write_up.MARKDOWN_NAME, write_up.PDF_NAME, "draft.json", "audio.wav",
+        names = (MARKDOWN_NAME, PDF_NAME, DOCX_NAME, MANIFEST_NAME,
+                 *write_up_names(), DRAFT_NAME, AUDIO_NAME,
                  "walkthrough.original.json")
         for path in [shot.path for shot in shots] + [folder / name for name in names]:
             path.unlink(missing_ok=True)

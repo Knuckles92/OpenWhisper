@@ -8,6 +8,7 @@ from __future__ import annotations
 import itertools
 import threading
 from collections.abc import Callable
+from contextlib import suppress
 
 from services.desktop_runtime import QCoreApplication, QObject, QThread, pyqtSignal
 from services.native_desktop.serialization import serializable
@@ -132,6 +133,7 @@ class NativeUIController(QObject):
     agent_data_changed = pyqtSignal()
     _audio_level_requested = pyqtSignal()
     _scratchpad_state_changed = pyqtSignal(object)
+    _owner_call_requested = pyqtSignal(object)
 
     def __init__(self, emit: Callable[[str, dict], None], clipboard=None):
         super().__init__()
@@ -165,6 +167,7 @@ class NativeUIController(QObject):
         self._audio_level_queued = False
         self._audio_level_requested.connect(self._flush_audio_level)
         self._scratchpad_state_changed.connect(self._on_scratchpad_state)
+        self._owner_call_requested.connect(self._call_on_owner)
         from services.native_desktop.scratchpad import ScratchpadStore
         self._scratchpad = ScratchpadStore(on_state=self._scratchpad_state_changed.emit)
         self.state["scratchpad"] = self._scratchpad.text
@@ -178,6 +181,23 @@ class NativeUIController(QObject):
             from services.native_desktop.clipboard import NativeClipboard
             self._clipboard = NativeClipboard()
         return self._clipboard
+
+    def call_on_owner(self, callback):
+        if QThread.currentThread() is self.thread():
+            callback()
+        elif not self._closed.is_set():
+            self._owner_call_requested.emit(callback)
+
+    def _call_on_owner(self, callback):
+        callback()
+
+    def cancel_walkthrough_library(self):
+        for entry in list(getattr(self, "_walkthrough_jobs", {}).values()):
+            entry["cancel"].set()
+
+    def set_walkthrough_writing_up(self, active):
+        self.state["walkthrough_live"]["writing_up"] = bool(active)
+        self.emit("walkthrough.state", self.state["walkthrough_live"])
 
     def request_prompt(self, kind, title, message, options, *, default=None, **extra):
         prompt_id = str(next(self._prompt_ids))
@@ -686,6 +706,10 @@ class NativeUIController(QObject):
 
     def cleanup(self):
         self.cancel_prompts()
+        self.cancel_walkthrough_library()
+        for path in getattr(self, "_walkthrough_exports", []):
+            with suppress(OSError):
+                path.unlink(missing_ok=True)
         self._scratchpad.close()
         self._on_scratchpad_state(self._scratchpad.snapshot())
         for session in list(getattr(self, "_snap_sessions", {}).values()):

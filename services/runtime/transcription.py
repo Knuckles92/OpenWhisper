@@ -309,12 +309,12 @@ class TranscriptionRuntime:
         return session if session is not None and session.open else None
 
     def _end_walkthrough(self, *, keep: bool) -> None:
-        """Let go of the walkthrough; its files stay unless the user canceled it."""
+        """Release the session; canceled recoveries keep their draft for another try."""
         with self._job_lock:
             session, self._walkthrough = self._walkthrough, None
         if session is None:
             return
-        if keep:
+        if keep or getattr(session, "preserve_on_cancel", False) is True:
             session.end()
         else:
             session.discard()
@@ -1621,6 +1621,9 @@ class TranscriptionRuntime:
         instructions = resolve_walkthrough_write_up_instructions(settings)
         follow_notes = resolve_walkthrough_write_up_notes(settings)
         cancel = self._write_up_cancel = threading.Event()
+        show_state = getattr(self.controller.ui_controller, "set_walkthrough_writing_up", None)
+        if callable(show_state):
+            show_state(True)
 
         def work():
             try:
@@ -1646,6 +1649,9 @@ class TranscriptionRuntime:
     def on_walkthrough_written_up(self, result) -> None:
         """The write-up came back, failed or was canceled: copy what there is; Qt thread."""
         self._write_up_cancel = None
+        show_state = getattr(self.controller.ui_controller, "set_walkthrough_writing_up", None)
+        if callable(show_state):
+            show_state(False)
         if getattr(self.controller, "_shutting_down", False) is True:
             return
         self._copy_walkthrough(self.controller.ui_controller, result)
@@ -2694,8 +2700,7 @@ class TranscriptionRuntime:
             event_catalog.transcription_failed(job, category, message=error_message),
         )
         if category == event_catalog.FAILURE_CANCELED:
-            # A Cancel throws a walkthrough's screenshots away whenever it
-            # comes, as it does while recording.
+            # Cancel discards new captures while recovered drafts remain retryable.
             self._end_walkthrough(keep=False)
         pending_audio = self.controller._pending_audio_path
         status = self._error_status(error_message, job, refused=refused)

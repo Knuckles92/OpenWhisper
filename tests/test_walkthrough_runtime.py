@@ -281,6 +281,40 @@ def test_recovery_does_not_replace_a_busy_job(h, monkeypatch):
     assert (h.session.folder() / library.AUDIO_NAME).exists()
 
 
+def test_canceling_recovery_keeps_original_draft_audio_screenshots_and_held_notes(h, monkeypatch):
+    from services.walkthrough import library
+
+    h.session.checkpoint_recording("a" * 32)
+    h.session.hold_note(0.25)
+    h.session.release_note(0.5)
+    h.session.add_shot(_image(), 1.0)
+    h.session.saved_shots()
+    _write_recording(h.audio, [_tone(3.0)])
+    h.session.preserve_audio(str(h.audio))
+    folder = h.session.folder()
+    h.session.end()
+    before = {path.name: path.read_bytes() for path in folder.iterdir() if path.is_file()}
+    submitted = []
+    monkeypatch.setattr(h.runtime, "_submit_transcription_job", submitted.append)
+    h.runtime.recover_walkthrough(folder)
+    assert h.runtime._walkthrough.preserve_on_cancel
+
+    def cancel_during_transcription(_path):
+        h.runtime.cancel()
+        return "partial words"
+
+    h.backend.transcribe = cancel_during_transcription
+    h.runtime.transcribe_audio_file(submitted[0])
+
+    assert h.runtime._walkthrough is None
+    assert not h.built and not h.ui.copied_files
+    assert {path.name: path.read_bytes() for path in folder.iterdir() if path.is_file()} == before
+    retried = library.recovery_session(folder)
+    assert retried.storyboard().notes_s == ((0.25, 0.5),)
+    assert len(retried.saved_shots()) == 1
+    retried.end()
+
+
 def test_a_walkthrough_records_like_a_dictation_without_early_decoding(h):
     assert h.runtime.start_walkthrough(h.session)
 

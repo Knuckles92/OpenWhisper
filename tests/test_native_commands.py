@@ -26,6 +26,8 @@ def context(tmp_path, monkeypatch):
     controller.transcription_runtime.recording_walkthrough = None
     controller.is_meeting_active.return_value = False
     controller.transcription_readiness_message.return_value = None
+    controller._acquire_walkthrough_library.return_value = None
+    controller._walkthrough_library_busy = False
     controller.meeting_runtime.meeting_busy.return_value = False
     ui = SimpleNamespace(state={"status": "Ready"}, answer_prompt=Mock())
     result = SimpleNamespace(database=database, history=manager,

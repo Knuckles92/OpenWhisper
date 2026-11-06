@@ -229,7 +229,7 @@ def entries(root: Path) -> list[Path]:
 
 
 def save_review(folder: Path, texts: list[str], keep: list[bool],
-                order: list[int] | None = None) -> WalkthroughResult:
+                order: list[int] | None = None, *, cancel_event=None) -> WalkthroughResult:
     """Regenerate all four documents; keep omitted images and the original manifest.
 
     Every write-up is kept as it is: one written from the old words is still
@@ -269,6 +269,8 @@ def save_review(folder: Path, texts: list[str], keep: list[bool],
         document.write_pdf(staged, stage, document_format=fmt, page_size=page_size)
         write_docx(staged, stage, document_format=fmt, page_size=page_size)
         document.write_manifest(staged, stage)
+        if cancel_event is not None and cancel_event.is_set():
+            raise RuntimeError("canceled")
         if not (folder / "walkthrough.original.json").exists():
             atomic_json(folder / "walkthrough.original.json", read_json(folder / MANIFEST_NAME))
         publish_files(stage, folder, (MARKDOWN_NAME, PDF_NAME, DOCX_NAME, MANIFEST_NAME))
@@ -321,7 +323,8 @@ def write_up_shot(folder: Path, line: str) -> Path | None:
         return None  # not one of this walkthrough's screenshots
 
 
-def save_write_up(folder: Path, text: str, *, version: int | None = None) -> WalkthroughResult:
+def save_write_up(folder: Path, text: str, *, version: int | None = None,
+                  cancel_event=None) -> WalkthroughResult:
     """Rebuild a write-up's Markdown, PDF and Word document from edited Markdown.
 
     ``version`` is an earlier write-up to save in place; None is the latest.
@@ -334,7 +337,8 @@ def save_write_up(folder: Path, text: str, *, version: int | None = None) -> Wal
     if not written_up(folder) or (version is not None
                                   and version not in earlier_write_ups(folder)):
         raise ValueError("This walkthrough has no write-up to save")
-    return _write(load_result(folder, version=version), text.strip(), Look(), version=version)
+    return _write(load_result(folder, version=version), text.strip(), Look(),
+                  version=version, cancel_event=cancel_event)
 
 
 def retry_write_up(folder: Path, *, instructions: str | None = None,
@@ -389,7 +393,8 @@ def recovery_session(folder: Path) -> WalkthroughSession:
         raise ValueError("Unsupported draft version")
     local_file(folder, AUDIO_NAME)
     session = WalkthroughSession(started_at=datetime.fromisoformat(draft["started_at"]),
-                                  make_folder=lambda _: folder)
+                                  make_folder=lambda _: folder, preserve_on_cancel=True)
+    session._journal_id = draft.get("journal_id", "")
     # Reconstitute only successfully written screenshots. No writer is needed.
     from concurrent.futures import Future
     last = 0.0

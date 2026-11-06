@@ -103,6 +103,9 @@ class WalkthroughRuntime:
             self._begin(source)
 
     def _begin(self, source: str) -> None:
+        if getattr(self.controller, "_walkthrough_library_busy", False) is True:
+            self._tell("Wait for the saved walkthrough change to finish before starting another walkthrough")
+            return
         if self.controller._refuse_dictation_during_meeting():
             return
         if self.controller.transcription_runtime.writing_up:

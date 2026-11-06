@@ -89,11 +89,17 @@ def test_canceling_deletes_the_screenshots_but_nothing_else(tmp_path):
     session.saved_shots()
     keep = tmp_path / "capture" / "notes.txt"
     keep.write_text("mine", encoding="utf-8")
+    unrelated_word = tmp_path / "capture" / "my-document.docx"
+    unrelated_word.write_bytes(b"my document")
+    earlier_version = tmp_path / "capture" / "write-up-7.docx"
+    earlier_version.write_bytes(b"a version this recording did not create")
 
     session.discard()
 
     assert not shot.path.exists()
     assert keep.exists()
+    assert unrelated_word.read_bytes() == b"my document"
+    assert earlier_version.read_bytes() == b"a version this recording did not create"
 
 
 def test_canceling_after_the_documents_are_written_deletes_them_too(tmp_path):
@@ -101,8 +107,32 @@ def test_canceling_after_the_documents_are_written_deletes_them_too(tmp_path):
     session.add_shot(_image(), 1.0)
     session.saved_shots()
     folder = tmp_path / "capture"
-    for name in ("walkthrough.md", "walkthrough.pdf", "walkthrough.json", "write-up.md"):
+    for name in (
+        "walkthrough.md", "walkthrough.pdf", "walkthrough.docx", "walkthrough.json",
+        "write-up.md", "write-up.pdf", "write-up.docx", "draft.json", "audio.wav",
+        "walkthrough.original.json",
+    ):
         (folder / name).write_text("written", encoding="utf-8")
+
+    session.discard()
+
+    assert not folder.exists()
+
+
+def test_canceling_works_without_legacy_renderer_filenames(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import services.walkthrough as walkthrough_package
+
+    # The portable native facade has no legacy PDF_NAME/DOCX_NAME exports.
+    # Cleanup must also work without loading either rendering backend.
+    monkeypatch.setattr(
+        walkthrough_package, "document", SimpleNamespace(), raising=False
+    )
+    session = _session(tmp_path)
+    folder = session.folder()
+    (folder / "walkthrough.docx").write_bytes(b"captured words")
+    (folder / "write-up.docx").write_bytes(b"captured write-up")
 
     session.discard()
 

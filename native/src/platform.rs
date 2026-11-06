@@ -227,8 +227,13 @@ pub fn on_close(state: &mut State, tx: &mut Tx) {
 }
 
 pub fn request_quit(state: &mut State) {
+    let document_busy = state.data["snapshot"]["walkthrough_library_busy"] == true;
     if let Some(desktop) = &mut state.desktop {
-        if state.snapshot.recording || state.snapshot.meeting || state.snapshot.busy {
+        if state.snapshot.recording
+            || state.snapshot.meeting
+            || state.snapshot.busy
+            || document_busy
+        {
             desktop.quit_pending = true;
             desktop.app.open();
         } else {
@@ -266,35 +271,43 @@ pub fn quit_confirmation(state: &State, p: &Palette) -> Option<El> {
     if !state.desktop.as_ref().is_some_and(|d| d.quit_pending) {
         return None;
     }
+    let document_only = state.data["snapshot"]["walkthrough_library_busy"] == true
+        && !state.snapshot.recording
+        && !state.snapshot.meeting
+        && !state.snapshot.busy;
+    let title = if document_only {
+        "A document is still being prepared"
+    } else {
+        "A capture is still in progress"
+    };
+    let message = if document_only {
+        "Let the document finish, or cancel unfinished work and quit. Your saved recording remains available."
+    } else {
+        "Finish your capture to save it, or quit and discard the unfinished recording."
+    };
     let body = ui::card(p)
         .key("quit-confirmation")
         .w(440.)
         .max_w(440.)
         .role("dialog")
-        .label("A capture is still in progress")
+        .label(title)
         .modal(false, |s: &mut State| {
             if let Some(d) = &mut s.desktop {
                 d.quit_pending = false;
             }
         })
-        .child(ui::label(
-            "A capture is still in progress",
-            20.,
-            600.,
-            p.ink,
-        ))
-        .child(ui::label(
-            "Finish your capture to save it, or quit and discard the unfinished recording.",
-            13.,
-            400.,
-            p.muted,
-        ))
+        .child(ui::label(title, 20., 600., p.ink))
+        .child(ui::label(message, 13., 400., p.muted))
         .child(
             row()
                 .gap(10.)
                 .child(ui::btn(
                     "keep-openwhisper",
-                    "Keep capturing",
+                    if document_only {
+                        "Keep working"
+                    } else {
+                        "Keep capturing"
+                    },
                     p,
                     true,
                     true,
@@ -306,19 +319,25 @@ pub fn quit_confirmation(state: &State, p: &Palette) -> Option<El> {
                 ))
                 .child(ui::btn(
                     "quit-openwhisper",
-                    "Discard and quit",
+                    if document_only {
+                        "Cancel and quit"
+                    } else {
+                        "Discard and quit"
+                    },
                     p,
                     false,
                     true,
                     |s, _| {
-                        s.command(
-                            if s.snapshot.mode == "walkthrough" {
-                                "walkthrough.cancel"
-                            } else {
-                                "record.cancel"
-                            },
-                            json!({}),
-                        );
+                        if s.snapshot.recording || s.snapshot.meeting || s.snapshot.busy {
+                            s.command(
+                                if s.snapshot.mode == "walkthrough" {
+                                    "walkthrough.cancel"
+                                } else {
+                                    "record.cancel"
+                                },
+                                json!({}),
+                            );
+                        }
                         finish_quit(s);
                     },
                 )),

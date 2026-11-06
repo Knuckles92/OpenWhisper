@@ -164,8 +164,8 @@ def test_scratchpad_update_survives_immediate_quit_and_service_relaunch(start_na
     notes.write_bytes(original.encode())
     first = start_native(folder)
     first.ready()
-    first.send({"id": 1, "method": "snapshot"})
-    assert first.response(1)["result"]["scratchpad"] == "Notes from the classic desktop\n"
+    first.send({"id": 1, "method": "scratchpad.get"})
+    assert first.response(1)["result"]["text"] == "Notes from the classic desktop\n"
     newest = "Newest scratchpad\n日本語 café 🙂"
     first.send({"id": 2, "method": "scratchpad.update", "params": {"text": newest}})
     assert first.response(2)["result"] == {"ok": True}
@@ -175,11 +175,31 @@ def test_scratchpad_update_survives_immediate_quit_and_service_relaunch(start_na
     assert notes.read_bytes() == newest.encode("utf-8")
     second = start_native(folder)
     second.ready()
-    second.send({"id": 4, "method": "snapshot"})
-    assert second.response(4)["result"]["scratchpad"] == newest
+    second.send({"id": 4, "method": "scratchpad.get"})
+    assert second.response(4)["result"]["text"] == newest
     second.send({"id": 5, "method": "app.quit"})
     second.response(5)
     second.exited()
+
+
+def test_idle_snapshots_do_not_repeat_large_scratchpad_notes(start_native, tmp_path):
+    folder = tmp_path / "large-notes"
+    folder.mkdir()
+    text = "日本語 café 🙂\n" * 25000
+    (folder / "scratchpad.txt").write_text(text, encoding="utf-8")
+    native = start_native(folder)
+    native.ready()
+    for request_id in range(1, 4):
+        native.send({"id": request_id, "method": "snapshot"})
+        snapshot = native.response(request_id)["result"]
+        assert "scratchpad" not in snapshot
+        assert snapshot["scratchpad_save"]["loaded"]
+        assert len(json.dumps(snapshot)) < 64 * 1024
+    native.send({"id": 4, "method": "scratchpad.get"})
+    assert native.response(4)["result"]["text"] == text
+    native.send({"id": 5, "method": "app.quit"})
+    assert native.response(5)["result"]["ok"]
+    native.exited()
 
 
 def test_quit_rejects_unsaved_notes_until_failed_write_can_be_retried(tmp_path):
@@ -209,8 +229,10 @@ _COMMANDS['_test.notes.recover'] = recover_notes
         assert native.process.poll() is None
         native.send({"id": 4, "method": "snapshot"})
         snapshot = native.response(4)["result"]
-        assert snapshot["scratchpad"] == "Keep these unsaved words"
+        assert "scratchpad" not in snapshot
         assert snapshot["scratchpad_save"]["dirty"]
+        native.send({"id": 7, "method": "scratchpad.get"})
+        assert native.response(7)["result"]["text"] == "Keep these unsaved words"
         native.send({"id": 5, "method": "_test.notes.recover"})
         native.response(5)
         native.send({"id": 6, "method": "app.quit"})
@@ -252,6 +274,46 @@ def test_valid_unicode_scratchpad_larger_than_one_megabyte_roundtrips(start_nati
     native.send({"id": 3, "method": "app.quit"})
     native.response(3)
     native.exited()
+
+
+@pytest.mark.parametrize("request_quit", [True, False], ids=["app-quit", "pipe-eof"])
+def test_shutdown_cancels_live_write_up_before_joining_its_executor(tmp_path, request_quit):
+    source = SOURCE.replace("_COMMANDS['_test.prompt'] = prompt", """
+_COMMANDS['_test.prompt'] = prompt
+def live_write_up(context, params):
+    import threading
+    from pathlib import Path
+    from config import data_root
+    cancel = threading.Event()
+    entered = threading.Event()
+    context.controller.transcription_runtime._write_up_cancel = cancel
+    context.ui.set_walkthrough_writing_up(True)
+    def work():
+        entered.set()
+        if not cancel.wait(5):
+            raise RuntimeError('The live write-up was joined without cancellation')
+        (Path(data_root()) / 'write-up-settled').write_text('canceled', encoding='utf-8')
+    context.controller.walkthrough_executor.submit(work)
+    assert entered.wait(2)
+    return {'ok': True}
+_COMMANDS['_test.live_write_up'] = live_write_up
+""")
+    folder = tmp_path / "data"
+    native = NativeProcess(folder, tmp_path / "stderr.log", source=source)
+    try:
+        native.ready()
+        native.send({"id": 1, "method": "_test.live_write_up"})
+        assert native.response(1)["result"]["ok"]
+        if request_quit:
+            native.send({"id": 2, "method": "app.quit"})
+            assert native.response(2)["result"]["ok"]
+            assert (folder / "write-up-settled").read_text(encoding="utf-8") == "canceled"
+        else:
+            native.process.stdin.close()
+        native.exited()
+        assert (folder / "write-up-settled").read_text(encoding="utf-8") == "canceled"
+    finally:
+        native.close()
 
 
 def test_native_rpc_and_app_quit_exit_cleanly_with_parent_pipe_still_open(start_native):

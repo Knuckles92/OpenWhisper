@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from . import collections, helpers, history, meetings, models, settings, system, walkthroughs
+from . import calendar, collections, helpers, history, history_remote, meetings, models, settings, system, walkthroughs
 from .common import boolean, changed, identifier, integer, serializable, string
 
 
@@ -268,6 +268,7 @@ _COMMANDS = {
     "components.cancel": _component_action("cancel_component_install"),
     "history.list": history.list_entries, "history.detail": history.detail, "history.update": history.update,
     "history.delete": history.delete, "history.export": history.export, "history.playback": history.playback,
+    "history.retranscribe": history.retranscribe, "history.audio.get": history.audio_get,
     "meetings.list": meetings.list_meetings, "meetings.detail": meetings.detail, "meetings.update": meetings.update,
     "meetings.current": meetings.current,
     "meetings.delete": meetings.delete, "meetings.export": meetings.export, "meetings.retry": meetings.retry,
@@ -280,6 +281,13 @@ _COMMANDS = {
     "walkthroughs.list": walkthroughs.list_walkthroughs, "walkthroughs.detail": walkthroughs.detail,
     "walkthroughs.review": walkthroughs.review, "walkthroughs.delete": walkthroughs.delete,
     "walkthroughs.export": walkthroughs.export, "walkthroughs.retention": walkthroughs.retention,
+    "walkthroughs.write_up.save": walkthroughs.save_write_up,
+    "walkthroughs.write_up.retry": walkthroughs.retry_write_up,
+    "walkthroughs.write_up.cancel": walkthroughs.cancel_write_up,
+    "walkthroughs.recover": walkthroughs.recover,
+    "walkthroughs.styles": walkthroughs.styles,
+    "walkthroughs.copy": walkthroughs.copy_document,
+    "walkthroughs.screenshot.copy": walkthroughs.copy_screenshot,
     "walkthrough.toggle": _walkthrough_control("toggle"), "walkthrough.snap": _walkthrough_control("snap"),
     "walkthrough.finish": _walkthrough_control("finish"), "walkthrough.cancel": _walkthrough_control("cancel"),
     "walkthrough.undo": _walkthrough_control("undo_last_shot"), "walkthrough.pause": _walkthrough_pause,
@@ -294,6 +302,8 @@ _COMMANDS = {
 
 _COMMANDS.update(system.COMMANDS)
 _COMMANDS.update(helpers.COMMANDS)
+_COMMANDS.update(calendar.COMMANDS)
+_COMMANDS.update(history_remote.COMMANDS)
 
 
 def dispatch(context, method: str, params: dict | None = None):

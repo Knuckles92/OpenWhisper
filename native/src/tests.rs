@@ -100,6 +100,20 @@ fn stale_library_response_does_not_replace_the_open_review() {
 }
 
 #[test]
+fn late_version_response_and_error_do_not_replace_a_newer_view_of_the_same_document() {
+    let mut s = State::new();
+    s.selected_item = Some("saved-walkthrough".into());
+    s.receive("walkthroughs.detail", json!({"id":20,"result":{"id":"saved-walkthrough","version":2,"spoken":false,"title":"Version two"}}));
+    assert!(!s.receive("walkthroughs.detail", json!({"id":19,"result":{"id":"saved-walkthrough","version":1,"spoken":false,"title":"Version one"}})));
+    assert!(!s.receive(
+        "walkthroughs.detail",
+        json!({"id":18,"error":"The older request failed"})
+    ));
+    assert_eq!(s.data["walkthroughs.detail"]["version"], 2);
+    assert!(s.error.is_none());
+}
+
+#[test]
 fn meeting_acknowledgments_update_live_and_saved_views_and_explain_rejections() {
     let mut s = State::new();
     s.selected_item = Some("meeting-1".into());

@@ -1,5 +1,5 @@
 use super::super::library::{
-    collection_pager, collection_search, confirm_delete, empty, export_item, field, value,
+    collection_pager, collection_search, confirm_delete, empty, field, value,
 };
 use crate::state::State;
 use crate::ui::{self, Palette, btn, card, divider, eyebrow, label, link, page_header};
@@ -7,6 +7,8 @@ use rune::{El, SurfaceFit, col, el, icon, row};
 use serde_json::json;
 
 const STEPS_PER_PAGE: usize = 6;
+mod library_tools;
+pub use library_tools::{walkthrough_block_navigation, walkthrough_event, walkthrough_response};
 
 fn gallery_page(s: &State, key: &str, count: usize) -> usize {
     (s.data[key].as_u64().unwrap_or(0) as usize).min(count.saturating_sub(1) / STEPS_PER_PAGE)
@@ -63,7 +65,16 @@ pub(super) fn reload_gallery(s: &mut State) {
     } else {
         "walkthrough.live.page"
     };
-    let page = s.data[key].as_u64().unwrap_or(0) as usize;
+    let count = if saved {
+        s.data["walkthroughs.detail"]["steps"]
+            .as_array()
+            .map_or(0, Vec::len)
+    } else {
+        s.data["snapshot"]["walkthrough_live"]["shots"]
+            .as_array()
+            .map_or(0, Vec::len)
+    };
+    let page = gallery_page(s, key, count);
     load_gallery(
         s,
         page,
@@ -147,18 +158,87 @@ fn screenshot(s: &State, p: &Palette, path: &str, key: &str) -> El {
         }
     }
     if !path.is_empty() {
-        panel = panel.child(link(
-            format!("{key}-open"),
-            "Open screenshot",
-            p,
-            move |s, _| {
-                if let Err(error) = crate::platform::open_path(&path) {
-                    s.error = Some(error);
-                }
-            },
-        ));
+        let copy_path = path.clone();
+        panel = panel.child(
+            row()
+                .gap(10.)
+                .flex_wrap()
+                .child(link(
+                    format!("{key}-open"),
+                    "Open screenshot",
+                    p,
+                    move |s, _| {
+                        if let Err(error) = crate::platform::open_path(&path) {
+                            s.error = Some(error);
+                        }
+                    },
+                ))
+                .child(if let Some(id) = s.selected_item.clone() {
+                    let filename = std::path::Path::new(&copy_path)
+                        .file_name()
+                        .and_then(|p| p.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    btn(
+                        format!("{key}-copy"),
+                        "Copy screenshot",
+                        p,
+                        false,
+                        !s.pending,
+                        move |s, _| {
+                            s.command(
+                                "walkthroughs.screenshot.copy",
+                                json!({"id":id,"filename":filename}),
+                            )
+                        },
+                    )
+                } else {
+                    el()
+                }),
+        );
     }
     panel
+}
+
+fn live_writeup_status(s: &State, p: &Palette) -> El {
+    if s.data["snapshot"]["walkthrough_live"]["writing_up"] != true {
+        return el();
+    }
+    card(p).key("walkthrough-live-writing-up").fill(p.accent_soft)
+        .child(label("Writing up your walkthrough…",17.,550.,p.ink))
+        .child(label("The spoken document is saved. You can keep using dictation while the write-up finishes.",12.,400.,p.muted))
+        .child(btn("walkthrough-cancel-live-writeup","Cancel this write-up",p,false,!s.pending,|s,_|s.command("walkthrough.cancel",json!({}))))
+}
+
+fn step_context(step: &serde_json::Value, p: &Palette) -> El {
+    let mut context = col().gap(6.);
+    if let Some(seconds) = step["kept_at_s"].as_f64() {
+        let seconds = seconds.max(0.) as u64;
+        context = context.child(label(
+            format!("Captured at {}:{:02}", seconds / 60, seconds % 60),
+            10.5,
+            400.,
+            p.muted,
+        ));
+    }
+    for note in step["notes"].as_array().into_iter().flatten() {
+        let text = note.as_str().unwrap_or_else(|| value(note, "text", ""));
+        if !text.is_empty() {
+            context = context.child(
+                card(p)
+                    .padding(12.)
+                    .fill(p.accent_soft)
+                    .child(label(
+                        "Note for the agent · not in the document",
+                        10.5,
+                        550.,
+                        p.accent,
+                    ))
+                    .child(label(text, 12., 400., p.ink).selectable(true)),
+            );
+        }
+    }
+    context
 }
 
 pub fn walkthrough(s: &State, p: &Palette) -> El {
@@ -209,6 +289,12 @@ pub fn walkthrough(s: &State, p: &Palette) -> El {
                 ),
             );
         }
+        if live["writing_up"] == true {
+            review = review.child(live_writeup_status(s, p));
+        }
+        if library_tools::has_ready_offer(s) {
+            review = review.child(library_tools::ready_offer(s, p));
+        }
         return review.child(walkthrough_detail(s, p, id));
     }
     let mut control = card(p).key("walkthrough-card").padding(26.).gap(20.).fill(p.soft)
@@ -220,7 +306,7 @@ pub fn walkthrough(s: &State, p: &Palette) -> El {
         .child(divider(p))
         .child(row().gap(9.).flex_wrap()
             .child(btn("walkthrough-toggle", if active { "Finish walkthrough" } else { "Start walkthrough" }, p, true,
-                s.available() && !s.pending && (active || !s.working()), |s, _| s.command("walkthrough.toggle", json!({}))))
+                s.available() && !s.pending && (active || (!s.working()&&!library_tools::library_busy(s)&&live["writing_up"]!=true)), |s, _| s.command("walkthrough.toggle", json!({}))))
             .child(btn("walkthrough-snap", "Capture screenshot", p, false, active && !s.pending, |s, _| s.command("walkthrough.snap", json!({}))))
             .child(btn("walkthrough-pause", if paused { "Resume" } else { "Pause" }, p, false, active && !s.pending,
                 move |s, _| s.command("walkthrough.pause", json!({"paused":!paused}))))
@@ -316,14 +402,26 @@ pub fn walkthrough(s: &State, p: &Palette) -> El {
                 ),
         );
     }
-    let mut content = col()
-        .gap(24.)
-        .child(page_header(
-            "Show it. Say it. Save it.",
-            "Turn a spoken walkthrough and screenshots into a document worth sharing.",
-            p,
-        ))
-        .child(control);
+    if library_tools::library_busy(s) && !active {
+        control = control.child(label(
+            "A saved walkthrough is being updated. You can keep using dictation while it finishes.",
+            12.,
+            400.,
+            p.muted,
+        ));
+    }
+    let mut content = col().gap(24.).child(page_header(
+        "Show it. Say it. Save it.",
+        "Turn a spoken walkthrough and screenshots into a document worth sharing.",
+        p,
+    ));
+    if live["writing_up"] == true {
+        content = content.child(live_writeup_status(s, p));
+    }
+    if library_tools::has_ready_offer(s) {
+        content = content.child(library_tools::ready_offer(s, p));
+    }
+    content = content.child(control);
     if active {
         let mut steps = card(p).key("walkthrough-live-steps").gap(17.).child(
             row()
@@ -498,7 +596,11 @@ pub fn walkthrough(s: &State, p: &Palette) -> El {
                             ),
                     )
                     .child(label(
-                        format!("{} steps", item["step_count"].as_u64().unwrap_or(0)),
+                        if item["status"] == "draft" {
+                            "Interrupted draft".into()
+                        } else {
+                            format!("{} steps", item["step_count"].as_u64().unwrap_or(0))
+                        },
                         10.,
                         450.,
                         p.muted,
@@ -512,6 +614,7 @@ pub fn walkthrough(s: &State, p: &Palette) -> El {
             "Saved walkthroughs and their screenshots will be ready to review here.",
         ));
     }
+    content = content.child(library_tools::retention(s, p));
     content =
         content.child(library.child(collection_pager(s, p, "walkthroughs", "walkthrough-query")));
     content
@@ -527,12 +630,14 @@ fn walkthrough_detail(s: &State, p: &Palette, id: &str) -> El {
     let copy = markdown.clone();
     let delete_id = id.to_string();
     let delete_title = title.to_string();
+    let mutable = !library_tools::dirty(s, id) && !library_tools::busy(s, id) && !s.pending;
+    let clean = mutable && detail["status"] != "draft" && value(detail, "error", "").is_empty();
     let mut actions = row().gap(7.).flex_wrap().child(btn(
         "copy-walkthrough",
-        "Copy document",
+        "Copy text",
         p,
         true,
-        !markdown.is_empty(),
+        !markdown.is_empty() && clean,
         move |s, tx| {
             tx.copy(copy.clone());
             s.notice = Some("Walkthrough copied".into());
@@ -550,8 +655,12 @@ fn walkthrough_detail(s: &State, p: &Palette, id: &str) -> El {
             title,
             p,
             false,
-            !s.pending,
-            move |s, tx| export_item(s, tx, "walkthroughs", id.clone(), format),
+            clean
+                && (format == "zip"
+                    || detail["exports"].as_array().is_some_and(|formats| {
+                        formats.iter().any(|entry| entry.as_str() == Some(format))
+                    })),
+            move |s, tx| library_tools::export_version(s, tx, id.clone(), format),
         ));
     }
     let mut panel = card(p)
@@ -564,13 +673,23 @@ fn walkthrough_detail(s: &State, p: &Palette, id: &str) -> El {
                 .child(eyebrow("WALKTHROUGH REVIEW", p))
                 .child(el().grow(1.))
                 .child(link("close-walkthrough-detail", "Close", p, |s, _| {
-                    s.selected_item = None;
-                    s.confirmation = None;
-                    s.selected_tab.clear();
+                    library_tools::request_action(s, json!({"kind":"close"}))
                 })),
         )
         .child(label(title, 23., 500., p.ink))
         .child(actions)
+        .child(library_tools::document_actions(s, p, id, detail));
+    if detail["is_draft"] == true
+        || detail["status"] == "draft"
+        || detail["can_recover"] == true
+        || !value(detail, "error", "").is_empty()
+    {
+        panel = panel.child(library_tools::draft_recovery(s, p, id, detail));
+    }
+    if library_tools::has_job_status(s, id) {
+        panel = panel.child(library_tools::job_status(s, p, id));
+    }
+    panel=panel.child(library_tools::version_picker(s,p,id,detail))
         .child(
             row()
                 .gap(8.)
@@ -579,24 +698,24 @@ fn walkthrough_detail(s: &State, p: &Palette, id: &str) -> El {
                     "walkthrough-steps-tab",
                     "Steps & screenshots",
                     p,
-                    s.selected_tab != "walkthrough-document",
+                    !matches!(s.selected_tab.as_str(),"walkthrough-document"|"walkthrough-writeup-edit"),
                     true,
-                    |s, _| s.selected_tab = "walkthrough-steps".into(),
+                    |s, _| library_tools::request_action(s,json!({"kind":"tab","tab":"walkthrough-steps"})),
                 ))
                 .child(btn(
                     "walkthrough-document-tab",
                     "Document",
                     p,
-                    s.selected_tab == "walkthrough-document",
+                    matches!(s.selected_tab.as_str(),"walkthrough-document"|"walkthrough-writeup-edit"),
                     true,
-                    |s, _| s.selected_tab = "walkthrough-document".into(),
+                    |s, _| library_tools::request_action(s,json!({"kind":"tab","tab":"walkthrough-document"})),
                 ))
                 .child(btn(
                     "walkthrough-review-edit",
-                    "Edit walkthrough",
+                    "Edit spoken steps",
                     p,
                     false,
-                    !s.pending
+                    clean&&detail["spoken"]==true
                         && detail["steps"]
                             .as_array()
                             .is_some_and(|steps| !steps.is_empty()),
@@ -614,19 +733,30 @@ fn walkthrough_detail(s: &State, p: &Palette, id: &str) -> El {
                                 value(step, "text", "").to_string();
                         }
                         s.data["walkthrough.review.draft"] =
-                            json!({"order":(0..steps.len()).collect::<Vec<_>>(),"keep":keep});
+                            json!({"id":s.selected_item,"order":(0..steps.len()).collect::<Vec<_>>(),"keep":keep});
                         s.data["walkthrough.gallery.page"] = json!(0);
                         s.selected_tab = "walkthrough-edit".into();
                     },
                 ))
-                .child(link("delete-walkthrough", "Delete", p, move |s, _| {
+                .child(btn("walkthrough-edit-writeup","Edit write-up",p,false,clean&&detail["written_up"]==true&&detail["spoken"]!=true,{
+                    let id=id.to_string();move|s,_|library_tools::edit_writeup(s,&id)
+                }))
+                .child(btn("delete-walkthrough", "Delete", p, false, mutable, move |s, _| {
                     s.confirmation =
                         Some(json!({"scope":"walkthroughs","id":delete_id,"title":delete_title}))
                 })),
         )
-        .child(divider(p));
-    if s.selected_tab == "walkthrough-edit" {
-        panel = panel.child(review_editor(s, p, id, detail));
+        .child(divider(p))
+        .child(library_tools::unsaved_confirmation(s,p));
+    if s.selected_tab == "walkthrough-writeup-edit" {
+        panel = panel.child(library_tools::writeup_editor(s, p, id));
+    } else if s.selected_tab == "walkthrough-edit" {
+        let editor = review_editor(s, p, id, detail);
+        panel = panel.child(if library_tools::busy(s, id) {
+            editor.inert()
+        } else {
+            editor
+        });
     } else if s.selected_tab == "walkthrough-document" {
         panel = panel.child(if !markdown.is_empty() {
             super::super::library::markdown(&markdown, p)
@@ -678,13 +808,20 @@ fn walkthrough_detail(s: &State, p: &Palette, id: &str) -> El {
                     } else {
                         el()
                     })
-                    .child(label(value(step, "text", ""), 13., 400., p.ink).selectable(true)),
+                    .child(label(value(step, "text", ""), 13., 400., p.ink).selectable(true))
+                    .child(step_context(step, p)),
             );
         }
     } else {
         panel = panel.child(super::super::library::markdown(&markdown, p));
     }
-    panel.child(confirm_delete(s, p, "walkthroughs"))
+    panel
+        .child(library_tools::retry_controls(s, p, id, detail))
+        .child(if library_tools::busy(s, id) {
+            el()
+        } else {
+            confirm_delete(s, p, "walkthroughs")
+        })
 }
 
 fn review_editor(s: &State, p: &Palette, id: &str, detail: &serde_json::Value) -> El {
@@ -774,6 +911,7 @@ fn review_editor(s: &State, p: &Palette, id: &str, detail: &serde_json::Value) -
                     value(step, "image_path", ""),
                     &format!("review-step-{index}"),
                 ))
+                .child(step_context(step, p))
                 .child(field(
                     s,
                     p,
@@ -795,20 +933,28 @@ fn review_editor(s: &State, p: &Palette, id: &str, detail: &serde_json::Value) -
                 true,
                 !s.pending,
                 move |s, _| {
-                    let count = s.data["walkthroughs.detail"]["steps"]
+                    let draft = s.data["walkthrough.review.draft"].clone();
+                    let order: Vec<_> = draft["order"]
                         .as_array()
-                        .map_or(0, Vec::len);
-                    let texts: Vec<_> = (0..count)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|index| index.as_u64().map(|index| index as usize))
+                        .collect();
+                    let texts: Vec<_> = order
+                        .iter()
                         .map(|index| {
                             s.edit(&format!("walkthrough-edit-step-{index}"))
                                 .text
                                 .clone()
                         })
                         .collect();
-                    let draft = s.data["walkthrough.review.draft"].clone();
+                    let keep: Vec<_> = order
+                        .iter()
+                        .map(|index| draft["keep"][*index].as_bool().unwrap_or(true))
+                        .collect();
                     s.command(
                         "walkthroughs.review",
-                        json!({"id":id,"texts":texts,"keep":draft["keep"],"order":draft["order"]}),
+                        json!({"id":id,"texts":texts,"keep":keep,"order":order}),
                     );
                 },
             ))
@@ -818,7 +964,12 @@ fn review_editor(s: &State, p: &Palette, id: &str, detail: &serde_json::Value) -
                 p,
                 false,
                 true,
-                |s, _| s.selected_tab = "walkthrough-steps".into(),
+                |s, _| {
+                    library_tools::request_action(
+                        s,
+                        json!({"kind":"tab","tab":"walkthrough-steps"}),
+                    )
+                },
             )),
     )
 }

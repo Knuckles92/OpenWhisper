@@ -13,6 +13,10 @@ mod studio;
 
 pub use capture::{files, meetings, walkthrough};
 pub use capture::{meeting_tools_demo, meeting_tools_demo_command, meeting_tools_response};
+pub use capture::{walkthrough_block_navigation, walkthrough_event, walkthrough_response};
+pub use library::calendar_demo;
+pub use library::calendar_refresh;
+pub use library::calendar_response;
 pub use library::history;
 pub use library::{library_demo, library_demo_command};
 pub use scratchpad::scratchpad;

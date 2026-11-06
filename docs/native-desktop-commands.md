@@ -80,6 +80,23 @@ versions, title/text edits, retained audio, and TXT/Markdown/JSON/SRT export.
 Detail/playback resolve only safe retained recording paths. Remote-owned
 history refuses unsupported local edits.
 
+`history.calendar.get` reuses the local-day calendar index for merged
+dictation/file/meeting navigation, month/year picking, kind/place filters,
+streaks, milestones, and a paginated selected-day agenda. Paired-host listing
+runs asynchronously and emits `history.calendar.loaded`; native state accepts
+only the current request ID. `history.calendar.open` opens a transcript or
+checks out a host-only meeting before emitting `history.calendar.opened`.
+Reopening the calendar selects today; filters retain the selected day.
+
+`history.remote.get` performs the host's full-text search independently of
+local SQLite browsing and emits `history.remote.loaded`. It preserves its own
+query/page, omits duplicate local copies, labels the host, and explains the
+host protocol's newest-500-match limit. Host transcripts support detail,
+export, and host-targeted deletion. `history.audio.get` fetches retained host
+audio asynchronously; `history.retranscribe` uses a validated local or fetched
+recording. `history.update {id,version:"original"|"ai"}` persists the chosen
+text version without creating a duplicate entry.
+
 `meeting.start` takes `capture_mode` (`mic` or `both`), optional
 `cloud_enabled`, `system_audio_policy` (`disabled`, `auto`, `required`), and
 `intent`/`title`. Runtime capture/privacy prompts remain authoritative.
@@ -100,6 +117,21 @@ Walkthrough capture controls include pause, undo, screenshot removal/move,
 note hold, and region/window/screen/delayed modes. `walkthroughs.list/detail`
 read safe saved manifests. `walkthroughs.review` takes matching `texts`,
 `keep`, and optional zero-based `order` arrays and rebuilds saved documents.
+The text and inclusion arrays follow displayed order; each `order` entry names
+its original saved section, preserving screenshot/text/held-note associations.
+Detail, exports, and file-copy commands accept `spoken` and an optional earlier
+write-up `version`. `walkthroughs.write_up.save/retry/cancel`, `.styles`,
+`.recover`, `.copy_document`, `.copy_screenshot`, and `.retention` expose the
+complete saved-document workflow. Retention pruning requires confirmation and
+keeps interrupted drafts.
+
+Document mutations return an operation ID immediately. `walkthroughs.operation`
+events report completion/failure/cancellation; `walkthroughs.busy` protects
+competing document work and quit while ordinary dictation remains available.
+Work holds the controller's library lease, renders before publication, and
+cancels before committing. Quit cancels and joins document workers before its
+acknowledgment. Failed/canceled recovery preserves the original draft and audio.
+
 Exports include TXT, JSON, Markdown, PDF, DOCX, and a portable ZIP. A Markdown
 export with `path` copies referenced screenshots into a sibling assets folder
 and rewrites image links; an export without `path` returns its asset manifest.

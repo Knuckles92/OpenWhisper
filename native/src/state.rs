@@ -131,6 +131,7 @@ pub struct State {
     pub desktop: Option<crate::platform::Desktop>,
     refresh_at: HashMap<String, Instant>,
     last_params: HashMap<String, Value>,
+    latest_query_ids: HashMap<String, u64>,
 }
 
 impl State {
@@ -169,6 +170,7 @@ impl State {
             desktop: None,
             refresh_at: HashMap::new(),
             last_params: HashMap::new(),
+            latest_query_ids: HashMap::new(),
         };
         if state.demo {
             demo(&mut state);
@@ -209,17 +211,39 @@ impl State {
             .or_insert_with(|| TextEdit::new(value))
     }
     fn refresh(&mut self, method: &str) {
+        let interval = if method == "snapshot" {
+            std::time::Duration::from_millis(40)
+        } else {
+            std::time::Duration::from_secs(1)
+        };
         if self
             .refresh_at
             .get(method)
-            .is_some_and(|last| last.elapsed() < std::time::Duration::from_secs(1))
+            .is_some_and(|last| last.elapsed() < interval)
         {
             return;
         }
         self.refresh_at.insert(method.into(), Instant::now());
-        self.command(method, json!({}));
+        // Background updates retain query filters and the user's current
+        // message. A model/progress event must not dismiss a recoverable error.
+        if !self.demo {
+            if let Some(client) = &self.client {
+                let params = self.last_params.get(method).cloned().unwrap_or(json!({}));
+                match client.send(method, params) {
+                    Ok(id) => {
+                        self.latest_query_ids.insert(method.into(), id);
+                    }
+                    Err(error) if self.error.is_none() => self.error = Some(error),
+                    Err(_) => {}
+                }
+            }
+        }
     }
     pub fn navigate(&mut self, page: Page) {
+        if self.page == Page::Walkthrough && crate::pages::walkthrough_block_navigation(self, page)
+        {
+            return;
+        }
         if self.page == Page::Screenshot && page != Page::Screenshot {
             self.data["screenshot.next_page"] = json!(page.key());
             crate::pages::finish_screenshot(self, true);
@@ -271,7 +295,30 @@ impl State {
     }
     pub fn receive_event(&mut self, event: &str, data: Value, tx: &mut rune::Tx) -> bool {
         self.data["events"][event] = data.clone();
+        crate::pages::walkthrough_event(self, event, &data);
+        if event == "history.calendar.opened" {
+            crate::pages::calendar_response(self, "history.calendar.open", &data);
+        }
+        if matches!(event, "history.calendar.loaded" | "history.remote.loaded") {
+            crate::pages::calendar_response(self, event, &data);
+        }
+        if matches!(event, "history.changed" | "meetings.changed") {
+            crate::pages::calendar_refresh(self);
+        }
         match event {
+            "walkthroughs.busy" => {
+                self.data["snapshot"]["walkthrough_library_busy"] = data["busy"].clone();
+            }
+            "recording.started" => {
+                self.snapshot.transcript.clear();
+                self.snapshot.raw.clear();
+                self.snapshot.preview.clear();
+                self.refresh("snapshot");
+            }
+            "overlay.state" | "engine.busy" | "engine.state" | "meeting.state"
+            | "walkthrough.state" => {
+                self.refresh("snapshot");
+            }
             "prompt" => {
                 self.data["prompt"] = data.clone();
                 self.data["dismissed_prompt"] = Value::Null;
@@ -406,9 +453,15 @@ impl State {
             if !read_command(method) {
                 self.pending = true;
             }
-            if client.send(method, params).is_err() {
-                self.pending = false;
-                self.error = Some("The audio service disconnected. Close this window and launch OpenWhisper again.".into());
+            match client.send(method, params) {
+                Ok(id) if read_command(method) => {
+                    self.latest_query_ids.insert(method.into(), id);
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    self.pending = false;
+                    self.error = Some("The audio service disconnected. Close this window and launch OpenWhisper again.".into());
+                }
             }
         } else {
             self.error = Some("The audio service is still starting. Try again in a moment.".into());
@@ -434,6 +487,15 @@ impl State {
         self.notice = None;
     }
     pub fn receive(&mut self, method: &str, response: Value) -> bool {
+        if read_command(method) {
+            if let Some(id) = response["id"].as_u64() {
+                let latest = self.latest_query_ids.entry(method.into()).or_default();
+                if id < *latest {
+                    return false;
+                }
+                *latest = id;
+            }
+        }
         if !read_command(method) {
             self.pending = false;
         }
@@ -456,6 +518,8 @@ impl State {
         }
         crate::pages::settings_response(self, method, result);
         crate::pages::meeting_tools_response(self, method, result);
+        crate::pages::walkthrough_response(self, method, result);
+        crate::pages::calendar_response(self, method, result);
         if method != "snapshot" {
             self.data[method] = result.clone();
         }
@@ -544,12 +608,6 @@ impl State {
                 self.command("meetings.detail", json!({"id":id}));
             }
         }
-        if method == "walkthroughs.review" {
-            self.selected_tab = "walkthrough-steps".into();
-            if let Some(id) = self.selected_item.clone() {
-                self.command("walkthroughs.detail", json!({"id":id}));
-            }
-        }
         if method.starts_with("meetings.") && result["item"].is_object() {
             if self.selected_item.as_deref() == result["item"]["id"].as_str() {
                 self.data["meetings.detail"] = result["item"].clone();
@@ -577,7 +635,7 @@ impl State {
                 );
             }
         }
-        if method.ends_with(".delete") {
+        if method.ends_with(".delete") && result["operation"]["status"] != "running" {
             self.confirmation = None;
             if method == "history.delete" {
                 self.selected = None;
@@ -715,6 +773,10 @@ pub static SCENES: &[(&str, fn(&mut State))] = &[
         s.page = Page::History;
         s.selected = Some("demo-0".into());
         s.demo_command("history.detail", json!({}));
+    }),
+    ("calendar", |s| {
+        demo(s);
+        crate::pages::calendar_demo(s);
     }),
     ("settings", |s| {
         demo(s);

@@ -17,8 +17,20 @@ def _database(context):
 def _entry(context, params):
     entry = _database(context).get_history_entry_by_id(identifier(params))
     if entry is None:
-        raise ValueError("History entry was not found.")
+        from services.history_manager import remote_history_entry
+        remote = _records(context).remote_item("dictation", identifier(params))
+        if remote is None:
+            raise ValueError("History entry was not found.")
+        entry = remote_history_entry(remote)
     return entry
+
+
+def _records(context):
+    records = getattr(context, "record_sync", None)
+    if records is None:
+        from services.remote_records.sync import record_sync
+        records = record_sync
+    return records
 
 
 def _row(context, entry, *, detail=False):
@@ -26,14 +38,20 @@ def _row(context, entry, *, detail=False):
     from services.history_manager import entry_version, kind_of, is_local_entry
     row = serialize_history_entry(entry)
     text = row.get("text") or ""
+    remote = bool(getattr(entry, "stored_on", None))
+    playback = getattr(context, "_native_history_audio", {}).get(entry.id) if remote else _playback_path(context, row.get("audio_file"))
+    if playback and not Path(playback).is_file():
+        playback = None
     row.update({"title": row.get("title") or row.get("source_name") or "Untitled transcript",
                 "preview": text[:220], "duration": row.get("audio_duration") or 0,
                 "kind": kind_of(entry), "words": len(text.split()),
-                "audio_available": bool(_playback_path(context, row.get("audio_file"))),
+                "audio_available": bool(getattr(entry, "remote_audio", False)) if remote else bool(playback),
+                "remote": remote, "stored_on": str(getattr(entry, "stored_on", "") or ""),
+                "can_delete": remote or is_local_entry(entry),
                 "version": entry_version(entry), "editable": is_local_entry(entry)})
     if detail:
         row["raw"] = row.get("raw_text") or text
-        row["playback_path"] = _playback_path(context, row.get("audio_file"))
+        row["playback_path"] = playback
     else:
         # The list payload is bounded even for hours-long recordings.
         row["text"] = text[:220]
@@ -73,7 +91,7 @@ def list_entries(context, params):
             # Legacy rows infer dictation from Quick Record, as HistoryManager does.
             legacy = Model.entry_kind.is_(None)
             if kind == "dictation":
-                query = query.filter(or_(Model.entry_kind == kind, legacy & Model.source_name.startswith("Quick Record")))
+                query = query.filter(or_(Model.entry_kind.in_(("dictation", "command", "transform", "action", "walkthrough")), legacy & Model.source_name.startswith("Quick Record")))
             elif kind == "file":
                 query = query.filter(or_(Model.entry_kind == kind, legacy & or_(Model.source_name.is_(None), ~Model.source_name.startswith("Quick Record"))))
             else:
@@ -82,7 +100,7 @@ def list_entries(context, params):
         entries = query.order_by(Model.timestamp.desc(), Model.id.desc()).offset(offset).limit(limit).all()
         items = [_row(context, item) for item in entries]
     return {"items": items, "total": total, "offset": offset, "limit": limit,
-            "has_more": offset + len(items) < total, "query": needle}
+            "has_more": offset + len(items) < total, "query": needle, "kind": kind or "all"}
 
 
 def detail(context, params):
@@ -132,6 +150,11 @@ def delete(context, params):
     from services.history_manager import is_local_entry
     from .common import boolean
     entry = _entry(context, params)
+    if getattr(entry, "stored_on", None):
+        if not _records(context).delete_remote("dictation", entry.id):
+            raise ValueError("The host could not delete this entry.")
+        _notify(context, entry.id)
+        return changed("history.list", id=entry.id)
     if not is_local_entry(entry):
         raise ValueError("Delete this entry on the computer that recorded it.")
     delete_audio = boolean(params.get("delete_audio", False), "delete_audio")
@@ -177,9 +200,42 @@ def export(context, params):
 
 def playback(context, params):
     entry = _entry(context, params)
-    path = _playback_path(context, entry.audio_file)
-    if not path:
+    path = (getattr(context, "_native_history_audio", {}).get(entry.id) if getattr(entry, "stored_on", None)
+            else _playback_path(context, entry.audio_file))
+    if not path or not Path(path).is_file():
         raise ValueError("This entry has no saved audio.")
     # Only a database-selected recording can be played, never an arbitrary
     # client-provided path.
     return {"id": entry.id, "path": str(Path(path).resolve())}
+
+
+def audio_get(context, params):
+    entry = _entry(context, params)
+    if not getattr(entry, "stored_on", None):
+        return playback(context, params)
+    if not getattr(entry, "remote_audio", False):
+        raise ValueError("This entry has no saved audio on the host.")
+    from .calendar import _publish
+    def finished(done):
+        try:
+            path = str(Path(done.result()).resolve())
+            if not Path(path).is_file():
+                raise ValueError("The host did not provide a recording.")
+            context._native_history_audio = {**getattr(context, "_native_history_audio", {}), entry.id: path}
+            payload = {"id": entry.id, "path": path}
+        except Exception:
+            payload = {"id": entry.id, "error": "The recording could not be fetched from the host. Check the connection and try again."}
+        _publish(context, "history.audio.ready", payload)
+    context.controller.executor.submit(_records(context).audio_for, entry.id).add_done_callback(finished)
+    return {"id": entry.id, "loading": True}
+
+
+def retranscribe(context, params):
+    from . import _idle
+    _idle(context)
+    unavailable = context.controller.transcription_readiness_message()
+    if unavailable:
+        raise ValueError(unavailable)
+    path = playback(context, params)["path"]
+    context.controller.retranscribe_audio(path)
+    return changed("history.list", id=identifier(params))

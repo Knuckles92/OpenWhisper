@@ -119,13 +119,17 @@ class NativeContext:
             self._history_generation = ui._history_generation
         saved = settings_manager.load_all_settings()
         state = QtAppControl(c).state().to_dict()
-        result = {**serializable(ui.state), **state, **_hotkey_state(c), "version": __version__,
+        # Notes are loaded explicitly and updated through focused insertion
+        # events. Repeating up to five million characters on every idle poll
+        # would make an otherwise quiet desktop serialize megabytes each second.
+        presentation = {key: value for key, value in ui.state.items() if key != "scratchpad"}
+        result = {**serializable(presentation), **state, **_hotkey_state(c), "version": __version__,
             "history": self._history, "engine": settings_manager.load_model_selection(),
             "ready": ready, "runtime": "native", "settings": {
                 key: saved.get(key, default) for key, default in (
                     ("auto_paste", True), ("transcript_cleanup_enabled", False),
                     ("copy_clipboard", True), ("local_asr_language", "en"),
-                    ("ui_theme", "light"), ("ui_font_scale", 1.0), ("compact_mode", False))}}
+                    ("ui_theme", "light"), ("ui_font_scale", 100), ("compact_mode", False))}}
         if ready and result["status"] == "Preparing your workspace…":
             result["status"] = "Ready when you are"
         return result
@@ -210,6 +214,13 @@ def main(argv=None) -> int:
                 saved = ui.flush_scratchpad()
                 if not saved and ui.state["scratchpad_save"]["dirty"]:
                     raise ValueError("Your latest Scratchpad notes could not be saved. Check free space and file permissions before quitting.")
+            # Accept Quit only once document publishers have finished or
+            # rolled back. A native parent may close immediately after its
+            # acknowledgement, so joining only in later cleanup is too late.
+            controller._shutting_down = True
+            controller.transcription_runtime.begin_shutdown()
+            ui.cancel_walkthrough_library()
+            controller.walkthrough_executor.shutdown(wait=True, cancel_futures=True)
             ui.cancel_prompts()
             app.quit()
 

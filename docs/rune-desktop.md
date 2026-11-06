@@ -55,11 +55,16 @@ settings, history, meeting, and walkthrough formats; run one instance at a time.
   brief, evidence/cards, questions, insight review, corrections, tailored reports,
   and exports. The existing browser dashboard remains available.
 - **Walkthroughs:** screenshots, note hold, pause, step ordering/removal, saved
-  search, screenshot galleries, text review, write-ups, and PDF/DOCX/Markdown/ZIP
-  exports. Native crop/annotation tools provide arrows, boxes, pen, highlight,
+  full-text search, screenshot galleries, spoken/write-up version selection,
+  editing, redo with saved styles or a custom prompt, interrupted-draft recovery,
+  retention, rich file/image copying, and PDF/DOCX/Markdown/ZIP exports.
+  Native crop/annotation tools provide arrows, boxes, pen, highlight,
   labels, numbered steps, zoom, and undo/redo.
 - **History:** full database search and pagination, transcript editing/deletion,
-  retained-audio playback, original-text comparison, and TXT/Markdown/JSON/SRT.
+  retained-audio playback/retranscription, original/AI version selection, and
+  TXT/Markdown/JSON/SRT. The calendar combines dictations, files, and meetings by
+  local date, with month/year navigation, place/kind filters, streaks and
+  milestones. Paired-host search and audio retrieval run in the background.
 - **Scratchpad:** editable dictation destination with atomic autosave to the
   existing scratchpad file. Insertion requires the scratchpad window to be
   active. Copy, export, and clear are available.
@@ -69,6 +74,10 @@ settings, history, meeting, and walkthrough formats; run one instance at a time.
   backups, updates, usage, setup, and MCP controls. Credentials are write-only
   in the service protocol. Settings coverage is inventoried by
   `settings.coverage`; internal/legacy keys include an explicit reason.
+
+File handoff uses the native clipboard and export/open controls. The original
+Qt file chip's drag-out gesture is not currently exposed in the native desktop;
+Rune's underlying drag-out implementation is macOS-only.
 
 Light/dark appearance and text scaling persist. The navigation rail collapses
 at narrow widths. Ctrl/Cmd+1–5 opens the workflow pages, Ctrl/Cmd+, opens Settings,

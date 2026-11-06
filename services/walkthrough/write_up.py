@@ -200,7 +200,7 @@ def write_up(
     if not text:
         raise WriteUpFailed(f"{name} sent back no document")
     # A write-up done again is a new version; the one it follows is kept.
-    return _write(result, text, look, keep_latest=True)
+    return _write(result, text, look, keep_latest=True, cancel_event=cancel_event)
 
 
 def agent_name(agent: str) -> str:
@@ -303,7 +303,8 @@ def _split_look(text: str) -> tuple["Look", str]:
 
 
 def _write(result: WalkthroughResult, text: str, look: "Look", *,
-           version: int | None = None, keep_latest: bool = False) -> WalkthroughResult:
+           version: int | None = None, keep_latest: bool = False,
+           cancel_event=None) -> WalkthroughResult:
     """Publish ``text`` as write-up ``version`` (None: the latest).
 
     With ``keep_latest``, the latest write-up there already becomes the
@@ -346,6 +347,8 @@ def _write(result: WalkthroughResult, text: str, look: "Look", *,
                                page_size=page_size, look=look)
             write_markdown_docx(text, stage / docx_name, folder=folder, title=title,
                                 page_size=page_size, look=look)
+            if cancel_event is not None and cancel_event.is_set():
+                raise WriteUpFailed("canceled")
             publish_files(stage, folder, (*names, pdf_name, docx_name, md_name))
     except (OSError, ValueError) as exc:
         raise WriteUpFailed(f"could not write its documents: {exc}") from exc

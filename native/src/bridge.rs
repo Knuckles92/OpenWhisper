@@ -220,10 +220,11 @@ impl Client {
         });
         Self { commands, sequence }
     }
-    pub fn send(&self, method: &str, params: Value) -> Result<(), String> {
+    pub fn send(&self, method: &str, params: Value) -> Result<u64, String> {
         let id = self.sequence.fetch_add(1, Ordering::Relaxed);
         self.commands
             .send((id, method.into(), params))
+            .map(|()| id)
             .map_err(|e| e.to_string())
     }
 }

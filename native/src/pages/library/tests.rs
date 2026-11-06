@@ -144,12 +144,22 @@ fn walkthrough_review_keeps_text_image_inclusion_and_order_together() {
         "Saved review should replace capture setup"
     );
     assert!(rt.presented("walkthrough-detail").unwrap().0[1] < 180.);
+    tap(&mut rt, "walkthrough-version-1");
     tap(&mut rt, "walkthrough-review-edit");
     rt.update(|s, _| s.edit("walkthrough-edit-step-0").text = "An edited first step".into());
     settle(&mut rt);
     tap(&mut rt, "review-include-0");
     tap(&mut rt, "review-down-0");
     tap(&mut rt, "save-walkthrough-review");
+    assert_eq!(rt.state.data["walkthroughs.detail"]["spoken"], true);
+    assert_eq!(
+        rt.state.data["demo.walkthrough-review-request"]["texts"][1],
+        "An edited first step"
+    );
+    assert_eq!(
+        rt.state.data["demo.walkthrough-review-request"]["keep"],
+        json!([true, false, true])
+    );
     let steps = rt.state.data["walkthroughs.detail"]["steps"]
         .as_array()
         .unwrap();
@@ -243,4 +253,212 @@ fn dense_library_workflows_stay_within_narrow_and_wide_windows() {
             }
         }
     }
+}
+
+#[test]
+fn walkthrough_versions_edit_the_selected_writeup_and_keep_unsaved_drafts() {
+    let mut rt = workspace(Page::Walkthrough, 720.);
+    tap(&mut rt, "walkthrough-walkthrough-demo-1");
+    tap(&mut rt, "walkthrough-version-2");
+    assert_eq!(rt.state.data["walkthroughs.detail"]["version"], 1);
+    tap(&mut rt, "walkthrough-edit-writeup");
+    let key = "walkthrough:walkthrough-demo-1:write-up:1";
+    assert!(rt.state.edits[key].text.contains("First write-up"));
+    rt.update(|s, _| {
+        s.edit(key).text = "# My edited first version\n\nKeep the context together.".into()
+    });
+    settle(&mut rt);
+    tap(&mut rt, "walkthrough-cancel-writeup-edit");
+    assert_eq!(
+        rt.state.confirmation.as_ref().unwrap()["scope"],
+        "walkthrough-unsaved"
+    );
+    tap(&mut rt, "walkthrough-keep-editing");
+    assert!(rt.state.edits[key].text.contains("My edited"));
+    rt.update(|s, _| s.navigate(Page::History));
+    settle(&mut rt);
+    assert_eq!(
+        rt.state.page,
+        Page::Walkthrough,
+        "Unsaved edits must guard sidebar navigation"
+    );
+    tap(&mut rt, "walkthrough-keep-editing");
+    tap(&mut rt, "walkthrough-save-writeup");
+    assert_eq!(rt.state.data["demo.walkthrough-save-request"]["version"], 1);
+    assert!(
+        rt.state.data["walkthroughs.detail"]["markdown"]
+            .as_str()
+            .unwrap()
+            .contains("My edited")
+    );
+    assert_eq!(rt.state.selected_tab, "walkthrough-document");
+    tap(&mut rt, "walkthrough-more-document-actions");
+    tap(&mut rt, "walkthrough-copy-md");
+    assert_eq!(rt.state.data["walkthroughs.copy"]["version"], 1);
+    assert_eq!(rt.state.data["walkthroughs.copy"]["spoken"], false);
+    tap(&mut rt, "export-walkthrough-md");
+    rt.resolve_file_dialog(Some("/tmp/openwhisper-version-1.md".into()))
+        .unwrap();
+    settle(&mut rt);
+    assert_eq!(rt.state.data["walkthroughs.export"]["version"], 1);
+    assert_eq!(rt.state.data["walkthroughs.export"]["spoken"], false);
+    tap(&mut rt, "walkthrough-version-0");
+    assert!(
+        rt.state.data["walkthroughs.detail"]["markdown"]
+            .as_str()
+            .unwrap()
+            .contains("A simple guide"),
+        "Editing an earlier version must leave the latest intact"
+    );
+}
+
+#[test]
+fn walkthrough_failure_retains_edits_and_only_success_closes_the_editor() {
+    let mut rt = workspace(Page::Walkthrough, 1220.);
+    tap(&mut rt, "walkthrough-walkthrough-demo-1");
+    tap(&mut rt, "walkthrough-version-1");
+    tap(&mut rt, "walkthrough-review-edit");
+    rt.update(|s, _| s.edit("walkthrough-edit-step-0").text = "A correction worth keeping".into());
+    settle(&mut rt);
+    rt.update(|s,_|{
+        crate::pages::walkthrough_response(s,"walkthroughs.review",&json!({"ok":true,"operation":{"id":"walkthrough-demo-1","job_id":"job-1","kind":"review","status":"running"}}));
+        crate::pages::walkthrough_event(s,"walkthroughs.operation",&json!({"id":"walkthrough-demo-1","job_id":"job-1","kind":"review","status":"failed","error":"Renderer could not finish"}));
+    });
+    settle(&mut rt);
+    assert_eq!(rt.state.selected_tab, "walkthrough-edit");
+    assert_eq!(
+        rt.state.edits["walkthrough-edit-step-0"].text,
+        "A correction worth keeping"
+    );
+    assert_eq!(rt.state.error.as_deref(), Some("Renderer could not finish"));
+    assert!(rt.find("walkthrough-review-editor").is_some());
+    tap(&mut rt, "cancel-walkthrough-review");
+    tap(&mut rt, "walkthrough-discard-changes");
+    assert_eq!(rt.state.selected_tab, "walkthrough-steps");
+    rt.update(|s,_|{
+        crate::pages::walkthrough_event(s,"walkthroughs.operation",&json!({"id":"walkthrough-demo-1","job_id":"job-2","kind":"review","status":"running"}));
+        crate::pages::walkthrough_event(s,"walkthroughs.operation",&json!({"id":"walkthrough-demo-1","job_id":"job-2","kind":"review","status":"done"}));
+        crate::pages::walkthrough_response(s,"walkthroughs.review",&json!({"ok":true,"operation":{"id":"walkthrough-demo-1","job_id":"job-2","kind":"review","status":"running"}}));
+    });
+    assert_eq!(
+        rt.state.data["walkthrough.operations"]["walkthrough-demo-1"]["status"], "done",
+        "A fast retry finishing before its response must not get stuck running"
+    );
+}
+
+#[test]
+fn walkthrough_style_retry_recovery_and_screenshot_copy_use_real_commands() {
+    let mut rt = workspace(Page::Walkthrough, 1220.);
+    rt.update(|s, _| {
+        s.data["demo.walkthroughs"][0]["steps"][0]["image_path"] = json!("/tmp/shot-1.png")
+    });
+    settle(&mut rt);
+    tap(&mut rt, "walkthrough-walkthrough-demo-1");
+    tap(&mut rt, "saved-step-0-copy");
+    assert_eq!(
+        rt.state.data["walkthroughs.screenshot.copy"]["filename"],
+        "shot-1.png"
+    );
+    tap(&mut rt, "walkthrough-retry-options");
+    tap(&mut rt, "walkthrough-retry-style-1");
+    tap(&mut rt, "walkthrough-retry-run");
+    assert!(
+        rt.state.data["demo.walkthrough-retry-request"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("team handoff")
+    );
+    assert_eq!(rt.state.selected_tab, "walkthrough-document");
+    tap(&mut rt, "close-walkthrough-detail");
+    rt.update(|s, _| {
+        s.data["demo.walkthroughs"][1]["status"] = json!("draft");
+        s.data["demo.walkthroughs"][1]["can_recover"] = json!(true);
+    });
+    settle(&mut rt);
+    tap(&mut rt, "walkthrough-walkthrough-demo-2");
+    tap(&mut rt, "walkthrough-recover");
+    assert_eq!(
+        rt.state.data["demo.walkthrough-recover-request"]["id"],
+        "walkthrough-demo-2"
+    );
+    assert_eq!(rt.state.data["walkthroughs.detail"]["status"], "ready");
+}
+
+#[test]
+fn walkthrough_retention_confirms_deletion_and_ready_events_preserve_dirty_review() {
+    let mut rt = workspace(Page::Walkthrough, 720.);
+    tap(&mut rt, "walkthrough-retention");
+    tap(&mut rt, "walkthrough-keep-30");
+    assert_eq!(rt.state.data["walkthroughs.retention"]["days"], 0);
+    tap(&mut rt, "walkthrough-retention-cancel");
+    assert_eq!(rt.state.data["walkthroughs.retention"]["days"], 0);
+    tap(&mut rt, "walkthrough-keep-30");
+    tap(&mut rt, "walkthrough-retention-apply");
+    assert_eq!(
+        rt.state.data["demo.walkthrough-retention-request"]["confirmed"],
+        true
+    );
+    assert_eq!(rt.state.data["walkthroughs.retention"]["days"], 30);
+    tap(&mut rt, "walkthrough-retention-close");
+    tap(&mut rt, "walkthrough-walkthrough-demo-1");
+    tap(&mut rt, "walkthrough-version-1");
+    tap(&mut rt, "walkthrough-review-edit");
+    rt.update(|s,_|{
+        s.edit("walkthrough-edit-step-0").text="Unsaved context".into();
+        crate::pages::walkthrough_event(s,"walkthrough.ready",&json!({"copied":false,"result":{"folder":"/tmp/walkthrough-demo-2","write_up_error":"Agent unavailable","lost_shots":2}}));
+    });
+    settle(&mut rt);
+    assert_eq!(
+        rt.state.selected_item.as_deref(),
+        Some("walkthrough-demo-1")
+    );
+    assert_eq!(rt.state.selected_tab, "walkthrough-edit");
+    assert!(
+        rt.state
+            .notice
+            .as_deref()
+            .unwrap()
+            .contains("Agent unavailable")
+    );
+    assert!(
+        rt.state
+            .notice
+            .as_deref()
+            .unwrap()
+            .contains("2 screenshots")
+    );
+    assert!(rt.find("walkthrough-ready-offer").is_some());
+}
+
+#[test]
+fn walkthrough_library_work_and_writeup_cancel_leave_ordinary_dictation_alone() {
+    let mut rt = workspace(Page::Walkthrough, 1220.);
+    rt.update(|s, _| s.data["walkthroughs.busy"] = json!({"busy":true}));
+    settle(&mut rt);
+    tap(&mut rt, "walkthrough-toggle");
+    assert!(
+        !rt.state.snapshot.recording,
+        "A saved-document worker must block a new live walkthrough"
+    );
+    rt.update(|s, _| s.data["walkthroughs.busy"] = json!({"busy":false}));
+    settle(&mut rt);
+    tap(&mut rt, "walkthrough-toggle");
+    assert!(rt.state.snapshot.recording);
+    rt.update(|s, _| {
+        s.snapshot.mode = "dictation".into();
+        s.snapshot.recording = true;
+        s.data["snapshot"]["walkthrough_live"]["active"] = json!(false);
+        s.data["snapshot"]["walkthrough_live"]["writing_up"] = json!(true);
+    });
+    settle(&mut rt);
+    tap(&mut rt, "walkthrough-cancel-live-writeup");
+    assert!(
+        rt.state.snapshot.recording,
+        "Canceling the post-recording write-up must preserve ordinary dictation"
+    );
+    assert_eq!(rt.state.snapshot.mode, "dictation");
+    assert_eq!(
+        rt.state.data["snapshot"]["walkthrough_live"]["writing_up"],
+        false
+    );
 }

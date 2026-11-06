@@ -27,6 +27,27 @@ pub fn library_demo(s: &mut State) {
          "steps":[{"index":0,"title":"Choose your microphone","text":"Open audio settings and choose the microphone you want to use.","included":true},{"index":1,"title":"Capture a thought","text":"Press Record, speak naturally, and finish when your idea is captured.","included":true},{"index":2,"title":"Make the words your own","text":"Open History to review, edit, and share the transcript.","included":true}],"exports":["md","pdf","docx"]},
         {"id":"walkthrough-demo-2","title":"Sharing a better handoff","started_at":"Yesterday · 4:20 PM","step_count":1,"preview":"Explain the details once. Keep the context together.","status":"ready","markdown":"Sharing a better handoff\n\nWalk through the task and explain what matters.","steps":[{"index":0,"title":"Keep the context","text":"Walk through the task and explain what matters.","included":true}],"exports":["md"]}
     ]);
+    for (i, item) in s.data["demo.walkthroughs"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .enumerate()
+    {
+        item["documents"] = json!({"spoken":item["markdown"],"latest":"# A welcoming first recording\n\nA simple guide to capturing and keeping an idea.\n\n## Begin with your microphone\nChoose a clear audio source, record naturally, and return to History to make the words your own.","1":"# First write-up\n\nChoose a microphone and capture a thought."});
+        item["written_up"] = json!(i == 0);
+        item["can_retry"] = json!(true);
+        item["can_recover"] = json!(false);
+        item["versions"] = if i == 0 {
+            json!([{"label":"Latest write-up","spoken":false,"version":null},{"label":"As spoken","spoken":true,"version":null},{"label":"Version 1","spoken":false,"version":1}])
+        } else {
+            json!([{"label":"As spoken","spoken":true,"version":null}])
+        };
+        item["steps"][0]["notes"] =
+            json!([{"text":"Keep the instructions welcoming and concise."}]);
+        item["steps"][0]["kept_at_s"] = json!(12.);
+    }
+    s.data["walkthroughs.styles"] = json!({"items":[{"id":"default","name":"Default","instructions":"Write a clear walkthrough with screenshots beside the steps they explain."},{"id":"handoff","name":"Team handoff","instructions":"Write a concise team handoff with the goal, decisions, and next steps."}]});
+    s.data["walkthroughs.retention"] = json!({"days":0});
     for (scope, source) in [
         ("meetings", "demo.meetings"),
         ("walkthroughs", "demo.walkthroughs"),
@@ -84,14 +105,15 @@ pub fn library_demo_command(s: &mut State, method: &str, params: &Value) -> bool
             library_demo_command(s, "history.detail", &json!({"id":params["id"]}));
             s.selected_tab.clear();
         }
-        "meetings.detail" | "walkthroughs.detail" => {
-            let source = if method.starts_with("meetings") {
-                "demo.meetings"
-            } else {
-                "demo.walkthroughs"
-            };
-            if let Some(item) = find(s, source, &params["id"]) {
+        "meetings.detail" => {
+            if let Some(item) = find(s, "demo.meetings", &params["id"]) {
                 s.data[method] = item;
+            }
+        }
+        "walkthroughs.detail" => {
+            if let Some(item) = walkthrough_detail(s, params) {
+                s.data[method] = item.clone();
+                crate::pages::walkthrough_response(s, method, &item);
             }
         }
         "meetings.list" | "walkthroughs.list" => {
@@ -131,6 +153,7 @@ pub fn library_demo_command(s: &mut State, method: &str, params: &Value) -> bool
             s.selected_tab.clear();
         }
         "walkthroughs.review" => {
+            s.data["demo.walkthrough-review-request"] = params.clone();
             if let Some(mut item) = find(s, "demo.walkthroughs", &params["id"]) {
                 let original = item["steps"].as_array().cloned().unwrap_or_default();
                 let order = params["order"].as_array().cloned().unwrap_or_default();
@@ -138,10 +161,11 @@ pub fn library_demo_command(s: &mut State, method: &str, params: &Value) -> bool
                     order
                         .iter()
                         .filter_map(|i| i.as_u64())
-                        .map(|i| {
+                        .enumerate()
+                        .map(|(position, i)| {
                             let mut step = original[i as usize].clone();
-                            step["text"] = params["texts"][i as usize].clone();
-                            step["included"] = params["keep"][i as usize].clone();
+                            step["text"] = params["texts"][position].clone();
+                            step["included"] = params["keep"][position].clone();
                             step
                         })
                         .collect::<Vec<_>>()
@@ -152,8 +176,80 @@ pub fn library_demo_command(s: &mut State, method: &str, params: &Value) -> bool
                         *row = item;
                     }
                 }
-                s.selected_tab = "walkthrough-steps".into();
+                s.data["walkthroughs.detail"] =
+                    walkthrough_detail(s, &json!({"id":params["id"],"spoken":true})).unwrap();
+                crate::pages::walkthrough_event(
+                    s,
+                    "walkthroughs.operation",
+                    &json!({"id":params["id"],"kind":"review","status":"done","item":s.data["walkthroughs.detail"]}),
+                );
             }
+        }
+        "walkthroughs.styles" => {}
+        "walkthroughs.export" => {
+            s.data[method] = params.clone();
+        }
+        "walkthroughs.copy" | "walkthroughs.screenshot.copy" => {
+            s.data[method] = params.clone();
+            s.notice = Some("Copied to clipboard".into());
+        }
+        "walkthroughs.retention" => {
+            s.data["demo.walkthrough-retention-request"] = params.clone();
+            if params["days"].is_number() {
+                s.data[method] = json!({"days":params["days"],"pruned":0});
+                s.confirmation = None;
+            }
+        }
+        "walkthroughs.write_up.save" => {
+            s.data["demo.walkthrough-save-request"] = params.clone();
+            let key = params["version"]
+                .as_u64()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "latest".into());
+            if let Some(rows) = s.data["demo.walkthroughs"].as_array_mut() {
+                if let Some(item) = rows.iter_mut().find(|i| i["id"] == params["id"]) {
+                    item["documents"][key] = params["markdown"].clone();
+                }
+            }
+            if let Some(item) = walkthrough_detail(s, params) {
+                crate::pages::walkthrough_event(
+                    s,
+                    "walkthroughs.operation",
+                    &json!({"id":params["id"],"kind":"write_up.save","status":"done","item":item}),
+                );
+            }
+        }
+        "walkthroughs.write_up.retry" => {
+            s.data["demo.walkthrough-retry-request"] = params.clone();
+            if let Some(rows) = s.data["demo.walkthroughs"].as_array_mut() {
+                if let Some(item) = rows.iter_mut().find(|i| i["id"] == params["id"]) {
+                    item["documents"]["latest"] = json!(
+                        "# A fresh write-up\n\nA clear handoff based on the spoken walkthrough."
+                    );
+                    item["written_up"] = json!(true);
+                }
+            }
+            if let Some(item) = walkthrough_detail(s, &json!({"id":params["id"],"spoken":false})) {
+                crate::pages::walkthrough_event(
+                    s,
+                    "walkthroughs.operation",
+                    &json!({"id":params["id"],"kind":"write_up.retry","status":"done","item":item}),
+                );
+            }
+        }
+        "walkthroughs.write_up.cancel" => {
+            s.data["walkthrough.operations"][params["id"].as_str().unwrap_or("")]["status"] =
+                json!("canceled");
+        }
+        "walkthroughs.recover" => {
+            s.data["demo.walkthrough-recover-request"] = params.clone();
+            if let Some(rows) = s.data["demo.walkthroughs"].as_array_mut() {
+                if let Some(item) = rows.iter_mut().find(|i| i["id"] == params["id"]) {
+                    item["status"] = json!("ready");
+                    item["can_recover"] = json!(false);
+                }
+            }
+            library_demo_command(s, "walkthroughs.detail", params);
         }
         "meeting.start" => {
             s.snapshot.meeting = true;
@@ -167,6 +263,15 @@ pub fn library_demo_command(s: &mut State, method: &str, params: &Value) -> bool
         }
         "walkthrough.pause" => {
             s.data["snapshot"]["walkthrough_live"]["paused"] = params["paused"].clone();
+        }
+        "walkthrough.toggle" => {
+            s.snapshot.recording = !s.snapshot.recording;
+            s.snapshot.mode = "walkthrough".into();
+            s.data["snapshot"]["walkthrough_live"]["active"] = json!(s.snapshot.recording);
+        }
+        "walkthrough.cancel" => {
+            s.data["demo.walkthrough-cancel-request"] = params.clone();
+            s.data["snapshot"]["walkthrough_live"]["writing_up"] = json!(false);
         }
         "file.enqueue" => {
             s.data["file.queue"] = json!({"items":params["paths"].as_array().into_iter().flatten().enumerate().map(|(i,path)| json!({"id":format!("preview-{i}"),"path":path,"name":path.as_str().and_then(|p|std::path::Path::new(p).file_name()).map(|p|p.to_string_lossy().into_owned()).unwrap_or_default(),"status":"queued"})).collect::<Vec<_>>(),"active":false});
@@ -200,4 +305,31 @@ fn find(s: &State, source: &str, id: &Value) -> Option<Value> {
         .iter()
         .find(|row| row["id"] == *id)
         .cloned()
+}
+
+fn walkthrough_detail(s: &State, params: &Value) -> Option<Value> {
+    let mut item = find(s, "demo.walkthroughs", &params["id"])?;
+    let spoken = params["spoken"]
+        .as_bool()
+        .unwrap_or(item["written_up"] != true);
+    let version = if spoken {
+        Value::Null
+    } else {
+        params["version"].clone()
+    };
+    let key = if spoken {
+        "spoken".into()
+    } else {
+        version
+            .as_u64()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "latest".into())
+    };
+    if let Some(markdown) = item["documents"][&key].as_str() {
+        item["markdown"] = json!(markdown);
+    }
+    item["spoken"] = json!(spoken);
+    item["version"] = version;
+    item["styles"] = s.data["walkthroughs.styles"]["items"].clone();
+    Some(item)
 }
