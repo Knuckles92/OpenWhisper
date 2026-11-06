@@ -104,9 +104,23 @@ def _lease(context):
         context.controller._release_walkthrough_library()
 
 
-def _publish_operation(context, operation):
+def _remember_operation(context, operation):
+    fields = ("id", "job_id", "kind", "status", "error", "cancelable")
+    metadata = {key: operation[key] for key in fields if key in operation}
+    if "error" in metadata:
+        metadata["error"] = str(metadata["error"])[:2000]
+    previous = dict(context.ui.state.get("walkthrough_operations", {}))
+    previous.pop(operation["id"], None)
+    previous[operation["id"]] = metadata
+    settled = [key for key, value in previous.items() if value.get("status") != "running"]
+    keep = set(settled[-64:])
     context.ui.state["walkthrough_operations"] = {
-        **context.ui.state.get("walkthrough_operations", {}), operation["id"]: operation}
+        key: value for key, value in previous.items()
+        if key in keep or value.get("status") == "running"}
+
+
+def _publish_operation(context, operation):
+    _remember_operation(context, operation)
     context.emit("walkthroughs.operation", operation)
 
 
@@ -153,8 +167,7 @@ def _start_operation(context, folder, kind, work, *, selection=None, record_id=N
             final = {**operation, "status": status, "error": error}
             context.ui.state["walkthrough_library_busy"] = getattr(context.controller, "_walkthrough_library_busy", False) is True
             context.emit("walkthroughs.busy", {"busy": context.ui.state["walkthrough_library_busy"]})
-            context.ui.state["walkthrough_operations"] = {
-                **context.ui.state.get("walkthrough_operations", {}), record_id: final}
+            _remember_operation(context, final)
             if not error and folder.is_dir():
                 try:
                     final["item"] = detail(context, {"id": record_id, **(selection or {})})
@@ -558,8 +571,7 @@ def recover(context, params):
         controller.history_persisted.disconnect(persisted)
         context.ui._walkthrough_jobs.pop(folder.name, None)
         final = {**operation, "status": "canceled" if cancel.is_set() else "failed" if error else "done", "error": error}
-        context.ui.state["walkthrough_operations"] = {
-            **context.ui.state.get("walkthrough_operations", {}), folder.name: final}
+        _remember_operation(context, final)
         try:
             final["item"] = detail(context, {"id": folder.name, "spoken": True})
         except (OSError, ValueError, KeyError, TypeError):

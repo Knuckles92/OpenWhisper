@@ -78,7 +78,9 @@ def settled(record_id=folder.name):
         app.processEvents()
         operation=ui.state.get('walkthrough_operations',{}).get(record_id,{})
         if operation.get('status') in ('done','failed','canceled'):
-            return operation
+            return next(data for event,data in reversed(events)
+                if event=='walkthroughs.operation' and data.get('job_id')==operation.get('job_id')
+                and data.get('status')==operation['status'])
         time.sleep(.005)
     raise AssertionError(('Timed out',ui.state))
 def good(record_id=folder.name):
@@ -270,4 +272,25 @@ def test_retention_confirmation_exempts_drafts_and_corrupt_rows_remain_selectabl
         assert settled(broken.name)['status']=='failed'
         assert (broken/'walkthrough.json').read_text()=='{broken' and (broken/'unrelated.txt').read_text()=='keep'
         assert not controller._walkthrough_library_busy
+    ''', tmp_path)
+
+
+def test_final_operation_items_are_emitted_once_and_idle_snapshot_keeps_bounded_metadata(tmp_path):
+    run_native(r'''
+        from services.native_desktop.commands.walkthroughs import _publish_operation
+        long_item={'id':'large-document','markdown':'LONG_DOCUMENT_CONTENT'*100_000,
+                   'steps':[{'text':'LONG_DOCUMENT_CONTENT'*100_000}]}
+        active={'id':'active-job','job_id':'active','kind':'write_up.retry','status':'running','cancelable':True}
+        _publish_operation(context,active)
+        for number in range(100):
+            _publish_operation(context,{'id':f'document-{number}','job_id':f'job-{number}',
+                'kind':'write_up.save','status':'done','error':'','cancelable':True,'item':long_item})
+        operations=ui.state['walkthrough_operations']
+        assert len(operations)==65 and operations['active-job']['status']=='running'
+        assert 'document-0' not in operations and 'document-99' in operations
+        assert all('item' not in metadata and 'result' not in metadata for metadata in operations.values())
+        finals=[data for event,data in events if event=='walkthroughs.operation' and data.get('status')=='done']
+        assert len(finals)==100 and all(data['item'] is long_item for data in finals)
+        snapshot=json.dumps(context.snapshot(),ensure_ascii=True)
+        assert len(snapshot)<32_768 and 'LONG_DOCUMENT_CONTENT' not in snapshot
     ''', tmp_path)

@@ -123,6 +123,9 @@ private child. Bounded, allowlisted JSON requests and asynchronous events use
 stdin/stdout; logs go to stderr. This transport creates no network listener and
 does not enable remote/MCP access. Separate reader/writer threads keep prompts
 and background progress responsive. Unchanged snapshots avoid idle redraws.
+Capture transitions request an immediate update. Large scratchpad text is loaded
+on demand and updated through focused insertion events instead of being sent on
+every idle poll. Late responses cannot replace a newer document version/search.
 
 `services.desktop_runtime` chooses either the original Qt classes or the native
 owner-thread event loop, signals, timers, and workers. Native startup owns the
@@ -145,7 +148,7 @@ python -m ruff check --select F .
 python scripts/smoke_rune_package.py dist/rune/OpenWhisper-native-linux-x86_64.tar.gz
 ```
 
-Scenes also include recording, transcript, files, meetings, walkthrough, history,
+Scenes also include recording, transcript, files, meetings, walkthrough, history, calendar,
 settings, settings-models, settings-keys, settings-remote, settings-backup,
 settings-updates, settings-stats, settings-setup, settings-mcp,
 settings-dictionary, and meeting-review. `--tree` emits accessibility/layout data.
