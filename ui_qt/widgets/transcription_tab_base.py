@@ -145,6 +145,8 @@ class TranscriptionTabBase(QWidget):
     #: Render the transcript as Markdown. Off for dictation, whose cleanup
     #: returns prose; on where the transcript carries structure of its own.
     TRANSCRIPT_MARKDOWN = False
+    TRANSCRIPT_EDITOR = QTextEdit
+    TRANSCRIPT_MIN_HEIGHT = 130
 
     BACKEND_CHIP_MAX_WIDTH = 150
 
@@ -396,10 +398,10 @@ class TranscriptionTabBase(QWidget):
         self.fixed_btn.setChecked(True)
         self.version_toggle.hide()
 
-        self.transcript_text = QTextEdit()
+        self.transcript_text = self.TRANSCRIPT_EDITOR()
         self.transcript_text.setObjectName("transcriptText")
         self.transcript_text.setReadOnly(True)
-        self.transcript_text.setMinimumHeight(130)
+        self.transcript_text.setMinimumHeight(self.TRANSCRIPT_MIN_HEIGHT)
         self.transcript_text.setFont(QFont("Segoe UI", 13))
         self.transcript_text.setPlaceholderText(self.TRANSCRIPT_PLACEHOLDER)
 

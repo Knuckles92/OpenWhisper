@@ -13,6 +13,8 @@ from PyQt6.QtWidgets import QApplication, QWidget
 from config import config
 from services.settings import settings_manager
 from ui_qt.main_window import MainWindow
+from ui_qt.utils.font_scale import apply_ui_font_scale
+from ui_qt.utils.theme_manager import ThemeManager
 from ui_qt.widgets.tabbed_content import TabbedContentWidget
 
 TABS = (
@@ -126,7 +128,10 @@ def test_an_open_transcript_keeps_the_height_the_user_gives_it(window):
     page.expand_transcription()
     _settle()
     assert window.height() > collapsed
-    window.resize(window.width(), 900)
+    start = window.geometry().bottomLeft()
+    window._begin_resize((0, 1), start)
+    window._apply_resize_delta(start + QPoint(0, 900 - window.height()))
+    window._finish_resize()
     _settle()
     assert window.height() == 900
 
@@ -143,3 +148,40 @@ def test_an_open_transcript_keeps_the_height_the_user_gives_it(window):
     page.expand_transcription()
     _settle()
     assert window.height() == 900
+
+
+def test_quick_record_fits_wrapped_text_and_shrinks_after_a_long_result(
+    window, isolated_app_theme,
+):
+    apply_ui_font_scale(100, theme_manager=ThemeManager())
+    page = window.quick_record_tab
+    editor = page.transcript_text
+    short = "A short recording."
+    page.set_transcript(short)
+    page.expand_transcription()
+    page.set_transcription_stats(0.3, 3, 100_000)
+    _settle()
+    short_height = window.height()
+    short_editor_height = editor.height()
+
+    assert editor.verticalScrollBar().maximum() == 0
+    assert editor.viewport().height() <= editor.document().size().height() + 1
+    assert page.scroll_area.verticalScrollBar().maximum() == 0
+
+    page.set_transcript("A longer result with enough text to wrap. " * 11)
+    _settle()
+    assert editor.height() > short_editor_height
+    assert editor.verticalScrollBar().maximum() == 0
+    assert editor.viewport().height() <= editor.document().size().height() + 1
+
+    page.set_transcript("A much longer transcript. " * 250)
+    _settle()
+    assert window.height() > short_height
+    assert editor.verticalScrollBar().maximum() > 0
+    assert page.scroll_area.verticalScrollBar().maximum() == 0
+
+    page.set_transcript(short)
+    _settle()
+    assert window.height() == short_height
+    assert editor.height() == short_editor_height
+    assert editor.verticalScrollBar().maximum() == 0
