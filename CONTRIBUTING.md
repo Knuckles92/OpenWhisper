@@ -4,7 +4,7 @@
 
 - Branch from `main` and keep each pull request to one topic. Split unrelated fixes, refactors, and dependency updates into their own pull requests.
 - For a larger feature or a new dependency, open an issue or a discussion first so the approach can be agreed before you build it.
-- Run the tests for the code you touched and `ruff check --select F .` (see [Validation](#validation)). UI changes need both interfaces checked (see [Desktop feature parity](#desktop-feature-parity)) and before/after screenshots in the pull request.
+- Run the tests for the code you touched and `uv run --locked ruff check --select F .` (see [Validation](#validation)). UI changes need both interfaces checked (see [Desktop feature parity](#desktop-feature-parity)) and before/after screenshots in the pull request.
 - Add a user-visible change to `CHANGELOG.md` under `## [Unreleased]`, in the matching `### Added`, `### Changed`, or `### Fixed` group. Follow the existing entries: a bold summary, then what changed for the user and any limits. Internal refactors and test-only changes need no entry.
 - Update the README or the page in `docs/` that describes the behavior you changed.
 - Keep API keys, tokens, private hostnames, and transcript content out of code, tests, logs, and screenshots.
@@ -35,26 +35,22 @@ windows, and cover both modes in the relevant UI regression tests.
 
 ## Validation
 
-Use `uv run` as described below, or activate the repository virtual environment
-before Python commands. Run tests through pytest so the shared fixtures isolate
-settings, manage Qt, and handle
-native-runtime teardown:
+After [setting up the project with uv](#development-with-uv), run tests through
+pytest so the shared fixtures isolate settings, manage Qt, and handle native-runtime teardown.
 
 ```powershell
-. .\venv\Scripts\Activate.ps1
-python -m pytest tests/ -n auto
-python -m pytest tests/test_recorder.py tests/test_settings.py
+uv run --locked python -m pytest tests/ -n auto
+uv run --locked python -m pytest tests/test_recorder.py tests/test_settings.py
 ```
 
-`-n auto` (pytest-xdist, from `requirements-build.txt`) runs the full suite on
+`-n auto` (pytest-xdist, installed by `uv sync --locked`) runs the full suite on
 every core: about 1.5 minutes instead of 7 on an 8-core desktop. Leave it off
 for a few files, where starting the workers takes longer than the tests.
 
 CI checks Python correctness and unused code with Ruff 0.16.4:
 
 ```powershell
-python -m pip install ruff==0.16.4
-python -m ruff check --select F .
+uv run --locked ruff check --select F .
 ```
 
 Keep imports that perform required runtime initialization or verify optional
@@ -66,46 +62,44 @@ below. It covers transcript loading, action acknowledgements, and speech preview
 
 ## Development with uv
 
-[Install uv](https://docs.astral.sh/uv/getting-started/installation/) once. On Windows:
+[Install uv](https://docs.astral.sh/uv/getting-started/installation/). On Windows, you can use WinGet.
 
 ```powershell
 winget install --id astral-sh.uv -e
 ```
 
-Open a new terminal after installation. From the repository root:
+Open a new terminal after installation and run this from the repository root.
 
 ```powershell
 uv sync --locked
-uv run python main.py
-uv run python -m pytest tests/ -n auto
-uv run ruff check --select F .
 ```
 
-No activation is needed. uv uses Python 3.12 (matching the release builders),
-creates `.venv`, and installs the locked app dependencies, pytest, Ruff, and build
-tools. It can download Python 3.12 if it is missing. An existing `venv` is retained;
-the `ow`/`openwhisper` launchers and installer scripts still use that environment.
-Use `uv run python main.py` when you want the uv development environment. On
-macOS, the existing source launcher also handles app-bundle identification for
-Accessibility permissions; use the documented pip/launcher workflow when testing
-that integration. Linux still needs the audio and Qt system libraries described
-in the README.
+uv uses Python 3.12, matching the release builders, and installs the locked app
+dependencies, pytest, Ruff, and build tools into `.venv/`. It downloads Python 3.12
+if needed. Run the app using the [source launch instructions](README.md#launch-the-app)
+and use the [validation commands](#validation) for tests and lint.
+
+For macOS auto-paste, install the Python.org framework build of Python 3.12 so
+`./scripts/openwhisper` can use its `Python.app` for Accessibility permissions.
+Select that interpreter when syncing the environment.
+
+```bash
+uv sync --locked --python /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12
+./scripts/openwhisper
+```
 
 On Windows, install **GPU Acceleration** through **Downloads → Components** in the
 app. Source launches activate installed components automatically, so the normal
-`uv run python main.py` command supports GPU use without an extra flag. Other
+`uv run --locked python main.py` command supports GPU use without an extra flag. Other
 speech runtimes and downloaded models also use the app's component manager.
 
-The `gpu` extra is an alternative way to put CUDA wheels in `.venv`, intended for
-Linux source installs (the downloadable GPU component is Windows-only) or for
-explicit testing of wheel-based GPU setups:
+Use the `gpu` extra to test CUDA wheels on Windows or Linux x86_64.
 
 ```powershell
 uv sync --locked --extra gpu
-uv run --extra gpu python main.py
 ```
 
-Keep `--extra gpu` on sync/run commands only when choosing that wheel-based setup.
+Keep `--extra gpu` on `uv sync` and `uv run` commands for this setup.
 Point your editor at `.venv/Scripts/python.exe` on Windows or `.venv/bin/python`
 on macOS/Linux. JavaScript work in `webui` and the sidecars retains its existing
 Node/Bun workflow.
@@ -132,9 +126,33 @@ and that the lockfile is current.
 Use `python3` for the standalone maintenance script if that is your platform's
 Python command. It uses only the standard library and does not require activation.
 Release pins should only change as part of a deliberate dependency update. Use
-`uv add` only for experiments: permanent dependency changes must also go through
-the requirements files and generator. uv itself is optional for source users and
-is not required by the release builders.
+`uv add` only for experiments. Permanent dependency changes must also go through
+the requirements files and generator.
+
+### Setup with pip
+
+Use this setup if you need Python 3.11 or your platform needs different wheel
+versions. The lockfile pins `onnxruntime` to a version that ships a macOS wheel
+only for Apple Silicon on macOS 14 or later. Use Python 3.11 or 3.12 and create
+`venv/` from the repository root.
+
+```powershell
+# Windows
+python -m venv venv
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+.\venv\Scripts\python.exe main.py
+```
+
+```bash
+# macOS / Linux
+python3 -m venv venv
+./venv/bin/python -m pip install -r requirements.txt
+./scripts/openwhisper
+```
+
+Run the same pip install command after pulling dependency changes. For CUDA
+wheels, install `requirements-gpu.txt` using that environment's Python. Source
+launchers fall back to `venv/` when `.venv/` has no launcher interpreter.
 
 ## Adding a provider or engine
 
@@ -216,7 +234,7 @@ ow              # short alias
 openwhisper     # full name
 ```
 
-The launcher invokes `venv\Scripts\pythonw.exe` directly, so the app always uses the project's venv regardless of which environment your shell has activated. Code changes are picked up live — no reinstall needed after `git pull`.
+The launcher invokes `.venv\Scripts\pythonw.exe` directly, with `venv\Scripts\pythonw.exe` as a fallback. Code changes are picked up live. Run `uv sync --locked` when dependencies change.
 
 ```
 uninstall.cmd
@@ -248,4 +266,4 @@ From the repo root:
 
 This adds the `scripts/` folder to your `PATH` in your shell profile files (`~/.bashrc`, `~/.zprofile`, and on macOS also `~/.bash_profile`; fish users get `~/.config/fish/config.fish`). It is idempotent. The installer prints the exact `source …` command for your shell — run that in your current terminal, or open a new one, then run `ow` or `openwhisper`.
 
-The launcher invokes `venv/bin/python` directly. Code changes are picked up live. To remove the PATH entry, run `./uninstall.sh`.
+The launcher uses `.venv/bin/python` first and falls back to `venv/bin/python`. Code changes are picked up live. Run `uv sync --locked` when dependencies change. To remove the PATH entry, run `./uninstall.sh`.

@@ -207,9 +207,9 @@ retrieve original evidence, and cite record/segment IDs and timestamps.
 
 ## Development
 
-Install the project's updated requirements (or run `uv sync`), then launch
-OpenWhisper normally and use Settings. The MCP SDK and HTTP client are bundled
-with native builds. The independent `python main.py --api` entry point continues
+Run `uv sync --locked`, then launch OpenWhisper normally and use Settings.
+The MCP SDK and HTTP client are bundled with native builds.
+The independent `uv run --locked python main.py --api` entry point continues
 to serve only the History API on its own port; it does not enable MCP.
 
 Implementation uses the [official Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk)

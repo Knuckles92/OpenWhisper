@@ -9,7 +9,10 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$REPO/scripts"
-VENV_PYTHON="$REPO/venv/bin/python"
+VENV_PYTHON="$REPO/.venv/bin/python"
+if [ ! -x "$VENV_PYTHON" ] && [ -x "$REPO/venv/bin/python" ]; then
+    VENV_PYTHON="$REPO/venv/bin/python"
+fi
 MARK_BEGIN="# >>> OpenWhisper >>>"
 MARK_END="# <<< OpenWhisper <<<"
 FISH_MARK_BEGIN="# >>> OpenWhisper >>>"
@@ -88,8 +91,7 @@ collect_profile_files() {
 if [ ! -x "$VENV_PYTHON" ]; then
     echo "[error] Virtual environment not found."
     echo "        Expected: $VENV_PYTHON"
-    echo "        Create it first:"
-    echo "          cd \"$REPO\" && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt"
+    echo "        From the repo root, run: uv sync --locked"
     exit 1
 fi
 

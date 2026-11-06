@@ -2,7 +2,13 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot   = Split-Path -Parent $PSScriptRoot
 $scriptsDir = Join-Path $repoRoot 'scripts'
-$venvPython = Join-Path $repoRoot 'venv\Scripts\pythonw.exe'
+$venvPython = Join-Path $repoRoot '.venv\Scripts\pythonw.exe'
+if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
+    $fallbackPython = Join-Path $repoRoot 'venv\Scripts\pythonw.exe'
+    if (Test-Path -LiteralPath $fallbackPython -PathType Leaf) {
+        $venvPython = $fallbackPython
+    }
+}
 
 function Format-PathEntry {
     param([string]$Path)
@@ -15,14 +21,11 @@ Write-Host 'OpenWhisper installer'
 Write-Host '---------------------'
 Write-Host ''
 
-if (-not (Test-Path $venvPython)) {
+if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
     Write-Host '[error] Virtual environment not found.' -ForegroundColor Red
     Write-Host "        Expected: $venvPython"
     Write-Host ''
-    Write-Host 'Create the venv first, then re-run install.cmd:'
-    Write-Host '    python -m venv venv'
-    Write-Host '    venv\Scripts\activate'
-    Write-Host '    pip install -r requirements.txt'
+    Write-Host 'From the repo root, run uv sync --locked, then re-run install.cmd.'
     Write-Host ''
     exit 1
 }

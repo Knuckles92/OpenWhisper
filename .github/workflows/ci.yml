@@ -31,7 +31,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Check optional uv development configuration
+      - name: Check uv dependency metadata and lockfile
         run: |
           python scripts/sync_uv_dependencies.py --check
           python -m pip install uv==0.11.8

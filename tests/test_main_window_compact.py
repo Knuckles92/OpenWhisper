@@ -298,33 +298,48 @@ class TestMainWindowCompactMode:
             bottom = button.mapTo(viewport, button.rect().bottomLeft()).y()
             assert 0 <= bottom < viewport.height()
 
-    def test_a_walkthrough_records_from_its_own_tab(self):
+    @pytest.mark.parametrize("walkthrough", [False, True])
+    def test_can_switch_tabs_during_a_recording(self, walkthrough):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
         from ui_qt.widgets.tabbed_content import TabbedContentWidget
 
         tabs = self.window.tabbed_content
+        tabs.unlock_meeting_tab()
         self.window.show()
+        tabs.set_current_index(TabbedContentWidget.TAB_UPLOAD_FILE)
         self.window.is_recording = True
         self.window._update_recording_state()
         assert tabs.current_index() == TabbedContentWidget.TAB_QUICK_RECORD
 
-        self.window.set_walkthrough_active(True)
+        if walkthrough:
+            self.window.set_walkthrough_active(True)
+            assert tabs.current_index() == TabbedContentWidget.TAB_WALKTHROUGH
+            assert self.window.walkthrough_tab.walkthrough_button.text() == "Finish Walkthrough"
 
-        assert tabs.current_index() == TabbedContentWidget.TAB_WALKTHROUGH
-        assert [tabs.tab_bar.isTabEnabled(i) for i in range(tabs.tab_bar.count())] == [
-            i == TabbedContentWidget.TAB_WALKTHROUGH for i in range(tabs.tab_bar.count())
-        ]
-        tab = self.window.walkthrough_tab
-        assert tab.walkthrough_button.text() == "Finish Walkthrough"
+        for index in (
+            TabbedContentWidget.TAB_WALKTHROUGH,
+            TabbedContentWidget.TAB_QUICK_RECORD,
+            TabbedContentWidget.TAB_MEETING_MODE,
+            TabbedContentWidget.TAB_UPLOAD_FILE,
+        ):
+            QTest.mouseClick(
+                tabs.tab_bar, Qt.MouseButton.LeftButton,
+                pos=tabs.tab_bar.tabRect(index).center(),
+            )
+            assert tabs.current_index() == tabs.stack.currentIndex() == index
+            assert self.window.is_recording
 
-        # The walkthrough ends before the window hears the recording stopped
-        # (the order the controller's handlers run in); it stays on its tab.
-        self.window.set_walkthrough_active(False)
-        assert tabs.current_index() == TabbedContentWidget.TAB_WALKTHROUGH
+        assert not self.window.meeting_mode_tab.start_button.isEnabled()
+        assert not self.window.upload_file_tab.model_combo.isEnabled()
+        if walkthrough:
+            self.window.set_walkthrough_active(False)
         self.window.is_recording = False
         self.window._update_recording_state()
-        assert tabs.current_index() == TabbedContentWidget.TAB_WALKTHROUGH
-        assert all(tabs.tab_bar.isTabEnabled(i) for i in range(tabs.tab_bar.count()))
-        assert tab.walkthrough_button.text() == "Start Walkthrough"
+        assert tabs.current_index() == TabbedContentWidget.TAB_UPLOAD_FILE
+        assert self.window.meeting_mode_tab.start_button.isEnabled()
+        assert self.window.upload_file_tab.model_combo.isEnabled()
+        assert self.window.walkthrough_tab.walkthrough_button.text() == "Start Walkthrough"
 
     def test_a_walkthrough_ended_in_the_tray_reopens_on_its_tab(self):
         from ui_qt.widgets.tabbed_content import TabbedContentWidget

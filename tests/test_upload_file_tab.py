@@ -1193,6 +1193,27 @@ class TestUploadFileTab:
         assert tab.findChild(QLabel, "statusLabel") is None
         assert not tab.model_combo.isEnabled()
 
+    def test_files_can_be_queued_during_a_recording_and_transcribed_afterward(self, tmp_path):
+        tab = self._tab_with_file(tmp_path)
+        path = tab.queued_paths[0]
+        tab.set_recording_active(True)
+        tab.clear_file()
+        with _inline_threads(), patch(
+            "ui_qt.widgets.upload_file_tab.audio_processor.preview_file",
+            return_value=_preview(),
+        ):
+            tab.drop_zone.files_selected.emit([path], 0)
+
+        assert tab.queued_paths == [path]
+        assert not tab.file_info_card.transcribe_btn.isEnabled()
+        assert not tab.model_combo.isEnabled()
+        assert not tab.is_transcribing
+
+        tab.set_recording_active(False)
+        assert tab.file_info_card.transcribe_btn.isEnabled()
+        tab.file_info_card.transcribe_btn.click()
+        assert tab.is_transcribing
+
     def test_overlay_states_and_status_text_land_in_the_panel(self, tmp_path):
         tab = self._tab_with_file(tmp_path)
         tab._on_transcribe()

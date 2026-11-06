@@ -20,15 +20,17 @@ resolve_script_dir() {
 
 SCRIPT_DIR="$(resolve_script_dir)"
 REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
-PYTHON="$REPO/venv/bin/python"
 ENTRY="$REPO/main.py"
-VIRTUAL_ENV="$REPO/venv"
+VIRTUAL_ENV="$REPO/.venv"
+if [ ! -x "$VIRTUAL_ENV/bin/python" ] && [ -x "$REPO/venv/bin/python" ]; then
+    VIRTUAL_ENV="$REPO/venv"
+fi
+PYTHON="$VIRTUAL_ENV/bin/python"
 
 if [ ! -x "$PYTHON" ]; then
     echo "[error] Virtual environment not found." >&2
     echo "        Expected: $PYTHON" >&2
-    echo "        Create it with:" >&2
-    echo "          cd \"$REPO\" && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt" >&2
+    echo "        From the repo root, run: uv sync --locked" >&2
     exit 1
 fi
 

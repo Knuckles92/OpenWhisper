@@ -1251,6 +1251,12 @@ class MeetingModeTab(QWidget):
             if key in payload:
                 self._identity[key] = payload.get(key)
 
+    def set_recording_active(self, active: bool) -> None:
+        """Keep past meetings available while another mode is recording."""
+        self.start_button.setEnabled(not active)
+        self.demo_button.setEnabled(not active)
+        self.finalization_start_new_button.setEnabled(not active)
+
     def set_status_text(self, text: str) -> None:
         """Update the status pill label.
 

@@ -2044,8 +2044,7 @@ class UIController(QObject):
             else:
                 # Unlock other tabs once capture ends; finalization stays on
                 # the Meeting Mode tab without blocking Quick Record.
-                if not self.main_window.is_recording:
-                    self.main_window.tabbed_content.set_recording_state(False, -1)
+                self.main_window.tabbed_content.set_recording_state(False, -1)
         elif has_dashboard:
             self.tray_manager.set_meeting_active(
                 self._meeting_active, dashboard_available=True

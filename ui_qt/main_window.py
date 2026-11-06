@@ -1098,8 +1098,6 @@ class MainWindow(QMainWindow):
         self.is_recording = False
         self.compact_controller.set_recording_state(False)
         self.compact_controller.set_status("Ready to record")
-        if not self.meeting_is_active():
-            self.tabbed_content.set_recording_state(False, -1)
 
         self.record_canceled.emit()
 
@@ -1156,6 +1154,7 @@ class MainWindow(QMainWindow):
         self.upload_file_requested.emit(audio_path, duration_seconds)
 
     def _update_recording_state(self):
+        started = self.is_recording and not self.quick_record_tab.is_recording
         self.quick_record_tab.is_recording = self.is_recording
         self.quick_record_tab._update_recording_state()
         self.compact_controller.set_recording_state(self.is_recording)
@@ -1166,19 +1165,10 @@ class MainWindow(QMainWindow):
         self.update_screen(
             "walkthrough", "set_recording_state", self.is_recording, self.walkthrough_active
         )
-        if self.is_recording:
-            self.tabbed_content.set_recording_state(True, self._recording_tab())
-        elif not self.meeting_is_active():
-            self.tabbed_content.set_recording_state(False, -1)
-
-    def _recording_tab(self) -> int:
-        """The tab that finishes the recording in progress.
-
-        Compact mode stays on Quick Record: opening another tab leaves it.
-        """
-        if self.walkthrough_active and not self._compact_mode:
-            return TabbedContentWidget.TAB_WALKTHROUGH
-        return TabbedContentWidget.TAB_QUICK_RECORD
+        self.update_screen("upload", "set_recording_active", self.is_recording)
+        self.update_screen("meeting", "set_recording_active", self.is_recording)
+        if started and (not self.walkthrough_active or self._compact_mode):
+            self.tabbed_content.set_current_index(TabbedContentWidget.TAB_QUICK_RECORD)
 
     def set_walkthrough_active(self, active: bool) -> None:
         """Whether the recording in progress is a walkthrough; its tab then finishes it."""
@@ -1186,11 +1176,9 @@ class MainWindow(QMainWindow):
         self.update_screen(
             "walkthrough", "set_recording_state", self.is_recording, self.walkthrough_active
         )
-        # Only a walkthrough starting moves the tab. One ends just as its
-        # recording stops, before is_recording catches up; moving then would
-        # leave the window on Quick Record instead of the walkthrough.
-        if self.is_recording and self.walkthrough_active:
-            self.tabbed_content.set_recording_state(True, self._recording_tab())
+        # Bring the walkthrough's controls forward when it starts in full mode.
+        if self.walkthrough_active and not self._compact_mode:
+            self.tabbed_content.set_current_index(TabbedContentWidget.TAB_WALKTHROUGH)
 
     def set_status(self, status_text: str):
         self.quick_record_tab.set_status(status_text)

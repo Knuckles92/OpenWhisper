@@ -4,7 +4,7 @@ A desktop app for dictation, audio-file transcription, and meeting notes on Wind
 
 [Website](https://openwhisper.fiorilabs.tech/) · [Download](https://github.com/Knuckles92/OpenWhisper/releases/latest) · [Run from source](#run-from-source) · [Install](#install) · [Changelog](CHANGELOG.md)
 
-Use a [packaged release](#install) with bundled Python and dependencies, or [run from source](#run-from-source) using your own Python environment.
+Use a [packaged release](#install) with bundled Python and dependencies, or [run from source](#run-from-source) with uv.
 
 **Feedback:** If you’re unhappy with any part of the app, please [open a GitHub issue](https://github.com/Knuckles92/OpenWhisper/issues) and I’ll do my best to make it right ASAP.
 
@@ -69,36 +69,21 @@ When macOS asks whether OpenWhisper may use your **login** Keychain (to read sav
 
 ## Run from source
 
-You'll need **Git** and **Python 3.11 or 3.12**. Source installs support Windows, macOS (including Intel Macs), and Linux distributions without native packages.
+Use **Git** and **uv** for the default source setup on Windows, Apple Silicon Macs running macOS 14 or later, and Linux. On Intel Macs and older macOS versions, follow [setup with pip](CONTRIBUTING.md#setup-with-pip) so pip can select compatible dependency versions.
 
 ### One-time setup
 
-Clone the repository and enter its folder:
+[Install uv](https://docs.astral.sh/uv/getting-started/installation/), then open a new terminal and run these commands:
 
 ```bash
 git clone https://github.com/Knuckles92/OpenWhisper
 cd OpenWhisper
+uv sync --locked
 ```
 
-Then create the virtual environment and install dependencies for your platform.
+uv uses Python 3.12, downloads it if needed, and installs the versions in `uv.lock` into `.venv/`. You can run the app without activating the environment. See [development with uv](CONTRIBUTING.md#development-with-uv) for tests and editor setup.
 
-**Windows (PowerShell):**
-
-```powershell
-python -m venv venv
-. .\venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
-
-**macOS / Linux:**
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-python -m pip install -r requirements.txt
-```
-
-On Linux, install Python's venv and development packages and a C compiler if needed. The launcher checks audio and Qt system libraries and prints the package-manager command for any missing dependencies. Meeting capture also needs [PulseAudio or PipeWire-Pulse](docs/linux-system-audio.md).
+On Linux, some dependencies may require a C compiler and development headers. The launcher checks audio and Qt system libraries and prints the package-manager command for any missing dependencies. Meeting capture also needs [PulseAudio or PipeWire-Pulse](docs/linux-system-audio.md).
 
 ### Launch the app
 
@@ -107,8 +92,7 @@ Run these commands from your `OpenWhisper` checkout folder:
 **Windows (PowerShell):**
 
 ```powershell
-. .\venv\Scripts\Activate.ps1
-python main.py
+uv run --locked python main.py
 ```
 
 **macOS / Linux:**
@@ -117,21 +101,17 @@ python main.py
 ./scripts/openwhisper
 ```
 
-The macOS/Linux launcher selects the virtual environment and handles macOS app-bundle identification for Accessibility. Then follow [Get started](#get-started).
+The macOS/Linux launcher uses `.venv/` and handles macOS app-bundle identification when Python provides a framework bundle. For macOS auto-paste, see [the framework Python setup](CONTRIBUTING.md#development-with-uv). Then follow [Get started](#get-started).
 
 ### Optional: launch from any terminal
 
 To register `ow` and `openwhisper`, run `.\install.cmd` in PowerShell on Windows or `./install.sh` on macOS/Linux once from your checkout folder. Open a new terminal, then use `ow` or `openwhisper` from any folder without activating the virtual environment. See [source launchers](CONTRIBUTING.md#source-launchers) for details.
 
-### Optional: develop with uv
-
-Contributors can use `uv sync` and `uv run python main.py`. See [development with uv](CONTRIBUTING.md#development-with-uv) for setup, tests, and GPU support.
-
 ## GPU acceleration
 
 For Local Whisper on Windows or Linux x86_64, install **GPU Acceleration** from **Settings → Models & storage → Downloads → Components**, or choose **Use this GPU** when prompted. Requires an NVIDIA driver providing CUDA 12 (525+); the CUDA Toolkit is not needed. macOS uses CPU.
 
-Source installs can use `python -m pip install -r requirements-gpu.txt` in the activated virtual environment. **Auto** selects a compatible compute type; **Downloads** shows GPU memory estimates.
+Source installs can also use `uv sync --locked --extra gpu` to install CUDA wheels on Windows or Linux x86_64. On Windows, launch with `uv run --locked --extra gpu python main.py`. On Linux, use `./scripts/openwhisper`. **Auto** selects a compatible compute type. **Downloads** shows GPU memory estimates.
 
 Other speech engines use their own runtimes from Downloads. On Apple Silicon Macs, **Auto** runs Parakeet MLX on the Apple GPU through MLX, Parakeet and Nemotron through the **NVIDIA Speech GPU (Metal)** runtime, and Qwen3-ASR through PyTorch MPS. The Pi and OpenCode SDK meeting agents are also separate components, available on Windows, Linux and macOS.
 
@@ -142,7 +122,7 @@ OpenWhisper asks GitHub for the latest release when it starts and every 4 hours 
 - **Windows:** Apply the in-app update or follow the setup prompt.
 - **macOS:** The verified update installs and restarts the app, restoring the previous version if startup fails. If the app cannot replace itself, it opens the verified DMG for replacement in Applications.
 - **Linux:** Install the new package with the same command used for installation.
-- **From source:** Run `git pull --ff-only` and reinstall requirements if dependencies changed.
+- **From source:** Run `git pull --ff-only` and `uv sync --locked`. Include `--extra gpu` if you installed CUDA wheels with uv.
 
 When a package upgrade or pull replaces the app while it runs, OpenWhisper offers **Restart now** once nothing is recording or transcribing.
 

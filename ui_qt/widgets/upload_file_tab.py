@@ -1054,6 +1054,7 @@ class UploadFileTab(TranscriptionTabBase):
         # State (safe to set after the base constructor: _setup_ui never
         # reads it, and no signals can fire during init)
         self._items: list[QueueItem] = []
+        self._recording_active = False
         # Mirrors of the single queued file, kept for the single-file callers.
         self._audio_path: str | None = None
         self._preview: AudioFilePreview | None = None
@@ -1109,6 +1110,12 @@ class UploadFileTab(TranscriptionTabBase):
     def queued_paths(self) -> list[str]:
         return [item.path for item in self._items]
 
+    def set_recording_active(self, active: bool) -> None:
+        """Allow browsing and queuing files while the recorder is in use."""
+        self._recording_active = active
+        self._refresh_ready()
+        self._update_engine_lock()
+
     def set_status(self, status_text: str):
         """Show a runtime message in the progress panel while a job is up.
 
@@ -1129,7 +1136,7 @@ class UploadFileTab(TranscriptionTabBase):
         if state is OverlayState.NONE:
             self._release_working_queue_rows(success=False)
             self.file_info_card.finish_transcribing(success=False)
-            self._unlock_engine()
+            self._update_engine_lock()
             return
         self.file_info_card.progress.apply_overlay_state(state)
 
@@ -1339,7 +1346,7 @@ class UploadFileTab(TranscriptionTabBase):
         ready = bool(items) and not failed and all(
             item.preview is not None for item in items
         )
-        self.file_info_card.set_ready(ready)
+        self.file_info_card.set_ready(ready and not self._recording_active)
         notes = []
         if failed:
             count = len(failed)
@@ -1427,7 +1434,7 @@ class UploadFileTab(TranscriptionTabBase):
     # Job lifecycle
 
     def _on_transcribe(self):
-        if self.is_transcribing or not self._items:
+        if self._recording_active or self.is_transcribing or not self._items:
             return
         self._reset_result()
         if len(self._items) == 1:
@@ -1438,8 +1445,7 @@ class UploadFileTab(TranscriptionTabBase):
             self.file_info_card.set_transcribing(
                 True, with_cleanup=self.cleanup_check.isChecked()
             )
-            self.set_backend_enabled(False)
-            self.local_engine.set_busy(True)
+            self._update_engine_lock()
             duration = self._preview.duration_seconds if self._preview else 0.0
             self.upload_requested.emit(self._audio_path, duration)
             return
@@ -1467,8 +1473,7 @@ class UploadFileTab(TranscriptionTabBase):
         )
         self.file_info_card.queue.render(self._items)
         self.file_info_card.queue.set_note("")
-        self.set_backend_enabled(False)
-        self.local_engine.set_busy(True)
+        self._update_engine_lock()
         request = BatchUploadRequest(
             items=tuple(
                 BatchItem(
@@ -1529,7 +1534,7 @@ class UploadFileTab(TranscriptionTabBase):
         copyable = bool(stripped) and stripped != EMPTY_ASR_MESSAGE and not failed
         self._release_working_queue_rows(success=not failed, canceled=canceled)
         self.file_info_card.finish_transcribing(success=not failed)
-        self._unlock_engine()
+        self._update_engine_lock()
         self.file_info_card.set_copy_enabled(copyable)
         self.expand_btn.setVisible(copyable)
         self._sync_viewer()
@@ -1540,7 +1545,7 @@ class UploadFileTab(TranscriptionTabBase):
         canceled = "canceled" in (message or "").lower()
         self._release_working_queue_rows(success=False, canceled=canceled)
         self.file_info_card.finish_transcribing(success=False)
-        self._unlock_engine()
+        self._update_engine_lock()
         self.file_info_card.set_copy_enabled(False)
         reason = message.removeprefix("Error: ").strip()
         if reason and not canceled:
@@ -1592,9 +1597,10 @@ class UploadFileTab(TranscriptionTabBase):
             return f"{len(names)} files"
         return ""
 
-    def _unlock_engine(self):
-        self.set_backend_enabled(True)
-        self.local_engine.set_busy(False)
+    def _update_engine_lock(self):
+        busy = self.is_transcribing or self._recording_active
+        self.set_backend_enabled(not busy)
+        self.local_engine.set_busy(busy)
 
     def set_transcription_stats(
         self,
@@ -1645,9 +1651,9 @@ class UploadFileTab(TranscriptionTabBase):
         card.queue.render([])
         card.queue.set_note("")
         card.set_mode("single")
-        card.set_ready(True)
+        card.set_ready(not self._recording_active)
         self.drop_zone.show()
-        self._unlock_engine()
+        self._update_engine_lock()
 
     def open_file_browser(self):
         self.drop_zone.open_file_browser()

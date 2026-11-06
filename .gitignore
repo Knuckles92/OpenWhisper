@@ -77,6 +77,9 @@ node_modules/
 /installer/Output/
 /.tmp/
 
+# Cargo build output
+native/target/
+
 # Pi sidecar bundle: a ~15 MB build artifact rebuilt by `node sidecar/build.mjs`
 # and shipped inside the meeting-agent component archive, never read from the
 # repo at runtime. (webui/dist IS committed — OpenWhisper.spec bundles it.)

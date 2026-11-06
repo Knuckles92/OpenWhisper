@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Changed
+
+- **Source setup uses uv** — run `uv sync --locked` to install dependencies in `.venv/`. The `ow` and `openwhisper` launchers look there first and fall back to `venv/` for existing pip setups.
+
 ## [2.8.4] - 2026-11-05
 
 ### Added
