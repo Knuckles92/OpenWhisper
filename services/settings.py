@@ -163,6 +163,7 @@ class SettingsKey:
     MEETING_LLM_PROVIDER: Final[str] = "meeting_llm_provider"
     MEETING_LLM_MODEL: Final[str] = "meeting_llm_model"
     MEETING_AGENT_CORE: Final[str] = "meeting_agent_core"
+    MEETING_BACKUP_AGENT: Final[str] = "meeting_backup_agent"
     #: ``{agent_id: model}`` for installed agents; "" keeps the agent's default.
     MEETING_AGENT_MODELS: Final[str] = "meeting_agent_models"
     #: ``TranscriptCleanupReasoning`` values for an installed agent's live
@@ -792,6 +793,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.MEETING_LLM_PROVIDER: TranscriptCleanupProvider.OPENROUTER,
     SettingsKey.MEETING_LLM_MODEL: config.MEETING_LLM_MODEL,
     SettingsKey.MEETING_AGENT_CORE: config.MEETING_AGENT_CORE,
+    SettingsKey.MEETING_BACKUP_AGENT: config.MEETING_BACKUP_AGENT,
     SettingsKey.MEETING_AGENT_MODELS: {},
     SettingsKey.MEETING_LIVE_THINKING: config.MEETING_LIVE_THINKING,
     SettingsKey.MEETING_FINAL_THINKING: config.MEETING_FINAL_THINKING,
@@ -1331,6 +1333,8 @@ resolve_transcript_batch_relation = _choice_resolver(
     SettingsKey.TRANSCRIPT_BATCH_RELATION, BatchRelation.ALL)
 resolve_meeting_agent_core = _choice_resolver(
     SettingsKey.MEETING_AGENT_CORE, MeetingAgentCore.ALL)
+resolve_meeting_backup_agent = _choice_resolver(
+    SettingsKey.MEETING_BACKUP_AGENT, ("", *MeetingAgentCore.INSTALLED))
 resolve_meeting_live_thinking = _choice_resolver(
     SettingsKey.MEETING_LIVE_THINKING, TranscriptCleanupReasoning.ALL)
 resolve_meeting_final_thinking = _choice_resolver(

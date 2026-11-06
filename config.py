@@ -732,6 +732,8 @@ class AppConfig:
     MEETING_LANGUAGE: str = "auto"
     MEETING_LLM_MODEL: str = "openrouter/free"
     MEETING_AGENT_CORE: str = "pi"
+    # No backup unless the user picks one: it decides who else may get a transcript.
+    MEETING_BACKUP_AGENT: str = ""
     # Installed agents: live passes favour speed; the final report may think harder.
     MEETING_LIVE_THINKING: str = "low"
     MEETING_FINAL_THINKING: str = "medium"

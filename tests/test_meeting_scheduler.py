@@ -288,7 +288,8 @@ class TestSegmentWatermark:
         ])
         agent = FakeAgent(fail_times=3)
         health = []
-        sched = CheckpointScheduler(engine, agent, on_health=health.append)
+        sched = CheckpointScheduler(
+            engine, agent, on_health=lambda online, _error: health.append(online))
 
         for _ in range(3):
             sched._pending_segments = 1
@@ -311,7 +312,8 @@ class TestSegmentWatermark:
             fail_error="RPC 'checkpoint' timed out after 60s",
         )
         health = []
-        sched = CheckpointScheduler(engine, agent, on_health=health.append)
+        sched = CheckpointScheduler(
+            engine, agent, on_health=lambda online, _error: health.append(online))
 
         with caplog.at_level("INFO"):
             for _ in range(2):

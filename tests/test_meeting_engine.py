@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from meeting.agent.base import create_agent_core as real_agent_core_factory
+from meeting.agent.scheduler import CheckpointScheduler as RealCheckpointScheduler
 from meeting.interfaces import AgentResult, SpooledChunk, TranscriptSegment
 
 # Load the real diarize package before the ``fakes`` fixture shadows its
@@ -988,6 +989,142 @@ class TestIntelligenceHealth:
 
         scheduler.on_health(True)
         assert engine.store.with_state(lambda s: s.intelligence_online) is True
+
+    def test_rejected_key_is_named_in_the_offline_message(self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+
+        fakes.schedulers[0].on_health(False, '401: {"message":"User not found."}')
+
+        assert "rejected the API key (401)" in events_of(engine, "intelligence")[-1]["error"]
+        assert "rejected the API key (401)" in engine._intelligence_offline_message()
+        fakes.schedulers[0].on_health(True)
+        assert engine._intelligence_offline_message().endswith("could not run.")
+
+
+def _wait_for_backup_switch():
+    for thread in threading.enumerate():
+        if thread.name == "meeting-backup-agent":
+            thread.join(timeout=10)
+
+
+class TestBackupAgent:
+    def test_no_backup_stays_transcript_only(self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=True)
+        engine.start()
+
+        fakes.schedulers[0].on_health(False, "401: nope")
+        _wait_for_backup_switch()
+
+        assert len(fakes.cores) == 1
+        assert engine.store.with_state(lambda s: s.intelligence_online) is False
+
+    def test_backup_takes_over_when_insights_go_offline(self, make_engine, fakes, repo):
+        engine = make_engine(cloud_enabled=True, backup_agent_kind="codex",
+                             backup_agent_model="gpt-x")
+        engine.start()
+
+        fakes.schedulers[0].on_health(False, "401: nope")
+        _wait_for_backup_switch()
+
+        assert fakes.schedulers[0].stopped and fakes.cores[0].shutdowns == 1
+        assert fakes.cores[1].config.provider == "codex"
+        assert fakes.cores[1].config.model == "gpt-x"
+        assert fakes.cores[1].config.endpoint is None
+        # The backup catches up on what was said before the switch.
+        assert fakes.schedulers[1].started and fakes.schedulers[1].seeded is None
+        assert engine.store.with_state(lambda s: s.intelligence_online) is True
+        finalization = engine.store.with_state(lambda s: s.finalization)
+        assert finalization.status == "pending"
+        assert "backup agent took over" in finalization.message
+        assert "rejected the API key" in finalization.message
+        # Re-runs and reports on this meeting use the backup.
+        meeting = repo.get_meeting(engine.meeting_id)
+        assert meeting["agent_provider"] == "codex"
+        assert meeting["agent_model"] == "gpt-x"
+        assert meeting["agent_endpoint_json"] is None
+
+    def test_real_scheduler_failures_hand_over_to_the_backup(
+            self, make_engine, fakes, monkeypatch):
+        monkeypatch.setattr("meeting.agent.scheduler.CheckpointScheduler",
+                            RealCheckpointScheduler)
+        engine = make_engine(cloud_enabled=True, backup_agent_kind="codex")
+        engine.start()
+        first = engine._scheduler
+
+        try:
+            for _ in range(3):
+                first._record_failure(1, "401: nope", request_id="r")
+            _wait_for_backup_switch()
+
+            assert engine._scheduler is not first
+            assert isinstance(engine._scheduler, RealCheckpointScheduler)
+            assert engine._scheduler._thread.is_alive()
+            assert not first._thread.is_alive()
+            assert fakes.cores[-1].config.provider == "codex"
+            assert engine.store.with_state(lambda s: s.intelligence_online) is True
+        finally:
+            engine._scheduler.stop()
+
+    def test_backup_only_gets_transcript_since_insights_were_turned_back_on(
+            self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=True, backup_agent_kind="codex")
+        engine.start()
+        engine.set_cloud_enabled(False)
+        engine.set_cloud_enabled(True)
+
+        fakes.schedulers[-1].on_health(False, "boom")
+        _wait_for_backup_switch()
+
+        assert fakes.schedulers[-1].seeded is not None
+
+    def test_backup_is_tried_once(self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=True, backup_agent_kind="codex")
+        engine.start()
+
+        fakes.schedulers[0].on_health(False, "boom")
+        _wait_for_backup_switch()
+        fakes.schedulers[1].on_health(False, "boom again")
+        _wait_for_backup_switch()
+
+        assert len(fakes.cores) == 2
+        assert engine.store.with_state(lambda s: s.intelligence_online) is False
+
+    def test_backup_covers_a_core_that_is_unusable_at_start(self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=True, backup_agent_kind="codex")
+        fakes.core_healthy = False
+        engine.start()
+        fakes.core_healthy = True
+        _wait_for_backup_switch()
+
+        assert fakes.cores[-1].config.provider == "codex"
+        assert engine.store.with_state(lambda s: s.intelligence_online) is True
+
+    def test_failed_backup_reports_both_reasons(self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=True, backup_agent_kind="codex")
+        engine.start()
+        fakes.core_healthy = False
+
+        fakes.schedulers[0].on_health(False, "401: nope")
+        _wait_for_backup_switch()
+
+        assert engine.store.with_state(lambda s: s.intelligence_online) is False
+        finalization = engine.store.with_state(lambda s: s.finalization)
+        assert finalization.status == "unavailable"
+        assert "rejected the API key" in finalization.message
+        assert "could not take over" in finalization.message
+
+    def test_backup_never_starts_once_the_meeting_is_ending(self, make_engine, fakes):
+        engine = make_engine(cloud_enabled=True, backup_agent_kind="codex")
+        engine.start()
+        engine._end_thread = threading.current_thread()
+        try:
+            fakes.schedulers[0].on_health(False, "boom")
+            _wait_for_backup_switch()
+            assert len(fakes.cores) == 1
+        finally:
+            engine._end_thread = None
+
 
 class TestCloudToggle:
     def test_stop_intelligence_shuts_the_agent_core_down(

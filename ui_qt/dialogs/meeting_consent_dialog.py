@@ -35,6 +35,19 @@ def _chosen_agent() -> str:
     return core if core in MeetingAgentCore.INSTALLED else ""
 
 
+def _backup_agent_name() -> str:
+    """The backup agent that may take over AI insights, "" if none."""
+    try:
+        from services.installed_agents import AGENT_SPECS
+        from services.settings import resolve_meeting_backup_agent, settings_manager
+
+        backup = resolve_meeting_backup_agent(settings_manager.load_all_settings())
+    except Exception:
+        logger.debug("Could not read the backup agent", exc_info=True)
+        return ""
+    return AGENT_SPECS[backup].name if backup else ""
+
+
 def _fast_judgments_elsewhere() -> str:
     """Who else receives excerpts under this consent: the Fast judgments judge, "" if none.
 
@@ -183,6 +196,18 @@ class MeetingConsentDialog(QDialog):
             "does not leave this machine."
         )
 
+    @staticmethod
+    def _backup_text() -> str:
+        """Who else may get the transcript if AI insights stop working."""
+        name = _backup_agent_name()
+        if not name:
+            return ""
+        return (
+            f"If AI insights stop working during a meeting, {name}, your chosen "
+            "backup, takes over and receives the transcript through its own "
+            "sign-in.\n\n"
+        )
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -203,6 +228,7 @@ class MeetingConsentDialog(QDialog):
             "action items, and questions updated on the dashboard while you "
             "talk.\n\n"
             f"{self._location_text()}\n\n"
+            f"{self._backup_text()}"
             "AI insights do not upload audio. Recordings are saved here. "
             "If Remote computer is selected for meeting speech, microphone and "
             "system audio are sent to your paired host for transcription. "

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -109,6 +110,10 @@ class MeetingEngineOptions:
     #: Packaged 'pi' | 'opencode', or installed 'claude_code' | 'codex' | 'opencode_cli'
     agent_core_kind: str = 'pi'
     sidecar_payload_dir: Optional[str] = None
+    #: Installed agent to hand AI insights to when ``agent_core_kind`` fails;
+    #: '' for none. The user chose it, so it may receive the transcript.
+    backup_agent_kind: str = ''
+    backup_agent_model: str = ''
     diarization_model_path: Optional[str] = None
     #: Resolve/download a missing embedding model on the processing worker.
     #: It raises with a sentence for the user when no model can be had.
@@ -141,6 +146,19 @@ _INTELLIGENCE_OFFLINE_MESSAGE = (
     "Meeting intelligence is offline; final cloud "
     "insights could not run."
 )
+
+
+def _agent_failure_text(error: str) -> str:
+    """One sentence on why the agent failed, for the dashboard."""
+    rejected = re.search(r"\b40[13]\b", error)
+    if rejected:
+        return (
+            f"The AI provider rejected the API key ({rejected.group()}). "
+            "Check it in Settings → Meeting Mode → Intelligence."
+        )
+    return f"Last error: {error[:200]}" if error else ""
+
+
 #: Headline shown while each finalization step runs.
 _STEP_RUNNING_MESSAGES = {
     "redecode": "Re-transcribing meeting…",
@@ -326,6 +344,9 @@ class MeetingEngine:
         # True once intelligence has been stopped at least once: a rebuilt
         # scheduler must not re-ship the whole meeting-to-date transcript.
         self._intelligence_restarted = False
+        #: Why the agent went offline, for the messages that report it.
+        self._intelligence_failure = ""
+        self._backup_agent_tried = False
 
         self._chunk_lock = threading.Lock()
         self._chunk_index: Dict[int, SpooledChunk] = {}
@@ -1142,7 +1163,7 @@ class MeetingEngine:
         elif not end.complete:
             self._set_finalization("unavailable", _RECOVERY_PENDING_MESSAGE, emit=False)
         else:
-            self._set_finalization("unavailable", _INTELLIGENCE_OFFLINE_MESSAGE, emit=False)
+            self._set_finalization("unavailable", self._intelligence_offline_message(), emit=False)
 
     def _end_redecode(self, end: _EndRun) -> None:
         if not end.will_offline:
@@ -1336,6 +1357,9 @@ class MeetingEngine:
             summary_stats=summary_stats,
         )
 
+    def _intelligence_offline_message(self) -> str:
+        return f"{_INTELLIGENCE_OFFLINE_MESSAGE} {self._intelligence_failure}".strip()
+
     def _report_end_without_cloud(self, end: _EndRun) -> None:
         if end.will_speaker_id:
             self._finish_end_after_speakers(end)
@@ -1349,7 +1373,7 @@ class MeetingEngine:
                 "Post-meeting cleanup and report are off.",
             )
         elif end.scheduler is None or not self._core_is_healthy():
-            self._set_finalization("unavailable", _INTELLIGENCE_OFFLINE_MESSAGE)
+            self._set_finalization("unavailable", self._intelligence_offline_message())
 
     def _finish_end_after_speakers(self, end: _EndRun) -> None:
         end.update_step(
@@ -2934,6 +2958,8 @@ class MeetingEngine:
             )
             self._emit("intelligence", {"online": False, "error": str(exc)})
             self._emit_status()
+        self._intelligence_failure = self._intelligence_failure or str(exc)
+        self._fall_back_to_backup_agent()
 
     def _on_agent_activity(self, activity: Any) -> None:
         """Publish one ephemeral agent activity tick to host dashboards.
@@ -3008,14 +3034,17 @@ class MeetingEngine:
         self._set_finalization("unavailable", reason, emit=False)
         self._emit("intelligence", {"online": False, "error": reason})
         self._emit_status(note=reason)
+        self._intelligence_failure = self._intelligence_failure or reason
+        self._fall_back_to_backup_agent()
 
-    def _on_intelligence_health(self, online: bool) -> None:
+    def _on_intelligence_health(self, online: bool, error: str = "") -> None:
         """Scheduler health callback: publish the real intelligence state.
 
         Args:
             online: True when checkpoints succeed again, False when the
                 scheduler declared intelligence offline after repeated
                 failures.
+            error: The failure that took it offline.
         """
         online = bool(online)
         if self.store is not None:
@@ -3026,9 +3055,11 @@ class MeetingEngine:
             meeting_status = self.store.with_state(lambda s: s.status) if self.store else "active"
             if meeting_status not in ("ending", "ended", "failed", "needs_recovery"):
                 self._set_finalization("pending", emit=False)
+            self._intelligence_failure = ""
         else:
-            payload["error"] = ("Checkpoints failed repeatedly; continuing "
-                                "transcript-only.")
+            self._intelligence_failure = _agent_failure_text(error)
+            payload["error"] = (f"Checkpoints failed repeatedly; continuing "
+                                f"transcript-only. {self._intelligence_failure}").strip()
             self._set_finalization(
                 "unavailable",
                 payload["error"],
@@ -3036,6 +3067,64 @@ class MeetingEngine:
             )
         self._emit("intelligence", payload)
         self._emit_status()
+        if not online:
+            self._fall_back_to_backup_agent()
+
+    def _fall_back_to_backup_agent(self) -> None:
+        """Hand AI insights to the backup agent the user chose, once per meeting.
+
+        On its own thread: callers are the scheduler being replaced or a start
+        still holding its lock.
+        """
+        kind = self.options.backup_agent_kind
+        with self._lifecycle_lock:
+            if (self._backup_agent_tried or not kind
+                    or kind == self.options.agent_core_kind
+                    or self._end_thread is not None or not self._active):
+                return
+            self._backup_agent_tried = True
+        threading.Thread(
+            target=self._switch_to_backup_agent, args=(kind,),
+            name="meeting-backup-agent", daemon=True,
+        ).start()
+
+    def _switch_to_backup_agent(self, kind: str) -> None:
+        failure = self._intelligence_failure
+        logger.warning("AI insights moving to backup agent %s: %s", kind, failure)
+        with self._intelligence_start_lock:
+            # Insights stayed on, so the backup may catch up on the meeting;
+            # only an earlier off-and-on keeps the send cursor forward-only.
+            restarted = self._intelligence_restarted
+            self._stop_intelligence()
+            self._intelligence_restarted = restarted
+            self.options.agent_core_kind = kind
+            self.options.llm_provider = kind
+            self.options.llm_model = self.options.backup_agent_model
+            self.options.llm_endpoint = None
+            self.options.sidecar_payload_dir = None
+            try:
+                # Re-runs and reports stay with the agent that wrote the record.
+                self.repository.update_meeting(
+                    self.meeting_id, agent_provider=kind,
+                    agent_model=self.options.backup_agent_model,
+                    agent_endpoint_json=None,
+                )
+            except Exception:
+                logger.exception("Failed to record the backup agent")
+            self._maybe_start_intelligence()
+            if not self.store.with_state(lambda s: s.cloud_enabled):
+                return
+            if self._scheduler is not None:
+                self._set_finalization(
+                    "pending",
+                    f"Your backup agent took over AI insights. {failure}".strip(),
+                )
+                return
+            backup_error = self.store.with_state(lambda s: s.finalization.message)
+            self._set_finalization(
+                "unavailable",
+                f"{failure} The backup agent could not take over. {backup_error}".strip(),
+            )
 
     def _seed_scheduler_watermark(self, scheduler: Any) -> None:
         """Mark the meeting-to-date transcript as already delivered.

@@ -34,6 +34,8 @@ from services.settings import (
     resolve_meeting_insight_review,
     resolve_meeting_report_views,
     resolve_meeting_language,
+    resolve_meeting_agent_model,
+    resolve_meeting_backup_agent,
     resolve_meeting_server_bind,
     resolve_meeting_server_port,
     resolve_meeting_speaker_id_backend,
@@ -1009,6 +1011,7 @@ class MeetingRuntime:
         from services.meeting_agent_route import resolve_meeting_agent_route
 
         route = resolve_meeting_agent_route(settings)
+        backup_agent = resolve_meeting_backup_agent(settings)
 
         speaker_backend = (
             MeetingSpeakerIdBackend.LOCAL
@@ -1032,6 +1035,8 @@ class MeetingRuntime:
             llm_endpoint=route.endpoint,
             agent_core_kind=route.kind,
             sidecar_payload_dir=route.payload_dir,
+            backup_agent_kind=backup_agent,
+            backup_agent_model=resolve_meeting_agent_model(backup_agent, settings),
             diarization_model_path=(
                 speaker_model_path() if want_speaker_model else None
             ),

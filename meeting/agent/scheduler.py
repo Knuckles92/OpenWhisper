@@ -1061,9 +1061,9 @@ class CheckpointScheduler:
                 "checkpoint failures (request_id=%s)",
                 self._consecutive_failures, request_id or "-",
             )
-            self._set_online(False)
+            self._set_online(False, error)
 
-    def _set_online(self, online: bool) -> None:
+    def _set_online(self, online: bool, error: str = "") -> None:
         if online == self._online:
             return
         self._online = online
@@ -1072,7 +1072,7 @@ class CheckpointScheduler:
             self._retry_not_before = 0.0
         if self._on_health is not None:
             try:
-                self._on_health(online)
+                self._on_health(online, error)
             except Exception:
                 logger.exception("Scheduler on_health callback raised")
 

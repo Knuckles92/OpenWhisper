@@ -109,6 +109,15 @@ class TestConsentForAnAgent:
         assert dialog.agent_id == MeetingAgentCore.CODEX
         assert "sent to Codex on this computer" in self._body(dialog)
 
+    def test_chosen_backup_is_named_in_the_consent(self):
+        settings_manager.save_setting(SettingsKey.MEETING_BACKUP_AGENT, MeetingAgentCore.CODEX)
+        dialog = MeetingConsentDialog(destination="OpenRouter", remote=True)
+        assert "Codex, your chosen backup" in self._body(dialog)
+
+        settings_manager.save_setting(SettingsKey.MEETING_BACKUP_AGENT, "")
+        dialog = MeetingConsentDialog(destination="OpenRouter", remote=True)
+        assert "backup" not in self._body(dialog)
+
     def test_built_in_engine_keeps_the_endpoint_copy(self):
         settings_manager.save_setting(SettingsKey.MEETING_AGENT_CORE, MeetingAgentCore.PI)
         dialog = MeetingConsentDialog(destination="Work gateway", remote=True)

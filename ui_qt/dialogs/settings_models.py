@@ -61,6 +61,7 @@ from services.settings import (
     resolve_meeting_agent_core,
     resolve_meeting_agent_model,
     resolve_meeting_agent_models,
+    resolve_meeting_backup_agent,
     resolve_meeting_audio_upload_consent,
     resolve_meeting_language,
     resolve_meeting_llm_model,
@@ -654,6 +655,19 @@ class ModelAssignments(QObject):
         self.meeting_model_tile.add_body_layout(thinking)
         self.meeting_thinking_note = self._caption("")
         self.meeting_model_tile.add_body(self.meeting_thinking_note)
+        self.meeting_backup_agent_combo = ElidingComboBox()
+        self.meeting_backup_agent_combo.setMinimumHeight(40)
+        self.meeting_backup_agent_combo.addItem("No backup", "")
+        for agent_id in MeetingAgentCore.INSTALLED:
+            self.meeting_backup_agent_combo.addItem(AGENT_SPECS[agent_id].name, agent_id)
+        self.meeting_backup_agent_combo.currentIndexChanged.connect(
+            self._on_meeting_backup_agent_changed
+        )
+        self.meeting_model_tile.add_body(self._field("Backup agent", self.meeting_backup_agent_combo))
+        self.meeting_model_tile.add_body(self._caption(
+            "If AI insights stop working during a meeting, this agent takes over "
+            "and receives the transcript through its own sign-in."
+        ))
         layout.addWidget(self.meeting_model_tile)
         self._built.add(MEETING_INTELLIGENCE)
         return self.meeting_model_tile
@@ -951,6 +965,16 @@ class ModelAssignments(QObject):
             return False
         self._refresh_rail_values()
         return True
+
+    def _on_meeting_backup_agent_changed(self, _index: int) -> None:
+        try:
+            settings_manager.save_setting(
+                SettingsKey.MEETING_BACKUP_AGENT,
+                self.meeting_backup_agent_combo.currentData() or "",
+            )
+        except Exception as exc:
+            logger.error("Couldn't save the backup agent: %s", exc)
+            self._say(f"Couldn't save the backup agent: {exc}")
 
     def _on_meeting_agent_choice(self, choice: str) -> None:
         """A tile was chosen: an installed agent, or OpenWhisper's own engine.
@@ -1939,6 +1963,10 @@ class ModelAssignments(QObject):
         combo.blockSignals(blocker)
         self.meeting_agent_picker.set_saved_models(resolve_meeting_agent_models(snapshot))
         self._apply_meeting_agent_choice(core)
+        backup = self.meeting_backup_agent_combo
+        blocker = backup.blockSignals(True)
+        backup.setCurrentIndex(max(0, backup.findData(resolve_meeting_backup_agent(snapshot))))
+        backup.blockSignals(blocker)
 
     def refresh_component_state(self) -> None:
         """Re-read component install state these pages report on."""

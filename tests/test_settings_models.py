@@ -1102,6 +1102,14 @@ class TestMeetingAgentChoice(_DialogTestCase):
         assert values[SettingsKey.MEETING_FINAL_THINKING] == "max"
         assert "Sent to Claude Code" in dialog.meeting_thinking_note.text()
 
+    def test_backup_agent_is_off_until_chosen(self):
+        dialog, values = self._make_agent_dialog(MeetingAgentCore.PI)
+        combo = dialog.meeting_backup_agent_combo
+        assert combo.currentData() == ""
+        assert SettingsKey.MEETING_BACKUP_AGENT not in values
+        combo.setCurrentIndex(combo.findData(MeetingAgentCore.CODEX))
+        assert values[SettingsKey.MEETING_BACKUP_AGENT] == MeetingAgentCore.CODEX
+
     def test_packaged_sdk_thinks_at_medium(self):
         dialog, _values = self._make_agent_dialog(MeetingAgentCore.PI)
         for combo in (dialog.meeting_live_thinking_combo, dialog.meeting_final_thinking_combo):

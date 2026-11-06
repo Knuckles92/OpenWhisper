@@ -583,6 +583,12 @@ export default function HeaderBar({
         </div>
       )}
 
+      {!showHistory && meetingLive && finalizationStatus === 'pending' && finalizationMessage && (
+        <div className="banner info" role="status">
+          {finalizationMessage}
+        </div>
+      )}
+
       {!showHistory && showDiarizationBanner && (
         <div className="banner info" role="status">
           {diarizationReason} Using Me / Others channels.
