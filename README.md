@@ -17,7 +17,7 @@ Use a [packaged release](#install) with bundled Python and dependencies, or [run
 </p>
 
 <p align="center">
-  <img width="880" alt="Remote engine: Quick Record on a laptop using a desktop's Parakeet engine, and the desktop's sharing settings with a pairing code and the connected laptop" src="docs/screenshots/remote-engine.png" />
+  <img width="880" alt="OpenWhisper | Remote Engine: Quick Record on a laptop using a desktop's Parakeet engine, and the desktop's sharing settings with a pairing code and the connected laptop" src="docs/screenshots/remote-engine-divider.png" />
 </p>
 
 ## What it does
