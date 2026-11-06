@@ -134,7 +134,10 @@ it at the edge again. Compositor-placed desktops (Wayland) don't show it.
 
 Drawing tools, with their keys: arrow (A), box (B), pen (P), highlighter
 (H), text (T) and numbered steps (N); colours 1–4; undo Ctrl+Z, redo
-Ctrl+Shift+Z or Ctrl+Y. Pressing **Screenshot** again while drawing keeps
+Ctrl+Shift+Z or Ctrl+Y. Press **S** or use the snapping button to toggle
+alignment to nearby screen corners and window edges when selecting a region
+or drawing an arrow or box. Window edges are available on Windows and macOS.
+Pressing **Screenshot** again while drawing keeps
 the screenshot. The overlay never appears in its own screenshots, and on
 Windows neither does the recording overlay while a walkthrough records.
 A snap freezes every monitor, so you can select on any of them. Starting a
@@ -155,11 +158,21 @@ Auto Mode waits briefly for the screen to update and saves the clicked
 monitor. Several quick clicks become one screenshot. Each saved image
 closes a section of narration and appears in the live column.
 
-Click **Draw** in the column to freeze its screen with the pen ready. Keep
-talking while you mark it up, then press Enter to add the annotated image
-or Esc to discard it. The arrow beside Draw and the Screenshot shortcut
-still let you take a manual screenshot. **Pause** also pauses automatic
-screenshots, and **Undo** removes the most recent image and keeps its words.
+The drawing toolbar opens at the top center of the screen where you start.
+Choose a tool there, or click **Draw** in the column to pick the pen. Draw on
+any monitor and release the mouse to save an annotated screenshot of that
+monitor. For text, press **Enter** after typing. The desktop is ready for
+clicks again after each mark. **Esc** exits drawing early.
+
+Marks disappear after about 1.5 seconds. Hold **Ctrl** when releasing the
+mouse to pin a mark. For text, hold it when placing the label or pressing
+**Enter**. Pinned marks appear in later automatic screenshots on that screen.
+Use the toolbar's **Clear marks** button or press **C** while drawing to
+remove them from the desktop. Tool keys and **S** work while drawing.
+
+The arrow beside Draw and the Screenshot shortcut take manual screenshots.
+**Pause** pauses automatic screenshots, and **Undo** removes the most recent
+image and keeps its words.
 
 ## How your words line up with the screenshots
 

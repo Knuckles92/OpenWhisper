@@ -566,7 +566,7 @@ def test_snaps_keep_the_overlay_out_only_when_it_is_its_own_window(monkeypatch, 
 
     seen = {}
     monkeypatch.setattr(snap, "start_snap", lambda **kwargs: seen.update(kwargs) or "session")
-    ui = SimpleNamespace(overlay=Mock(), _walkthrough_panel=None)
+    ui = SimpleNamespace(overlay=Mock(), _walkthrough_panel=None, _walkthrough_drawing=None)
     ui.overlay.isWindow.return_value = window
 
     assert UIController.start_snap(ui, hint="talk") == "session"
@@ -625,12 +625,14 @@ def test_snaps_keep_the_walkthrough_column_out_while_it_shows(monkeypatch):
     monkeypatch.setattr(snap, "start_snap", lambda **kwargs: seen.update(kwargs) or "session")
     panel = Mock()
     panel.isVisible.return_value = True
-    ui = SimpleNamespace(overlay=Mock(), _walkthrough_panel=panel)
+    drawing = Mock()
+    drawing.windows.return_value = (Mock(),)
+    ui = SimpleNamespace(overlay=Mock(), _walkthrough_panel=panel, _walkthrough_drawing=drawing)
     ui.overlay.isWindow.return_value = True
 
     UIController.start_snap(ui, hint="")
 
-    assert seen["keep_out"] == (ui.overlay, panel)
+    assert seen["keep_out"] == (ui.overlay, panel, *drawing.windows.return_value)
 
 
 def test_buttons_reach_the_walkthrough_as_the_user():

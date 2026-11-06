@@ -46,7 +46,7 @@ class _Button:
     tip: str
 
 
-def _layout() -> tuple[list[_Button], list[int]]:
+def _layout(live: bool) -> tuple[list[_Button], list[int]]:
     """Buttons left to right, and the x of each group separator, inside the panel."""
     buttons: list[_Button] = []
     separators: list[int] = []
@@ -64,16 +64,24 @@ def _layout() -> tuple[list[_Button], list[int]]:
         x += SEPARATOR
 
     for tool, tip in _TOOLS:
+        if live:
+            tip += " · Hold Ctrl to pin"
         add("tool", tool.value, tip)
     separate()
-    add("undo", "undo", "Undo (Ctrl+Z)")
-    add("redo", "redo", "Redo (Ctrl+Shift+Z)")
-    separate()
+    if not live:
+        add("undo", "undo", "Undo (Ctrl+Z)")
+        add("redo", "redo", "Redo (Ctrl+Shift+Z)")
+        separate()
     for index, swatch in enumerate(SWATCHES):
         add("color", str(index), f"{swatch.name} ({index + 1})", SWATCH)
     separate()
-    add("drop", "drop", "Cancel (Esc)")
-    add("keep", "keep", "Keep (Enter)")
+    add("snap", "snap", "Snap to corners and window edges (S)")
+    if live:
+        add("clear", "clear", "Clear marks (C while drawing)")
+        add("drop", "drop", "Return to the desktop (Esc)")
+    else:
+        add("drop", "drop", "Cancel (Esc)")
+        add("keep", "keep", "Keep (Enter)")
     return buttons, separators
 
 
@@ -86,12 +94,15 @@ class SnapToolbar(QWidget):
     redo_clicked = pyqtSignal()
     drop_clicked = pyqtSignal()
     keep_clicked = pyqtSignal()
+    snap_clicked = pyqtSignal()
+    clear_clicked = pyqtSignal()
 
-    def __init__(self, parent: QWidget, palette: Palette) -> None:
-        super().__init__(parent)
+    def __init__(self, parent: QWidget | None, palette: Palette, *, live: bool = False,
+                 flags: Qt.WindowType = Qt.WindowType.Widget) -> None:
+        super().__init__(parent, flags)
         self.setObjectName("snapToolbar")
         self._palette = palette
-        self._buttons, self._separators = _layout()
+        self._buttons, self._separators = _layout(live)
         self.setFixedSize(self._buttons[-1].rect.right() + 1 + PAD, BUTTON + 2 * PAD)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setMouseTracking(True)
@@ -100,6 +111,7 @@ class SnapToolbar(QWidget):
         self._color = 0
         self._can_undo = False
         self._can_redo = False
+        self._snap_enabled = False
         self._hover: _Button | None = None
         self._pressed: _Button | None = None
         self._signals = {
@@ -107,15 +119,21 @@ class SnapToolbar(QWidget):
             "redo": self.redo_clicked,
             "drop": self.drop_clicked,
             "keep": self.keep_clicked,
+            "snap": self.snap_clicked,
+            "clear": self.clear_clicked,
         }
 
     # ---- state ----
 
-    def set_state(self, tool: Tool, color: int, can_undo: bool, can_redo: bool) -> None:
-        state = (Tool(tool), color, can_undo, can_redo)
+    def set_state(self, tool: Tool | None, color: int, can_undo: bool, can_redo: bool) -> None:
+        state = (tool, color, can_undo, can_redo)
         if state != (self._tool, self._color, self._can_undo, self._can_redo):
             self._tool, self._color, self._can_undo, self._can_redo = state
             self.update()
+
+    def set_snap_enabled(self, enabled: bool) -> None:
+        self._snap_enabled = enabled
+        self.update()
 
     def button_rect(self, kind: str, value: str = "") -> QRect:
         """Where a control is, for tests and for anchoring popups; empty if unknown."""
@@ -231,7 +249,9 @@ class SnapToolbar(QWidget):
             return self._palette.color("accent-hover" if hovered else "accent"), QColor(
                 "#FFFFFF"
             )
-        if button.kind == "tool" and button.value == self._tool.value:
+        if button.kind == "snap" and self._snap_enabled:
+            return self._palette.color("overlay-rgb", 36), self._palette.color("accent")
+        if button.kind == "tool" and button.value == self._tool:
             color = QColor(SWATCHES[self._color].color)
             tint = QColor(color)
             tint.setAlpha(46 if hovered else 34)

@@ -8,8 +8,9 @@ in. These helpers are the only place the two meet.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
-from PyQt6.QtCore import QPoint, QRect, QSize
+from PyQt6.QtCore import QPoint, QPointF, QRect, QSize
 
 #: Space between the selection and the toolbar.
 TOOLBAR_GAP = 10
@@ -22,6 +23,7 @@ GRAB_INSIDE = 4
 #: Along an edge, this close to the end grabs the corner (the drawn corner mark).
 GRAB_CORNER = 16
 _EPSILON = 1e-6
+SNAP_DISTANCE = 10
 
 #: Which edges a grab moves: x is -1 (left), 1 (right) or 0; y likewise.
 Grab = tuple[int, int]
@@ -32,6 +34,28 @@ def span(a: QPoint, b: QPoint) -> QRect:
     return QRect(
         min(a.x(), b.x()), min(a.y(), b.y()), abs(b.x() - a.x()), abs(b.y() - a.y())
     )
+
+
+def snap_point(point: QPointF, targets: Sequence[QRect]) -> QPointF:
+    """Magnetize to nearby edges and favor a corner when both axes are close."""
+    best = point
+    best_rank = (0, 0.0)
+    x, y = point.x(), point.y()
+    for rect in targets:
+        left, top = rect.x(), rect.y()
+        right, bottom = left + rect.width(), top + rect.height()
+        if not (left - SNAP_DISTANCE <= x <= right + SNAP_DISTANCE
+                and top - SNAP_DISTANCE <= y <= bottom + SNAP_DISTANCE):
+            continue
+        edge_x = min((left, right), key=lambda edge: abs(edge - x))
+        edge_y = min((top, bottom), key=lambda edge: abs(edge - y))
+        dx, dy = abs(edge_x - x), abs(edge_y - y)
+        near_x, near_y = dx <= SNAP_DISTANCE, dy <= SNAP_DISTANCE
+        rank = (int(near_x) + int(near_y), -(dx if near_x else 0) - (dy if near_y else 0))
+        if rank > best_rank:
+            best = QPointF(edge_x if near_x else x, edge_y if near_y else y)
+            best_rank = rank
+    return best
 
 
 def _side(value: int, low: int, high: int, reach: int) -> int:

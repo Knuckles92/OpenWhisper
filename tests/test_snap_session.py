@@ -428,10 +428,10 @@ class TestEveryScreen:
         first, second = snap._overlays
         first._select_all()
 
-        _drag_on(second, QPoint(10, 10), QPoint(110, 60))
+        _drag_on(second, QPoint(18, 18), QPoint(118, 68))
 
         assert first.selection is None
-        assert second.selection == QRect(10, 10, 100, 50)
+        assert second.selection == QRect(18, 18, 100, 50)
         assert snap._overlay is second
         snap.keep()
         (image,) = kept.calls[0]
