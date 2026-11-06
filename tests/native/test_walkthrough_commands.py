@@ -217,8 +217,9 @@ def test_real_recovery_claims_transcription_job_and_preserves_draft_on_cancel(tm
             stream.setnchannels(1);stream.setsampwidth(2);stream.setframerate(16000)
             stream.writeframes(b'\0 '*48000)
         interrupted.preserve_audio(audio)
+        writer=interrupted._writer
         interrupted.end()
-        if interrupted._writer is not None: interrupted._writer.shutdown(wait=True)
+        if writer is not None: writer.shutdown(wait=True)
         original={p.name:p.read_bytes() for p in draft_folder.iterdir()}
         shown=call('walkthroughs.detail',id=draft_folder.name)
         assert shown['is_draft'] and shown['can_recover'] and len(shown['steps'])==1
