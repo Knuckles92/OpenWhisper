@@ -51,7 +51,12 @@ def smoke(argv=None):
         # The frozen runtime must run without the source checkout or a venv.
         env.pop("PYTHONPATH", None)
         env.pop("VIRTUAL_ENV", None)
-        result = subprocess.run([service, "--self-test"], cwd=folder, env=env, capture_output=True, text=True, timeout=120)
+        service_env = env.copy()
+        if sys.platform.startswith("linux"):
+            # Workspace audio libraries must not mask a missing bundle dependency.
+            service_env.pop("LD_LIBRARY_PATH", None)
+            service_env.pop("LD_LIBRARY_PATH_ORIG", None)
+        result = subprocess.run([service, "--self-test"], cwd=folder, env=service_env, capture_output=True, text=True, timeout=120)
         if result.returncode:
             raise RuntimeError(f"Frozen service self-test failed:\n{result.stderr[-16000:]}")
         health = json.loads(result.stdout.strip().splitlines()[-1])
@@ -59,7 +64,7 @@ def smoke(argv=None):
             raise RuntimeError(f"Unexpected service health: {health}")
         output = queue.Queue()
         with (folder / "service.log").open("w", encoding="utf-8") as log:
-            child = subprocess.Popen([service], cwd=folder, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True)
+            child = subprocess.Popen([service], cwd=folder, env=service_env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log, text=True)
             def read():
                 for line in child.stdout:
                     try:

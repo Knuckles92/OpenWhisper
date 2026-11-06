@@ -6,6 +6,27 @@ import os
 import sys
 
 
+def _import_packaged_audio():
+    """Let SoundDevice find the Linux library collected inside its bundle."""
+    if not getattr(sys, "frozen", False) or not sys.platform.startswith("linux"):
+        return
+    import ctypes.util
+    import importlib
+    from pathlib import Path
+
+    library = Path(sys._MEIPASS) / "libportaudio.so.2"
+    if not library.is_file():
+        raise RuntimeError("The native service is missing its bundled PortAudio library")
+    # find_library consults the host ldconfig cache, which does not describe
+    # PyInstaller's private libraries. Limit this override to the initial import.
+    original = ctypes.util.find_library
+    ctypes.util.find_library = lambda name: str(library) if name == "portaudio" else original(name)
+    try:
+        importlib.import_module("sounddevice")
+    finally:
+        ctypes.util.find_library = original
+
+
 def main():
     # Frozen multiprocessing must dispatch child workers before opening the pipe.
     multiprocessing.freeze_support()
@@ -17,6 +38,7 @@ def main():
 
     native_libraries.register_cuda_dll_directories()
     native_libraries.preload_cuda_libraries()
+    _import_packaged_audio()
     try:
         from services.components import prune_orphans
         from services.component_runtime import activate_components

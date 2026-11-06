@@ -16,6 +16,7 @@ av==18.1.0
 certifi==2026.7.22
 cffi==2.1.1
 click==8.5.0
+coloredlogs==15.0.1
 cryptography==50.0.1
 ctranslate2==4.8.1
 et_xmlfile==2.0.0
@@ -34,6 +35,7 @@ httpcore2==2.12.0
 httptools==0.8.0
 httpx==0.28.1
 httpx2==2.12.0
+humanfriendly==10.0
 idna==3.19
 iniconfig==2.3.0
 jaraco.classes==3.4.0
@@ -50,7 +52,10 @@ mcp==2.2.0
 mcp-types==2.2.0
 more-itertools==11.1.0
 numpy==2.5.2
-onnxruntime==1.29.0
+# 1.23.2 is the last published CPython 3.12 macOS Intel wheel. Newer
+# runtimes remain pinned on Apple Silicon and the other release targets.
+onnxruntime==1.23.2 ; sys_platform == "darwin" and platform_machine == "x86_64"
+onnxruntime==1.29.0 ; sys_platform != "darwin" or platform_machine != "x86_64"
 openai==3.6.0
 openpyxl==3.1.5
 opentelemetry-api==1.45.0

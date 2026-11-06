@@ -271,6 +271,73 @@ fn update_installation_requires_download_and_confirmation() {
 }
 
 #[test]
+fn native_package_updates_open_releases_without_exposing_stale_installer_actions() {
+    let mut rt = workspace("settings:system:updates");
+    let releases = "https://github.com/Knuckles92/OpenWhisper/releases";
+    rt.update(|s, _| {
+        s.data["updates.state"] = json!({"manual_update":true,"releases_url":releases,
+            "source_hint":"Download the native package for your platform from the release page.",
+            "error":"The update check could not reach the server.","result":null,
+            "download":{"handoff":{"path":"/tmp/stale-qt-installer","verified":true}},
+            "progress":{"phase":"Downloading","done":10,"total":20}});
+        s.confirmation = Some(json!({"kind":"updates.apply"}));
+    });
+    settle(&mut rt);
+    assert!(rt.find("updates-open-release-page").is_some());
+    for action in [
+        "updates-download",
+        "updates-apply-confirmation",
+        "confirm-updates.apply",
+        "updates-cancel",
+    ] {
+        assert!(rt.find(action).is_none(), "native package exposed {action}");
+    }
+    assert!(
+        rt.elements()
+            .iter()
+            .filter_map(|e| e.text.as_deref())
+            .all(|text| !text.contains("Download verified") && !text.contains("Downloading"))
+    );
+    tap(&mut rt, "updates-open-release-page");
+    assert_eq!(rt.take_url_requests(), vec![releases.to_owned()]);
+    assert!(rt.state.data["_demo.last_system_command"].is_null());
+
+    // Even a stale installable result and an in-flight download cannot expose
+    // legacy installer controls in a native package.
+    rt.update(|s, _| {
+        s.data["updates.state"]["result"] = json!({"status":"update_available","can_apply":true});
+        s.data["updates.state"]["download"] = json!({});
+    });
+    settle(&mut rt);
+    for action in [
+        "updates-download",
+        "updates-apply-confirmation",
+        "confirm-updates.apply",
+        "updates-cancel",
+    ] {
+        assert!(rt.find(action).is_none(), "stale state exposed {action}");
+    }
+    assert!(rt.find("updates-open-release-page").is_some());
+}
+
+#[test]
+fn native_package_release_link_requires_https() {
+    let mut rt = workspace("settings:system:updates");
+    for url in [
+        "file:///tmp/installer",
+        "javascript:alert(1)",
+        "http://example.com/releases",
+    ] {
+        rt.update(|s, _| {
+            s.data["updates.state"] = json!({"manual_update":true,"releases_url":url});
+        });
+        settle(&mut rt);
+        assert!(rt.find("updates-open-release-page").is_none());
+        assert!(rt.take_url_requests().is_empty());
+    }
+}
+
+#[test]
 fn shortcut_recorder_suspends_captures_and_resumes_global_hotkeys() {
     let mut rt = workspace("settings:collection:hotkeys");
     rt.update(|s, _| {

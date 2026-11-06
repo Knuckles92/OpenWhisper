@@ -253,15 +253,30 @@ def backup_restore(context, params):
 
 
 def updates_state(context, _params):
-    from services.app_update import channel_label, detect_channel, source_update_hint
+    from services.app_update import InstallChannel, RELEASES_PAGE_URL, channel_label, detect_channel, source_update_hint
     channel = detect_channel()
-    return {**context.ui.state.get("update", {}),
+    result = {**context.ui.state.get("update", {}),
         "progress": context.ui.state.get("update_progress", {}),
         "download": context.ui.state.get("update_download", {}),
-        "channel": channel, "channel_label": channel_label(channel), "source_hint": source_update_hint(channel)}
+        "channel": channel, "channel_label": channel_label(channel), "source_hint": source_update_hint(channel),
+        "releases_url": RELEASES_PAGE_URL, "manual_update": channel == InstallChannel.NATIVE_PACKAGE}
+    if channel == InstallChannel.NATIVE_PACKAGE:
+        # A stale result or handoff from the old Qt installer must not turn
+        # into an install action in a relocated native service package.
+        if isinstance(result.get("result"), dict):
+            result["result"] = {**result["result"], "can_apply": False, "apply_mode": "notify_only", "channel": channel}
+        result["download"], result["progress"] = {}, {}
+    return result
+
+
+def _require_update_installation():
+    from services.app_update import InstallChannel, NATIVE_PACKAGE_UPDATE_HINT, detect_channel
+    if detect_channel() == InstallChannel.NATIVE_PACKAGE:
+        raise ValueError(NATIVE_PACKAGE_UPDATE_HINT)
 
 
 def updates_download(context, params):
+    _require_update_installation()
     result = getattr(context.ui, "_last_update_result", None)
     if result is None or not result.can_apply:
         raise ValueError("Check for an installable update first.")
@@ -282,6 +297,7 @@ def updates_cancel(context, _params):
 
 
 def updates_apply(context, params):
+    _require_update_installation()
     from services.app_update_apply import (
         _launch_exe,
         discover_install_registration,

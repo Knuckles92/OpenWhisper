@@ -95,6 +95,11 @@ macOS builds are ad-hoc signed for testing; public distribution still needs
 Developer ID signing/notarization. Packages built on Linux should target the
 oldest supported distribution to keep glibc requirements compatible.
 
+Native archives currently use manual updates: quit the app and replace the
+complete extracted package with the matching native build. Application data is
+kept separately. Version checks and release notes remain available; the native
+desktop does not install the existing Qt release's updater payloads.
+
 The [native CI workflow](../.github/workflows/rune-desktop.yml) builds on
 Ubuntu 22.04, Windows 2022, and macOS 15 (Apple Silicon and Intel). Each job installs an environment without
 Qt, tests clipboard/runtime behavior, builds a package, relocates it to a path

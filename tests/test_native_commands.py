@@ -47,6 +47,28 @@ def test_dispatch_is_allowlisted(context):
         dispatch(context, "history.list", [])
 
 
+def test_frozen_native_updates_never_use_cached_qt_installer_results(context, monkeypatch):
+    from services import app_update
+    monkeypatch.setenv("OPENWHISPER_DESKTOP_RUNTIME", "native")
+    monkeypatch.setattr(app_update, "is_frozen", lambda: True)
+    context.ui._last_update_result = SimpleNamespace(can_apply=True)
+    context.ui.state["update"] = {"result": {"can_apply": True, "apply_mode": "setup", "channel": "installer"}}
+    context.ui.state["update_download"] = {"handoff": "old-qt-setup.exe", "error": ""}
+    state = dispatch(context, "updates.state")
+    assert state["channel"] == "native_package" and state["manual_update"]
+    assert state["channel_label"] == "Native desktop package"
+    assert state["result"]["can_apply"] is False and state["download"] == {}
+    assert state["releases_url"] == app_update.RELEASES_PAGE_URL
+    assert "native desktop archive" in state["source_hint"]
+    for method in ("updates.download", "updates.apply"):
+        with pytest.raises(ValueError, match="native desktop archive"):
+            dispatch(context, method, {"confirmed": True, "force_setup": True})
+    context.controller.request_update_download.assert_not_called()
+    context.controller.request_update_check.return_value = None
+    assert dispatch(context, "updates.check")["ok"]
+    context.controller.request_update_check.assert_called_once_with(manual=True)
+
+
 def test_hotkey_capture_suspends_global_hooks_until_explicit_end(context):
     assert dispatch(context, "hotkeys.capture", {"active": True}) == {"ok": True, "active": True}
     context.controller.hotkey_runtime.set_capture_suspended.assert_called_once_with(True)

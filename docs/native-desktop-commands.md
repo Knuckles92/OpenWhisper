@@ -116,7 +116,15 @@ statistics, guided setup, MCP status/token copying, and native window helpers.
 Large operations report state and progress asynchronously. Backup restore
 requests a native restart through the transport lifecycle.
 
+Frozen native archives are a separate update channel. They report versions and
+release notes with `manual_update: true`; legacy Qt installer downloads and
+handoffs are rejected. Replace the complete native archive until a signed native
+update feed is published. Source and existing Qt install channels retain their
+established behavior.
+
 Native prompts emit an ID, kind, title, message, and allowed choices.
 `prompt.resolve {id,value}` validates the choice while the owning operation
 waits. The transport remains responsive to snapshots and other RPCs during a
-prompt. `scratchpad.get/update` retain scratchpad text in native state.
+prompt. `scratchpad.get/update/flush` persist the existing UTF-8 scratchpad file
+with coalesced atomic writes. `app.quit` refuses to discard unsaved notes after a
+save failure; the editor stays available for recovery.

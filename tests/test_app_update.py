@@ -5,6 +5,7 @@ import os
 import ssl
 import urllib.error
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -138,6 +139,42 @@ class TestDetectChannel:
         assert channel_label(InstallChannel.INSTALLER, "win32") == "Windows installer"
         assert channel_label(InstallChannel.INSTALLER, "linux") == "Linux package"
         assert channel_label(InstallChannel.INSTALLER, "linux2") == "Linux package"
+
+    @pytest.mark.parametrize("platform_name", ["win32", "darwin", "linux"])
+    def test_frozen_native_runtime_is_a_standalone_package(self, monkeypatch, platform_name):
+        monkeypatch.setenv("OPENWHISPER_DESKTOP_RUNTIME", "native")
+        monkeypatch.setattr(app_update, "is_frozen", lambda: True)
+        monkeypatch.setattr(app_update.sys, "platform", platform_name)
+        assert detect_channel() == InstallChannel.NATIVE_PACKAGE
+        assert channel_label(detect_channel()) == "Native desktop package"
+
+    @pytest.mark.parametrize("has_git", [False, True])
+    def test_native_source_keeps_its_source_channel(self, tmp_path, monkeypatch, has_git):
+        monkeypatch.setenv("OPENWHISPER_DESKTOP_RUNTIME", "native")
+        monkeypatch.setattr(app_update, "is_frozen", lambda: False)
+        if has_git:
+            (tmp_path / ".git").mkdir()
+        assert detect_channel(str(tmp_path)) == (InstallChannel.GIT if has_git else InstallChannel.SOURCE)
+
+    @pytest.mark.parametrize("relative", [
+        "native/bin/openwhisper-service/openwhisper-service.exe",
+        "OpenWhisper.app/Contents/Resources/native/bin/openwhisper-service/openwhisper-service",
+    ])
+    def test_native_marker_is_bound_to_the_frozen_service(self, tmp_path, monkeypatch, relative):
+        service = tmp_path / relative
+        service.parent.mkdir(parents=True)
+        service.write_bytes(b"service")
+        monkeypatch.delenv("OPENWHISPER_DESKTOP_RUNTIME", raising=False)
+        monkeypatch.setattr(app_update, "is_frozen", lambda: True)
+        monkeypatch.setattr(app_update.sys, "executable", str(service))
+        marker = tmp_path / "package.json"
+        marker.write_text(json.dumps({"runtime": "native", "qt": False, "service": relative}))
+        with patch.dict(app_update.sys.modules, {"services.desktop_runtime": SimpleNamespace(IS_NATIVE=False)}):
+            assert detect_channel() == InstallChannel.NATIVE_PACKAGE
+            marker.write_text(json.dumps({"runtime": "native", "qt": False, "service": "another-service"}))
+            assert detect_channel() == InstallChannel.INSTALLER
+            marker.write_text("[]")
+            assert detect_channel() == InstallChannel.INSTALLER
 
 
 class TestCompareVersions:
@@ -328,6 +365,50 @@ class TestCanApplyAndHints:
         assert "git pull --ff-only" in hint
         assert "pip install -r requirements.txt" in hint
         assert source_update_hint(InstallChannel.INSTALLER) is None
+
+    @pytest.mark.parametrize("platform_name", ["win32", "darwin"])
+    def test_native_package_checks_versions_without_offering_legacy_installers(self, monkeypatch, platform_name):
+        from dataclasses import replace
+        mac = ReleaseAsset("https://github.com/Knuckles92/OpenWhisper/releases/download/v2.2.0/OpenWhisper-2.2.0-macos-arm64.dmg",
+                           "OpenWhisper-2.2.0-macos-arm64.dmg", 100, "ab" * 32)
+        release = replace(_release(native=True), macos_asset=mac)
+        monkeypatch.setenv("OPENWHISPER_DESKTOP_RUNTIME", "native")
+        monkeypatch.setattr(app_update, "is_frozen", lambda: True)
+        monkeypatch.setattr(app_update.sys, "platform", platform_name)
+        monkeypatch.setattr("platform.machine", lambda: "arm64")
+        monkeypatch.setattr(app_update, "fetch_latest_release", lambda: release)
+        monkeypatch.setattr(app_update, "__version__", "2.1.0")
+        result = check_for_update(persist=False)
+        assert result.status == UpdateStatus.UPDATE_AVAILABLE
+        assert result.channel == InstallChannel.NATIVE_PACKAGE
+        assert not result.can_apply and result.apply_mode == ApplyMode.NOTIFY_ONLY
+        assert result.release.html_url == release.html_url
+        assert "native desktop archive" in result.git_hint
+        assert "replace the complete" in result.git_hint
+        # Even an old caller passing the installer channel must not advertise
+        # the Windows Qt setup/native payload or the Qt Mac DMG in Rune.
+        assert not can_apply(InstallChannel.INSTALLER, release)
+
+    @pytest.mark.parametrize("platform_name,mode", [
+        ("win32", ApplyMode.SETUP), ("win32", ApplyMode.NATIVE), ("darwin", ApplyMode.MACOS_DMG),
+    ])
+    @pytest.mark.parametrize("force_setup", [False, True])
+    def test_native_package_refuses_stale_update_handoffs_before_download(self, monkeypatch, platform_name, mode, force_setup):
+        monkeypatch.setenv("OPENWHISPER_DESKTOP_RUNTIME", "native")
+        monkeypatch.setattr(app_update, "is_frozen", lambda: True)
+        monkeypatch.setattr(app_update.sys, "platform", platform_name)
+        release = _release(native=True)
+        result = app_update.UpdateCheckResult(UpdateStatus.UPDATE_AVAILABLE, "2.1.0",
+            InstallChannel.INSTALLER, release, True, apply_mode=mode)
+        with patch.object(app_update, "_download_verified") as download, patch.object(app_update, "prepare_candidate") as prepare:
+            with pytest.raises(AppUpdateError, match="native desktop archive"):
+                app_update.apply_update(result, force_setup=force_setup)
+            with pytest.raises(AppUpdateError, match="native desktop archive"):
+                download_installer(release)
+            with pytest.raises(AppUpdateError, match="native desktop archive"):
+                app_update.download_release_asset(release.native_asset)
+        download.assert_not_called()
+        prepare.assert_not_called()
 
 
 class TestFetchLatestRelease:

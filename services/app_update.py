@@ -7,7 +7,8 @@ semver against the latest stable tag; git commit distance is ignored.
 
 Validated HKCU Windows installs may hand a verified ``tar.xz`` to
 ``OpenWhisperUpdater.exe``; other Windows installs use the setup exe. Native
-Linux package installs, source copies, and git checkouts are notify-only.
+Linux package installs, Rune native archives, source copies, and git checkouts
+are notify-only. Rune archives have no automatic update feed or handoff yet.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Callable, Dict, Final, List, Optional, Tuple
 
 from _version import __version__
@@ -71,6 +73,12 @@ LATEST_RELEASE_URL: Final[str] = (
     f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 )
 RELEASES_PAGE_URL: Final[str] = f"https://github.com/{GITHUB_REPO}/releases"
+NATIVE_PACKAGE_UPDATE_HINT: Final[str] = (
+    "Open the release page and choose the native desktop archive for your OS "
+    "and architecture. Quit OpenWhisper, then replace the complete extracted "
+    "package, including its audio service. Keep your application data folder. "
+    "Automatic native package updates are not available yet."
+)
 LATEST_RELEASE_PAGE_URL: Final[str] = f"{RELEASES_PAGE_URL}/latest"
 UPDATE_FEED_ENV: Final[str] = "OPENWHISPER_UPDATE_FEED_URL"
 _FAILED_CHECK_INTERVAL_S: Final[int] = 60 * 60
@@ -101,6 +109,7 @@ class InstallChannel:
     """How the running copy was installed."""
 
     INSTALLER: Final[str] = "installer"
+    NATIVE_PACKAGE: Final[str] = "native_package"
     GIT: Final[str] = "git"
     SOURCE: Final[str] = "source"
 
@@ -173,6 +182,36 @@ class UpdateCheckResult:
 ProgressCallback = Callable[[str, int, int], None]
 
 
+def _frozen_native_package() -> bool:
+    if not is_frozen():
+        return False
+    runtime = sys.modules.get("services.desktop_runtime")
+    if (os.environ.get("OPENWHISPER_DESKTOP_RUNTIME", "").lower() == "native"
+            or getattr(runtime, "IS_NATIVE", False)):
+        return True
+    # The service lives several levels inside Windows/Linux archives and the
+    # macOS app's Resources folder. Bind the package marker to this executable;
+    # an unrelated package.json in an ancestor must not change its channel.
+    executable = Path(sys.executable).resolve()
+    for root in list(executable.parents)[:8]:
+        marker = root / "package.json"
+        try:
+            if not marker.is_file() or marker.stat().st_size > 64 * 1024:
+                continue
+            manifest = json.loads(marker.read_text(encoding="utf-8"))
+            if not isinstance(manifest, dict):
+                continue
+            service = manifest.get("service")
+            if (manifest.get("runtime") == "native" and manifest.get("qt") is False
+                    and isinstance(service, str) and service != "source"
+                    and not Path(service).is_absolute()
+                    and (root / service).resolve() == executable):
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def detect_channel(repo_root: Optional[str] = None) -> str:
     """Return the install channel of the running copy.
 
@@ -184,7 +223,7 @@ def detect_channel(repo_root: Optional[str] = None) -> str:
         One of :class:`InstallChannel`.
     """
     if is_frozen():
-        return InstallChannel.INSTALLER
+        return InstallChannel.NATIVE_PACKAGE if _frozen_native_package() else InstallChannel.INSTALLER
     root = repo_root if repo_root is not None else bundle_root()
     if os.path.isdir(os.path.join(root, ".git")):
         return InstallChannel.GIT
@@ -193,6 +232,8 @@ def detect_channel(repo_root: Optional[str] = None) -> str:
 
 def channel_label(channel: str, platform_name: Optional[str] = None) -> str:
     """Return a short human label for ``channel`` on the current platform."""
+    if channel == InstallChannel.NATIVE_PACKAGE:
+        return "Native desktop package"
     if channel == InstallChannel.INSTALLER:
         platform_id = platform_name if platform_name is not None else sys.platform
         if platform_id.startswith("linux"):
@@ -352,7 +393,7 @@ def resolve_release_apply_mode(
     platform_name: Optional[str] = None,
 ) -> str:
     """Return :class:`ApplyMode` for this channel and release."""
-    if channel != InstallChannel.INSTALLER:
+    if channel != InstallChannel.INSTALLER or _frozen_native_package():
         return ApplyMode.NOTIFY_ONLY
     platform_id = platform_name if platform_name is not None else sys.platform
     if platform_id == "darwin":
@@ -402,7 +443,9 @@ def can_apply(
 
 
 def source_update_hint(channel: str) -> Optional[str]:
-    """Copy-paste commands for a source/git checkout, or ``None``."""
+    """Manual update instructions for notify-only channels, or ``None``."""
+    if channel == InstallChannel.NATIVE_PACKAGE:
+        return NATIVE_PACKAGE_UPDATE_HINT
     if channel == InstallChannel.GIT:
         return "git pull --ff-only\npip install -r requirements.txt"
     if channel == InstallChannel.SOURCE:
@@ -948,6 +991,8 @@ def download_release_asset(
     destination_dir: Optional[str] = None,
 ) -> str:
     """Download and SHA-256-verify one authorized release asset."""
+    if detect_channel() == InstallChannel.NATIVE_PACKAGE:
+        raise AppUpdateError(NATIVE_PACKAGE_UPDATE_HINT)
     digest = _validated_asset_digest(asset)
     if not progress:
         progress = lambda _phase, _done, _total: None
@@ -982,6 +1027,8 @@ def download_installer(
     Refuses to run unless this process may apply a verified setup asset.
     Never writes a setup exe into a source checkout.
     """
+    if detect_channel() == InstallChannel.NATIVE_PACKAGE:
+        raise AppUpdateError(NATIVE_PACKAGE_UPDATE_HINT)
     if not _asset_ready(release.setup_asset) or detect_channel() != InstallChannel.INSTALLER:
         raise AppUpdateError(
             "This copy of OpenWhisper cannot install the Windows setup package."
@@ -1061,6 +1108,8 @@ def apply_update(
     Returns:
         An installer path (exe/DMG) or ``native:<transaction_id>``.
     """
+    if detect_channel() == InstallChannel.NATIVE_PACKAGE or getattr(result, "channel", None) == InstallChannel.NATIVE_PACKAGE:
+        raise AppUpdateError(NATIVE_PACKAGE_UPDATE_HINT)
     release = result.release
     if release is None:
         raise AppUpdateError("No installer is available.")

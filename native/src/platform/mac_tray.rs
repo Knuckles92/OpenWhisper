@@ -43,6 +43,9 @@ extern "C" fn should_terminate(_: *mut AnyObject, _: Sel, _: *mut AnyObject) -> 
 pub(super) fn install_quit_guard(handle: AppHandle<State>) -> Result<(), String> {
     // SAFETY: called once on Rune's main AppKit thread. The existing winit delegate
     // is retained unchanged; this adds only its previously absent optional method.
+    // Rune's pinned winit 0.30.13 delegate implements DidFinishLaunching and
+    // WillTerminate only; neither it nor its NSObject superclass supplies
+    // applicationShouldTerminate:. The Dock-menu hook adds a different selector.
     // NSUInteger is 64-bit on every supported macOS target (the Q@:@ method ABI).
     unsafe {
         let app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];

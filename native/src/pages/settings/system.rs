@@ -876,12 +876,15 @@ fn updates(s: &State, p: &Palette) -> El {
     let state = data(s, "updates.state");
     let result = &state["result"];
     let release = &result["release"];
+    let manual_update = state["manual_update"].as_bool().unwrap_or(false);
     let available = string(result, "status") == "update_available";
-    let ready = state["download"]["handoff"].is_object()
-        || state["download"]["handoff"]
-            .as_str()
-            .is_some_and(|s| !s.is_empty());
-    let downloading = !string(&state["progress"], "phase").is_empty()
+    let ready = !manual_update
+        && (state["download"]["handoff"].is_object()
+            || state["download"]["handoff"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()));
+    let downloading = !manual_update
+        && !string(&state["progress"], "phase").is_empty()
         && !ready
         && string(&state["download"], "error").is_empty();
     let mut overview = card(p)
@@ -912,20 +915,44 @@ fn updates(s: &State, p: &Palette) -> El {
             p.muted,
         ))
         .child(label(string(state, "source_hint"), 12., 400., p.muted))
-        .child(error(&state["error"], p))
-        .child(error(&state["download"]["error"], p))
-        .child(progress(&state["progress"], p))
-        .child(
-            btn(
-                "updates-check",
-                "Check for updates",
-                p,
-                true,
-                editable(s) && !downloading,
-                |s, _| s.command("updates.check", json!({})),
-            )
-            .h(34.),
-        );
+        .child(error(&state["error"], p));
+    if !manual_update {
+        overview = overview
+            .child(error(&state["download"]["error"], p))
+            .child(progress(&state["progress"], p));
+    }
+    overview = overview.child(
+        btn(
+            "updates-check",
+            "Check for updates",
+            p,
+            true,
+            editable(s) && !downloading,
+            |s, _| s.command("updates.check", json!({})),
+        )
+        .h(34.),
+    );
+    if manual_update {
+        let url = string(state, "releases_url").trim().to_owned();
+        if url.starts_with("https://") {
+            overview = overview.child(
+                btn(
+                    "updates-open-release-page",
+                    "Open release page ↗",
+                    p,
+                    false,
+                    true,
+                    move |s, tx| {
+                        // Rune validates the URL before it reaches the system browser.
+                        if let Err(error) = tx.open_url(&url) {
+                            s.error = Some(error.to_string());
+                        }
+                    },
+                )
+                .h(34.),
+            );
+        }
+    }
     if !string(result, "git_hint").is_empty() {
         overview =
             overview.child(label(string(result, "git_hint"), 12., 400., p.ink).selectable(true));
@@ -964,7 +991,7 @@ fn updates(s: &State, p: &Palette) -> El {
             );
         }
     }
-    if available && result["can_apply"].as_bool() == Some(true) && !ready {
+    if !manual_update && available && result["can_apply"].as_bool() == Some(true) && !ready {
         overview = overview.child(
             btn(
                 "updates-download",

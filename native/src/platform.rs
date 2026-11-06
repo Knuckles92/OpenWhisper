@@ -109,22 +109,22 @@ pub fn menus(app: App<State>) -> App<State> {
     #[cfg(target_os = "macos")]
     {
         app.menu_item(
-            MenuItem::new("New Dictation", |s, _| s.toggle_record())
+            MenuItem::new("New Dictation", |s: &mut State, _| s.toggle_record())
                 .id("dictation")
                 .menu("File"),
         )
         .menu_item(
-            MenuItem::new("History", |s, _| s.navigate(Page::History))
+            MenuItem::new("History", |s: &mut State, _| s.navigate(Page::History))
                 .id("history")
                 .menu("View"),
         )
         .menu_item(
-            MenuItem::new("Settings…", |s, _| s.navigate(Page::Settings))
+            MenuItem::new("Settings…", |s: &mut State, _| s.navigate(Page::Settings))
                 .id("settings")
                 .key_equivalent("cmd+,".parse().unwrap()),
         )
         .menu_item(
-            MenuItem::new("Open OpenWhisper", |s, _| {
+            MenuItem::new("Open OpenWhisper", |s: &mut State, _| {
                 if let Some(d) = &s.desktop {
                     d.app.open();
                 }
