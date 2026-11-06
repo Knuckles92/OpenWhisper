@@ -480,6 +480,30 @@ def test_remote_backend_reports_a_host_without_a_ready_engine(paired_backend, en
     assert paired_backend.device_info == "devbox: not loaded"
 
 
+def test_host_reports_a_reload_and_refuses_audio_before_decoding(paired_backend, host, engine):
+    from services.remote_asr.client import RemoteDecodeNotStarted
+
+    settled = threading.Event()
+    settled.set()
+    host._engine_settled = settled.is_set
+    backend = paired_backend
+    backend.reload_model()
+    assert backend.is_available()
+
+    settled.clear()
+    with pytest.raises(RemoteDecodeNotStarted, match="loading its speech engine"):
+        backend.transcribe_windows([(0, _tone(160))])
+    assert engine.calls == []
+    assert not backend.is_available()
+    assert backend.restore_link() == "offline"
+    assert "loading its speech engine" in backend.device_info
+
+    settled.set()
+    assert backend.restore_link() == "connected"
+    assert backend.transcribe_windows([(0, _tone(160))]) == ["heard 160"]
+    assert [call[0] for call in engine.calls] == ["transcribe"]
+
+
 def test_remote_backend_without_pairing_says_how_to_pair():
     from transcriber.remote_backend import RemoteSpeechBackend
 

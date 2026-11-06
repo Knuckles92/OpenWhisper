@@ -1737,6 +1737,30 @@ class TestApplicationController:
             complete.assert_not_called()
             assert "recording kept in History" in controller.ui_controller.statuses[-1]
 
+    def test_recording_retries_a_decode_the_remote_host_refused_before_starting(self):
+        from services.remote_asr.client import RemoteDecodeNotStarted
+        from transcriber.remote_backend import RemoteSpeechBackend
+
+        controller = self._create_controller()
+        runtime = controller.transcription_runtime
+        backend = RemoteSpeechBackend()
+        controller.current_backend = backend
+        backend.link = Mock(return_value=types.SimpleNamespace(state="offline"))
+        backend.is_available = Mock(side_effect=[True, True, False, True, True])
+        backend.transcribe = Mock(side_effect=[RemoteDecodeNotStarted("loading"), "recovered words"])
+        source = Path(config.RECORDED_AUDIO_FILE)
+        source.write_bytes(b"RIFF")
+        assert runtime._claim_job()
+        controller._pending_audio_path = str(source)
+        controller.retry_remote_for_transcription = Mock(side_effect=lambda settled: settled.set())
+
+        runtime._run_transcription_job(str(source))
+
+        controller.retry_remote_for_transcription.assert_called_once()
+        assert backend.transcribe.call_count == 2
+        assert self.history_manager.entries[0]["text"] == "recovered words"
+        assert not controller.ui_controller.copied
+
     def test_copy_failure_does_not_claim_pasted(self):
         controller = self._create_controller()
         self.settings.all_settings["auto_paste"] = True

@@ -61,6 +61,7 @@ MAX_APPROVAL_REQUESTS = 4
 APPROVAL_WINDOW_S = 600.0
 #: How long turning sharing off waits for a waiting request to hear why.
 STOP_ANSWER_GRACE_S = 2.0
+_ENGINE_LOADING_MESSAGE = "The host is loading its speech engine."
 
 HostEvent = Callable[[str, dict], None]
 
