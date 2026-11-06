@@ -84,35 +84,35 @@ def test_markdown_preserves_structure_links_look_and_only_local_images(tmp_path)
         except OSError:
             pass
         markdown = """# Changing the backend
-        
+
         Open **Settings**, *then* follow [the guide](https://example.com/guide).
-        
+
         ![The menu](shot.png)
-        
+
         ## Steps
-        
+
         - Pick one
           - Nested step
         - Save it
-        
+
         3. Third step
-        
+
         > Restart after.
-        
+
         ```python
         backend = "remote"
           keep_indentation = True
         ```
-        
+
         | Name | Value |
         |---|---|
         | speed | fast |
-        
+
         ![Remote](https://example.com/secret.png)
         ![Outside](../outside.png)
         ![Symlink](escape.png)
         ![Missing](missing.png)
-        
+
         <script>alert("literal HTML")</script>
         """
         look = Look(text_color='#203040', heading_color='#5b2a86', font='Not an installed font')
