@@ -164,11 +164,16 @@ any monitor and release the mouse to save an annotated screenshot of that
 monitor. For text, press **Enter** after typing. The desktop is ready for
 clicks again after each mark. **Esc** exits drawing early.
 
-Marks disappear after about 1.5 seconds. Hold **Ctrl** when releasing the
-mouse to pin a mark. For text, hold it when placing the label or pressing
-**Enter**. Pinned marks appear in later automatic screenshots on that screen.
-Use the toolbar's **Clear marks** button or press **C** while drawing to
-remove them from the desktop. Tool keys and **S** work while drawing.
+Marks disappear after about 1.5 seconds by default. Turn on **Keep marks** in
+the drawing toolbar to pin each new mark. Auto Mode remembers this choice
+between walkthroughs. With **Keep marks** off, hold **Ctrl** when releasing
+the mouse to pin an individual mark. For text, hold it when placing the
+label or pressing **Enter**. Pinned marks appear in later automatic
+screenshots on that screen.
+
+Click **Clear marks** in the toolbar, or press **C** while drawing, to remove
+all marks from the desktop. Saved screenshots keep their annotations.
+Tool keys and **S** work while drawing.
 
 The arrow beside Draw and the Screenshot shortcut take manual screenshots.
 **Pause** pauses automatic screenshots, and **Undo** removes the most recent

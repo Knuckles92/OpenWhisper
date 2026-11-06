@@ -60,6 +60,54 @@ def test_live_release_pins_with_ctrl_and_returns_desktop_input(monkeypatch):
         drawing.close()
 
 
+def test_live_toolbar_keeps_new_marks_and_clears_them_without_arming(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr(live, "monotonic", lambda: now)
+    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
+    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    shots = []
+    drawing.drawn.connect(lambda _, marks: shots.append(marks))
+    try:
+        toolbar, = drawing.windows()
+        keep = toolbar.button_rect("keep_marks").center()
+        clear = toolbar.button_rect("clear").center()
+        left = Qt.MouseButton.LeftButton
+        assert not live.resolve_walkthrough_keep_marks()
+        QTest.mouseClick(toolbar, left, pos=keep)
+        assert live.resolve_walkthrough_keep_marks()
+        assert not drawing.armed
+
+        drawing.arm(Tool.PEN)
+        screen = live.capture.screen_under_cursor()
+        canvas = drawing._canvases[screen]
+        QTest.mousePress(canvas, left, pos=QPoint(50, 80))
+        QTest.mouseRelease(canvas, left, pos=QPoint(90, 110))
+        (pinned,) = canvas.items(pinned_only=True)
+        assert not canvas._expire.isActive()
+
+        QTest.mouseClick(toolbar, left, pos=keep)
+        assert not live.resolve_walkthrough_keep_marks()
+        drawing.arm(Tool.PEN)
+        QTest.mousePress(canvas, left, pos=QPoint(60, 90))
+        QTest.mouseRelease(canvas, left, pos=QPoint(100, 120))
+        assert canvas._expire.isActive()
+        assert len(canvas.items()) == 2
+        now += live.MARK_LIFETIME_S
+        canvas._expire.timeout.emit()
+        assert canvas.items() == (pinned,)
+
+        QTest.mouseClick(toolbar, left, pos=clear)
+        assert not drawing.armed
+        assert not canvas.isVisible()
+        assert not canvas.items()
+        assert not canvas._expire.isActive()
+        assert len(shots) == 2
+    finally:
+        drawing.close()
+
+
 def test_live_text_saves_on_commit(monkeypatch):
     monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
     monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)

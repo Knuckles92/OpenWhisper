@@ -13,11 +13,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtGui import QColor, QFontMetrics, QPainter, QPen
 from PyQt6.QtWidgets import QToolTip, QWidget
 
 from ui_qt.snap.annotations import SWATCHES, Tool
-from ui_qt.snap.chrome import paint_panel
+from ui_qt.snap.chrome import chrome_font, paint_panel
 from ui_qt.snap.icons import paint_icon
 from ui_qt.utils.palette import Palette
 
@@ -27,6 +27,8 @@ ICON = 20
 PAD = 6
 SEPARATOR = 13
 RADIUS = 12.0
+LABEL_PAD = 6
+LABEL_GAP = 4
 
 _TOOLS = (
     (Tool.ARROW, "Arrow (A)"),
@@ -40,22 +42,25 @@ _TOOLS = (
 
 @dataclass(frozen=True)
 class _Button:
-    kind: str  # "tool", "undo", "redo", "color", "drop" or "keep"
+    kind: str
     value: str
     rect: QRect
     tip: str
+    label: str
 
 
-def _layout(live: bool) -> tuple[list[_Button], list[int]]:
+def _layout(live: bool, label_metrics: QFontMetrics) -> tuple[list[_Button], list[int]]:
     """Buttons left to right, and the x of each group separator, inside the panel."""
     buttons: list[_Button] = []
     separators: list[int] = []
     x = PAD
     top = PAD
 
-    def add(kind: str, value: str, tip: str, width: int = BUTTON) -> None:
+    def add(kind: str, value: str, tip: str, width: int = BUTTON, *, label: str = "") -> None:
         nonlocal x
-        buttons.append(_Button(kind, value, QRect(x, top, width, BUTTON), tip))
+        if label:
+            width = ICON + LABEL_GAP + label_metrics.horizontalAdvance(label) + 2 * LABEL_PAD + 4
+        buttons.append(_Button(kind, value, QRect(x, top, width, BUTTON), tip, label))
         x += width
 
     def separate() -> None:
@@ -77,7 +82,9 @@ def _layout(live: bool) -> tuple[list[_Button], list[int]]:
     separate()
     add("snap", "snap", "Snap to corners and window edges (S)")
     if live:
-        add("clear", "clear", "Clear marks (C while drawing)")
+        separate()
+        add("keep_marks", "keep_marks", "Keep new marks visible until cleared", label="Keep marks")
+        add("clear", "clear", "Clear marks (C while drawing)", label="Clear marks")
         add("drop", "drop", "Return to the desktop (Esc)")
     else:
         add("drop", "drop", "Cancel (Esc)")
@@ -95,6 +102,7 @@ class SnapToolbar(QWidget):
     drop_clicked = pyqtSignal()
     keep_clicked = pyqtSignal()
     snap_clicked = pyqtSignal()
+    keep_marks_clicked = pyqtSignal()
     clear_clicked = pyqtSignal()
 
     def __init__(self, parent: QWidget | None, palette: Palette, *, live: bool = False,
@@ -102,7 +110,8 @@ class SnapToolbar(QWidget):
         super().__init__(parent, flags)
         self.setObjectName("snapToolbar")
         self._palette = palette
-        self._buttons, self._separators = _layout(live)
+        self._label_font = chrome_font(self.font(), 12)
+        self._buttons, self._separators = _layout(live, QFontMetrics(self._label_font))
         self.setFixedSize(self._buttons[-1].rect.right() + 1 + PAD, BUTTON + 2 * PAD)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setMouseTracking(True)
@@ -112,6 +121,7 @@ class SnapToolbar(QWidget):
         self._can_undo = False
         self._can_redo = False
         self._snap_enabled = False
+        self._keep_marks = False
         self._hover: _Button | None = None
         self._pressed: _Button | None = None
         self._signals = {
@@ -120,6 +130,7 @@ class SnapToolbar(QWidget):
             "drop": self.drop_clicked,
             "keep": self.keep_clicked,
             "snap": self.snap_clicked,
+            "keep_marks": self.keep_marks_clicked,
             "clear": self.clear_clicked,
         }
 
@@ -133,6 +144,10 @@ class SnapToolbar(QWidget):
 
     def set_snap_enabled(self, enabled: bool) -> None:
         self._snap_enabled = enabled
+        self.update()
+
+    def set_keep_marks(self, enabled: bool) -> None:
+        self._keep_marks = enabled
         self.update()
 
     def button_rect(self, kind: str, value: str = "") -> QRect:
@@ -233,6 +248,9 @@ class SnapToolbar(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(background)
             painter.drawRoundedRect(rect, 8, 8)
+        if button.label:
+            self._paint_labeled_button(painter, button, rect, icon)
+            return
         inset = (rect.width() - ICON) / 2
         paint_icon(
             painter,
@@ -240,6 +258,23 @@ class SnapToolbar(QWidget):
             rect.adjusted(inset, inset, -inset, -inset),
             icon,
         )
+
+    def _paint_labeled_button(self, painter: QPainter, button: _Button, rect: QRectF,
+                              icon: QColor) -> None:
+        icon_rect = QRectF(rect.left() + LABEL_PAD, rect.center().y() - ICON / 2, ICON, ICON)
+        if button.kind == "keep_marks":
+            painter.setPen(QPen(icon, 1.3))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(icon_rect.adjusted(3, 3, -3, -3), 3, 3)
+            if self._keep_marks:
+                paint_icon(painter, "keep", icon_rect, icon)
+        else:
+            paint_icon(painter, button.kind, icon_rect, icon)
+        painter.setFont(self._label_font)
+        painter.setPen(self._palette.color("overlay-text"))
+        label_rect = QRectF(rect)
+        label_rect.setLeft(icon_rect.right() + LABEL_GAP)
+        painter.drawText(label_rect, Qt.AlignmentFlag.AlignVCenter, button.label)
 
     def _button_colors(self, button: _Button) -> tuple[QColor | None, QColor]:
         """The fill behind a button (None for none) and its icon colour."""
@@ -249,7 +284,8 @@ class SnapToolbar(QWidget):
             return self._palette.color("accent-hover" if hovered else "accent"), QColor(
                 "#FFFFFF"
             )
-        if button.kind == "snap" and self._snap_enabled:
+        if ((button.kind == "snap" and self._snap_enabled)
+                or (button.kind == "keep_marks" and self._keep_marks)):
             return self._palette.color("overlay-rgb", 36), self._palette.color("accent")
         if button.kind == "tool" and button.value == self._tool:
             color = QColor(SWATCHES[self._color].color)

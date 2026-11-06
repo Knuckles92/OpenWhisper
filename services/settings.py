@@ -357,6 +357,7 @@ class SettingsKey:
     # menu: the Snap button and the Screenshot shortcut repeat it.
     WALKTHROUGH_SNAP_MODE: Final[str] = "walkthrough_snap_mode"
     WALKTHROUGH_AUTO_MODE: Final[str] = "walkthrough_auto_mode"
+    WALKTHROUGH_KEEP_MARKS: Final[str] = "walkthrough_keep_marks"
     SNAP_TO_EDGES: Final[str] = "snap_to_edges"
     # The capture folder name of the walkthrough last closed on the Walkthrough
     # tab: while it is still the newest, the tab opens without one.
@@ -883,6 +884,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.WALKTHROUGH_WRITE_UP_NOTES: False,
     SettingsKey.WALKTHROUGH_SNAP_MODE: WalkthroughSnapMode.REGION,
     SettingsKey.WALKTHROUGH_AUTO_MODE: False,
+    SettingsKey.WALKTHROUGH_KEEP_MARKS: False,
     SettingsKey.SNAP_TO_EDGES: True,
     SettingsKey.WALKTHROUGH_CLOSED: "",
 })
@@ -1426,6 +1428,7 @@ resolve_walkthrough_write_up_notes = _bool_resolver(SettingsKey.WALKTHROUGH_WRIT
 resolve_walkthrough_snap_mode = _choice_resolver(
     SettingsKey.WALKTHROUGH_SNAP_MODE, WalkthroughSnapMode.ALL)
 resolve_walkthrough_auto_mode = _bool_resolver(SettingsKey.WALKTHROUGH_AUTO_MODE)
+resolve_walkthrough_keep_marks = _bool_resolver(SettingsKey.WALKTHROUGH_KEEP_MARKS)
 resolve_snap_to_edges = _bool_resolver(SettingsKey.SNAP_TO_EDGES)
 
 

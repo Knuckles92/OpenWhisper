@@ -9,7 +9,12 @@ from PyQt6.QtCore import QEvent, QObject, QPointF, QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QGuiApplication, QPainter, QScreen
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from services.settings import SettingsKey, resolve_snap_to_edges, settings_manager
+from services.settings import (
+    SettingsKey,
+    resolve_snap_to_edges,
+    resolve_walkthrough_keep_marks,
+    settings_manager,
+)
 from ui_qt.snap import affinity, capture, pointed
 from ui_qt.snap.annotations import SWATCHES, Annotation, Step, Tool, new_draft
 from ui_qt.snap.geometry import EDGE_MARGIN, snap_point
@@ -47,6 +52,7 @@ class LiveAnnotations(QObject):
         self.tool: Tool | None = None
         self.color = 0
         self.snap_enabled: bool
+        self._keep_marks = resolve_walkthrough_keep_marks()
         self._previous_focus = None
         self._screen = capture.screen_under_cursor()
         self._toolbar = SnapToolbar(None, current_palette(), live=True,
@@ -57,8 +63,10 @@ class LiveAnnotations(QObject):
         self._toolbar.tool_chosen.connect(self.arm)
         self._toolbar.color_chosen.connect(self.set_color)
         self._toolbar.snap_clicked.connect(self.toggle_snap)
+        self._toolbar.keep_marks_clicked.connect(self.toggle_keep_marks)
         self._toolbar.drop_clicked.connect(self.disarm)
         self._toolbar.clear_clicked.connect(self.clear)
+        self._toolbar.set_keep_marks(self._keep_marks)
         QGuiApplication.instance().screenRemoved.connect(self._remove_screen)
         self._sync_toolbar()
         self.set_enabled(True)
@@ -160,6 +168,12 @@ class LiveAnnotations(QObject):
         self._toolbar.set_snap_enabled(self.snap_enabled)
         settings_manager.save_setting(SettingsKey.SNAP_TO_EDGES, self.snap_enabled)
 
+    def toggle_keep_marks(self) -> None:
+        keep_marks = not self._keep_marks
+        settings_manager.save_setting(SettingsKey.WALKTHROUGH_KEEP_MARKS, keep_marks)
+        self._keep_marks = keep_marks
+        self._toolbar.set_keep_marks(keep_marks)
+
     def set_busy(self, busy: bool) -> None:
         self._toolbar.setEnabled(not busy)
 
@@ -171,7 +185,7 @@ class LiveAnnotations(QObject):
             self.disarm()
 
     def complete(self, canvas: _Canvas, mark: Annotation, pinned: bool) -> None:
-        canvas.add(mark, pinned)
+        canvas.add(mark, pinned or self._keep_marks)
         marks = canvas.items()
         self.disarm()
         self.drawn.emit(canvas.screen, marks)
