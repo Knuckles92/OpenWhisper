@@ -697,7 +697,7 @@ class RemoteConnection:
 
         with self._state_lock:
             if self._closed or self._ws is None:
-                raise RuntimeError("Transcription canceled")
+                raise RemoteConnectionLost(f"Lost the connection to {self.where}.", sent=False)
             ws = self._ws
             self._serial += 1
             serial = self._serial

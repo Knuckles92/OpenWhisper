@@ -1746,13 +1746,27 @@ class TestApplicationController:
         backend = RemoteSpeechBackend()
         controller.current_backend = backend
         backend.link = Mock(return_value=types.SimpleNamespace(state="offline"))
-        backend.is_available = Mock(side_effect=[True, True, False, True, True])
-        backend.transcribe = Mock(side_effect=[RemoteDecodeNotStarted("loading"), "recovered words"])
+        available = True
+        backend.is_available = lambda: available
+
+        def decode(_path):
+            nonlocal available
+            if backend.transcribe.call_count == 1:
+                available = False
+                raise RemoteDecodeNotStarted("loading")
+            return "recovered words"
+
+        def reconnect(settled):
+            nonlocal available
+            available = True
+            settled.set()
+
+        backend.transcribe = Mock(side_effect=decode)
         source = Path(config.RECORDED_AUDIO_FILE)
         source.write_bytes(b"RIFF")
         assert runtime._claim_job()
         controller._pending_audio_path = str(source)
-        controller.retry_remote_for_transcription = Mock(side_effect=lambda settled: settled.set())
+        controller.retry_remote_for_transcription = Mock(side_effect=reconnect)
 
         runtime._run_transcription_job(str(source))
 

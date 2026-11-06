@@ -2213,6 +2213,8 @@ class TranscriptionRuntime:
         if not self._deliver_to_clipboard:
             status = "Transcript ready to copy" if live or self._retry_entry_id else "Ready"
             self.controller.ui_controller.set_status(status + status_suffix)
+            if live:
+                self._notify("Transcript recovered. Ready to copy.", done=True)
             entry.update(context)
             if self._retry_entry_id:
                 entry.update(retry_entry_id=self._retry_entry_id, entry_kind=dictation_pipeline.FILE_ENTRY_KIND)
@@ -2911,8 +2913,10 @@ class TranscriptionRuntime:
 
     def _require_backend_ready(self) -> None:
         backend = self.controller.current_backend
+        if backend.is_available():
+            return
         from transcriber.optional_backend import LocalSpeechBackend
-        if isinstance(backend, LocalSpeechBackend) and not backend.is_available():
+        if isinstance(backend, LocalSpeechBackend):
             if getattr(backend, "is_remote", False) is True:
                 self.controller.retry_remote_now()
             elif backend.is_model_missing:
@@ -2920,7 +2924,7 @@ class TranscriptionRuntime:
             else:
                 self.controller.reload_whisper_model()
             raise EngineNotReadyError(backend.device_info)
-        if not backend.is_available() and getattr(backend, "is_model_missing", False):
+        if getattr(backend, "is_model_missing", False):
             # Trigger the consent/download flow, but never transcribe with a
             # model the user has not approved downloading.
             self.controller.ensure_local_model_available()
