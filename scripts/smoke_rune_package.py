@@ -31,6 +31,19 @@ def smoke(argv=None):
             raise RuntimeError("Smoke requires the independently launchable native package")
         if manifest["platform"].startswith("linux-") and not (package / "native/bin/openwhisper-clipboard").is_file():
             raise RuntimeError("The Linux package is missing its native Wayland clipboard helper")
+        licenses = (package / manifest["licenses"]).resolve()
+        if not licenses.is_relative_to(package.resolve()):
+            raise RuntimeError("The package license path is outside the package")
+        license_index = json.loads((licenses / "index.json").read_text(encoding="utf-8"))
+        for ecosystem, dependency in (("python", "python-bidi"), ("python", "uharfbuzz"), ("rust", "rune"), ("rust", "rune-kit"), ("rust", "rodio")):
+            records = [item for item in license_index[ecosystem] if item["name"].lower().replace("_", "-") == dependency]
+            if not records or any(not item["files"] for item in records):
+                raise RuntimeError(f"Missing packaged license material for {dependency}")
+            for item in records:
+                for relative in item["files"]:
+                    path = (licenses / relative).resolve()
+                    if not path.is_relative_to(licenses.resolve()) or not path.is_file() or not path.stat().st_size:
+                        raise RuntimeError(f"Missing packaged license file for {dependency}: {relative}")
         service = package / manifest["service"]
         desktop = package / manifest["native"]
         if os.name != "nt":

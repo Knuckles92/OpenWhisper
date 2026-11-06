@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 
 def build(argv=None):
     from _version import __version__
+    from scripts.collect_rune_licenses import collect as collect_licenses
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-only", action="store_true", help="Include service source instead of freezing Python")
@@ -86,8 +87,11 @@ def build(argv=None):
         source = ROOT / name
         if source.exists():
             shutil.copy2(source, package / source.name)
+    license_path = resources / "third_party_licenses"
+    collect_licenses(license_path, ROOT / "native/Cargo.toml")
     manifest = {"format": 1, "version": __version__, "platform": platform_id, "runtime": "native", "qt": False,
-                "native": native_path, "service": "source" if args.source_only else str((resources / ("native/bin/openwhisper-service/openwhisper-service" + suffix)).relative_to(package)).replace("\\", "/")}
+                "native": native_path, "service": "source" if args.source_only else str((resources / ("native/bin/openwhisper-service/openwhisper-service" + suffix)).relative_to(package)).replace("\\", "/"),
+                "licenses": license_path.relative_to(package).as_posix()}
     (package / "package.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     if sys.platform == "darwin":
         subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(package / "OpenWhisper.app")], check=True)

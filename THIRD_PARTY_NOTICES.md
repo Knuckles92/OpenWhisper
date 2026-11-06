@@ -40,8 +40,12 @@ Portable document exports bundle **Inter**, **IBM Plex Mono**, **Noto Sans SC**,
 `native/assets/fonts`. PDF rendering uses **ReportLab** (BSD), **HarfBuzz** through
 **uharfbuzz** (MIT bindings, HarfBuzz's upstream license), and **python-bidi**
 (LGPL); Markdown parsing uses **markdown-it-py** (MIT), and Word export uses
-**python-docx** (MIT). Their distribution license files remain in the frozen
-service. Rust dependencies retain their upstream license terms; the Wayland
+**python-docx** (MIT). Native archives collect upstream Python distribution and
+locked Rust dependency license/notice files in `third_party_licenses` on Linux
+and Windows, or `OpenWhisper.app/Contents/Resources/third_party_licenses` on
+macOS. That directory contains the dependency/file index `index.json`, and the
+macOS notices stay inside the application when it is moved. Rust dependencies
+retain their upstream license terms; the Wayland
 clipboard helper uses **wl-clipboard-rs** (MIT/Apache-2.0), and audio playback uses
 **rodio** (MIT/Apache-2.0).
 
