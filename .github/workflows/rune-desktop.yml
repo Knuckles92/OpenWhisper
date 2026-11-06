@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-2022, macos-14]
+        os: [ubuntu-22.04, windows-2022, macos-15, macos-15-intel]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     env:
@@ -52,7 +52,7 @@ jobs:
       - name: Update Rust
         run: rustup update stable --no-self-update
       - name: Native Rust tests
-        run: cargo test --locked --manifest-path native/Cargo.toml
+        run: cargo test --release --locked --manifest-path native/Cargo.toml
       - name: Clipboard ownership tests
         run: python -m unittest discover -s tests/native -p test_*.py -v
       - name: Real native clipboard · Windows and macOS

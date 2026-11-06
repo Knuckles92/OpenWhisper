@@ -33,8 +33,8 @@ sudo apt-get install build-essential pkg-config libasound2-dev libxkbcommon-dev 
 ```
 
 The Linux file chooser uses the XDG FileChooser portal; install a backend for
-your desktop. X11 clipboard exchange uses `xclip`; Wayland uses the bundled
-native clipboard helper. Global shortcut and paste support depends on your
+your desktop. X11 clipboard exchange uses python-Xlib directly; Wayland uses
+the bundled native clipboard helper. Global shortcut and paste support depends on your
 desktop/compositor permissions. Meeting system audio needs
 [PulseAudio or PipeWire-Pulse](linux-system-audio.md). macOS requires microphone,
 screen recording, and Accessibility permission for the corresponding features.
@@ -96,7 +96,7 @@ Developer ID signing/notarization. Packages built on Linux should target the
 oldest supported distribution to keep glibc requirements compatible.
 
 The [native CI workflow](../.github/workflows/rune-desktop.yml) builds on
-Ubuntu 22.04, Windows 2022, and macOS 14. Each job installs an environment without
+Ubuntu 22.04, Windows 2022, and macOS 15 (Apple Silicon and Intel). Each job installs an environment without
 Qt, tests clipboard/runtime behavior, builds a package, relocates it to a path
 with spaces, exercises the frozen service, and renders the native desktop.
 Artifacts are retained for 14 days. Source-only packaging is also available
