@@ -525,10 +525,10 @@ class WalkthroughTab(QWidget):
         buttons.addWidget(self.cancel_button, 1)
         body.addLayout(start_row(button_box))
 
-        self.auto_check = QCheckBox("Auto Mode · capture after clicks")
+        self.auto_check = QCheckBox("Auto Mode · capture clicks and drawings")
         self.auto_check.setObjectName("walkthroughAutoCheck")
         self.auto_check.setToolTip(
-            "Save screenshots after you click in other apps. Use Draw to annotate a screenshot."
+            "Save screenshots after clicks and drawings. Use the toolbar at the top to draw."
         )
         self.auto_check.toggled.connect(
             lambda on: settings_manager.save_setting(SettingsKey.WALKTHROUGH_AUTO_MODE, on)

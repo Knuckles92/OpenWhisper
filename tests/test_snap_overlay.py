@@ -40,8 +40,8 @@ class Spy:
 def make_overlay():
     created = []
 
-    def make(dpr: float = 1.0, hint: str = "") -> SnapOverlay:
-        overlay = SnapOverlay(_frozen(dpr), None, hint=hint)
+    def make(dpr: float = 1.0, hint: str = "", **kwargs) -> SnapOverlay:
+        overlay = SnapOverlay(_frozen(dpr), None, hint=hint, **kwargs)
         overlay.show()
         created.append(overlay)
         return overlay
@@ -99,6 +99,17 @@ def _click(widget, x, y, kind=QEvent.Type.MouseButtonPress):
     _mouse(
         widget, QEvent.Type.MouseButtonRelease, x, y, buttons=Qt.MouseButton.NoButton
     )
+
+
+def test_selection_snaps_to_window_and_screen_corners_until_toggled_off(make_overlay):
+    overlay = make_overlay(snap_enabled=True, targets=(QRect(110, 90, 250, 160),))
+    _drag(overlay, (5, 8), (354, 248))
+    assert overlay.selection == QRect(0, 0, 360, 250)
+
+    overlay.clear_selection()
+    QTest.keyClick(overlay, Qt.Key.Key_S)
+    _drag(overlay, (5, 8), (354, 248))
+    assert overlay.selection == QRect(5, 8, 349, 240)
 
 
 class TestKeepAndDrop:

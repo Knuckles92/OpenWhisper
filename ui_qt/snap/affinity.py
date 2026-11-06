@@ -116,6 +116,20 @@ def bring_to_front(window: QWidget) -> None:
         logger.warning("Bringing the snap overlay to the front failed", exc_info=True)
 
 
+def foreground_window() -> int | None:
+    if QGuiApplication.platformName() == "windows":
+        return _user32().GetForegroundWindow()
+    return None
+
+
+def return_foreground(previous: int | None, windows: list[QWidget]) -> None:
+    """Return focus when one of our temporary drawing surfaces still has it."""
+    current = foreground_window()
+    if previous and current and any(w.isVisible() and int(w.winId()) == current
+                                    for w in windows):
+        _force_foreground(previous)
+
+
 def _force_foreground(hwnd: int) -> None:
     user32 = _user32()
     foreground = user32.GetForegroundWindow()

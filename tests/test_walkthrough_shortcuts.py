@@ -118,6 +118,33 @@ class FakePanel(QObject):
         self.calls.append(("move", number, step))
 
 
+class FakeDrawing(QObject):
+    arming = pyqtSignal()
+    drawn = pyqtSignal(object, object)
+
+    def __init__(self):
+        super().__init__()
+        self.armed = False
+        self.enabled = True
+        self.busy = False
+
+    def arm(self):
+        if self.enabled and not self.busy:
+            self.arming.emit()
+            self.armed = True
+
+    def set_enabled(self, enabled):
+        self.enabled = enabled
+        if not enabled:
+            self.armed = False
+
+    def pinned_at(self, position):
+        return ()
+
+    def set_busy(self, busy):
+        self.busy = busy
+
+
 class FakeUI:
     def __init__(self):
         self.walkthrough_panel = FakePanel()
@@ -130,6 +157,7 @@ class FakeUI:
         self.copied = []
         self.notices = []
         self.statuses = []
+        self.drawing = None
 
     def snap_support(self):
         return self.supported
@@ -137,11 +165,19 @@ class FakeUI:
     def request_snap_access(self):
         self.access_requests += 1
 
-    def start_snap(self, *, hint="", take="region", front=False, click_at=None):
+    def start_snap(self, *, hint="", take="region", front=False, click_at=None, screen=None):
         snap = FakeSnap(hint, take, front)
         snap.click_at = click_at
+        snap.screen = screen
         self.snaps.append(snap)
         return snap
+
+    def start_walkthrough_drawing(self):
+        self.drawing = FakeDrawing()
+        return self.drawing
+
+    def stop_walkthrough_drawing(self):
+        self.drawing = None
 
     def keep_overlay_out_of_screenshots(self, enabled):
         self.excluded.append(enabled)
@@ -276,17 +312,34 @@ def test_auto_mode_coalesces_clicks_and_finishes_after_the_pending_shot(h, auto)
 
 
 def test_auto_draw_takes_priority_over_a_pending_click(h, auto):
+    from PyQt6.QtCore import QPointF
+
+    from ui_qt.snap.annotations import Step
+
     auto.click(20, 40)
     h.ui.walkthrough_panel.snap_requested.emit()
-    (snap,) = h.ui.snaps
-    assert snap.take == "draw"
+    assert h.ui.drawing.armed
+    assert not h.ui.snaps
     assert not h.runtime._auto_timer.isActive()
 
     auto.click(22, 42)
     h.runtime._auto_timer.timeout.emit()
-    snap.keep()
+    assert not h.ui.snaps
+
+    h.ui.drawing.armed = False
+    screen = object()
+    h.ui.drawing.drawn.emit(screen, (Step(QPointF(12, 8), 1, QColor("blue")),))
+    (snap,) = h.ui.snaps
+    assert snap.take == WalkthroughSnapMode.SCREEN
+    assert snap.screen is screen
+    h.runtime.snap()
     assert h.ui.snaps == [snap]
-    assert auto.session.shot_count == 1
+    h.recorder.get_recording_duration = lambda: 13.0
+    snap.keep()
+    (shot,) = auto.session.saved_shots()
+    assert QImage(str(shot.path)).pixelColor(6, 8) != _image().pixelColor(6, 8)
+    assert shot.kept_at_s == 12.5
+    assert h.ui.snaps[1].take == WalkthroughSnapMode.REGION
 
 
 def test_auto_mode_drops_an_in_flight_shot_on_pause_or_end(h, auto):
@@ -300,11 +353,13 @@ def test_auto_mode_drops_an_in_flight_shot_on_pause_or_end(h, auto):
     h.runtime._auto_timer.timeout.emit()
     (first,) = h.ui.snaps
     h.runtime.set_paused(True)
+    assert not h.ui.drawing.enabled
     auto.click(22, 42)
     assert first.drops == 1
     assert not h.runtime._auto_timer.isActive()
 
     h.runtime.set_paused(False)
+    assert h.ui.drawing.enabled
     auto.click(20, 40)
     h.runtime._auto_timer.timeout.emit()
     _, second = h.ui.snaps
