@@ -336,6 +336,40 @@ def test_mouse_hook_passes_everything_but_side_buttons_untouched():
     assert harness.drained() == []
 
 
+def test_mouse_hook_observes_only_external_real_clicks_and_passes_them_through():
+    import os
+
+    harness = _HookHarness()
+    observe = Mock()
+    harness.user32.WindowFromPoint = lambda point: point.x
+
+    def window_owner(window, process_id):
+        process_id._obj.value = os.getpid() if window == 1 else os.getpid() + 1
+        return 1
+
+    harness.user32.GetWindowThreadProcessId = window_owner
+    hook = _mouse_hook_win.MouseButtonHook(
+        Mock(return_value=False), Mock(), on_click=observe, libraries=harness.hook._libraries,
+    )
+    callback = hook._make_callback(harness.events)
+
+    def click(down, up, owner, *, flags=0):
+        info = _mouse_event(flags=flags)
+        info.pt.x = owner
+        assert callback(0, down, ctypes.addressof(info)) == 0
+        info.pt.x, info.pt.y = -30, 12
+        assert callback(0, up, ctypes.addressof(info)) == 0
+
+    click(_mouse_hook_win.WM_LBUTTONDOWN, _mouse_hook_win.WM_LBUTTONUP, 1)
+    click(_mouse_hook_win.WM_RBUTTONDOWN, _mouse_hook_win.WM_RBUTTONUP, 2,
+          flags=_mouse_hook_win.LLMHF_INJECTED)
+    click(_mouse_hook_win.WM_LBUTTONDOWN, _mouse_hook_win.WM_LBUTTONUP, 2)
+    harness.events.put(None)
+    hook._dispatch(harness.events)
+    observe.assert_called_once()
+    assert observe.call_args.args[:2] == (-30, 12)
+
+
 def test_mouse_hook_suppresses_a_claimed_press_and_always_its_release():
     harness = _HookHarness()
     harness.user32.pressed = {0x11}

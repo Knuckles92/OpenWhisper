@@ -147,6 +147,20 @@ screenshot that couldn't be saved, still appear at the pointer. On Wayland,
 where there is no column, the overlay is part of the main window and shows
 the walkthrough with its **Snap** and **Done**.
 
+### Auto Mode on Windows
+
+Turn on **Auto Mode** under **Start Walkthrough**, then start recording.
+Keep talking as you work. After a left or right click outside OpenWhisper,
+Auto Mode waits briefly for the screen to update and saves the clicked
+monitor. Several quick clicks become one screenshot. Each saved image
+closes a section of narration and appears in the live column.
+
+Click **Draw** in the column to freeze its screen with the pen ready. Keep
+talking while you mark it up, then press Enter to add the annotated image
+or Esc to discard it. The arrow beside Draw and the Screenshot shortcut
+still let you take a manual screenshot. **Pause** also pauses automatic
+screenshots, and **Undo** removes the most recent image and keeps its words.
+
 ## How your words line up with the screenshots
 
 Each screenshot you keep closes a section: everything said since the

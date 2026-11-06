@@ -17,6 +17,8 @@ docs/walkthrough.md.
 """
 from __future__ import annotations
 
+import sys
+
 from PyQt6.QtCore import QEvent, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
@@ -39,6 +41,7 @@ from services.installed_agents import AGENT_SPECS
 from services.settings import (
     SettingsKey,
     WalkthroughCopyFormat,
+    resolve_walkthrough_auto_mode,
     resolve_walkthrough_copy_format,
     resolve_walkthrough_intro_seen,
     resolve_walkthrough_minimize_to_tray,
@@ -116,23 +119,25 @@ _STYLE = """
         color: @text-muted;
         font-weight: 400;
     }
-    QCheckBox#walkthroughMinimizeCheck {
+    QCheckBox#walkthroughMinimizeCheck, QCheckBox#walkthroughAutoCheck {
         color: @text-secondary;
         font-size: 12px;
         spacing: 7px;
         background: transparent;
     }
-    QCheckBox#walkthroughMinimizeCheck::indicator {
+    QCheckBox#walkthroughMinimizeCheck::indicator, QCheckBox#walkthroughAutoCheck::indicator {
         width: 15px;
         height: 15px;
         border-radius: 4px;
         border: 1px solid @border-strong;
         background-color: @bg;
     }
-    QCheckBox#walkthroughMinimizeCheck::indicator:hover {
+    QCheckBox#walkthroughMinimizeCheck::indicator:hover,
+    QCheckBox#walkthroughAutoCheck::indicator:hover {
         border-color: @accent;
     }
-    QCheckBox#walkthroughMinimizeCheck::indicator:checked {
+    QCheckBox#walkthroughMinimizeCheck::indicator:checked,
+    QCheckBox#walkthroughAutoCheck::indicator:checked {
         background-color: @accent;
         border-color: @accent;
         image: url(ui_qt/assets/check.svg);
@@ -520,6 +525,17 @@ class WalkthroughTab(QWidget):
         buttons.addWidget(self.cancel_button, 1)
         body.addLayout(start_row(button_box))
 
+        self.auto_check = QCheckBox("Auto Mode · capture after clicks")
+        self.auto_check.setObjectName("walkthroughAutoCheck")
+        self.auto_check.setToolTip(
+            "Save screenshots after you click in other apps. Use Draw to annotate a screenshot."
+        )
+        self.auto_check.toggled.connect(
+            lambda on: settings_manager.save_setting(SettingsKey.WALKTHROUGH_AUTO_MODE, on)
+        )
+        self.auto_check.setVisible(sys.platform == "win32")
+        body.addWidget(self.auto_check, 0, Qt.AlignmentFlag.AlignHCenter)
+
         # Leads the shortcut row rather than sitting on the Start button, so
         # the button matches the other tabs' Start buttons.
         self.walkthrough_badge = FeatureBadge(
@@ -772,12 +788,14 @@ class WalkthroughTab(QWidget):
             self._save_prompt()
         settings = settings_manager.load_all_settings()
         self._styles = load_styles(settings)
-        quiet = (self.write_up_switch, self.notes_switch, self.prompt_edit, self.minimize_check)
+        quiet = (self.write_up_switch, self.notes_switch, self.prompt_edit,
+                 self.minimize_check, self.auto_check)
         for widget in quiet:
             widget.blockSignals(True)
         self.write_up_switch.setChecked(resolve_walkthrough_write_up(settings))
         self.notes_switch.setChecked(resolve_walkthrough_write_up_notes(settings))
         self.minimize_check.setChecked(resolve_walkthrough_minimize_to_tray(settings))
+        self.auto_check.setChecked(resolve_walkthrough_auto_mode(settings))
         prompt = resolve_walkthrough_write_up_instructions(settings) or DEFAULT_INSTRUCTIONS
         if self.prompt_edit.toPlainText().strip() != prompt:
             # Only when it differs: setting it moves the cursor to the start.
@@ -951,6 +969,7 @@ class WalkthroughTab(QWidget):
             "Finish Walkthrough" if walkthrough_active else "Start Walkthrough")
         self.walkthrough_button.set_active(walkthrough_active or not is_recording)
         self.cancel_button.setVisible(walkthrough_active)
+        self.auto_check.setEnabled(not is_recording and not walkthrough_active)
 
     # ---- the storyboard ----
 

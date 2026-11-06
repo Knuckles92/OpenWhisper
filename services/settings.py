@@ -356,6 +356,7 @@ class SettingsKey:
     # What a walkthrough's Snap takes, as last picked from the column's Snap
     # menu: the Snap button and the Screenshot shortcut repeat it.
     WALKTHROUGH_SNAP_MODE: Final[str] = "walkthrough_snap_mode"
+    WALKTHROUGH_AUTO_MODE: Final[str] = "walkthrough_auto_mode"
     # The capture folder name of the walkthrough last closed on the Walkthrough
     # tab: while it is still the newest, the tab opens without one.
     WALKTHROUGH_CLOSED: Final[str] = "walkthrough_closed"
@@ -880,6 +881,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS: "",
     SettingsKey.WALKTHROUGH_WRITE_UP_NOTES: False,
     SettingsKey.WALKTHROUGH_SNAP_MODE: WalkthroughSnapMode.REGION,
+    SettingsKey.WALKTHROUGH_AUTO_MODE: False,
     SettingsKey.WALKTHROUGH_CLOSED: "",
 })
 
@@ -1421,6 +1423,7 @@ resolve_walkthrough_write_up_agent = _choice_resolver(
 resolve_walkthrough_write_up_notes = _bool_resolver(SettingsKey.WALKTHROUGH_WRITE_UP_NOTES)
 resolve_walkthrough_snap_mode = _choice_resolver(
     SettingsKey.WALKTHROUGH_SNAP_MODE, WalkthroughSnapMode.ALL)
+resolve_walkthrough_auto_mode = _bool_resolver(SettingsKey.WALKTHROUGH_AUTO_MODE)
 
 
 def resolve_walkthrough_title(settings: Optional[Mapping[str, Any]] = None) -> str:

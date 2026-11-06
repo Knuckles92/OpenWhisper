@@ -42,6 +42,24 @@ def screen_under_cursor() -> QScreen | None:
     return QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
 
 
+def screen_at_windows_point(point: tuple[int, int]) -> QScreen | None:
+    """Find the screen of a mouse-hook event, in Windows' native coordinates."""
+    import pywintypes
+    import win32api
+
+    try:
+        monitor = win32api.MonitorFromPoint(point, 0)  # MONITOR_DEFAULTTONULL
+        if not monitor:
+            return None
+        left, top, _right, _bottom = win32api.GetMonitorInfo(monitor)["Monitor"]
+    except pywintypes.error:
+        logger.warning("Could not find the clicked monitor", exc_info=True)
+        return None
+    # Qt scales screen sizes on Windows but leaves their desktop origins intact.
+    return next((screen for screen in QGuiApplication.screens()
+                 if (screen.geometry().x(), screen.geometry().y()) == (left, top)), None)
+
+
 def screens_to_cover() -> list[QScreen]:
     """Every screen a snap freezes, the pointer's first: the user may select on any.
 

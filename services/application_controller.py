@@ -2877,6 +2877,7 @@ class ApplicationController(QObject):
         if hasattr(self, "_shutdown_cancel"):
             self._shutdown_cancel.set()
         self._batch_stop_requested = True
+        _attempt(lambda: self.walkthrough_runtime.cleanup(), "Error stopping Auto Mode")
         self.transcription_runtime.begin_shutdown()
         cancel_library = getattr(self.ui_controller, "cancel_walkthrough_library", None)
         if callable(cancel_library):

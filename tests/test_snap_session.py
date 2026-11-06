@@ -30,7 +30,8 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 from ui_qt.snap import affinity, capture, grim, session, support
 from ui_qt.snap import start_snap as public_start_snap
-from ui_qt.snap.session import CAPTURE_FAILED, start_snap
+from ui_qt.snap.annotations import Tool
+from ui_qt.snap.session import CAPTURE_FAILED, DRAW, SCREEN, start_snap
 
 REAL_GRAB = capture._grab_screen
 
@@ -149,6 +150,39 @@ class TestOutcomes:
         assert snap.active
         assert grabs[0]["screen"] is overlay._screen
         assert overlay.windowTitle() == "OpenWhisper Snap"
+
+    def test_draw_starts_with_the_pen_on_the_whole_screen(self, grabs):
+        snap = start_snap(take=DRAW)
+        overlay = snap._overlay
+        assert len(grabs) == 1
+        assert overlay.selection.size() == overlay._screen.geometry().size()
+        assert overlay.tool == Tool.PEN
+
+        kept = Spy(snap.kept)
+        start, end = QPoint(60, 90), QPoint(120, 130)
+        QTest.mousePress(overlay, Qt.MouseButton.LeftButton, pos=start)
+        QTest.mouseMove(overlay, end)
+        QTest.mouseRelease(overlay, Qt.MouseButton.LeftButton, pos=end)
+        QTest.keyClick(overlay, Qt.Key.Key_Return)
+        ((image,),) = kept.calls
+        assert image != _screen_image(overlay._screen)
+
+    def test_automatic_snap_targets_the_click_position_without_an_overlay(self, grabs, monkeypatch):
+        monitor = QGuiApplication.primaryScreen()
+        clicked_at = []
+
+        def screen_at(point):
+            clicked_at.append(point)
+            return monitor
+
+        monkeypatch.setattr(capture, "screen_at_windows_point", screen_at)
+        snap = start_snap(take=SCREEN, click_at=(-500, 100))
+        kept = Spy(snap.kept)
+
+        assert _pump_until(lambda: len(kept) == 1)
+        assert clicked_at == [(-500, 100)]
+        assert [grab["screen"] for grab in grabs] == [monitor]
+        assert snap._overlay is None
 
     def test_keep_emits_the_whole_screen_once_and_deletes_the_overlay(self):
         snap = start_snap()
