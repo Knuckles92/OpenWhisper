@@ -751,22 +751,36 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertTrue(self.tab.finalization_card.isHidden())
         self.assertTrue(self.tab.end_button.isEnabled())
 
-    def test_finalization_footer_elements_are_centered(self):
-        """Footer links, keep hint, and decisions are horizontally centered."""
-        links_layout = self.tab.finalization_links_row.layout()
-        self.assertEqual(
-            links_layout.alignment() & Qt.AlignmentFlag.AlignHorizontal_Mask,
-            Qt.AlignmentFlag.AlignHCenter,
+    def test_incomplete_result_groups_actions_by_context(self):
+        self.tab.set_meeting_state({
+            "display_title": "Team sync",
+            "finalization": {"status": "failed"},
+        })
+        self.tab.resize(650, 560)
+        self.tab.show()
+        self.app.processEvents()
+
+        def top(widget):
+            return widget.mapTo(self.tab, QPoint()).y()
+
+        self.assertTrue(self.tab.intro.isHidden())
+        self.assertLess(
+            top(self.tab.finalization_report_button), top(self.tab.finalization_title)
         )
-        self.assertEqual(
-            self.tab.finalization_keep_hint.alignment() & Qt.AlignmentFlag.AlignHorizontal_Mask,
-            Qt.AlignmentFlag.AlignHCenter,
+        self.assertLess(
+            top(self.tab.finalization_retry_button), top(self.tab.finalization_message)
         )
-        decisions_layout = self.tab.finalization_decisions_row.layout()
-        self.assertEqual(
-            decisions_layout.alignment() & Qt.AlignmentFlag.AlignHorizontal_Mask,
-            Qt.AlignmentFlag.AlignHCenter,
+        self.assertLess(
+            top(self.tab.finalization_message), top(self.tab.finalization_keep_later_button)
         )
+        self.assertLess(
+            top(self.tab.finalization_keep_later_button), top(self.tab.cloud_checkbox)
+        )
+        self.assertEqual(self.tab.cloud_checkbox.text(), "AI insights for next meeting")
+
+        self.tab.set_meeting_state({"finalization": None})
+        self.assertFalse(self.tab.intro.isHidden())
+        self.assertEqual(self.tab.cloud_checkbox.text(), "AI insights")
 
     def test_starting_clears_previous_finalization(self):
         """A subsequent start payload clears the previous result card."""
@@ -989,7 +1003,8 @@ class TestMeetingModeTabState(unittest.TestCase):
 
         self.assertFalse(self.tab.finalization_card.isHidden())
         self.assertTrue(self.tab.finalization_progress.isHidden())
-        self.assertEqual(self.tab.finalization_step_badge.text(), "Complete")
+        self.assertTrue(self.tab.finalization_step_badge.isHidden())
+        self.assertEqual(self.tab.finalization_title.text(), "Final Insights Ready")
         self.assertTrue(self.tab.finalization_active_box.isHidden())
         self.assertFalse(hasattr(self.tab, "finalization_stats_widget"))
         self.assertFalse(self.tab.finalization_steps_widget.isHidden())
@@ -1034,7 +1049,7 @@ class TestMeetingModeTabState(unittest.TestCase):
         })
         self.app.processEvents()
 
-        self.assertEqual(self.tab.finalization_step_badge.text(), "Needs retry")
+        self.assertTrue(self.tab.finalization_step_badge.isHidden())
         self.assertEqual(
             self.tab.finalization_title.text(), "Meeting Finished With Issues"
         )
@@ -1155,7 +1170,6 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertEqual(self.tab.identity_title.text(), "Quarterly roadmap")
         self.assertIn("Jan 02, 2025", self.tab.identity_meta.text())
         self.assertIn("40 min", self.tab.identity_meta.text())
-        self.assertEqual(self.tab.identity_pill.text(), "Ready")
         self.assertFalse(self.tab.finalization_report_button.isHidden())
         self.assertTrue(self.tab.finalization_report_button.isEnabled())
         self.tab.finalization_report_button.click()

@@ -2788,7 +2788,8 @@ QTextEdit#cleanupRuleEditor:focus {
 
 QWidget#meetingModeTab,
 QWidget#meetingModeContent,
-QWidget#meetingModeScrollHost {
+QWidget#meetingModeScrollHost,
+QWidget#meetingIntro {
     background-color: transparent;
 }
 
@@ -2983,23 +2984,10 @@ QWidget#meetingFinalizationCard {
     border-radius: 12px;
 }
 
-QWidget#meetingFinalizationCard[finalizationTone="success"] {
-    border: 1px solid @success;
-}
-
-QWidget#meetingFinalizationCard[finalizationTone="warning"] {
-    border: 1px solid @warning;
-}
-
-QWidget#meetingFinalizationCard[finalizationTone="info"],
-QWidget#meetingFinalizationCard[finalizationTone="neutral"] {
-    border: 1px solid @accent;
-}
-
 QLabel#meetingFinalizationIdentityTitle {
     color: @text;
     background-color: transparent;
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 700;
 }
 
@@ -3016,12 +3004,15 @@ QLabel#meetingFinalizationTitle {
     font-weight: 600;
 }
 
-/* Meeting badges share one pill: 20px tall (set in code), fully rounded, a
-   tinted fill and coloured text, no outline. Tones: neutral (default for the
-   identity pill), accent (default for the step badge), success, warning. The
-   Past Meetings card pills use the same values in their own stylesheet. */
+QWidget#meetingFinalizationCard[finalizationTone="warning"] QLabel#meetingFinalizationTitle {
+    color: @warning-text;
+}
+
+QWidget#meetingFinalizationCard[finalizationTone="success"] QLabel#meetingFinalizationTitle {
+    color: @success-text;
+}
+
 QLabel#meetingBetaBadge,
-QLabel#meetingFinalizationIdentityPill,
 QLabel#meetingFinalizationStepBadge {
     border: none;
     border-radius: 10px;
@@ -3030,34 +3021,18 @@ QLabel#meetingFinalizationStepBadge {
     font-weight: 600;
 }
 
-QLabel#meetingFinalizationIdentityPill,
-QLabel#meetingFinalizationIdentityPill[pillTone="neutral"],
-QLabel#meetingFinalizationStepBadge[badgeTone="neutral"] {
-    color: @text-secondary-strong;
-    background-color: rgba(@overlay-rgb, 0.08);
-}
-
 QLabel#meetingFinalizationStepBadge {
     color: @accent-soft;
     background-color: rgba(@accent-rgb, 0.15);
 }
 
-QLabel#meetingFinalizationIdentityPill[pillTone="success"],
-QLabel#meetingFinalizationStepBadge[badgeTone="success"] {
-    color: @success-text;
-    background-color: rgba(@success-rgb, 0.15);
-}
-
-QLabel#meetingBetaBadge,
-QLabel#meetingFinalizationIdentityPill[pillTone="warning"],
-QLabel#meetingFinalizationStepBadge[badgeTone="warning"] {
+QLabel#meetingBetaBadge {
     color: @warning-text;
     background-color: rgba(@warning-rgb, 0.15);
 }
 
 QWidget#meetingFinalizationActiveBox {
     background-color: @inset;
-    border: 1px solid @border;
     border-radius: 8px;
 }
 
@@ -3119,14 +3094,12 @@ QFrame#meetingFinalizationDivider {
     max-height: 1px;
 }
 
-QWidget#meetingFinalizationFooter,
-QWidget#meetingFinalizationLinksRow,
-QWidget#meetingFinalizationDecisionsRow {
+QWidget#meetingFinalizationIdentity,
+QWidget#meetingFinalizationFooter {
     background-color: transparent;
 }
 
-/* Flat links that open or repeat something: the finalization footer's first
-   tier and "Change…" beside AI insights. */
+/* Flat meeting actions, including "Change…" beside AI insights. */
 QPushButton[meetingLink="true"] {
     color: @accent;
     background-color: transparent;
@@ -3153,24 +3126,34 @@ QPushButton[meetingLink="true"]:disabled {
     background-color: transparent;
 }
 
-/* Second footer tier: filled decisions, centered. */
-QPushButton[meetingFooterDecision="true"] {
+QPushButton#meetingFinalizationKeepLaterButton:enabled,
+QPushButton#meetingFinalizationStartNewButton:enabled {
+    color: @text-body;
+}
+
+QPushButton#meetingFinalizationKeepLaterButton:hover,
+QPushButton#meetingFinalizationStartNewButton:hover {
+    color: @text;
+    text-decoration: underline;
+}
+
+QPushButton[meetingResultAction="true"] {
     background-color: @surface-hover;
     color: @text;
     border: none;
     border-radius: 8px;
-    padding: 9px 18px;
+    padding: 7px 12px;
     font-size: 13px;
     font-weight: 600;
     min-width: 0;
     min-height: 0;
 }
 
-QPushButton[meetingFooterDecision="true"]:hover {
+QPushButton[meetingResultAction="true"]:hover {
     background-color: @surface-active;
 }
 
-QPushButton[meetingFooterDecision="true"]:pressed {
+QPushButton[meetingResultAction="true"]:pressed {
     background-color: @surface;
 }
 

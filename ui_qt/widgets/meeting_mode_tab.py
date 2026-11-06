@@ -39,7 +39,6 @@ from meeting.time_utils import format_meeting_identity_meta
 from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
 from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton, start_row
 from ui_qt.widgets.cards import Card
-from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
@@ -213,10 +212,7 @@ def _saved_setting(key: str):
 
 
 #: Identity fields a meeting-state payload may update, kept for the header.
-_IDENTITY_KEYS = (
-    "title", "display_title", "started_at", "ended_at",
-    "paused_total_s", "insights_pill", "insights_tone",
-)
+_IDENTITY_KEYS = ("title", "display_title", "started_at", "ended_at", "paused_total_s")
 
 _FINALIZATION_TITLES = {
     "running": "Finalizing Meeting",
@@ -428,7 +424,7 @@ class MeetingModeTab(QWidget):
 
     @staticmethod
     def _link_button(text: str, object_name: str, tooltip: str = "") -> QPushButton:
-        """Build a flat text action, e.g. the finalization footer's first tier.
+        """Build a flat text action.
 
         Args:
             text: Button label.
@@ -452,20 +448,10 @@ class MeetingModeTab(QWidget):
     def _decision_button(
         text: str, object_name: str, tooltip: str = ""
     ) -> QPushButton:
-        """Build a filled action for the finalization footer's second tier.
-
-        Args:
-            text: Button label.
-            object_name: QSS object name; the theme gives the retry, start-new,
-                and done names their accent colors.
-            tooltip: Optional hover text.
-
-        Returns:
-            A hidden button sized to its label, for the centered decision row.
-        """
+        """Build a filled, initially hidden result action."""
         button = QPushButton(text)
         button.setObjectName(object_name)
-        button.setProperty("meetingFooterDecision", True)
+        button.setProperty("meetingResultAction", True)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         if tooltip:
@@ -502,7 +488,7 @@ class MeetingModeTab(QWidget):
         )
         self.content_widget = content
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(24, 14, 24, 16)
+        content_layout.setContentsMargins(36, 16, 36, 24)
         content_layout.setSpacing(16)
 
         center_wrapper.addStretch()
@@ -513,54 +499,36 @@ class MeetingModeTab(QWidget):
         self.scroll_area.setWidget(scroll_host)
         main_layout.addWidget(self.scroll_area)
 
-        intro_card = Card()
-        intro_card.setMinimumHeight(0)
-        title = QLabel("Meeting Mode")
-        title.setObjectName("headerLabel")
-        title.setFont(QFont("Segoe UI", 16, QFont.Weight.DemiBold))
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_row = QHBoxLayout()
-        title_row.setSpacing(8)
-        title_row.addStretch()
-        title_row.addWidget(title)
+        self.intro = QWidget()
+        self.intro.setObjectName("meetingIntro")
+        intro_layout = QVBoxLayout(self.intro)
+        intro_layout.setContentsMargins(0, 0, 0, 0)
+        intro_layout.setSpacing(8)
+        intro_row = QHBoxLayout()
+        intro_row.setSpacing(10)
         beta_badge = QLabel("Beta")
         beta_badge.setObjectName("meetingBetaBadge")
         beta_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        beta_badge.setFixedHeight(20)
+        beta_badge.setMinimumHeight(20)
         beta_badge.setAccessibleName("Meeting Mode is in beta")
-        title_row.addWidget(beta_badge, 0, Qt.AlignmentFlag.AlignVCenter)
-        title_row.addStretch()
-        intro_card.layout.addLayout(title_row)
+        beta_notice = "Transcripts and insights may be inaccurate."
+        beta_badge.setAccessibleDescription(beta_notice)
+        beta_badge.setToolTip(beta_notice)
+        intro_row.addWidget(beta_badge, 0, Qt.AlignmentFlag.AlignTop)
 
-        # One body style for the intro lines (theme.qss: meetingIntroText);
-        # the platform line below is a quiet note box, not more body text.
-        intro_text = QVBoxLayout()
-        intro_text.setSpacing(4)
         subtitle_copy, platform_copy = meeting_audio_support_copy()
         self.subtitle = WrappedLabel(subtitle_copy)
         self.subtitle.setObjectName("meetingIntroText")
-        self.subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.subtitle.setToolTip(platform_copy)
-        intro_text.addWidget(self.subtitle)
-        self.speech_destination = WrappedLabel("")
-        self.speech_destination.setObjectName("meetingIntroText")
-        self.speech_destination.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        intro_text.addWidget(self.speech_destination)
-        beta_notice = WrappedLabel(
-            "Meeting Mode is in beta. Transcripts and insights may be inaccurate."
-        )
-        beta_notice.setObjectName("meetingIntroText")
-        beta_notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        intro_text.addWidget(beta_notice)
-        intro_card.layout.addLayout(intro_text)
-        self.platform_hint = WrappedLabel(platform_copy, intro_card)
+        intro_row.addWidget(self.subtitle, 1)
+        intro_layout.addLayout(intro_row)
+        self.platform_hint = WrappedLabel(platform_copy)
         self.platform_hint.setObjectName("meetingModePlatformHint")
         self.platform_hint.setProperty("tone", meeting_audio_platform_tone())
-        self.platform_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.platform_hint.setAccessibleName("Meeting platform notice")
         self.platform_hint.setVisible(meeting_audio_shows_platform_warning())
-        intro_card.layout.addWidget(self.platform_hint)
-        content_layout.addWidget(intro_card)
+        intro_layout.addWidget(self.platform_hint)
+        content_layout.addWidget(self.intro)
 
         # Active session card. It comes before the AI insights panel so the
         # meeting's own controls lead while it runs.
@@ -623,14 +591,207 @@ class MeetingModeTab(QWidget):
 
         content_layout.addWidget(self.session_card)
 
-        # The AI insights panel and the idle controls share one column, inset
-        # to the cards' content edge, so the two setup panels stack as tightly
-        # as Quick Record's engine cards.
+        # Post-meeting finalization / result card
+        self.finalization_card = Card()
+        self.finalization_card.setObjectName("meetingFinalizationCard")
+        self.finalization_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        self.finalization_card.setMinimumHeight(0)
+        self._keep_natural_height(self.finalization_card)
+        self.finalization_card.setProperty("finalizationTone", "neutral")
+
+        self.identity_box = QWidget()
+        self.identity_box.setObjectName("meetingFinalizationIdentity")
+        identity_layout = QVBoxLayout(self.identity_box)
+        identity_layout.setContentsMargins(0, 0, 0, 0)
+        identity_layout.setSpacing(4)
+
+        self.identity_title = WrappedLabel("", break_long_words=True)
+        self.identity_title.setObjectName("meetingFinalizationIdentityTitle")
+        self.identity_title.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
+        self.identity_title.setTextFormat(Qt.TextFormat.PlainText)
+        identity_layout.addWidget(self.identity_title)
+
+        details_row = QHBoxLayout()
+        details_row.setSpacing(12)
+        self.identity_meta = WrappedLabel("")
+        self.identity_meta.setObjectName("meetingFinalizationIdentityMeta")
+        self.identity_meta.setFont(QFont("Segoe UI", 11))
+        details_row.addWidget(self.identity_meta, 1, Qt.AlignmentFlag.AlignTop)
+
+        record_actions = QVBoxLayout()
+        record_actions.setSpacing(6)
+        record_actions.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.finalization_report_button = self._link_button(
+            "Open report",
+            "meetingFinalizationReportButton",
+            "Open the final report in the web dashboard",
+        )
+        self.finalization_report_button.clicked.connect(self.open_report_requested)
+        record_actions.addWidget(
+            self.finalization_report_button, 0, Qt.AlignmentFlag.AlignRight
+        )
+        self.finalization_retry_speakers_button = self._link_button(
+            "Re-run speakers",
+            "meetingFinalizationRetrySpeakersButton",
+        )
+        self.finalization_retry_speakers_button.clicked.connect(
+            self.retry_speakers_requested.emit
+        )
+        self.finalization_retry_speakers_button.hide()
+        record_actions.addWidget(
+            self.finalization_retry_speakers_button, 0, Qt.AlignmentFlag.AlignRight
+        )
+        details_row.addLayout(record_actions)
+        identity_layout.addLayout(details_row)
+        self.finalization_card.layout.addWidget(self.identity_box)
+
+        identity_divider = QFrame()
+        identity_divider.setObjectName("meetingFinalizationDivider")
+        identity_divider.setFrameShape(QFrame.Shape.HLine)
+        identity_divider.setFixedHeight(1)
+        self.finalization_card.layout.addWidget(identity_divider)
+
+        # Header row with title and step badge
+        fin_header_layout = QHBoxLayout()
+        fin_header_layout.setContentsMargins(0, 0, 0, 0)
+        fin_header_layout.setSpacing(8)
+
+        self.finalization_title = WrappedLabel("Final insights")
+        self.finalization_title.setObjectName("meetingFinalizationTitle")
+        self.finalization_title.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        fin_header_layout.addWidget(self.finalization_title, 1)
+
+        self.finalization_step_badge = QLabel("")
+        self.finalization_step_badge.setObjectName("meetingFinalizationStepBadge")
+        self.finalization_step_badge.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
+        self.finalization_step_badge.setMinimumHeight(20)
+        self.finalization_step_badge.hide()
+        fin_header_layout.addWidget(self.finalization_step_badge)
+
+        self.finalization_retry_button = self._decision_button(
+            "Retry failed steps",
+            "meetingFinalizationRetryButton",
+            "Run every failed post-meeting step again.",
+        )
+        self.finalization_retry_button.clicked.connect(self.retry_insights_requested)
+        fin_header_layout.addWidget(self.finalization_retry_button)
+        self.finalization_card.layout.addLayout(fin_header_layout)
+
+        # Progress bar
+        self.finalization_progress = QProgressBar()
+        self.finalization_progress.setObjectName("meetingFinalizationProgress")
+        self.finalization_progress.setTextVisible(False)
+        self.finalization_progress.setAccessibleName("Meeting finalization progress")
+        self.finalization_progress.setMaximumHeight(6)
+        self.finalization_progress.hide()
+        self.finalization_card.layout.addWidget(self.finalization_progress)
+
+        # Active status / details highlight container
+        self.finalization_active_box = QWidget()
+        self.finalization_active_box.setObjectName("meetingFinalizationActiveBox")
+        active_box_layout = QVBoxLayout(self.finalization_active_box)
+        active_box_layout.setContentsMargins(10, 8, 10, 8)
+        active_box_layout.setSpacing(4)
+
+        self.finalization_message = WrappedLabel("", break_long_words=True)
+        self.finalization_message.setObjectName("meetingFinalizationMessage")
+        self.finalization_message.setAccessibleName("Meeting finalization status")
+        self.finalization_message.setTextFormat(Qt.TextFormat.PlainText)
+        active_box_layout.addWidget(self.finalization_message)
+
+        self.finalization_detail = WrappedLabel("")
+        self.finalization_detail.setObjectName("meetingFinalizationDetail")
+        active_box_layout.addWidget(self.finalization_detail)
+        self.finalization_card.layout.addWidget(self.finalization_active_box)
+
+        # Multi-step pipeline / checklist container
+        self.finalization_steps_widget = QWidget()
+        self.finalization_steps_widget.setObjectName("meetingFinalizationStepsWidget")
+        self.finalization_steps_layout = QVBoxLayout(self.finalization_steps_widget)
+        # Matches the active box's inner padding so both inset the same amount
+        # from the card. QSS padding does not inset a plain widget's layout.
+        self.finalization_steps_layout.setContentsMargins(10, 8, 10, 8)
+        self.finalization_steps_layout.setSpacing(6)
+        self.finalization_steps_widget.hide()
+        self._keep_natural_height(self.finalization_steps_widget)
+        self.finalization_card.layout.addWidget(self.finalization_steps_widget)
+
+        # Secondary actions stay with the meeting record.
+        self.finalization_footer = QWidget()
+        self.finalization_footer.setObjectName("meetingFinalizationFooter")
+        footer_layout = QVBoxLayout(self.finalization_footer)
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setSpacing(6)
+
+        footer_divider = QFrame()
+        footer_divider.setObjectName("meetingFinalizationDivider")
+        footer_divider.setFrameShape(QFrame.Shape.HLine)
+        footer_divider.setFixedHeight(1)
+        footer_layout.addWidget(footer_divider)
+
+        actions_layout = QHBoxLayout()
+        actions_layout.setSpacing(16)
+
+        self.finalization_background_button = self._decision_button(
+            "Continue in the background",
+            "meetingFinalizationBackgroundButton",
+            "Keep preparing this meeting in the background and return to "
+            "Start Meeting. Results will be available in Past Meetings.",
+        )
+        self.finalization_background_button.clicked.connect(
+            self.background_requested.emit
+        )
+        actions_layout.addWidget(self.finalization_background_button)
+
+        self.finalization_keep_later_button = self._link_button(
+            "Keep for later",
+            "meetingFinalizationKeepLaterButton",
+            "Hide this card and return to idle. The meeting stays in Past "
+            "Meetings until you open it again.",
+        )
+        self.finalization_keep_later_button.clicked.connect(
+            self.defer_insights_requested.emit
+        )
+        actions_layout.addWidget(self.finalization_keep_later_button)
+
+        self.finalization_start_new_button = self._link_button(
+            "Start new meeting",
+            "meetingFinalizationStartNewButton",
+            "Save this meeting in Past Meetings, then start a fresh session.",
+        )
+        self.finalization_start_new_button.clicked.connect(
+            self._on_start_new_clicked
+        )
+        actions_layout.addWidget(self.finalization_start_new_button)
+
+        self.finalization_done_button = self._decision_button(
+            "Done",
+            "meetingFinalizationDoneButton",
+            "This meeting is already in Past Meetings. Hide this card and "
+            "return to idle.",
+        )
+        self.finalization_done_button.clicked.connect(
+            self.defer_insights_requested.emit
+        )
+        actions_layout.addWidget(self.finalization_done_button)
+        actions_layout.addStretch()
+        footer_layout.addLayout(actions_layout)
+
+        self.finalization_keep_hint = WrappedLabel("")
+        self.finalization_keep_hint.setObjectName("meetingFinalizationKeepHint")
+        self.finalization_keep_hint.hide()
+        footer_layout.addWidget(self.finalization_keep_hint)
+        self.finalization_card.layout.addWidget(self.finalization_footer)
+        content_layout.addWidget(self.finalization_card)
+
         setup_group = QWidget()
         setup_group.setObjectName("meetingSetupGroup")
         setup_layout = QVBoxLayout(setup_group)
-        setup_layout.setContentsMargins(16, 0, 16, 0)
+        setup_layout.setContentsMargins(0, 0, 0, 0)
         setup_layout.setSpacing(12)
+        self.speech_destination = WrappedLabel("")
+        self.speech_destination.setObjectName("meetingIntroText")
+        setup_layout.addWidget(self.speech_destination)
         setup_layout.addWidget(self._build_ai_panel())
 
         # Idle controls
@@ -675,230 +836,6 @@ class MeetingModeTab(QWidget):
 
         setup_layout.addWidget(self.idle_card)
         content_layout.addWidget(setup_group)
-
-        # Post-meeting finalization / result card
-        self.finalization_card = Card()
-        self.finalization_card.setObjectName("meetingFinalizationCard")
-        self.finalization_card.setMinimumHeight(0)
-        self._keep_natural_height(self.finalization_card)
-        self.finalization_card.setProperty("finalizationTone", "neutral")
-
-        self.identity_box = QWidget()
-        self.identity_box.setObjectName("meetingFinalizationIdentity")
-        identity_layout = QVBoxLayout(self.identity_box)
-        identity_layout.setContentsMargins(0, 0, 0, 4)
-        identity_layout.setSpacing(4)
-
-        self.identity_title = WrappedLabel("")
-        self.identity_title.setObjectName("meetingFinalizationIdentityTitle")
-        self.identity_title.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
-        self.identity_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        identity_layout.addWidget(self.identity_title)
-
-        identity_meta_row = QHBoxLayout()
-        identity_meta_row.setContentsMargins(0, 0, 0, 0)
-        identity_meta_row.setSpacing(8)
-        identity_meta_row.addStretch()
-        self.identity_meta = QLabel("")
-        self.identity_meta.setObjectName("meetingFinalizationIdentityMeta")
-        self.identity_meta.setFont(QFont("Segoe UI", 11))
-        identity_meta_row.addWidget(self.identity_meta)
-        self.identity_pill = QLabel("")
-        self.identity_pill.setObjectName("meetingFinalizationIdentityPill")
-        self.identity_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.identity_pill.setFixedHeight(20)
-        self.identity_pill.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
-        identity_meta_row.addWidget(self.identity_pill)
-        identity_meta_row.addStretch()
-        identity_layout.addLayout(identity_meta_row)
-
-        identity_layout.addSpacing(8)
-        identity_divider = QFrame()
-        identity_divider.setObjectName("meetingFinalizationDivider")
-        identity_divider.setFrameShape(QFrame.Shape.HLine)
-        identity_divider.setFixedHeight(1)
-        identity_layout.addWidget(identity_divider)
-        self.identity_box.hide()
-        self.finalization_card.layout.addWidget(self.identity_box)
-
-        # Header row with title and step badge
-        fin_header_layout = QHBoxLayout()
-        fin_header_layout.setContentsMargins(0, 0, 0, 0)
-        fin_header_layout.setSpacing(8)
-
-        self.finalization_title = QLabel("Final insights")
-        self.finalization_title.setObjectName("meetingFinalizationTitle")
-        self.finalization_title.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
-        fin_header_layout.addWidget(self.finalization_title)
-
-        fin_header_layout.addStretch()
-
-        self.finalization_step_badge = QLabel("")
-        self.finalization_step_badge.setObjectName("meetingFinalizationStepBadge")
-        self.finalization_step_badge.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
-        self.finalization_step_badge.setFixedHeight(20)
-        self.finalization_step_badge.setProperty("badgeTone", "neutral")
-        self.finalization_step_badge.hide()
-        fin_header_layout.addWidget(self.finalization_step_badge)
-        self.finalization_card.layout.addLayout(fin_header_layout)
-
-        # Progress bar
-        self.finalization_progress = QProgressBar()
-        self.finalization_progress.setObjectName("meetingFinalizationProgress")
-        self.finalization_progress.setTextVisible(False)
-        self.finalization_progress.setAccessibleName("Meeting finalization progress")
-        self.finalization_progress.setMaximumHeight(6)
-        self.finalization_progress.hide()
-        self.finalization_card.layout.addWidget(self.finalization_progress)
-
-        # Active status / details highlight container
-        self.finalization_active_box = QWidget()
-        self.finalization_active_box.setObjectName("meetingFinalizationActiveBox")
-        active_box_layout = QVBoxLayout(self.finalization_active_box)
-        active_box_layout.setContentsMargins(10, 8, 10, 8)
-        active_box_layout.setSpacing(4)
-
-        self.finalization_message = WrappedLabel("")
-        self.finalization_message.setObjectName("meetingFinalizationMessage")
-        self.finalization_message.setAccessibleName("Meeting finalization status")
-        active_box_layout.addWidget(self.finalization_message)
-
-        self.finalization_detail = WrappedLabel("")
-        self.finalization_detail.setObjectName("meetingFinalizationDetail")
-        active_box_layout.addWidget(self.finalization_detail)
-        self.finalization_card.layout.addWidget(self.finalization_active_box)
-
-        # Multi-step pipeline / checklist container
-        self.finalization_steps_widget = QWidget()
-        self.finalization_steps_widget.setObjectName("meetingFinalizationStepsWidget")
-        self.finalization_steps_layout = QVBoxLayout(self.finalization_steps_widget)
-        # Matches the active box's inner padding so both inset the same amount
-        # from the card. QSS padding does not inset a plain widget's layout.
-        self.finalization_steps_layout.setContentsMargins(10, 8, 10, 8)
-        self.finalization_steps_layout.setSpacing(6)
-        self.finalization_steps_widget.hide()
-        self._keep_natural_height(self.finalization_steps_widget)
-        self.finalization_card.layout.addWidget(self.finalization_steps_widget)
-
-        # Action footer: quiet links that open something, then the decisions
-        # that dismiss or repeat work. Two tiers keep five possible actions
-        # from reading as one undifferentiated strip of buttons.
-        self.finalization_footer = QWidget()
-        self.finalization_footer.setObjectName("meetingFinalizationFooter")
-        footer_layout = QVBoxLayout(self.finalization_footer)
-        footer_layout.setContentsMargins(0, 0, 0, 0)
-        footer_layout.setSpacing(10)
-
-        footer_divider = QFrame()
-        footer_divider.setObjectName("meetingFinalizationDivider")
-        footer_divider.setFrameShape(QFrame.Shape.HLine)
-        footer_divider.setFixedHeight(1)
-        footer_layout.addWidget(footer_divider)
-
-        self.finalization_links_row = QWidget()
-        self.finalization_links_row.setObjectName("meetingFinalizationLinksRow")
-        links_layout = QHBoxLayout(self.finalization_links_row)
-        links_layout.setContentsMargins(0, 0, 0, 0)
-        links_layout.setSpacing(18)
-        links_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.finalization_report_button = self._link_button(
-            "Open report",
-            "meetingFinalizationReportButton",
-            "Open the final report in the web dashboard",
-        )
-        self.finalization_report_button.clicked.connect(
-            self.open_report_requested
-        )
-        links_layout.addWidget(self.finalization_report_button)
-
-        self.finalization_retry_speakers_button = self._link_button(
-            "Re-run speakers",
-            "meetingFinalizationRetrySpeakersButton",
-        )
-        self.finalization_retry_speakers_button.clicked.connect(
-            self.retry_speakers_requested.emit
-        )
-        self.finalization_retry_speakers_button.hide()
-        links_layout.addWidget(self.finalization_retry_speakers_button)
-        footer_layout.addWidget(self.finalization_links_row)
-
-        self.finalization_keep_hint = WrappedLabel(
-            "This meeting, transcript, and audio stay in Past Meetings. "
-            "Nothing is deleted."
-        )
-        self.finalization_keep_hint.setObjectName("meetingFinalizationKeepHint")
-        self.finalization_keep_hint.setFont(QFont("Segoe UI", 10))
-        self.finalization_keep_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.finalization_keep_hint.hide()
-        footer_layout.addWidget(self.finalization_keep_hint)
-
-        self.finalization_decisions_row = QWidget()
-        self.finalization_decisions_row.setObjectName(
-            "meetingFinalizationDecisionsRow"
-        )
-        decisions_layout = QHBoxLayout(self.finalization_decisions_row)
-        decisions_layout.setContentsMargins(0, 0, 0, 0)
-        decisions_layout.setSpacing(10)
-        decisions_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self.finalization_background_button = self._decision_button(
-            "Continue in the background",
-            "meetingFinalizationBackgroundButton",
-            "Keep preparing this meeting in the background and return to "
-            "Start Meeting. Results will be available in Past Meetings.",
-        )
-        self.finalization_background_button.clicked.connect(
-            self.background_requested.emit
-        )
-        self.finalization_background_button.hide()
-        decisions_layout.addWidget(self.finalization_background_button)
-
-        self.finalization_keep_later_button = self._decision_button(
-            "Keep for later",
-            "meetingFinalizationKeepLaterButton",
-            "Hide this card and return to idle. The meeting stays in Past "
-            "Meetings until you open it again.",
-        )
-        self.finalization_keep_later_button.clicked.connect(
-            self.defer_insights_requested.emit
-        )
-        decisions_layout.addWidget(self.finalization_keep_later_button)
-
-        self.finalization_start_new_button = self._decision_button(
-            "Start new meeting",
-            "meetingFinalizationStartNewButton",
-            "Save this meeting in Past Meetings, then start a fresh session.",
-        )
-        self.finalization_start_new_button.clicked.connect(
-            self._on_start_new_clicked
-        )
-        decisions_layout.addWidget(self.finalization_start_new_button)
-
-        self.finalization_retry_button = self._decision_button(
-            "Retry failed steps",
-            "meetingFinalizationRetryButton",
-            "Run every failed post-meeting step again.",
-        )
-        self.finalization_retry_button.clicked.connect(
-            self._on_retry_failed_clicked
-        )
-        decisions_layout.addWidget(self.finalization_retry_button)
-
-        self.finalization_done_button = self._decision_button(
-            "Done",
-            "meetingFinalizationDoneButton",
-            "This meeting is already in Past Meetings. Hide this card and "
-            "return to idle.",
-        )
-        self.finalization_done_button.clicked.connect(
-            self.defer_insights_requested.emit
-        )
-        decisions_layout.addWidget(self.finalization_done_button)
-
-        footer_layout.addWidget(self.finalization_decisions_row)
-        self.finalization_card.layout.addWidget(self.finalization_footer)
-        content_layout.addWidget(self.finalization_card)
 
         self.background_notice = WrappedLabel("")
         self.background_notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -948,16 +885,6 @@ class MeetingModeTab(QWidget):
         title_row.addWidget(self.cloud_checkbox)
         title_row.addStretch()
 
-        # While a meeting runs the details are hidden, so the model moves up
-        # into the switch's row.
-        self.ai_compact_destination = ElidingLabel()
-        self.ai_compact_destination.setObjectName("meetingAiCompactDestination")
-        self.ai_compact_destination.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
-        self.ai_compact_destination.hide()
-        title_row.addWidget(self.ai_compact_destination)
-
         self.ai_settings_button = self._link_button(
             "Change…",
             "meetingAiSettingsButton",
@@ -967,6 +894,12 @@ class MeetingModeTab(QWidget):
         self.ai_settings_button.clicked.connect(self.ai_settings_requested)
         title_row.addWidget(self.ai_settings_button)
         layout.addLayout(title_row)
+
+        self.ai_compact_destination = WrappedLabel("", break_long_words=True)
+        self.ai_compact_destination.setObjectName("meetingAiCompactDestination")
+        self.ai_compact_destination.setIndent(self._AI_DETAIL_INDENT)
+        self.ai_compact_destination.hide()
+        layout.addWidget(self.ai_compact_destination)
 
         self.ai_details = QWidget()
         self.ai_details.setObjectName("meetingAiDetails")
@@ -1133,10 +1066,6 @@ class MeetingModeTab(QWidget):
             self.resume_requested.emit()
         else:
             self.pause_requested.emit()
-
-    def _on_retry_failed_clicked(self):
-        """Retry every failed/skipped checklist step."""
-        self.retry_insights_requested.emit()
 
     def set_developer_mode(self, enabled: bool) -> None:
         """Show or hide demo-meeting controls.
@@ -1394,6 +1323,7 @@ class MeetingModeTab(QWidget):
         show_finalization = bool(finalization) and not self._active
         showing_session = self._active or self._starting
 
+        self.intro.setVisible(not show_finalization)
         self.session_card.setVisible(showing_session)
         # Hide the idle Start control while finalization is running or an
         # incomplete card is asking the user to retry, defer, or start new.
@@ -1407,6 +1337,9 @@ class MeetingModeTab(QWidget):
         self.ai_details.setVisible(setting_up)
         self.ai_settings_button.setVisible(setting_up)
         self.ai_compact_destination.setVisible(not setting_up)
+        self.cloud_checkbox.setText(
+            "AI insights for next meeting" if show_finalization else "AI insights"
+        )
         self.start_button.setVisible(not hide_idle_start)
         show_demo = (
             self._developer_mode
@@ -1426,30 +1359,18 @@ class MeetingModeTab(QWidget):
         if show_finalization and finalization is not None:
             self._render_identity()
             self._render_finalization(finalization)
-        else:
-            self.identity_box.hide()
 
         self.dashboard_button.setEnabled(self._active or self._has_dashboard)
         self.finalization_report_button.setVisible(show_finalization)
-        self._sync_footer_rows()
-
-    def _sync_footer_rows(self) -> None:
-        """Collapse footer tiers that have no visible action left."""
-        def has_action(row: QWidget) -> bool:
-            return any(
-                not button.isHidden() for button in row.findChildren(QPushButton)
-            )
-
-        has_links = has_action(self.finalization_links_row)
-        has_decisions = has_action(self.finalization_decisions_row)
-        self.finalization_links_row.setVisible(has_links)
-        self.finalization_decisions_row.setVisible(has_decisions)
         self.finalization_footer.setVisible(
-            has_links or has_decisions or not self.finalization_keep_hint.isHidden()
+            show_finalization and any(
+                not button.isHidden()
+                for button in self.finalization_footer.findChildren(QPushButton)
+            )
         )
 
     def _render_identity(self) -> None:
-        """Show title, date, duration, and insights pill on the leftover card."""
+        """Show the meeting name, date, and duration above its result."""
         identity = self._identity
         title = str(
             identity.get("display_title") or identity.get("title") or ""
@@ -1457,21 +1378,9 @@ class MeetingModeTab(QWidget):
         meta = format_meeting_identity_meta(identity) if identity else ""
         if meta == "Unknown date" and not identity.get("started_at"):
             meta = ""
-        pill_label = str(identity.get("insights_pill") or "").strip()
-        pill_tone = str(identity.get("insights_tone") or "")
-        has_identity = bool(title or meta or pill_label)
-        self.identity_box.setVisible(has_identity)
-        self.identity_title.setText(title)
-        self.identity_title.setVisible(bool(title))
+        self.identity_title.setText(title or "Meeting result")
         self.identity_meta.setText(meta)
         self.identity_meta.setVisible(bool(meta))
-        self.identity_pill.setText(pill_label)
-        self.identity_pill.setProperty("pillTone", pill_tone)
-        style = self.identity_pill.style()
-        if style is not None:
-            style.unpolish(self.identity_pill)
-            style.polish(self.identity_pill)
-        self.identity_pill.setVisible(bool(pill_label))
 
     def _render_finalization(self, finalization: Dict[str, Any]) -> None:
         """Update finalization card copy, tone, and step visibility.
@@ -1516,8 +1425,7 @@ class MeetingModeTab(QWidget):
         self.finalization_keep_hint.setText(
             "This failed start has no audio or transcript."
             if view.empty_meeting
-            else "This meeting, transcript, and audio stay in Past Meetings. "
-                 "Nothing is deleted."
+            else "This meeting, transcript, and audio stay in Past Meetings."
         )
         self.finalization_retry_speakers_button.setToolTip(
             self._speaker_rerun_tip()
@@ -1527,6 +1435,7 @@ class MeetingModeTab(QWidget):
             tone = "neutral"
             self._show_running_finalization(view)
         else:
+            self.finalization_step_badge.hide()
             self.finalization_progress.hide()
             self.finalization_progress.setRange(0, 1)
             self.finalization_progress.setValue(0)
@@ -1539,7 +1448,7 @@ class MeetingModeTab(QWidget):
                 self._show_completed_finalization(view, has_speaker_step)
             elif needs_retry:
                 tone = "warning"
-                self._show_retry_finalization(view, bool(failed_steps), has_speaker_step)
+                self._show_retry_finalization(view, has_speaker_step)
             else:
                 tone = "info"
                 self._show_off_finalization()
@@ -1566,21 +1475,23 @@ class MeetingModeTab(QWidget):
         self.finalization_active_box.show()
 
         if view.total_steps > 0:
-            self._show_step_badge(f"Step {view.current_step} of {view.total_steps}", "info")
+            self.finalization_step_badge.setText(
+                f"Step {view.current_step} of {view.total_steps}"
+            )
             # Progress calculation
             pct = int(max(5, min(95, ((view.current_step - 0.5) / view.total_steps) * 100)))
             self.finalization_progress.setRange(0, 100)
             self.finalization_progress.setValue(pct)
         else:
-            self._show_step_badge("In Progress", "info")
+            self.finalization_step_badge.setText("In progress")
             # Indeterminate only when steps not configured
             self.finalization_progress.setRange(0, 0)
 
+        self.finalization_step_badge.show()
         self._show_step_details(view)
         self._show_steps(view.steps, view.current_step, allow_actions=False)
 
     def _show_completed_finalization(self, view: _FinalizationView, has_speaker_step: bool) -> None:
-        self._show_step_badge("Complete", "success")
         self.finalization_retry_button.hide()
         self._offer_speaker_rerun(not has_speaker_step and self._speaker_rerun_offered)
         self._set_incomplete_actions_visible(False)
@@ -1592,13 +1503,8 @@ class MeetingModeTab(QWidget):
         self._show_steps(view.steps, len(view.steps))
 
     def _show_retry_finalization(
-        self, view: _FinalizationView, has_failed_steps: bool, has_speaker_step: bool
+        self, view: _FinalizationView, has_speaker_step: bool
     ) -> None:
-        if has_failed_steps:
-            badge_text = "Needs retry"
-        else:
-            badge_text = "Failed" if view.status == "failed" else "Unavailable"
-        self._show_step_badge(badge_text, "warning")
         self.finalization_retry_button.show()
         self.finalization_retry_button.setEnabled(True)
         self._offer_speaker_rerun(not has_speaker_step and self._speaker_rerun_offered)
@@ -1610,7 +1516,6 @@ class MeetingModeTab(QWidget):
         self._show_steps(view.steps, view.current_step)
 
     def _show_off_finalization(self) -> None:
-        self._show_step_badge("Off", "neutral")
         self.finalization_active_box.show()
         self.finalization_detail.hide()
         self.finalization_steps_widget.hide()
@@ -1618,11 +1523,6 @@ class MeetingModeTab(QWidget):
         self._offer_speaker_rerun(self._speaker_rerun_offered)
         self._set_incomplete_actions_visible(False)
         self._set_done_visible(True)
-
-    def _show_step_badge(self, text: str, tone: str) -> None:
-        self.finalization_step_badge.setText(text)
-        self.finalization_step_badge.setProperty("badgeTone", tone)
-        self.finalization_step_badge.show()
 
     def _offer_speaker_rerun(self, visible: bool) -> None:
         self.finalization_retry_speakers_button.setVisible(visible)
@@ -1650,7 +1550,7 @@ class MeetingModeTab(QWidget):
     def _apply_finalization_tone(self, tone: str) -> None:
         self.finalization_card.setProperty("finalizationTone", tone)
         # Force QSS to re-evaluate dynamic properties.
-        for widget in (self.finalization_card, self.finalization_step_badge):
+        for widget in (self.finalization_card, self.finalization_title):
             style = widget.style()
             if style is not None:
                 style.unpolish(widget)
@@ -1714,15 +1614,14 @@ class MeetingModeTab(QWidget):
         icon_label.setFixedWidth(16)
         row_layout.addWidget(icon_label)
 
-        name_label = QLabel(step_name)
+        name_label = WrappedLabel(step_name, break_long_words=True)
         name_label.setObjectName("meetingFinalizationStepName")
+        name_label.setTextFormat(Qt.TextFormat.PlainText)
         name_font = QFont("Segoe UI", 11)
         if step_status == "running":
             name_font.setWeight(QFont.Weight.DemiBold)
         name_label.setFont(name_font)
-        row_layout.addWidget(name_label)
-
-        row_layout.addStretch()
+        row_layout.addWidget(name_label, 1)
 
         detail_label = QLabel(_step_detail_text(step_status))
         detail_label.setObjectName("meetingFinalizationStepDetail")
