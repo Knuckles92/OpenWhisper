@@ -1,9 +1,9 @@
-"""Side mouse buttons as shortcuts on Windows, through a WH_MOUSE_LL hook.
+"""Windows side-button shortcuts and optional passive click observation.
 
 Windows calls a low-level mouse hook for every mouse move, on the thread that
 installed it, and silently removes a hook whose callback is too slow. So the
-hook lives on its own message-loop thread, returns for anything but a side
-button before doing any work, and hands matched presses to a second thread.
+hook lives on its own message-loop thread and hands matched events to a
+second thread. It ignores mouse movement.
 It is independent of the keyboard hook, so a failure here never affects
 keyboard shortcuts.
 
@@ -14,22 +14,27 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import os
 import queue
 import threading
 import time
+from collections.abc import Callable
 from ctypes import wintypes
-from typing import Callable, Optional
+from typing import NamedTuple, Optional
 
 logger = logging.getLogger(__name__)
 
 WH_MOUSE_LL = 14
 WM_QUIT = 0x0012
+WM_LBUTTONDOWN, WM_LBUTTONUP = 0x0201, 0x0202
+WM_RBUTTONDOWN, WM_RBUTTONUP = 0x0204, 0x0205
 WM_XBUTTONDOWN = 0x020B
 WM_XBUTTONUP = 0x020C
 LLMHF_INJECTED = 0x01
 PM_NOREMOVE = 0x0000
 
 _BUTTONS = {1: "mouse4", 2: "mouse5"}
+_CLICK_PRESSES = {WM_LBUTTONUP: WM_LBUTTONDOWN, WM_RBUTTONUP: WM_RBUTTONDOWN}
 _MODIFIER_KEYS = (
     ("ctrl", (0x11,)),
     ("alt", (0x12,)),
@@ -82,6 +87,10 @@ def _load_libraries():
     user32.PostThreadMessageW.restype = wintypes.BOOL
     user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
     user32.GetAsyncKeyState.restype = ctypes.c_short
+    user32.WindowFromPoint.argtypes = [wintypes.POINT]
+    user32.WindowFromPoint.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
     kernel32.GetCurrentThreadId.argtypes = []
     kernel32.GetCurrentThreadId.restype = wintypes.DWORD
     kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
@@ -117,8 +126,14 @@ class _Run:
         self.proc = None
 
 
+class _Click(NamedTuple):
+    x: int
+    y: int
+    at: float
+
+
 class MouseButtonHook:
-    """Suppress claimed side-button presses and report them in order.
+    """Suppress claimed side-button presses and optionally observe left and right clicks.
 
     Args:
         claims: ``claims(button, modifiers) -> bool``, asked inside the hook
@@ -127,6 +142,8 @@ class MouseButtonHook:
         on_button: ``on_button(button, pressed, modifiers, at)``, called on the
             dispatch thread, never inside the hook. ``at`` is the hook's
             ``time.monotonic()``.
+        on_click: Optional ``on_click(x, y, at)`` for releases of real clicks
+            that began outside this process. The hook passes these through.
     """
 
     def __init__(
@@ -134,10 +151,12 @@ class MouseButtonHook:
         claims: Callable[[str, frozenset], bool],
         on_button: Callable[[str, bool, frozenset, float], None],
         *,
+        on_click: Callable[[int, int, float], None] | None = None,
         libraries=None,
     ):
         self._claims = claims
         self._on_button = on_button
+        self._on_click = on_click
         self._libraries = libraries
         self._lock = threading.Lock()
         self._run: Optional[_Run] = None
@@ -168,6 +187,10 @@ class MouseButtonHook:
                 target=self._hook_loop, args=(run,), name="mouse-hook", daemon=True
             )
             run.thread.start()
+
+    def wait_until_installed(self, timeout: float = 1.0) -> bool:
+        run = self._run
+        return run is not None and run.ready.wait(timeout) and run.installed
 
     def stop(self, timeout: float = 1.0) -> None:
         with self._lock:
@@ -214,9 +237,33 @@ class MouseButtonHook:
         clock = time.monotonic
         timer = time.perf_counter
         from_address = MSLLHOOKSTRUCT.from_address
+        observe_clicks = self._on_click is not None
+        process = os.getpid()
+        pressed_outside = set()
+
+        def observe_click(wparam, info):
+            if info.flags & LLMHF_INJECTED:
+                return
+            if wparam in (WM_LBUTTONDOWN, WM_RBUTTONDOWN):
+                pressed_outside.discard(wparam)
+                window = user32.WindowFromPoint(info.pt)
+                owner = wintypes.DWORD()
+                if window and user32.GetWindowThreadProcessId(window, ctypes.byref(owner)):
+                    if owner.value != process:
+                        pressed_outside.add(wparam)
+            elif _CLICK_PRESSES[wparam] in pressed_outside:
+                pressed_outside.remove(_CLICK_PRESSES[wparam])
+                events.put(_Click(info.pt.x, info.pt.y, clock()))
 
         def callback(code, wparam, lparam):
             if wparam != WM_XBUTTONDOWN and wparam != WM_XBUTTONUP:
+                if observe_clicks and code >= 0 and wparam in (
+                    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP,
+                ):
+                    try:
+                        observe_click(wparam, from_address(lparam))
+                    except Exception:
+                        pass  # Always let Windows deliver the original click.
                 return call_next(None, code, wparam, lparam)
             started = timer()
             try:
@@ -252,9 +299,12 @@ class MouseButtonHook:
             if event is None:
                 return
             try:
-                self._on_button(*event)
+                if isinstance(event, _Click):
+                    self._on_click(*event)
+                else:
+                    self._on_button(*event)
             except Exception:
-                logger.exception("Mouse button shortcut failed")
+                logger.exception("Mouse event dispatch failed")
             self._report_latency()
 
     def _report_latency(self) -> None:

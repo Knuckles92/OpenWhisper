@@ -346,6 +346,11 @@ class SnapOverlay(QWidget):
         self._enter_annotate()
         self.selecting.emit()
 
+    def start_drawing(self) -> None:
+        """Start a whole-screen annotation with the pen ready to draw."""
+        self.set_tool(Tool.PEN)
+        self._select_all()
+
     def clear_selection(self) -> None:
         """Back to the bare frozen screen: the selection moved to another screen."""
         if self._editor is not None:

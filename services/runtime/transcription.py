@@ -674,6 +674,8 @@ class TranscriptionRuntime:
 
         if not self.controller.recorder.stop_recording():
             self._forget_recording()
+            if walkthrough is not None:
+                self.controller.recording_state_changed.emit(False)
             self.controller.overlay_state_update.emit(OverlayState.NONE)
             self.controller.status_update.emit("Failed to stop recording")
             return

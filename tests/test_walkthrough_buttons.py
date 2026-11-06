@@ -72,6 +72,17 @@ def test_the_button_asks_for_a_walkthrough(tab):
     assert not tab.cancel_button.isVisibleTo(tab)
 
 
+def test_auto_mode_is_opt_in_and_set_before_recording(tab):
+    assert not tab.auto_check.isChecked()
+    with patch.object(settings_manager, "save_setting") as save:
+        tab.auto_check.click()
+        save.assert_called_once_with(SettingsKey.WALKTHROUGH_AUTO_MODE, True)
+    tab.set_recording_state(True, True)
+    assert not tab.auto_check.isEnabled()
+    tab.set_recording_state(False, False)
+    assert tab.auto_check.isEnabled()
+
+
 def test_during_a_walkthrough_the_tab_finishes_or_cancels_it(tab):
     cancel = QSignalSpy(tab.cancel_requested)
     tab.set_recording_state(True, True)

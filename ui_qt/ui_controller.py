@@ -1081,14 +1081,14 @@ class UIController(QObject):
 
         request_access()
 
-    def start_snap(self, *, hint: str = "", take: str = "region", front: bool = False):
+    def start_snap(self, *, hint: str = "", take: str = "region", front: bool = False,
+                   click_at: tuple[int, int] | None = None):
         """Freeze the screen under the pointer for a screenshot; a SnapSession.
 
         The recording overlay never appears in it, yet stays in sight in a
         corner above the snap while it is drawn. On Wayland the overlay is
         a part of the main window, which must not be hidden for it.
-        ``take`` is what to keep (ui_qt.snap.session's REGION, SCREEN, WINDOW),
-        and ``front`` makes WINDOW the window in front (see ``start_snap``).
+        See ``ui_qt.snap.start_snap`` for capture options.
         """
         from ui_qt.snap import start_snap
 
@@ -1097,7 +1097,7 @@ class UIController(QObject):
         if self._walkthrough_panel is not None and self._walkthrough_panel.isVisible():
             keep_out += (self._walkthrough_panel,)
         return start_snap(keep_out=keep_out, hint=hint, float_above=floating, parent=self,
-                          take=take, front=front)
+                          take=take, front=front, click_at=click_at)
 
     def keep_overlay_out_of_screenshots(self, enabled: bool) -> bool:
         """Leave the recording overlay out of every screen capture, or stop.

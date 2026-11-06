@@ -84,6 +84,7 @@ SLOT_BADGE = 20.0
 SLOT_TIME_W = 34.0
 SLOT_HINT_H = 16.0
 SLOT_HINT = "Talking… Snap to close this section"
+AUTO_SLOT_HINT = "Auto Mode · captures after clicks"
 PAUSED_HINT = "Paused · Resume to keep talking"
 #: The tools that hover over a screenshot, and its number badge.
 TOOL = 28.0
@@ -369,6 +370,7 @@ class WalkthroughPanel(QWidget):
         # What Snap takes, the Screenshot shortcut's keys, and the seconds
         # left before an "In 3 seconds" snap (0: none counting down).
         self.snap_mode = WalkthroughSnapMode.REGION
+        self._auto_mode = False
         self._snap_shortcut = ""
         # Whether a note has anyone to read it: the AI write-up is on.
         self._notes_on = True
@@ -437,6 +439,10 @@ class WalkthroughPanel(QWidget):
         self.snap_mode = mode
         if shortcut is not None:
             self._snap_shortcut = shortcut
+        self.update()
+
+    def set_auto_mode(self, enabled: bool) -> None:
+        self._auto_mode = enabled
         self.update()
 
     def set_countdown(self, seconds: int) -> None:
@@ -647,6 +653,11 @@ class WalkthroughPanel(QWidget):
                 key = "note-off"
             text = TOOLTIPS.get(key, "").format(
                 mode=WalkthroughSnapMode.LABELS[self.snap_mode].lower())
+            if self._auto_mode:
+                if key == "snap" and not self._countdown:
+                    text = "Draw on a screenshot while you talk. Enter keeps it."
+                elif key == "snap-menu":
+                    text = "Take a screenshot manually"
             if text:
                 QToolTip.showText(event.globalPos(), text, self)
             else:
@@ -1052,7 +1063,8 @@ class WalkthroughPanel(QWidget):
         painter.drawText(QRectF(rect.left() + SLOT_PAD_X, hint_top, rect.width() - 2 * SLOT_PAD_X,
                                 SLOT_HINT_H),
                          Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                         NOTE_HINT if holding else PAUSED_HINT if self.paused else SLOT_HINT)
+                         NOTE_HINT if holding else PAUSED_HINT if self.paused
+                         else AUTO_SLOT_HINT if self._auto_mode else SLOT_HINT)
         painter.restore()
 
     def _paint_shot(self, painter: QPainter, shot: ShotItem, left: float, top: float,
@@ -1162,7 +1174,7 @@ class WalkthroughPanel(QWidget):
             elif self._countdown:
                 self._paint_label(painter, rect, "camera", f"Snap in {self._countdown}", ink)
             else:
-                self._paint_label(painter, rect, "camera", "Snap", ink)
+                self._paint_label(painter, rect, "camera", "Draw" if self._auto_mode else "Snap", ink)
             return
         fill = token_color("border-hover" if pressed else "surface-active" if hover else "surface-hover")
         painter.setPen(QPen(token_color("border-strong"), 1.0))

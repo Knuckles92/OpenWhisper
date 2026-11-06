@@ -1,11 +1,12 @@
 """The Walkthrough and Screenshot shortcuts (services/runtime/walkthrough.py)."""
 
+import time
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QObject, pyqtSignal
 from PyQt6.QtGui import QColor, QImage
 
 from services.hotkey_manager import format_hotkey_display
@@ -88,6 +89,7 @@ class FakePanel(QObject):
         self.snap_mode = ""
         self.shortcut = ""
         self.countdowns = []
+        self.auto_mode = False
 
     def set_snap_mode(self, mode, shortcut=None):
         self.snap_mode = mode
@@ -99,6 +101,9 @@ class FakePanel(QObject):
 
     def set_notes_on(self, on):
         self.notes_on = on
+
+    def set_auto_mode(self, enabled):
+        self.auto_mode = enabled
 
     def set_countdown(self, seconds):
         self.countdowns.append(seconds)
@@ -132,8 +137,9 @@ class FakeUI:
     def request_snap_access(self):
         self.access_requests += 1
 
-    def start_snap(self, *, hint="", take="region", front=False):
+    def start_snap(self, *, hint="", take="region", front=False, click_at=None):
         snap = FakeSnap(hint, take, front)
+        snap.click_at = click_at
         self.snaps.append(snap)
         return snap
 
@@ -182,13 +188,14 @@ def h(tmp_path, monkeypatch):
     monkeypatch.setattr(walkthrough_module, "settings_manager", settings)
     ui = FakeUI()
     transcription = FakeTranscription()
-    recorder = SimpleNamespace(is_recording=False, capture_canceled=False,
+    recorder = SimpleNamespace(is_recording=False, capture_canceled=False, paused=False,
                                get_recording_duration=lambda: 12.5)
     controller = SimpleNamespace(
         ui_controller=ui,
         transcription_runtime=transcription,
         recorder=recorder,
         recording_destination_changed=Signal(),
+        status_update=Signal(),
         cancel=Mock(),
         _refuse_dictation_during_meeting=lambda: False,
         transcription_readiness_message=lambda: None,
@@ -222,6 +229,90 @@ def _begin(h):
     assert session is not None
     h.recorder.is_recording = True
     return session
+
+
+@pytest.fixture
+def auto(h, monkeypatch):
+    h.settings.values[SettingsKey.WALKTHROUGH_AUTO_MODE] = True
+    monkeypatch.setattr(walkthrough_module, "sys", SimpleNamespace(platform="win32"))
+    hook = Mock()
+    hook.wait_until_installed.return_value = True
+    factory = Mock(return_value=hook)
+    monkeypatch.setattr(walkthrough_module, "MouseButtonHook", factory)
+    session = _begin(h)
+    on_click = factory.call_args.kwargs["on_click"]
+
+    def click(x, y):
+        on_click(x, y, time.monotonic())
+        QCoreApplication.processEvents()
+
+    yield SimpleNamespace(session=session, click=click, hook=hook)
+    h.runtime.cleanup()
+    session.end()
+
+
+def test_auto_mode_coalesces_clicks_and_finishes_after_the_pending_shot(h, auto):
+    assert h.ui.walkthrough_panel.auto_mode
+    auto.click(20, 40)
+    auto.click(-120, 25)
+    h.runtime.finish()
+    assert h.runtime._auto_timer.isActive()
+    assert not h.ui.snaps
+    h.controller.stop_recording.assert_not_called()
+
+    h.runtime._auto_timer.timeout.emit()
+    (snap,) = h.ui.snaps
+    assert snap.take == WalkthroughSnapMode.SCREEN
+    assert snap.click_at == (-120, 25)
+    snap.keep()
+
+    (shot,) = auto.session.saved_shots()
+    assert shot.kept_at_s == 12.5
+    assert h.ui.walkthrough_panel.calls == [("add", 1, 12.5)]
+    assert not h.ui.copied
+    h.controller.stop_recording.assert_called_once()
+    auto.hook.stop.assert_called_once()
+    assert not h.ui.walkthrough_panel.auto_mode
+
+
+def test_auto_draw_takes_priority_over_a_pending_click(h, auto):
+    auto.click(20, 40)
+    h.ui.walkthrough_panel.snap_requested.emit()
+    (snap,) = h.ui.snaps
+    assert snap.take == "draw"
+    assert not h.runtime._auto_timer.isActive()
+
+    auto.click(22, 42)
+    h.runtime._auto_timer.timeout.emit()
+    snap.keep()
+    assert h.ui.snaps == [snap]
+    assert auto.session.shot_count == 1
+
+
+def test_auto_mode_drops_an_in_flight_shot_on_pause_or_end(h, auto):
+    def pause():
+        h.recorder.paused = True
+        return True
+
+    h.recorder.pause = pause
+    h.recorder.resume = lambda: setattr(h.recorder, "paused", False)
+    auto.click(20, 40)
+    h.runtime._auto_timer.timeout.emit()
+    (first,) = h.ui.snaps
+    h.runtime.set_paused(True)
+    auto.click(22, 42)
+    assert first.drops == 1
+    assert not h.runtime._auto_timer.isActive()
+
+    h.runtime.set_paused(False)
+    auto.click(20, 40)
+    h.runtime._auto_timer.timeout.emit()
+    _, second = h.ui.snaps
+    h.controller.stop_recording()
+    assert second.drops == 1
+    assert auto.session.shot_count == 0
+    assert not h.ui.copied
+    auto.hook.stop.assert_called_once()
 
 
 def test_the_shortcut_starts_a_walkthrough_kept_out_of_its_own_screenshots(h):
