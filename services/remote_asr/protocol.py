@@ -15,6 +15,9 @@ the host spent on the request from receiving it, waiting for a work slot
 included, which older hosts leave out. Some older hosts started the clock
 after that wait, so their replies count it as network time.
 
+While its engine loads, a host can advertise it as unavailable in ``ready``
+and return ``engine_reloading`` to audio requests it refused before decoding.
+
 Opt-in model management is advertised only to authenticated clients as
 ``ready.capabilities.model_management`` (missing means unsupported).
 ``model_catalog`` returns bundled models, cache/runtime readiness, the active
@@ -150,6 +153,9 @@ CLOSE_UNAUTHORIZED = 4401
 CLOSE_BAD_REQUEST = 4400
 CLOSE_TIMEOUT = 4408
 CLOSE_ENGINE_CHANGED = 4409
+
+# The host rejected this audio request before starting a decode.
+ENGINE_RELOADING = "engine_reloading"
 CLOSE_BUSY = 4429
 
 #: Longest name one computer keeps for another, given or chosen.

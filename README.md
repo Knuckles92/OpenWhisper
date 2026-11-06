@@ -131,7 +131,7 @@ When a package upgrade or pull replaces the app while it runs, OpenWhisper offer
 1. Open **Settings → Dictation → Voice model** and choose a speech backend. New Windows x64 and Linux x86_64 installs default to Parakeet, and Apple Silicon Macs on macOS 14 or later to Parakeet MLX; other platforms default to Local Whisper. Existing installs keep the engine they use.
 2. Download the model and runtime through **Settings → Models & storage → Downloads**, or add an OpenAI key in **Settings → App → API keys** for cloud transcription.
 3. Choose your microphone in **Settings → Dictation → Recording**. On macOS, grant the [required permissions](#macos-permissions).
-4. Use **Quick Record** or the recording hotkey. Stop recording to transcribe; dictation follows your clipboard and auto-paste settings. **Upload File** results stay in the app and have Copy buttons.
+4. Use **Quick Record** or the recording hotkey. Stop recording to transcribe. Dictation follows your clipboard and auto-paste settings. If the remote engine goes offline before transcription, the recording overlay shows up to three reconnect attempts within 12 seconds. If transcription fails, open **History** to play the saved recording or choose **Retry transcription**. Recovered transcripts and **Upload File** results are ready to copy in the app.
 
 For meetings, open **Meeting Mode**. Add an optional brief to guide AI notes and the live copilot; you can edit it during the meeting. After transcription, **Continue in the background** lets you start another meeting while reports finish. Find results in **Past Meetings**.
 

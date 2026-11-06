@@ -78,6 +78,10 @@ class RemoteConnectionLost(RemoteEngineError):
         self.sent = sent
 
 
+class RemoteDecodeNotStarted(RemoteEngineError):
+    """The request was not sent or the host refused it before decoding."""
+
+
 class RemoteUnreachable(RemoteEngineError):
     """Nothing accepted a connection at the address.
 

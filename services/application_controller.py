@@ -186,6 +186,7 @@ class ApplicationController(QObject):
     streaming_overlay_show = pyqtSignal()
     streaming_overlay_hide = pyqtSignal()
     overlay_state_update = pyqtSignal(object)
+    transcription_retry_progress = pyqtSignal(str)
     minimize_to_tray_requested = pyqtSignal()
     # Emitted from the background reload worker (thread-safe UI updates).
     # (readout, engine is loaded and usable)
@@ -199,6 +200,7 @@ class ApplicationController(QObject):
     remote_settled = pyqtSignal(str)
     # Reconnect now (emitted from any thread; hotkeys start recordings off it).
     remote_retry_requested = pyqtSignal()
+    remote_job_retry_requested = pyqtSignal(object)  # the waiting worker's event
     # Arm the engine reload's debounce timer (emitted from any thread; hotkeys
     # and transcription workers ask for reloads off the Qt thread).
     reload_debounce_requested = pyqtSignal()
@@ -389,6 +391,7 @@ class ApplicationController(QObject):
         self._remote_retry_step = 0
         self._remote_retry_at: Optional[float] = None
         self._remote_restoring = False
+        self._remote_job_retry: Optional[threading.Event] = None
         self._remote_link = None
         # device_info the watch last reported, so repeat failures stay quiet.
         self._remote_reported = ""
@@ -1417,6 +1420,7 @@ class ApplicationController(QObject):
         if remote.check_link():
             # Closed between requests: say so now, not at the next recording.
             self.device_info_update.emit(remote.device_info, False)
+        if not remote.is_available():
             self._schedule_remote_retry()
         self._publish_remote_link()
 
@@ -1456,9 +1460,22 @@ class ApplicationController(QObject):
         """Reconnect to the paired computer now. Safe from any thread."""
         self.remote_retry_requested.emit()
 
+    def retry_remote_for_transcription(self, settled: threading.Event) -> None:
+        """Ask Qt to start or join a reconnect and signal when it settles."""
+        self.remote_job_retry_requested.emit(settled)
+
+    def _retry_remote_for_transcription(self, settled: threading.Event) -> None:
+        remote = self._selected_remote()
+        if remote is None or remote.is_available():
+            settled.set()
+            return
+        self._remote_job_retry = settled
+        self._retry_remote()
+
     def _retry_remote(self) -> None:
         remote = self._selected_remote()
-        if remote is None or self._remote_restoring or self._reload_in_flight or self._reload_pending:
+        if (remote is None or self._remote_restoring or self._reload_in_flight
+                or (self._reload_pending and self._remote_job_retry is None)):
             return
         self._remote_retry_timer.stop()
         self._remote_retry_at = None
@@ -1486,6 +1503,9 @@ class ApplicationController(QObject):
         if outcome != "reload":
             self._remote_restoring = False
         remote = self._selected_remote()
+        if self._remote_job_retry is not None:
+            self._remote_job_retry.set()
+            self._remote_job_retry = None
         if remote is None:
             return
         available = remote.is_available()
@@ -2752,6 +2772,7 @@ class ApplicationController(QObject):
         self.remote_catalog_received.connect(self._on_remote_catalog)
         self.remote_settled.connect(self._on_remote_settled)
         self.remote_retry_requested.connect(self._retry_remote)
+        self.remote_job_retry_requested.connect(self._retry_remote_for_transcription)
         self.remote_clients_changed.connect(self.ui_controller.set_remote_clients)
         self.ui_controller.on_remote_retry = self.retry_remote_now
         self.status_update.connect(self.ui_controller.set_status)
@@ -2826,6 +2847,8 @@ class ApplicationController(QObject):
         )
         if hasattr(self.ui_controller, "set_overlay_state"):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)
+        if hasattr(self.ui_controller, "show_transcription_retry"):
+            self.transcription_retry_progress.connect(self.ui_controller.show_transcription_retry)
         self.stt_state_changed.connect(self.hotkey_runtime.on_stt_state_changed)
         self.recording_state_changed.connect(self._on_recording_state_changed)
         self.recording_destination_changed.connect(

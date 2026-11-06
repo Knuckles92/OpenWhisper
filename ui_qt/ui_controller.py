@@ -910,9 +910,18 @@ class UIController(QObject):
         elif state in _OVERLAY_WORK_STATES:
             self.tray_manager.set_recording(False)
             waveform_state = getattr(self.overlay, _OVERLAY_WORK_STATES[state])
+            if state is OverlayState.PROCESSING:
+                self.overlay.set_processing_label("")
             self._dismiss_streaming_preview_for_waveform(waveform_state)
         elif state in _OVERLAY_MOMENT_STATES:
             self._show_or_set_overlay(getattr(self.overlay, _OVERLAY_MOMENT_STATES[state]))
+
+    def show_transcription_retry(self, label: str) -> None:
+        self._dismiss_streaming_preview_for_waveform(self.overlay.STATE_PROCESSING)
+        self.overlay.set_processing_label(label)
+
+    def show_transcription_retry_failure(self, label: str) -> None:
+        self.overlay.show_notice(label)
 
     def _show_listening_overlay(self, state: OverlayState) -> None:
         if state is OverlayState.COMMAND_LISTENING:

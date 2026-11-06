@@ -431,6 +431,7 @@ class RemoteEngineService:
                 model_management=remote_settings.host_model_management,
                 manage_models=self.manage_host_models,
                 runtime=self.runtime_state,
+                engine_settled=self._engine_settled,
                 configure_runtime=self.configure_runtime if self._configure_engine is not None else None,
                 records_enabled=remote_settings.host_keeps_records,
                 records=self.records_request,

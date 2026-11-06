@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from config import config
+from services.models import FAILED_RECORDING_KIND
 
 
 class _BoundSignal:
@@ -340,7 +341,7 @@ class FakeExecutor:
         self.shutdown_called = False
 
     def submit(self, fn, *args):
-        if fn.__name__ in ("_persist_history", "_preserve_failed_audio", "recover_recordings"):
+        if fn.__name__ in ("_persist_history", "_preserve_failed_audio", "_save_failed_recording", "recover_recordings"):
             fn(*args)
             return types.SimpleNamespace()
         self.submissions.append((fn, args))
@@ -362,6 +363,9 @@ class FakeHistoryManager:
     def preserve_recording(self, source_path):
         self.preserved.append(source_path)
         return "recording_recovered.wav"
+
+    def failed_recording_for_path(self, audio_path):
+        return None
 
 
 class FakeKeyboard:
@@ -635,6 +639,9 @@ class DummyUIController:
 
     def show_notice(self, text, done=False):
         self.notices.append((text, done))
+
+    def show_transcription_retry_failure(self, text):
+        self.show_notice(text)
 
     def set_ambient_status(self, status):
         self.ambient_statuses.append(status)
@@ -1624,7 +1631,7 @@ class TestApplicationController:
 
         assert controller._pending_streaming_text == ""
 
-    def test_transcription_failure_preserves_quick_recording(self):
+    def test_transcription_failure_keeps_recording_in_history(self):
         controller = self._create_controller()
         source = Path(self.temp_dir.name) / "failed-quick-record.wav"
         source.write_bytes(b"RIFF-failed-audio")
@@ -1634,10 +1641,101 @@ class TestApplicationController:
 
         controller._on_transcription_error("backend unavailable")
 
-        assert self.history_manager.preserved == [str(source)]
-        assert "audio saved in Recordings" in controller.ui_controller.statuses[-1]
+        entry, = self.history_manager.entries
+        assert entry["source_audio_path"] == str(source)
+        assert entry["entry_kind"] == FAILED_RECORDING_KIND
+        assert entry["text"] == ""
+        assert controller.ui_controller.refreshed_history
+        assert "Retry transcription" in controller.ui_controller.statuses[-1]
+        assert not controller.ui_controller.copied
         assert controller._pending_audio_path is None
         assert not controller.transcription_runtime.has_active_job
+
+    @pytest.mark.parametrize("outcome", ["reconnected", "offline", "canceled", "timeout"])
+    def test_recording_waits_briefly_for_the_remote_engine(self, outcome, monkeypatch):
+        from transcriber.remote_backend import RemoteSpeechBackend
+
+        controller = self._create_controller()
+        runtime = controller.transcription_runtime
+        backend = RemoteSpeechBackend()
+        controller.current_backend = backend
+        monkeypatch.setattr(backend, "link", lambda: types.SimpleNamespace(state="offline"))
+        available = False
+        monkeypatch.setattr(backend, "is_available", lambda: available)
+        runtime_module = sys.modules[type(runtime).__module__]
+        monkeypatch.setattr(runtime_module, "REMOTE_RECOVERY_DELAYS_S", (0, 0, 0))
+        if outcome == "timeout":
+            monkeypatch.setattr(runtime_module, "REMOTE_RECOVERY_WAIT_S", 0.05)
+        source = Path(config.RECORDED_AUDIO_FILE)
+        source.write_bytes(b"RIFF")
+        assert runtime._claim_job()
+        controller._pending_audio_path = str(source)
+
+        progress = []
+        controller.transcription_retry_progress.connect(progress.append)
+
+        def reconnect(settled):
+            nonlocal available
+            available = outcome == "reconnected" and len(progress) == 2
+            if outcome == "canceled":
+                runtime._cancel_requested.set()
+            elif outcome != "timeout":
+                settled.set()
+
+        controller.retry_remote_for_transcription = Mock(side_effect=reconnect)
+        runtime.transcribe_audio_file = Mock(
+            side_effect=lambda path: controller._on_transcription_complete("recovered words")
+        )
+
+        runtime._run_transcription_job(str(source))
+
+        attempts = {"reconnected": 2, "offline": 3, "canceled": 1, "timeout": 1}[outcome]
+        assert controller.retry_remote_for_transcription.call_count == attempts
+        assert progress == [f"Retrying connection ({n}/3)..." for n in range(1, attempts + 1)]
+        assert not controller.ui_controller.copied
+        if outcome == "reconnected":
+            runtime.transcribe_audio_file.assert_called_once_with(str(source))
+            assert self.history_manager.entries[0]["text"] == "recovered words"
+        else:
+            runtime.transcribe_audio_file.assert_not_called()
+            if outcome != "canceled":
+                assert self.history_manager.entries[0]["entry_kind"] == FAILED_RECORDING_KIND
+                assert f"after {attempts} reconnect attempt" in controller.ui_controller.statuses[-1]
+                assert ("Reconnect failed. Audio saved in History.", False) in controller.ui_controller.notices
+            else:
+                assert not self.history_manager.entries
+
+    @pytest.mark.parametrize("result", ["recovered words", None, ""])
+    def test_retry_from_history_reuses_the_failed_entry(self, result):
+        controller = self._create_controller()
+        runtime = controller.transcription_runtime
+        audio = Path(self.temp_dir.name) / "saved.wav"
+        audio.write_bytes(b"RIFF")
+        self.history_manager.failed_recording_for_path = Mock(return_value=types.SimpleNamespace(
+            id="failed-entry", source_name="Quick Record", audio_duration=2.0,
+        ))
+        self.history_manager.complete_failed_recording = Mock(return_value=types.SimpleNamespace(
+            id="failed-entry", audio_file=audio.name,
+        ))
+        if result is None:
+            controller.current_backend.transcribe = Mock(side_effect=RuntimeError("still offline"))
+        else:
+            controller.current_backend.transcribe = Mock(return_value=result)
+
+        controller.retranscribe_audio(str(audio))
+        worker, args = controller.executor.submissions[-1]
+        worker(*args)
+
+        assert not self.history_manager.entries
+        assert not controller.ui_controller.copied
+        assert not runtime.has_active_job
+        complete = self.history_manager.complete_failed_recording
+        if result:
+            assert complete.call_args.args == ("failed-entry",)
+            assert complete.call_args.kwargs["text"] == result
+        else:
+            complete.assert_not_called()
+            assert "recording kept in History" in controller.ui_controller.statuses[-1]
 
     def test_copy_failure_does_not_claim_pasted(self):
         controller = self._create_controller()
@@ -3393,7 +3491,7 @@ class TestApplicationController:
         worker, args = controller.executor.submissions[-1]
         worker(*args)
         controller.current_backend.transcribe.assert_not_called()
-        assert self.history_manager.preserved
+        assert self.history_manager.entries[0]["entry_kind"] == FAILED_RECORDING_KIND
         assert "microphone disconnected" in controller.ui_controller.statuses[-1]
         assert not runtime.has_active_job
 

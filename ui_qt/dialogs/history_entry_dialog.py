@@ -32,12 +32,14 @@ from services.history_manager import (
     history_manager,
     is_local_entry,
 )
+from services.models import FAILED_RECORDING_KIND
 from ui_qt.widgets import Button, DangerButton, PrimaryButton
 from ui_qt.widgets.buttons import neutral_button
 from ui_qt.widgets.history_playback import PlaybackControl
 from ui_qt.widgets.history_sidebar import (
     _cleanup_tooltip,
     _entry_was_cleaned,
+    _failed_recording_hint,
     _format_cleanup_info,
     _format_model_name,
     _kind_label,
@@ -141,6 +143,7 @@ class HistoryEntryDialog(QDialog):
         """
         super().__init__(parent)
         self.entry = entry
+        self._failed_recording = getattr(entry, "entry_kind", None) == FAILED_RECORDING_KIND
         self._read_versions(entry)
         self._showing_raw = self._version == ORIGINAL_VERSION
         self._audio_path: Optional[str] = None
@@ -149,7 +152,7 @@ class HistoryEntryDialog(QDialog):
             if path:
                 self._audio_path = path
 
-        self.setWindowTitle("Transcription")
+        self.setWindowTitle("Transcription failed" if self._failed_recording else "Transcription")
         self.setModal(True)
         self.setMinimumSize(640, 600)
         self.resize(720, 700)
@@ -254,7 +257,9 @@ class HistoryEntryDialog(QDialog):
         self.transcript_text.setObjectName("historyEntryTranscript")
         self.transcript_text.setReadOnly(True)
         self.transcript_text.setFont(QFont("Segoe UI", 13))
-        self.transcript_text.setText(self._shown_text())
+        self.transcript_text.setText(
+            _failed_recording_hint(bool(self._audio_path)) if self._failed_recording else self._shown_text()
+        )
         self.transcript_text.setMinimumHeight(240)
         body_layout.addWidget(self.transcript_text, stretch=1)
 
@@ -282,6 +287,7 @@ class HistoryEntryDialog(QDialog):
         self.copy_button.setToolTip("Copy the currently shown transcript (Ctrl+C)")
         self.copy_button.set_base_minimum_size(96, 40)
         self.copy_button.clicked.connect(self._copy_shown_text)
+        self.copy_button.setVisible(not self._failed_recording)
         primary_actions.addWidget(self.copy_button)
 
         self.copy_raw_button = Button("Copy Raw")
@@ -291,7 +297,9 @@ class HistoryEntryDialog(QDialog):
         self.copy_raw_button.setVisible(self._raw_text is not None)
         primary_actions.addWidget(self.copy_raw_button)
 
-        self.retranscribe_button = Button("Transcribe Again")
+        self.retranscribe_button = Button(
+            "Retry transcription" if self._failed_recording else "Transcribe Again"
+        )
         self.retranscribe_button.setObjectName("warningButton")
         self.retranscribe_button.setToolTip(
             "Run transcription again using the current AI cleanup setting"
@@ -453,6 +461,8 @@ class HistoryEntryDialog(QDialog):
 
     def _copy_shown_text(self) -> None:
         """Copy the currently shown transcript to the clipboard."""
+        if self._failed_recording:
+            return
         text = self._shown_text()
         try:
             QApplication.clipboard().setText(text)

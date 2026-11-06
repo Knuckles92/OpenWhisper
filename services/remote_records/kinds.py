@@ -25,6 +25,7 @@ from typing import Callable, Dict, List, Optional
 
 from sqlalchemy import Boolean, Float, Integer, LargeBinary, String, Text, func
 
+from services.models import FAILED_RECORDING_KIND
 from services.remote_records.host_store import MANIFEST, safe_name
 
 logger = logging.getLogger(__name__)
@@ -281,7 +282,8 @@ class DictationRecords:
         return entry is not None and entry.origin_device_id is None
 
     def local_ids(self) -> List[str]:
-        return [entry.id for entry in self.db.get_history_entries(origin=None)]
+        return [entry.id for entry in self.db.get_history_entries(origin=None)
+                if entry.entry_kind != FAILED_RECORDING_KIND]
 
     def ready(self, record_id: str) -> Optional[str]:
         """None when the record can be sent now, else why it has to wait."""

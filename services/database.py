@@ -11,7 +11,7 @@ from sqlalchemy.orm import scoped_session, sessionmaker
 
 from config import config
 from services.models import (
-    HISTORY_CONTEXT_COLUMNS, Base, SchemaVersion, TranscriptionHistory,
+    FAILED_RECORDING_KIND, HISTORY_CONTEXT_COLUMNS, Base, SchemaVersion, TranscriptionHistory,
     history_context,
 )
 
@@ -508,6 +508,20 @@ class DatabaseManager:
     def get_history_entry_by_id(self, entry_id: str) -> Optional[TranscriptionHistory]:
         with self.get_session() as session:
             return session.get(TranscriptionHistory, entry_id)
+
+    def get_failed_recording(self, audio_file: str) -> Optional[TranscriptionHistory]:
+        with self.get_session() as session:
+            return session.query(TranscriptionHistory).filter_by(
+                audio_file=audio_file, origin_device_id=None, entry_kind=FAILED_RECORDING_KIND,
+            ).first()
+
+    def complete_failed_recording(self, entry_id: str, fields: dict) -> Optional[TranscriptionHistory]:
+        """Replace a failed result only while its local row still exists."""
+        with self.get_session() as session:
+            rows = session.query(TranscriptionHistory).filter_by(
+                id=entry_id, origin_device_id=None, entry_kind=FAILED_RECORDING_KIND,
+            ).update(fields)
+            return session.get(TranscriptionHistory, entry_id) if rows else None
 
     def delete_history_entry(self, entry_id: str) -> bool:
         with self.get_session() as session:

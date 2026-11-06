@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from config import config
 from services.database import db
 from services.format_utils import format_file_size, format_timestamp
-from services.models import HISTORY_CONTEXT_COLUMNS
+from services.models import FAILED_RECORDING_KIND, HISTORY_CONTEXT_COLUMNS, history_context
 from services.models import TranscriptionHistory as HistoryEntry
 from services.settings import (
     resolve_max_saved_recordings,
@@ -220,6 +220,8 @@ class HistoryManager:
         )
 
         logger.info(f"Added history entry: {entry.id[:8]}...")
+        if entry.entry_kind == FAILED_RECORDING_KIND:
+            return entry  # Keep recovery audio on the computer that recorded it.
         if kind_of(entry) == "dictation":
             # Before record_saved: the move to the host can start right away.
             snapshot = HistoryEntry(**{
@@ -227,6 +229,30 @@ class HistoryManager:
             })
             with self._newest_lock:
                 self._newest_dictation = snapshot
+        _record_sync().record_saved("dictation", entry.id)
+        return entry
+
+    def failed_recording_for_path(self, audio_path: str) -> Optional[HistoryEntry]:
+        filename = os.path.basename(audio_path)
+        path = self.get_recording_path(filename)
+        if path and os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(audio_path)):
+            return db.get_failed_recording(filename)
+        return None
+
+    def complete_failed_recording(
+        self, entry_id: str, *, text: str, model: str, transcription_time: Optional[float],
+        raw_text: Optional[str], cleanup_provider: Optional[str], cleanup_model: Optional[str],
+        **context,
+    ) -> HistoryEntry:
+        """Save a retry in place, preserving the recording and its original date."""
+        fields = dict(
+            history_context(context), text=text, model=model, transcription_time=transcription_time,
+            raw_text=raw_text, cleanup_provider=cleanup_provider, cleanup_model=cleanup_model,
+            cleaned_text=text if raw_text is not None and raw_text != text else None,
+        )
+        entry = db.complete_failed_recording(entry_id, fields)
+        if entry is None:
+            raise RuntimeError("The failed recording entry is no longer in History")
         _record_sync().record_saved("dictation", entry.id)
         return entry
 

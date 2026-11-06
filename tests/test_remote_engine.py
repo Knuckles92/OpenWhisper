@@ -761,6 +761,7 @@ def _controller(backend, events):
         _reload_pending=False,
         executor=Mock(),
         _remote_restoring=False,
+        _remote_job_retry=None,
         _remote_retry_step=0,
         _remote_retry_at=None,
         _remote_link=None,

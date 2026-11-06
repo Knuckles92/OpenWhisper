@@ -37,6 +37,8 @@ HISTORY_CONTEXT_COLUMNS = (
     "language",
 )
 
+FAILED_RECORDING_KIND = "failed_recording"
+
 
 def history_context(values: dict) -> dict:
     """``values`` restricted to HISTORY_CONTEXT_COLUMNS, without Nones.
@@ -80,8 +82,7 @@ class TranscriptionHistory(Base):
     app_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     app_category: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     cleanup_level: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    # dictation | file | command | transform; NULL on rows from before v17,
-    # whose kind follows from source_name.
+    # NULL on legacy rows, whose kind follows from source_name.
     entry_kind: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     # The AI output, kept beside raw_text so "Undo AI edit" never loses it.
     cleaned_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

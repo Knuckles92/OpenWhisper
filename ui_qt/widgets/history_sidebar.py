@@ -31,6 +31,7 @@ from services.history_manager import (
     is_local_entry,
     remote_history_entry,
 )
+from services.models import FAILED_RECORDING_KIND
 from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
 from services.text_llm import profile_display_name
 from ui_qt.utils.collapse_animation import (
@@ -146,9 +147,17 @@ def _kind_label(entry: HistoryEntry) -> str:
     ("Transform · Polish"); older or synced rows may hold the bare name.
     """
     kind = getattr(entry, "entry_kind", None)
+    if kind == FAILED_RECORDING_KIND:
+        return "Transcription failed"
     if kind not in LABELLED_KINDS:
         return ""
     return classify_source(getattr(entry, "source_name", None), kind)[1]
+
+
+def _failed_recording_hint(has_audio: bool) -> str:
+    if has_audio:
+        return "Audio saved. Retry with the currently selected speech engine."
+    return "The saved audio is no longer available."
 
 
 def _record_sync():
@@ -347,6 +356,7 @@ class HistoryItemWidget(QFrame):
     def __init__(self, entry: HistoryEntry, parent=None, *, settings=None):
         super().__init__(parent)
         self.entry = entry
+        self._failed_recording = getattr(entry, "entry_kind", None) == FAILED_RECORDING_KIND
         self._settings = settings
         self._cleanup_info = _format_cleanup_info(entry, settings) if _entry_was_cleaned(entry) else ""
         self._audio_path = None
@@ -371,6 +381,10 @@ class HistoryItemWidget(QFrame):
         if self._stored_on:
             return bool(getattr(self.entry, "remote_audio", False))
         return bool(self._audio_path)
+
+    @property
+    def _retranscribe_label(self) -> str:
+        return "Retry transcription" if self._failed_recording else "Transcribe again"
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -452,7 +466,8 @@ class HistoryItemWidget(QFrame):
         # Preview text is already truncated by HistoryEntry.preview_text, so
         # let it size naturally — a hard maxHeight was clipping glyphs mid-line
         # and making the footer button look like it was cutting the text off.
-        self.preview_label = WrappedLabel(self.entry.preview_text)
+        preview = _failed_recording_hint(self._has_audio) if self._failed_recording else self.entry.preview_text
+        self.preview_label = WrappedLabel(preview)
         self.preview_label.setObjectName("historyPreview")
         self.preview_label.setFont(QFont("Segoe UI", 11))
         self.preview_label.setAlignment(
@@ -506,7 +521,7 @@ class HistoryItemWidget(QFrame):
         footer.addWidget(self.playback.time_label)
         footer.addStretch()
 
-        self.retranscribe_btn = QPushButton("Transcribe again")
+        self.retranscribe_btn = QPushButton(self._retranscribe_label)
         self.retranscribe_btn.setObjectName("retranscribeBtn")
         self.retranscribe_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.retranscribe_btn.setFixedHeight(28)
@@ -557,7 +572,7 @@ class HistoryItemWidget(QFrame):
         button = getattr(self, "retranscribe_btn", None)
         if button is not None:
             button.setEnabled(True)
-            button.setText("Transcribe again")
+            button.setText(self._retranscribe_label)
             if error:
                 button.setToolTip(f"Couldn't get the recording: {error}")
         if path:
@@ -692,7 +707,7 @@ class HistoryItemWidget(QFrame):
             copy_raw.triggered.connect(
                 lambda: self.copy_raw_requested.emit(self.entry.id)
             )
-        else:
+        elif not self._failed_recording:
             copy_action = menu.addAction("Copy Text")
             copy_action.triggered.connect(
                 lambda: self.copy_requested.emit(self.entry.id)
@@ -711,7 +726,7 @@ class HistoryItemWidget(QFrame):
             )
 
         if self._has_audio:
-            retranscribe_action = menu.addAction("Transcribe again")
+            retranscribe_action = menu.addAction(self._retranscribe_label)
             retranscribe_action.triggered.connect(self._request_retranscribe)
 
         # Always listed so the menu keeps its shape, but only live for entries

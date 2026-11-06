@@ -707,25 +707,36 @@ class RemoteSpeechBackend(LocalSpeechBackend):
 
     def _send_audio(self, op, samples, language, options):
         """One request's ``(result, host_s)``, reconnecting once if the link was idle-dead."""
-        from services.remote_asr.client import RemoteConnectionLost
+        from services.remote_asr import protocol
+        from services.remote_asr.client import (
+            RemoteConnectionLost, RemoteDecodeNotStarted, RemoteRequestError,
+        )
 
         for attempt in (0, 1):
             with self._state_lock:
                 process = self._process
             if process is None:
-                raise RuntimeError(self.last_error or "Remote engine is not connected")
+                raise RemoteDecodeNotStarted(self.last_error or "Remote engine is not connected")
             try:
                 return process.request_timed(
                     op, audio=samples, language=language, timeout=300, **options
                 )
+            except RemoteRequestError as exc:
+                if exc.code != protocol.ENGINE_RELOADING:
+                    raise
+                self._drop(process, str(exc))
+                raise RemoteDecodeNotStarted(str(exc)) from exc
             except RemoteConnectionLost as exc:
                 # A connection that died while idle (the host restarted, the
                 # laptop slept) failed before the host saw anything, so one
                 # reconnect and resend is safe. A request the host may have
                 # started is not repeated.
-                if exc.sent or attempt or not self._reconnect(process):
+                if exc.sent:
                     self._drop(process, str(exc))
                     raise RuntimeError(str(exc)) from exc
+                if attempt or not self._reconnect(process):
+                    self._drop(process, str(exc))
+                    raise RemoteDecodeNotStarted(str(exc)) from exc
         raise AssertionError("unreachable")
 
     def _wait_for_room(self, seconds: float) -> None:

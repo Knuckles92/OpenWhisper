@@ -372,6 +372,7 @@ class SpeechHost:
         model_management: Optional[Callable[[], bool]] = None,
         manage_models: Optional[Callable[[str, dict, str], dict]] = None,
         runtime: Optional[Callable[[], dict]] = None,
+        engine_settled: Optional[Callable[[], bool]] = None,
         configure_runtime: Optional[Callable[[str, str, dict, str], dict]] = None,
         records_enabled: Optional[Callable[[], bool]] = None,
         records: Optional[Callable[[str, dict, bytes, dict], dict]] = None,
@@ -396,6 +397,7 @@ class SpeechHost:
         self._model_management = model_management or (lambda: False)
         self._manage_models = manage_models
         self._runtime = runtime or (lambda: {})
+        self._engine_settled = engine_settled or (lambda: True)
         self._configure_runtime = configure_runtime
         self._records_enabled = records_enabled or (lambda: False)
         self._records = records
@@ -1077,6 +1079,11 @@ class SpeechHost:
                              "engine_controls": self._configure_runtime is not None,
                              "recognition_hints": getattr(engine, "accepts_phrases", False) is True},
         }
+        if not self._engine_settled():
+            ready["engine"] = {
+                **ready["engine"], "available": False,
+                "status": _ENGINE_LOADING_MESSAGE,
+            }
         if self._mcp is not None:
             ready["capabilities"]["mcp_control"] = self._controls_mcp()
         if self._records is not None:
@@ -1160,6 +1167,9 @@ class SpeechHost:
         managed = self._management_request(request_id, header, device_name)
         if managed is not None:
             return managed
+        if op in ("transcribe", "stream") and not self._engine_settled():
+            return {"id": request_id, "code": protocol.ENGINE_RELOADING,
+                    "error": _ENGINE_LOADING_MESSAGE}
         current = self._engine()
         if current.identity != identity:
             return {

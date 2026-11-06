@@ -2,11 +2,12 @@
 
 import sqlite3
 from contextlib import closing
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import inspect
 
-from services.models import HISTORY_CONTEXT_COLUMNS, DictationStat, TranscriptionHistory
+from services.models import FAILED_RECORDING_KIND, HISTORY_CONTEXT_COLUMNS, DictationStat, TranscriptionHistory
 
 CONTEXT = {
     "app_id": "outlook.exe",
@@ -134,6 +135,40 @@ def test_history_manager_passes_context_through_and_drops_the_rest():
     assert stored.entry_kind == "dictation"
     assert stored.app_category is None
     assert not hasattr(stored, "window_title")
+
+
+def test_failed_recording_retry_replaces_the_row_and_keeps_the_audio(db, tmp_path, monkeypatch):
+    from services import history_manager as history_module
+
+    sync = Mock()
+    monkeypatch.setattr(history_module, "_record_sync", lambda: sync)
+    manager = history_module.HistoryManager(str(tmp_path / "recordings"), max_recordings=None)
+    source = tmp_path / "capture.wav"
+    source.write_bytes(b"RIFF")
+    failed = manager.add_entry(
+        text="", model="remote", source_audio_path=str(source), source_name="Quick Record",
+        audio_duration=5.0, entry_kind=FAILED_RECORDING_KIND,
+    )
+    sync.record_saved.assert_not_called()
+    audio_path = manager.get_recording_path(failed.audio_file)
+    assert manager.failed_recording_for_path(audio_path).id == failed.id
+    assert manager.failed_recording_for_path(str(tmp_path / failed.audio_file)) is None
+
+    completed = manager.complete_failed_recording(
+        failed.id, text="Recovered.", raw_text="recovered", model="local_whisper",
+        transcription_time=0.5, cleanup_provider="test", cleanup_model="test",
+        entry_kind="file",
+    )
+
+    assert completed.timestamp == failed.timestamp
+    assert completed.audio_file == failed.audio_file
+    assert completed.audio_duration == failed.audio_duration
+    assert completed.source_name == failed.source_name
+    assert completed.cleaned_text == "Recovered."
+    assert manager.get_entry_by_id(failed.id).text == "Recovered."
+    assert manager.failed_recording_for_path(audio_path) is None
+    sync.record_saved.assert_called_once_with("dictation", failed.id)
+    assert db.complete_failed_recording(failed.id, {"text": "Stale result"}) is None
 
 
 def test_dictation_stats_rows_round_trip(db):

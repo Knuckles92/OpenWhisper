@@ -11,6 +11,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 - **Source setup uses uv** — run `uv sync --locked` to install dependencies in `.venv/`. The `ow` and `openwhisper` launchers look there first and fall back to `venv/` for existing pip setups.
 
+### Fixed
+
+- **Retry failed recordings from History** — if Quick Record loses its remote speech engine before transcription, the recording overlay shows up to three reconnect attempts within 12 seconds. A failed transcription keeps its audio in History with **Retry transcription**. A successful retry fills in the same entry, ready to copy.
+
 ## [2.8.4] - 2026-11-05
 
 ### Added

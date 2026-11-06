@@ -18,6 +18,7 @@ from services.dictation_pipeline import JobMode
 from services.hotkey_manager import is_accessibility_trusted, send_paste
 from services.runtime.command import CommandRefused
 from services.history_manager import history_manager
+from services.models import FAILED_RECORDING_KIND
 from services.transcript_cleanup import (
     CANCELED_REASON,
     CleanupInfo,
@@ -54,6 +55,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 EMPTY_ASR_MESSAGE = "No speech detected (empty after VAD)"
+REMOTE_RECOVERY_DELAYS_S = (0.0, 1.0, 2.0)
+REMOTE_RECOVERY_WAIT_S = 12.0
 #: How the overlay, the status line and History name a walkthrough.
 WALKTHROUGH_LABEL = "Walkthrough"
 
@@ -177,6 +180,8 @@ class TranscriptionRuntime:
         # window and its result stays there; the Upload File tab has its own
         # Copy buttons. Set per job after the slot is claimed.
         self._deliver_to_clipboard = True
+        self._retry_entry_id: Optional[str] = None
+        self._remote_retry_exhausted = False
         self._recording_profile = None
         self._profile_settings = None
         # The recording's DictationJob from its start until its stop claims
@@ -380,6 +385,8 @@ class TranscriptionRuntime:
             self._saving = False
             self._job_active = False
             self._deliver_to_clipboard = True
+            self._retry_entry_id = None
+            self._remote_retry_exhausted = False
 
     def _report_busy(self, action: str) -> str:
         message = f"A transcription is already in progress — wait before {action}"
@@ -837,14 +844,59 @@ class TranscriptionRuntime:
         return "Quick Record"
 
     def _run_transcription_job(self, audio_path: str) -> None:
-        """Transcribe on the worker thread this job already runs on.
+        """Start a recording's final pass or a History retry on a worker."""
+        try:
+            self._raise_if_canceled()
+            job = self._active_job
+            backend = self.controller.current_backend
+            if (getattr(backend, "is_remote", False) is True and not backend.is_available()
+                    and (job is None or job.mode == JobMode.DICTATION)):
+                self._retry_remote_for_recording(backend)
+            else:
+                self._require_backend_ready()
+            self._raise_if_canceled()
+            self.transcribe_audio_file(audio_path)
+        except Exception as exc:
+            logger.error("Failed to start transcription: %s", exc)
+            self.controller.transcription_failed.emit(_start_failure_message(exc))
 
-        The mirror of ``_submit_transcription_job``, which runs on the Qt
-        thread and hands the same work to the executor.
-        """
-        self._raise_if_canceled()
-        self._require_backend_ready()
-        self.transcribe_audio_file(audio_path)
+    def _retry_remote_for_recording(self, backend) -> None:
+        """Join the controller's reconnects for a bounded time before decoding."""
+        if backend.link().state == "unpaired":
+            raise EngineNotReadyError(backend.device_info)
+        # Focus may move while the engine is down.
+        self._deliver_to_clipboard = False
+        self.controller.ui_controller.discard_clipboard_prefetch()
+        deadline = time.monotonic() + REMOTE_RECOVERY_WAIT_S
+        attempts = 0
+        for delay in REMOTE_RECOVERY_DELAYS_S:
+            self._cancel_requested.wait(min(delay, max(0.0, deadline - time.monotonic())))
+            self._raise_if_canceled()
+            if backend.is_available():
+                return
+            if time.monotonic() >= deadline:
+                break
+
+            attempts += 1
+            progress = f"Retrying connection ({attempts}/{len(REMOTE_RECOVERY_DELAYS_S)})..."
+            self.controller.transcription_retry_progress.emit(progress)
+            self.controller.status_update.emit(progress)
+            settled = threading.Event()
+            self.controller.retry_remote_for_transcription(settled)
+            while not settled.is_set() and not backend.is_available():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                settled.wait(min(0.1, remaining))
+                self._raise_if_canceled()
+            if backend.is_available():
+                return
+        if not backend.is_available():
+            self._remote_retry_exhausted = True
+            count = f"{attempts} reconnect attempt{'s' if attempts != 1 else ''}"
+            raise EngineNotReadyError(
+                f"Remote engine unavailable after {count}. {backend.device_info}"
+            )
 
     def toggle_recording(self) -> None:
         logger.info(
@@ -959,9 +1011,16 @@ class TranscriptionRuntime:
         self.controller.status_update.emit("Processing...")
 
         try:
+            failed = history_manager.failed_recording_for_path(audio_path)
             self.controller._pending_file_size = os.path.getsize(audio_path)
-            self.controller._pending_audio_duration = None
-            self._submit_transcription_job(audio_path)
+            self.controller._pending_audio_duration = failed.audio_duration if failed else None
+            if failed:
+                self._retry_entry_id = failed.id
+                self.controller._pending_source_name = failed.source_name
+                self._deliver_to_clipboard = False
+                self.controller.executor.submit(self._run_transcription_job, audio_path)
+            else:
+                self._submit_transcription_job(audio_path)
         except Exception as exc:
             logger.error(f"Failed to start re-transcription: {exc}")
             self.on_transcription_error(_start_failure_message(exc))
@@ -1531,9 +1590,21 @@ class TranscriptionRuntime:
 
     def _decode_and_complete(self, backend, audio_path: str, recognition, job):
         """Decode one recording or file and finish its text; ``(text, raw_text, info)``."""
-        raw = self._timed_decode(backend, lambda: recognition_context.transcribe(
-            self._incremental, backend, audio_path, recognition
-        ))
+        from services.remote_asr.client import RemoteDecodeNotStarted
+
+        def decode():
+            return recognition_context.transcribe(self._incremental, backend, audio_path, recognition)
+
+        try:
+            raw = self._timed_decode(backend, decode)
+        except RemoteDecodeNotStarted:
+            has_saved_audio = self.controller._pending_audio_path or self._retry_entry_id
+            if not has_saved_audio or (job is not None and job.mode != JobMode.DICTATION):
+                raise
+            self._retry_remote_for_recording(backend)
+            self._raise_if_canceled()
+            self._announce_transcription(backend, audio_path)
+            raw = self._timed_decode(backend, decode)
         self._complete_preview_fallback(audio_path, raw)
         self._raise_if_canceled()
         if job is not None and job.mode in (JobMode.COMMAND, JobMode.TRANSFORM):
@@ -2095,9 +2166,10 @@ class TranscriptionRuntime:
                 event_catalog.TRANSCRIPTION_FAILED,
                 event_catalog.transcription_failed(job, event_catalog.FAILURE_NO_SPEECH),
             )
-            self.controller.ui_controller.set_status(
-                EMPTY_PREVIEW_FALLBACK_MESSAGE if preview else EMPTY_ASR_MESSAGE
-            )
+            status = EMPTY_PREVIEW_FALLBACK_MESSAGE if preview else EMPTY_ASR_MESSAGE
+            if self._retry_entry_id:
+                status += " — recording kept in History"
+            self.controller.ui_controller.set_status(status)
             if job is not None and job.mode == JobMode.WALKTHROUGH:
                 # The column said "Writing it up…"; nothing is coming.
                 dismiss = getattr(self.controller.ui_controller, "dismiss_walkthrough_panel", None)
@@ -2124,7 +2196,7 @@ class TranscriptionRuntime:
         )
         # Only a recording's own WAV is dictated live; a re-transcription is
         # delivered like one but read from a file.
-        live = bool(self._deliver_to_clipboard and self.controller._pending_audio_path)
+        live = bool(self.controller._pending_audio_path)
         context = self._history_context(job, cleanup_info, live=live)
         # Lets history.saved name the job; dropped before the entry is saved.
         entry["job_id"] = job.id if job is not None else ""
@@ -2139,8 +2211,11 @@ class TranscriptionRuntime:
         notice = self._delivery_notice()
         status_suffix = f" — {notice}" if notice else ""
         if not self._deliver_to_clipboard:
-            self.controller.ui_controller.set_status("Ready" + status_suffix)
+            status = "Transcript ready to copy" if live or self._retry_entry_id else "Ready"
+            self.controller.ui_controller.set_status(status + status_suffix)
             entry.update(context)
+            if self._retry_entry_id:
+                entry.update(retry_entry_id=self._retry_entry_id, entry_kind=dictation_pipeline.FILE_ENTRY_KIND)
             self._queue_history([entry])
             return
         with self._job_lock:
@@ -2370,10 +2445,15 @@ class TranscriptionRuntime:
             for fields in entries:
                 # spoken_text feeds Stats and job_id names the job in events;
                 # neither is a history column.
-                entry = history_manager.add_entry(
-                    **{key: value for key, value in fields.items()
-                       if key not in ('spoken_text', 'job_id')}
-                )
+                saved = {key: value for key, value in fields.items()
+                         if key not in ('spoken_text', 'job_id', 'retry_entry_id')}
+                retry_entry_id = fields.get('retry_entry_id')
+                if retry_entry_id:
+                    for key in ('source_audio_path', 'audio_duration', 'file_size', 'source_name'):
+                        saved.pop(key, None)
+                    entry = history_manager.complete_failed_recording(retry_entry_id, **saved)
+                else:
+                    entry = history_manager.add_entry(**saved)
                 record_id = getattr(entry, 'id', None)
                 if record_id is not None:
                     publish_event(
@@ -2408,6 +2488,11 @@ class TranscriptionRuntime:
                 self.controller.ui_controller.refresh_history()
             if outcome.get('error'):
                 self.controller.ui_controller.set_status(outcome['error'])
+            if outcome.get('notice'):
+                if self._remote_retry_exhausted:
+                    self.controller.ui_controller.show_transcription_retry_failure(outcome['notice'])
+                else:
+                    self._notify(outcome['notice'])
         except Exception:
             logger.exception('Could not refresh saved transcription history')
         finally:
@@ -2701,6 +2786,8 @@ class TranscriptionRuntime:
             self._end_walkthrough(keep=False)
         pending_audio = self.controller._pending_audio_path
         status = self._error_status(error_message, job, refused=refused)
+        if self._retry_entry_id:
+            status += " — recording kept in History"
         self.controller.ui_controller.set_status(status)
         self.controller.ui_controller.show_transcription_error(status)
         self.controller.overlay_state_update.emit(OverlayState.NONE)
@@ -2713,7 +2800,11 @@ class TranscriptionRuntime:
         self.controller.ui_controller.discard_clipboard_prefetch()
         if pending_audio:
             try:
-                self.controller.persistence_executor.submit(self._preserve_failed_audio, pending_audio, status)
+                save = self._preserve_failed_audio
+                if (category == event_catalog.FAILURE_FAILED
+                        and (job is None or job.mode != JobMode.WALKTHROUGH)):
+                    save = self._save_failed_recording
+                self.controller.persistence_executor.submit(save, pending_audio, status)
                 return
             except Exception:
                 logger.exception('Could not queue failed recording preservation')
@@ -2730,6 +2821,33 @@ class TranscriptionRuntime:
         with self._job_lock:
             session = self._walkthrough
         return status + kept_note(session)
+
+    def _save_failed_recording(self, path: str, status: str) -> None:
+        try:
+            entry = history_manager.add_entry(
+                text="", model=self._model_info_for_history(), source_audio_path=path,
+                audio_duration=self.controller._pending_audio_duration,
+                file_size=self.controller._pending_file_size,
+                source_name=self.controller._pending_source_name,
+                entry_kind=FAILED_RECORDING_KIND,
+            )
+            if entry.audio_file:
+                if os.path.abspath(path) == os.path.abspath(config.RECORDED_AUDIO_FILE):
+                    acknowledge = getattr(self.controller.recorder, 'acknowledge_recording', None)
+                    if acknowledge:
+                        acknowledge()
+                status += " — recording saved in History. Select Retry transcription."
+                notice = ("Reconnect failed. Audio saved in History."
+                          if self._remote_retry_exhausted else
+                          "Transcription failed. Retry the recording from History.")
+            else:
+                status += " — audio could not be retained in History; recovery copy kept"
+                notice = status
+        except Exception:
+            logger.exception("Failed to save failed recording in History")
+            status += " — History could not be saved; recovery copy kept"
+            notice = status
+        self.controller.history_persisted.emit(dict(error=status, refresh=True, notice=notice))
 
     def _preserve_failed_audio(self, path: str, status: str) -> None:
         try:
@@ -2795,7 +2913,9 @@ class TranscriptionRuntime:
         backend = self.controller.current_backend
         from transcriber.optional_backend import LocalSpeechBackend
         if isinstance(backend, LocalSpeechBackend) and not backend.is_available():
-            if backend.is_model_missing:
+            if getattr(backend, "is_remote", False) is True:
+                self.controller.retry_remote_now()
+            elif backend.is_model_missing:
                 self.controller.ensure_local_model_available()
             else:
                 self.controller.reload_whisper_model()

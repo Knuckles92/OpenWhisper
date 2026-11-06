@@ -7,8 +7,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from services.models import TranscriptionHistory
+from services.models import FAILED_RECORDING_KIND, TranscriptionHistory
 from ui_qt.dialogs.history_entry_dialog import HistoryEntryDialog
+from ui_qt.widgets.history_sidebar import HistoryItemWidget
 
 
 class _QtTestCase:
@@ -129,6 +130,30 @@ class TestHistoryEntryDialog(_QtTestCase):
         dialog.retranscribe_button.click()
         assert requests == [r"C:\recordings\clip.wav"]
         assert dialog.retranscribe_button.menu() is None
+
+    def test_failed_recording_can_be_retried_from_the_card_or_dialog(self, tmp_path):
+        recording = tmp_path / "clip.wav"
+        recording.write_bytes(b"RIFF")
+        entry = _make_entry(text="", audio_file=recording.name)
+        entry.entry_kind = FAILED_RECORDING_KIND
+        with patch(
+            "ui_qt.dialogs.history_entry_dialog.history_manager.get_recording_path",
+            return_value=str(recording),
+        ):
+            dialog = HistoryEntryDialog(entry)
+            card = HistoryItemWidget(entry)
+
+        assert card.kind_chip.text() == "Transcription failed"
+        assert card.retranscribe_btn.text() == "Retry transcription"
+        assert dialog.retranscribe_button.text() == "Retry transcription"
+        assert dialog.copy_button.isHidden()
+        assert "Audio saved" in dialog.transcript_text.toPlainText()
+        requests = []
+        dialog.retranscribe_requested.connect(requests.append)
+        card.retranscribe_requested.connect(requests.append)
+        card.retranscribe_btn.click()
+        dialog.retranscribe_button.click()
+        assert requests == [str(recording), str(recording)]
 
     def test_metadata_facts_render_when_present(self):
         entry = _make_entry(

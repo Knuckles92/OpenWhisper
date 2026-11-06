@@ -113,6 +113,26 @@ def test_a_problem_notice_shakes_but_never_celebrates(overlay, theme):
     assert overlay._moment() is None and overlay.stt_particles == []
 
 
+def test_reconnect_status_and_failure_remain_visible_on_the_overlay(overlay, theme):
+    overlay.show_at_cursor(overlay.STATE_PROCESSING)
+    for attempt in (1, 2, 3):
+        label = f"Retrying connection ({attempt}/3)..."
+        overlay.set_processing_label(label)
+        assert overlay._work_label() == label
+        overlay.grab()
+    overlay.set_state(overlay.STATE_TRANSCRIBING)
+    assert overlay._label_from == label
+    assert overlay._work_label() == "Transcribing..."
+
+    overlay.hide()
+    assert overlay._fading_since is not None
+    overlay.show_notice("Reconnect failed. Audio saved in History.")
+    assert overlay.current_state == overlay.STATE_NOTICE
+    assert overlay._fading_since is None
+    _paint_through(overlay, 0.5)
+    assert overlay.isVisible()
+
+
 def test_the_language_notice_and_the_split_still_paint(overlay, theme):
     overlay.set_language("es", ["en", "es"])
     overlay.show_language_notice()

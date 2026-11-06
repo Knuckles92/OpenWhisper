@@ -185,6 +185,7 @@ class WaveformOverlay(QWidget):
         self.setFixedSize(self.overlay_width, self.overlay_height)
 
         self.current_state = self.STATE_IDLE
+        self._processing_label = ""
         self.audio_levels: List[float] = [0.0] * 20
         self.animation_time = 0.0
         self.cancel_progress = 0.0
@@ -537,7 +538,16 @@ class WaveformOverlay(QWidget):
             shown = recording_looks.smooth((time.monotonic() - self._label_changed) / _LABEL_CROSSFADE_S)
             if shown < 1.0:
                 self._draw_label_at(painter, self._label_from, 1.0 - shown, -6.0 * shown)
-        self._draw_label_at(painter, _WORK_LABELS[self.current_state], shown, 6.0 * (1.0 - shown))
+        self._draw_label_at(painter, self._work_label(), shown, 6.0 * (1.0 - shown))
+
+    def _work_label(self) -> str:
+        if self.current_state == self.STATE_PROCESSING and self._processing_label:
+            return self._processing_label
+        return _WORK_LABELS.get(self.current_state, "")
+
+    def set_processing_label(self, text: str) -> None:
+        self._processing_label = text
+        self.update()
 
     def _draw_label_at(self, painter: QPainter, text: str, alpha: float, dy: float) -> None:
         painter.setPen(QPen(token_color("overlay-text", int(255 * alpha))))
@@ -1361,7 +1371,7 @@ class WaveformOverlay(QWidget):
             self._begin_work_stage()
         elif state in self._FADING_STATES:
             # Cleaning up hands off from the work stage, if it follows one.
-            self._label_from = _WORK_LABELS.get(self.current_state, "")
+            self._label_from = self._work_label()
         self.current_state = state
         keeps_destination = (state in self.LISTENING_STATES | self._FADING_STATES
                              and state != self.STATE_COMMAND_LISTENING)
@@ -1388,7 +1398,7 @@ class WaveformOverlay(QWidget):
     def _begin_work_stage(self) -> None:
         """Entering Processing or Transcribing, before ``current_state`` changes."""
         if self.current_state in self._WORK_STATES:
-            self._label_from = _WORK_LABELS[self.current_state]
+            self._label_from = self._work_label()
             self._label_changed = time.monotonic()
         else:
             self._work_started = time.monotonic()
@@ -1541,7 +1551,8 @@ class WaveformOverlay(QWidget):
         """
         if not text:
             return
-        if self.isVisible() and self.current_state not in self._TRANSIENT_STATES | {self.STATE_IDLE}:
+        if (self.isVisible() and self._fading_since is None
+                and self.current_state not in self._TRANSIENT_STATES | {self.STATE_IDLE}):
             self.show_caption(text)
             return
         self._notice, self._notice_done = text, done
