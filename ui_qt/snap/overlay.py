@@ -50,6 +50,7 @@ from ui_qt.snap.geometry import (
     grab_at,
     place_toolbar,
     resized,
+    snap_point,
     span,
 )
 from ui_qt.snap.toolbar import SnapToolbar
@@ -173,6 +174,9 @@ class LabelEditor(QLineEdit):
         """Size to the text again, now that the editor has its place."""
         self._fit()
 
+    def annotation(self) -> Label:
+        return Label(QPointF(self.pos()), self.text().strip(), self.color(), QFont(self.font()))
+
     def keyPressEvent(self, event: QKeyEvent) -> None:
         key = event.key()
         if key in _KEEP_KEYS:
@@ -203,6 +207,15 @@ class LabelEditor(QLineEdit):
         )
 
 
+def label_origin(area: QRect, point: QPointF, size: QSize) -> QPoint:
+    """The label's top-left, centered on the click and inside the drawing area."""
+    left, top = area.left(), area.top()
+    room_x = left + max(0, area.width() - size.width())
+    room_y = top + max(0, area.height() - size.height())
+    return QPointF(min(max(point.x(), left), room_x),
+                   min(max(point.y() - size.height() / 2, top), room_y)).toPoint()
+
+
 class SnapOverlay(QWidget):
     """Freeze, select, annotate: one screen, one snap."""
 
@@ -211,15 +224,19 @@ class SnapOverlay(QWidget):
     #: A selection started here; one snap covering several screens keeps
     #: only the newest one (see ``clear_selection``).
     selecting = pyqtSignal()
+    snap_toggled = pyqtSignal(bool)
 
     def __init__(
-        self, frozen: QImage, screen: QScreen | None = None, *, hint: str = ""
+        self, frozen: QImage, screen: QScreen | None = None, *, hint: str = "",
+        snap_enabled: bool = False, targets: tuple[QRect, ...] = (),
     ) -> None:
         super().__init__(None, window_flags())
         self._frozen = frozen
         self._dimmed = _dimmed(frozen)
         self._canvas = export.logical_rect(frozen)
         self._screen = screen
+        self._snap_enabled = snap_enabled
+        self._targets = (self._canvas, *targets)
         self._palette = current_palette()
         base_font = QGuiApplication.font()
         self._hint = chrome.HintPill(
@@ -237,7 +254,6 @@ class SnapOverlay(QWidget):
         self._tool = Tool.ARROW
         self._color = 0
         self._editor: LabelEditor | None = None
-        self._editor_pos = QPointF()
         self._done = False
         self._configure()
         self._toolbar = self._build_toolbar()
@@ -267,7 +283,17 @@ class SnapOverlay(QWidget):
         toolbar.redo_clicked.connect(self.redo)
         toolbar.drop_clicked.connect(self.drop)
         toolbar.keep_clicked.connect(self.keep)
+        toolbar.snap_clicked.connect(self._toggle_snap)
+        toolbar.set_snap_enabled(self._snap_enabled)
         return toolbar
+
+    def set_snap_enabled(self, enabled: bool) -> None:
+        self._snap_enabled = enabled
+        self._toolbar.set_snap_enabled(enabled)
+
+    def _toggle_snap(self) -> None:
+        self.set_snap_enabled(not self._snap_enabled)
+        self.snap_toggled.emit(self._snap_enabled)
 
     # ---- what callers and tests read ----
 
@@ -428,6 +454,8 @@ class SnapOverlay(QWidget):
             return self.keep
         if key == Qt.Key.Key_Escape:
             return self.drop
+        if key == Qt.Key.Key_S:
+            return self._toggle_snap
         if key in _TOOL_KEYS:
             return partial(self.set_tool, _TOOL_KEYS[key])
         if key in _COLOR_KEYS:
@@ -467,10 +495,13 @@ class SnapOverlay(QWidget):
         if event.button() != Qt.MouseButton.LeftButton:
             return
         if self._origin is not None:
+            self._drag_selection(event.position().toPoint())
             self._finish_selection()
         elif self._grab is not None:
+            self._drag_resize(event.position().toPoint())
             self._finish_resize()
         elif self._draft is not None:
+            self._extend_draft(event.position())
             self._finish_draft()
 
     def mouseDoubleClickEvent(self, event) -> None:
@@ -515,7 +546,7 @@ class SnapOverlay(QWidget):
         self._phase = Phase.SELECT
         self._toolbar.hide()
         self._stack = AnnotationStack()
-        self._origin = self._clamp(point)
+        self._origin = self._selection_point(point)
         self._set_selection(None)
         if reselecting:
             # The hint pill may have moved out of the toolbar's way: repaint it all.
@@ -523,7 +554,7 @@ class SnapOverlay(QWidget):
         self.selecting.emit()
 
     def _drag_selection(self, point: QPoint) -> None:
-        rect = span(self._origin, self._clamp(point))
+        rect = span(self._origin, self._selection_point(point))
         big_enough = rect.width() >= MIN_SELECTION and rect.height() >= MIN_SELECTION
         self._set_selection(rect if big_enough else None)
 
@@ -555,7 +586,7 @@ class SnapOverlay(QWidget):
         self.update()
 
     def _drag_resize(self, point: QPoint) -> None:
-        edge = self._clamp(point + self._grab_shift)
+        edge = self._selection_point(point + self._grab_shift)
         rect = resized(self._grabbed_from, self._grab, edge)
         if rect.width() >= MIN_SELECTION and rect.height() >= MIN_SELECTION:
             self._set_selection(rect)
@@ -579,6 +610,11 @@ class SnapOverlay(QWidget):
             min(max(point.x(), canvas.left()), canvas.right() + 1),
             min(max(point.y(), canvas.top()), canvas.bottom() + 1),
         )
+
+    def _selection_point(self, point: QPoint) -> QPoint:
+        if self._snap_enabled:
+            point = snap_point(QPointF(point), self._targets).toPoint()
+        return self._clamp(point)
 
     def _set_selection(self, rect: QRect | None) -> None:
         dirty = self._decor_region()
@@ -608,13 +644,19 @@ class SnapOverlay(QWidget):
             )
             self._add(step)
         else:
-            self._draft = new_draft(self._tool, point, self.current_color())
+            self._draft = new_draft(self._tool, self._annotation_point(point),
+                                    self.current_color())
             self._update_marks(self._draft.bounds())
 
     def _extend_draft(self, point: QPointF) -> None:
         before = self._draft.bounds()
-        self._draft.extend(point)
+        self._draft.extend(self._annotation_point(point))
         self._update_marks(before.united(self._draft.bounds()))
+
+    def _annotation_point(self, point: QPointF) -> QPointF:
+        if self._snap_enabled and self._tool in (Tool.BOX, Tool.ARROW):
+            return self._inside(snap_point(point, (self._selection, *self._targets)))
+        return point
 
     def _finish_draft(self) -> None:
         draft, self._draft = self._draft, None
@@ -644,33 +686,17 @@ class SnapOverlay(QWidget):
         editor = LabelEditor(self, self.current_color())
         editor.committed.connect(self._commit_label)
         editor.cancelled.connect(self._close_label)
-        self._editor_pos = self._label_origin(point, editor.size())
-        editor.move(self._editor_pos.toPoint())
+        editor.move(label_origin(self._selection, point, editor.size()))
         editor.refit()
         self._editor = editor
         editor.show()
         editor.setFocus(Qt.FocusReason.MouseFocusReason)
 
-    def _label_origin(self, point: QPointF, size: QSize) -> QPointF:
-        """The label's top-left: centred on the click, inside the selection."""
-        left, top = self._selection.left(), self._selection.top()
-        room_x = left + max(0, self._selection.width() - size.width())
-        room_y = top + max(0, self._selection.height() - size.height())
-        return QPointF(
-            min(max(point.x(), left), room_x),
-            min(max(point.y() - size.height() / 2, top), room_y),
-        )
-
     def _commit_label(self) -> None:
         editor = self._editor
         if editor is None:
             return
-        label = Label(
-            QPointF(self._editor_pos),
-            editor.text().strip(),
-            editor.color(),
-            QFont(editor.font()),
-        )
+        label = editor.annotation()
         self._close_label()
         if label.meaningful():
             self._add(label)

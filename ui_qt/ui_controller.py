@@ -326,6 +326,7 @@ class UIController(QObject):
         self._walkthrough_ready = None
         # The column that writes a walkthrough as it records; made on first use.
         self._walkthrough_panel = None
+        self._walkthrough_drawing = None
         self.get_missing_local_runtime: Optional[Callable[[], Optional[str]]] = None
 
         self.on_component_install: Optional[Callable] = None
@@ -1081,8 +1082,19 @@ class UIController(QObject):
 
         request_access()
 
+    def start_walkthrough_drawing(self):
+        from ui_qt.snap.live import LiveAnnotations
+
+        self._walkthrough_drawing = LiveAnnotations(self, self._walkthrough_panel)
+        return self._walkthrough_drawing
+
+    def stop_walkthrough_drawing(self) -> None:
+        drawing, self._walkthrough_drawing = self._walkthrough_drawing, None
+        if drawing is not None:
+            drawing.close()
+
     def start_snap(self, *, hint: str = "", take: str = "region", front: bool = False,
-                   click_at: tuple[int, int] | None = None):
+                   click_at: tuple[int, int] | None = None, screen=None):
         """Freeze the screen under the pointer for a screenshot; a SnapSession.
 
         The recording overlay never appears in it, yet stays in sight in a
@@ -1096,8 +1108,10 @@ class UIController(QObject):
         keep_out = floating
         if self._walkthrough_panel is not None and self._walkthrough_panel.isVisible():
             keep_out += (self._walkthrough_panel,)
+        if self._walkthrough_drawing is not None:
+            keep_out += self._walkthrough_drawing.windows()
         return start_snap(keep_out=keep_out, hint=hint, float_above=floating, parent=self,
-                          take=take, front=front, click_at=click_at)
+                          take=take, front=front, click_at=click_at, screen=screen)
 
     def keep_overlay_out_of_screenshots(self, enabled: bool) -> bool:
         """Leave the recording overlay out of every screen capture, or stop.

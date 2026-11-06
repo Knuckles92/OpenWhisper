@@ -84,7 +84,7 @@ SLOT_BADGE = 20.0
 SLOT_TIME_W = 34.0
 SLOT_HINT_H = 16.0
 SLOT_HINT = "Talking… Snap to close this section"
-AUTO_SLOT_HINT = "Auto Mode · captures after clicks"
+AUTO_SLOT_HINT = "Auto Mode · captures clicks and drawings"
 PAUSED_HINT = "Paused · Resume to keep talking"
 #: The tools that hover over a screenshot, and its number badge.
 TOOL = 28.0
@@ -655,7 +655,7 @@ class WalkthroughPanel(QWidget):
                 mode=WalkthroughSnapMode.LABELS[self.snap_mode].lower())
             if self._auto_mode:
                 if key == "snap" and not self._countdown:
-                    text = "Draw on a screenshot while you talk. Enter keeps it."
+                    text = "Draw on the live screen with the pen. Release to save a screenshot."
                 elif key == "snap-menu":
                     text = "Take a screenshot manually"
             if text:

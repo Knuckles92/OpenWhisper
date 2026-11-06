@@ -29,6 +29,7 @@ from PyQt6 import sip
 from PyQt6.QtGui import QCursor, QGuiApplication, QImage, QScreen
 from PyQt6.QtWidgets import QWidget
 
+from services.settings import SettingsKey, resolve_snap_to_edges, settings_manager
 from ui_qt.snap import capture, export, macos, pointed
 from ui_qt.snap.overlay import SnapOverlay
 from ui_qt.snap.support import snap_support
@@ -87,6 +88,7 @@ class SnapSession(QObject):
         # One per covered screen, the pointer's first.
         self._overlays: list[SnapOverlay] = []
         self._screens: list[QScreen] = []
+        self._window_targets: list[tuple[QRect, ...]] = []
         self._hint = ""
         self._draw = False
         self._hidden: list[QWidget] = []
@@ -154,12 +156,15 @@ class SnapSession(QObject):
     def _start(
         self, keep_out: Sequence[QWidget], hint: str, float_above: Sequence[Parkable],
         take: str = REGION, front: bool = False, click_at: tuple[int, int] | None = None,
+        screen: QScreen | None = None,
     ) -> None:
         supported, reason = snap_support()
         if not supported:
             self._fail_soon(reason)
             return
-        if click_at is None:
+        if screen is not None:
+            screens = [screen] if screen in QGuiApplication.screens() else []
+        elif click_at is None:
             screens = capture.screens_to_cover()
         else:
             screen = capture.screen_at_windows_point(click_at)
@@ -173,6 +178,8 @@ class SnapSession(QObject):
             self._keep_when_captured = not self._draw
             if take == WINDOW:
                 self._crop = pointed.window_under_pointer(screens[0], keep_out, front=front)
+        if not self._keep_when_captured:
+            self._window_targets = [pointed.window_targets(item, keep_out) for item in screens]
         self._screens, self._hint = screens, hint
         self._float_above = tuple(float_above)
         # Opening the overlay makes OpenWhisper active on macOS; whoever
@@ -184,7 +191,7 @@ class SnapSession(QObject):
             return
         # Let the hide reach the window system, then give the compositor a
         # couple of frames to stop drawing those windows before grabbing.
-        if click_at is None:
+        if click_at is None and screen is None:
             QCoreApplication.processEvents(
                 QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
             )
@@ -206,18 +213,23 @@ class SnapSession(QObject):
             self._finish(lambda: self.kept.emit(whole))
         else:
             # Another screen that couldn't be captured is left uncovered.
-            self._open([(s, i) for s, i in zip(self._screens, images) if i is not None])
+            self._open([(s, i, targets) for s, i, targets in
+                        zip(self._screens, images, self._window_targets) if i is not None])
 
     def _restore_windows(self) -> None:
         capture.restore_windows(self._hidden)
         self._hidden.clear()
 
-    def _open(self, frozen: list[tuple[QScreen, QImage]]) -> None:
-        for screen, image in frozen:
-            overlay = SnapOverlay(image, screen, hint=self._hint)
+    def _open(self, frozen: list[tuple[QScreen, QImage, tuple[QRect, ...]]]) -> None:
+        snap_enabled = resolve_snap_to_edges()
+        hint = " · ".join(filter(None, (self._hint, "S toggles snapping")))
+        for screen, image, targets in frozen:
+            overlay = SnapOverlay(image, screen, hint=hint, snap_enabled=snap_enabled,
+                                  targets=targets)
             overlay.kept.connect(self._on_kept)
             overlay.dropped.connect(self._on_dropped)
             overlay.selecting.connect(partial(self._on_selecting, overlay))
+            overlay.snap_toggled.connect(self._set_snap_enabled)
             # An overlay outliving its session would cover the screen for good.
             self.destroyed.connect(overlay.deleteLater)
             self._overlays.append(overlay)
@@ -230,6 +242,11 @@ class SnapSession(QObject):
         for window in self._float_above:
             window.park(area)
             self._parked.append(window)
+
+    def _set_snap_enabled(self, enabled: bool) -> None:
+        settings_manager.save_setting(SettingsKey.SNAP_TO_EDGES, enabled)
+        for overlay in self._overlays:
+            overlay.set_snap_enabled(enabled)
 
     def _on_selecting(self, chosen: SnapOverlay) -> None:
         """The selection moved to ``chosen``'s screen: clear the rest, focus it."""
@@ -288,6 +305,7 @@ def start_snap(
     take: str = REGION,
     front: bool = False,
     click_at: tuple[int, int] | None = None,
+    screen: QScreen | None = None,
 ) -> SnapSession:
     """Freeze the screens and open an overlay on each (Qt thread only).
 
@@ -307,6 +325,7 @@ def start_snap(
             pointer is on: the snap was asked for from our own windows.
         click_at: For an automatic ``SCREEN`` capture on Windows, the native
             coordinates of the click that triggered the capture.
+        screen: For a live annotation, the screen the mark was drawn on.
 
     Returns:
         The session; connect to its signals right away. One outcome follows,
@@ -317,5 +336,5 @@ def start_snap(
         raise RuntimeError("start_snap must be called on the Qt thread")
     session = SnapSession(parent)
     _live.add(session)
-    session._start(tuple(keep_out), hint, tuple(float_above), take, front, click_at)
+    session._start(tuple(keep_out), hint, tuple(float_above), take, front, click_at, screen)
     return session

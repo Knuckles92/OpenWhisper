@@ -112,6 +112,23 @@ def _cross(painter: QPainter, color: QColor) -> None:
     painter.strokePath(_path((14.4, 5.6), (5.6, 14.4)), pen)
 
 
+def _snap(painter: QPainter, color: QColor) -> None:
+    pen = _line_pen(color)
+    for x, dx in ((3.5, 1), (16.5, -1)):
+        for y, dy in ((3.5, 1), (16.5, -1)):
+            painter.strokePath(_path((x + 4 * dx, y), (x, y), (x, y + 4 * dy)), pen)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawEllipse(QPointF(10, 10), 1.8, 1.8)
+
+
+def _clear(painter: QPainter, color: QColor) -> None:
+    pen = _line_pen(color)
+    painter.strokePath(_path((4, 5.5), (16, 5.5)), pen)
+    painter.strokePath(_path((7.5, 5.5), (8, 3), (12, 3), (12.5, 5.5)), pen)
+    painter.strokePath(_path((5.5, 5.5), (7, 17), (13, 17), (14.5, 5.5)), pen)
+
+
 _GLYPHS: dict[str, Callable[[QPainter, QColor], None]] = {
     "arrow": _arrow,
     "box": _box,
@@ -123,6 +140,8 @@ _GLYPHS: dict[str, Callable[[QPainter, QColor], None]] = {
     "redo": _redo,
     "keep": _check,
     "drop": _cross,
+    "snap": _snap,
+    "clear": _clear,
 }
 
 

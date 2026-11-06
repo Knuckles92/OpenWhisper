@@ -91,7 +91,10 @@ class WalkthroughRuntime(QObject):
         # Who asked for the snap being taken (see snap's ``source``).
         self._source = "hotkey"
         self._auto_hook: MouseButtonHook | None = None
+        self._live_drawing = None
         self._auto_snap = None
+        self._auto_drawing_capture = False
+        self._snap_after_drawing: str | None = None
         self._auto_position: tuple[int, int] | None = None
         # Ignore click signals queued before a pause or a manual screenshot.
         self._auto_after = 0.0
@@ -194,6 +197,7 @@ class WalkthroughRuntime(QObject):
             return
         if self._auto_position is not None or self._auto_snap is not None:
             self._finish_after_snap = True
+            self._live_drawing.set_busy(True)
             return
         self.controller.stop_recording()
 
@@ -208,6 +212,9 @@ class WalkthroughRuntime(QObject):
             hook.start()
             if hook.wait_until_installed():
                 self._auto_hook = hook
+                self._live_drawing = self._ui.start_walkthrough_drawing()
+                self._live_drawing.arming.connect(self._discard_auto_capture)
+                self._live_drawing.drawn.connect(self._capture_drawing)
                 if self._panel is not None:
                     self._panel.set_auto_mode(True)
                 return
@@ -220,6 +227,7 @@ class WalkthroughRuntime(QObject):
         return (self._auto_hook is not None and self._session is not None
                 and not self.controller.recorder.paused and self._snap is None
                 and self._auto_snap is None and not self._countdown_left
+                and not self._live_drawing.armed
                 and not (self._tray_timer is not None and self._tray_timer.isActive()))
 
     def _on_click(self, session: WalkthroughSession, x: int, y: int, at: float) -> None:
@@ -236,35 +244,65 @@ class WalkthroughRuntime(QObject):
         if not self._auto_can_capture():
             self._finish_if_asked()
             return
+        self._capture_automatic(self._live_drawing.pinned_at(position), click_at=position)
+
+    def _capture_drawing(self, screen, marks) -> None:
+        if not self._finish_after_snap and self._auto_can_capture():
+            self._auto_drawing_capture = True
+            self._live_drawing.set_busy(True)
+            self._capture_automatic(marks, screen=screen,
+                                    kept_at_s=self.controller.recorder.get_recording_duration())
+
+    def _capture_automatic(self, marks, *, kept_at_s: float | None = None, **location) -> None:
         session = self._session
-        snap = self._ui.start_snap(take=WalkthroughSnapMode.SCREEN, click_at=position)
+        snap = self._ui.start_snap(take=WalkthroughSnapMode.SCREEN, **location)
         self._auto_snap = snap
-        snap.kept.connect(lambda image: self._on_auto_outcome(snap, session, image=image))
+        snap.kept.connect(lambda image: self._on_auto_outcome(snap, session, image=image,
+                                                             marks=marks, kept_at_s=kept_at_s))
         snap.failed.connect(lambda reason: self._on_auto_outcome(snap, session, reason=reason))
 
-    def _on_auto_outcome(self, snap, session: WalkthroughSession, *, image=None, reason="") -> None:
+    def _on_auto_outcome(self, snap, session: WalkthroughSession, *, image=None, marks=(),
+                         kept_at_s: float | None = None, reason="") -> None:
         snap.deleteLater()
         if snap is not self._auto_snap:
             return
         self._auto_snap = None
+        self._auto_drawing_capture = False
+        next_snap, self._snap_after_drawing = self._snap_after_drawing, None
         if session is self._session:
             if image is not None:
-                self._keep_walkthrough_shot(session, image, automatic=True)
+                if marks:
+                    from ui_qt.snap import export
+
+                    image = export.render(image, export.logical_rect(image), marks)
+                self._keep_walkthrough_shot(session, image, automatic=True, kept_at_s=kept_at_s)
             elif reason:
                 self._tell(reason)
         self._finish_if_asked()
+        if self._live_drawing is not None:
+            self._live_drawing.set_busy(False)
+            if next_snap is not None:
+                self.snap(next_snap)
 
     def _discard_auto_capture(self) -> None:
         self._auto_after = time.monotonic()
         self._auto_timer.stop()
         self._auto_position = None
+        self._auto_drawing_capture = False
+        self._snap_after_drawing = None
         snap, self._auto_snap = self._auto_snap, None
-        if snap is not None and snap.active:
-            snap.drop()
+        if snap is not None:
+            if snap.active:
+                snap.drop()
             snap.deleteLater()
+        if self._live_drawing is not None:
+            self._live_drawing.set_busy(False)
 
     def _stop_auto(self) -> None:
         self._discard_auto_capture()
+        if self._live_drawing is not None:
+            self._live_drawing = None
+            self._ui.stop_walkthrough_drawing()
         hook, self._auto_hook = self._auto_hook, None
         if hook is not None:
             hook.stop()
@@ -277,14 +315,16 @@ class WalkthroughRuntime(QObject):
     def _panel_snap(self) -> None:
         if self._finish_after_snap:
             return
-        if self._auto_hook is not None and not self._countdown_left and self._snap is None:
-            from ui_qt.snap.session import DRAW
-
-            self._discard_auto_capture()
-            self._source = "ui"
-            self._snap_now(DRAW)
+        if self._live_drawing is not None and not self._countdown_left and self._snap is None:
+            self._live_drawing.arm()
         else:
             self.snap("ui")
+
+    def _restore_live_drawing(self) -> None:
+        if (self._live_drawing is not None and not self._finish_after_snap
+                and self._snap is None and not self._countdown_left
+                and not (self._tray_timer is not None and self._tray_timer.isActive())):
+            self._live_drawing.set_enabled(not self.controller.recorder.paused)
 
     # ---- the Screenshot shortcut ----
 
@@ -295,7 +335,12 @@ class WalkthroughRuntime(QObject):
         """
         if self._finish_after_snap:
             return
+        if self._auto_drawing_capture:
+            self._snap_after_drawing = source
+            return
         self._discard_auto_capture()
+        if self._live_drawing is not None:
+            self._live_drawing.set_enabled(False)
         if self._snap is not None and self._snap.active:
             # Pressed again while drawing: keep it.
             self._snap.keep()
@@ -372,6 +417,7 @@ class WalkthroughRuntime(QObject):
         if not supported:
             self._tell(reason)
             self._ui.request_snap_access()
+            self._restore_live_drawing()
             return
         session = self.controller.transcription_runtime.recording_walkthrough
         # Asked for from our own windows, "the window" is the one in front:
@@ -391,12 +437,15 @@ class WalkthroughRuntime(QObject):
             # was being drawn: either way it goes to the clipboard.
             self._copy_screenshot(image, finished=session is not None)
         self._finish_if_asked()
+        self._restore_live_drawing()
 
     def _keep_walkthrough_shot(self, session: WalkthroughSession, image, *,
-                               automatic: bool = False) -> bool:
+                               automatic: bool = False, kept_at_s: float | None = None) -> bool:
         """Add to the storyboard. Return False when the session is closed."""
         try:
-            shot = session.add_shot(image, self.controller.recorder.get_recording_duration())
+            if kept_at_s is None:
+                kept_at_s = self.controller.recorder.get_recording_duration()
+            shot = session.add_shot(image, kept_at_s)
         except ScreenshotNotSaved as exc:
             self._tell(f"Couldn't save the screenshot ({exc.strerror or exc}) — "
                        "the walkthrough keeps recording")
@@ -415,12 +464,14 @@ class WalkthroughRuntime(QObject):
         self._snap = self._snap_for = None
         self._discard_auto_capture()
         self._finish_if_asked()
+        self._restore_live_drawing()
 
     def _on_failed(self, reason: str) -> None:
         self._snap = self._snap_for = None
         self._discard_auto_capture()
         self._tell(reason or "Couldn't take a screenshot")
         self._finish_if_asked()
+        self._restore_live_drawing()
 
     def _finish_if_asked(self) -> None:
         if self._finish_after_snap:
@@ -485,6 +536,7 @@ class WalkthroughRuntime(QObject):
         if not paused:
             recorder.resume()
         self._discard_auto_capture()
+        self._restore_live_drawing()
         if self._panel is not None:
             self._panel.set_paused(paused)
         self.controller.status_update.emit(
