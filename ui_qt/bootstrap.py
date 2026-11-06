@@ -249,6 +249,12 @@ def run_with_ui_pulse(fn):
 
 def main() -> int:
     """Main application entry point."""
+    rune_mode = sys.argv[1:] == ["--rune-backend"]
+    rune_output = None
+    if rune_mode:
+        from services.rune_bridge import reserve_output
+
+        rune_output = reserve_output()
     profiler = StartupProfiler()
     profiler.mark("main_entered")
     summary_logged = False
@@ -278,11 +284,14 @@ def main() -> int:
         profiler.mark("early_imports_finished")
 
         qt_app = QtApplication()
+        if rune_mode:
+            qt_app.app.setQuitOnLastWindowClosed(False)
         profiler.mark("qt_app_created")
 
         loading_screen = LoadingScreen()
         profiler.mark("loading_screen_constructed")
-        loading_screen.show()
+        if not rune_mode:
+            loading_screen.show()
         profiler.mark("loading_screen_shown")
 
         loading_screen.update_status("Initializing components...")
@@ -327,7 +336,14 @@ def main() -> int:
         loading_screen.destroy()
         loading_screen = None
 
-        ui_controller.show_main_window()
+        rune_bridge = None
+        if rune_mode:
+            from services.rune_bridge import RuneBridge
+
+            rune_bridge = RuneBridge(app_controller, rune_output)
+            rune_bridge.start()
+        else:
+            ui_controller.show_main_window()
         instance.attach_activate(
             qt_thread_callback(ui_controller.main_window.restore_from_tray)
         )
@@ -359,7 +375,7 @@ def main() -> int:
         # run after the window is visible — never on the splash path.
         app_controller.setup_backup()
         app_controller.notify_main_ui_ready()
-        if not health_token:
+        if not health_token and not rune_mode:
             ui_controller.offer_guided_setup()
         from services.agent_mcp.runtime import runtime as mcp_runtime
         from services.settings import settings_manager
@@ -383,7 +399,7 @@ def main() -> int:
         summary_logged = True
         logging.info("Application initialization complete")
         logging.info("Starting event loop")
-        return qt_app.run(ui_controller.main_window)
+        return qt_app.run(None if rune_mode else ui_controller.main_window)
     except Exception:
         if not summary_logged:
             profiler.log_summary()

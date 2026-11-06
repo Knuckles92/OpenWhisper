@@ -127,6 +127,7 @@ With no option, opens OpenWhisper.
 Options:
   -h, --help              Show this help and exit.
   --version               Print the version and exit.
+  --rune [OPTIONS]        Open the native Rune desktop preview (source installs).
   --diagnostics OUTPUT.json
                           Write a sanitized support report to a new JSON file
                           and exit. Nothing is uploaded.
@@ -158,6 +159,14 @@ Environment:
 
 def _handle_early_cli() -> None:
     """Handle worker and metadata modes before native-library bootstrap."""
+    if sys.argv[1:2] == ["--rune"]:
+        from services.rune_launcher import main as rune_main
+
+        raise SystemExit(rune_main(sys.argv[2:]))
+    if sys.argv[1:] == ["--rune-backend"]:
+        from services.rune_bridge import reserve_output
+
+        reserve_output()
     if sys.argv[1:2] in (["-h"], ["--help"]):
         # Before anything loads Qt or CUDA: help must answer in a terminal
         # with no display, and at once.

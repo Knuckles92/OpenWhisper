@@ -119,6 +119,14 @@ python main.py
 
 The macOS/Linux launcher selects the virtual environment and handles macOS app-bundle identification for Accessibility. Then follow [Get started](#get-started).
 
+### Optional: Rune desktop preview
+
+For the new native interface built with Anomalyco Rune, install a current stable
+Rust toolchain alongside the Python environment, then run `python main.py --rune`.
+It includes recording, files, meetings, walkthroughs, searchable recent history,
+and light/dark settings. Advanced controls still open the existing dialogs.
+See [Rune desktop setup and preview](docs/rune-desktop.md).
+
 ### Optional: launch from any terminal
 
 To register `ow` and `openwhisper`, run `.\install.cmd` in PowerShell on Windows or `./install.sh` on macOS/Linux once from your checkout folder. Open a new terminal, then use `ow` or `openwhisper` from any folder without activating the virtual environment. See [source launchers](CONTRIBUTING.md#source-launchers) for details.

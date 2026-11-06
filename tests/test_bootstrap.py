@@ -114,6 +114,41 @@ class TestBootstrap:
         _FakeApplicationController.instances = []
         _FakeApplicationController.should_raise = False
 
+    def test_rune_backend_keeps_main_window_hidden_and_starts_bridge(self, monkeypatch):
+        from io import StringIO
+        from unittest.mock import Mock
+        from services import rune_bridge
+        from services.agent_mcp.runtime import runtime as mcp_runtime
+
+        output = StringIO()
+        bridge = Mock()
+        bridge_factory = Mock(return_value=bridge)
+        qt_app = _FakeQtApplication()
+        qt_app.app = SimpleNamespace(setQuitOnLastWindowClosed=Mock())
+        ui_controller = _FakeUIController()
+        order = []
+        loading_screen = _FakeLoadingScreen(order)
+        monkeypatch.setattr(bootstrap.sys, "argv", ["main.py", "--rune-backend"])
+        monkeypatch.setattr(bootstrap, "setup_logging", lambda: None)
+        monkeypatch.setattr(bootstrap, "process_qt_events", lambda: None)
+        monkeypatch.setattr(bootstrap, "run_with_ui_pulse", lambda fn: fn())
+        monkeypatch.setattr(bootstrap, "create_deferred_local_whisper_backend", lambda: None)
+        monkeypatch.setattr(bootstrap, "get_early_runtime_components", lambda: (lambda: qt_app, lambda: loading_screen))
+        monkeypatch.setattr(bootstrap, "get_late_runtime_components", lambda: (lambda: ui_controller, _FakeApplicationController))
+        monkeypatch.setattr(rune_bridge, "reserve_output", lambda: output)
+        monkeypatch.setattr(rune_bridge, "RuneBridge", bridge_factory)
+        monkeypatch.setattr(mcp_runtime, "configure_controls", Mock())
+
+        assert bootstrap.main() == 123
+        assert not ui_controller.show_main_window_called
+        assert not ui_controller.guided_setup_offered
+        assert "loading_screen_shown" not in order
+        assert qt_app.main_window is None
+        qt_app.app.setQuitOnLastWindowClosed.assert_called_once_with(False)
+        bridge.start.assert_called_once_with()
+        assert bridge_factory.call_args.args[1] is output
+        assert _FakeApplicationController.instances[0].cleaned_up
+
     @patch("services.settings.is_hf_hub_offline_env_set", return_value=False)
     @patch.object(bootstrap, "create_deferred_local_whisper_backend", return_value=None)
     @patch.object(bootstrap, "run_with_ui_pulse", side_effect=lambda fn: fn())

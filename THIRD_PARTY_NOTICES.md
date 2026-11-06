@@ -25,6 +25,15 @@ Additional Python distributions retain their upstream license files under
 `_internal` (typically in `*.dist-info/licenses`, package-specific `LICENSE`
 files, or both). Copyright and license terms belong to their respective
 authors. This notice does not replace those terms.
+## Rune desktop preview
+
+The source-only Rune desktop preview uses **Rune and rune-kit** from
+[Anomalyco](https://github.com/anomalyco/rune), under the MIT License. Rune embeds
+**Inter** fonts under the SIL Open Font License 1.1; their upstream license files
+are retained in the pinned Cargo Git dependency. Exact Rust dependency versions
+and source revisions are recorded in `native/Cargo.lock`. This preview is not
+included in the packaged Qt releases.
+
 ## Optional speech runtimes and model weights
 
 The native NVIDIA Speech runtimes are also available for Linux x86_64 (CPU and CUDA) and, in the unreleased source integration, Apple Silicon macOS (CPU). These are NeMo-Speech.cpp's own release archives; the Linux CUDA archive includes NVIDIA's CUDA runtime and cuBLAS libraries. Their upstream license files are retained in `nemo-speech/share/licenses`.
