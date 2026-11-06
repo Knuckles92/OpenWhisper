@@ -451,8 +451,8 @@ class MainWindow(QMainWindow):
         self._geometry_format = "collapsed_content_v1"
 
         self._current_tab_index = TabbedContentWidget.TAB_QUICK_RECORD
-        # Every tab sizes the window to its page (see _sync_page_size),
-        # except an open transcript, which keeps the height the user gives it.
+        # Quick Record fits the wrapped transcript until the user drags its height.
+        self._quick_record_height = None
         self._transcript_height = config.MAIN_WINDOW_TRANSCRIPTION_EXPAND_HEIGHT
         # The page height the window last fitted, so it refits only on change.
         self._page_fit = None
@@ -1245,6 +1245,12 @@ class MainWindow(QMainWindow):
 
         if not self.isVisible() or self._compact_mode or self._host_mode:
             return
+        page = self._current_page()
+        if page is self.quick_record_tab:
+            self._schedule_page_fit()
+            return
+        if page not in MainWindow.existing_transcription_tabs(self):
+            return
         # The window moves with the card's own animation, then refits to the
         # page once both settle (_on_resize_animation_finished).
         current_height = self.height()
@@ -1327,9 +1333,9 @@ class MainWindow(QMainWindow):
 
         Every tab sizes the window's height to its page, so none shows blank
         space below its content or a scrollbar it does not need, and the
-        window follows as rows come and go. An open transcript is the
-        exception: it fills the height the user last gave it. A page that
-        needs more width than the window has widens it (_page_width). The
+        window follows as rows come and go. An open transcript can fill
+        the height the user last gave it. A page that needs more width
+        than the window has widens it (_page_width). The
         window refits only when the page's needs change (or on _refit_page),
         so a size the user drags stays until then.
         """
@@ -1368,11 +1374,17 @@ class MainWindow(QMainWindow):
             return
         self._page_fit = fit
         self._page_floor = min(fit, config.MAIN_WINDOW_MIN_HEIGHT)
-        target = max(fit, self._transcript_height) if self._page_is_elastic(page) else fit
+        target = fit
+        if self._page_is_elastic(page):
+            preferred = (
+                self._quick_record_height if page is self.quick_record_tab
+                else self._transcript_height
+            )
+            target = max(fit, preferred or 0)
         # Lower the floor first so a shrink is not stopped short; a rise
         # waits until the window is there, or it would jump.
         self.setMinimumHeight(min(self._page_floor, self.height()))
-        if abs(target - self.height()) > 1 or width != self.width():
+        if target != self.height() or width != self.width():
             if animate:
                 self._animate_resize(width, target)
                 return
@@ -2163,6 +2175,16 @@ class MainWindow(QMainWindow):
         if not self._resizing:
             return
         self._resizing = False
+        if (
+            not self._compact_mode and not self._host_mode
+            and self._current_page() is self.quick_record_tab
+        ):
+            if (
+                self.quick_record_tab.fills_height()
+                and self.height() != self._resize_start_geometry.height()
+            ):
+                self._quick_record_height = self.height()
+            self._schedule_page_fit()
         self._resize_edge = None
         self._resize_start_pos = None
         self._resize_start_geometry = None
@@ -2322,15 +2344,16 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # An open transcript keeps the height the user drags it to.
+        # Quick Record remembers only an explicit drag (_finish_resize).
         if (
             not self._compact_mode
             and not self._host_mode
             and hasattr(self, "tabbed_content")
-            and self._page_is_elastic(self._current_page())
             and not self._resize_animation_running()
         ):
-            self._transcript_height = event.size().height()
+            page = self._current_page()
+            if page is not self.quick_record_tab and self._page_is_elastic(page):
+                self._transcript_height = event.size().height()
 
         # A narrower window rewraps a page's text, changing how much height
         # it needs. Height-only changes cannot alter the wrap.

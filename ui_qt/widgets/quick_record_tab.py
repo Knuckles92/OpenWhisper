@@ -1,6 +1,9 @@
 import logging
+from math import ceil
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFrame, QLabel
+from PyQt6.QtWidgets import (
+    QFrame, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+)
 from PyQt6.QtCore import QEvent, Qt, QSize, QTimer, pyqtSignal
 
 from ui_qt.dialogs.settings_destinations import COMMANDS
@@ -23,6 +26,38 @@ from services.settings import (
 logger = logging.getLogger(__name__)
 
 
+class _QuickRecordTranscript(QTextEdit):
+    """Prefer the height of the wrapped text, with scrolling for long results."""
+
+    PREVIEW_LINES = 12
+
+    def __init__(self):
+        super().__init__()
+        self.document().documentLayout().documentSizeChanged.connect(self.updateGeometry)
+        self.textChanged.connect(self.updateGeometry)
+
+    def minimumSizeHint(self) -> QSize:
+        size = super().minimumSizeHint()
+        size.setHeight(self._height_for_lines(2 if self.document().isEmpty() else 1))
+        return size
+
+    def sizeHint(self) -> QSize:
+        size = super().sizeHint()
+        padding = self.height() - self.contentsRect().height()
+        natural_height = ceil(self.document().size().height()) + padding
+        size.setHeight(max(
+            self.minimumSizeHint().height(),
+            min(natural_height, self._height_for_lines(self.PREVIEW_LINES)),
+        ))
+        return size
+
+    def _height_for_lines(self, lines: int) -> int:
+        padding = self.height() - self.contentsRect().height()
+        text_height = lines * self.fontMetrics().lineSpacing()
+        margins = 2 * self.document().documentMargin()
+        return ceil(text_height + margins) + padding
+
+
 class QuickRecordTab(TranscriptionTabBase):
     record_toggled = pyqtSignal(bool)
     record_canceled = pyqtSignal()
@@ -32,6 +67,8 @@ class QuickRecordTab(TranscriptionTabBase):
 
     CONTENT_OBJECT_NAME = "quickRecordContent"
     INITIAL_STATUS = "Ready to record"
+    TRANSCRIPT_EDITOR = _QuickRecordTranscript
+    TRANSCRIPT_MIN_HEIGHT = 0
     TRANSCRIPT_PLACEHOLDER = (
         "Transcription will appear here...\n"
         "Start recording to begin."
@@ -39,6 +76,7 @@ class QuickRecordTab(TranscriptionTabBase):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.transcription_card.layout.setContentsMargins(16, 8, 16, 8)
 
         # State (safe to set after the base constructor: _setup_ui never
         # reads it, and no signals can fire during init)
