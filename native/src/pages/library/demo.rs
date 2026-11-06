@@ -125,6 +125,7 @@ pub fn library_demo_command(s: &mut State, method: &str, params: &Value) -> bool
             s.data[method] = json!({"items":s.data[source],"offset":0,"limit":50,"has_more":false});
         }
         "history.delete" | "meetings.delete" | "walkthroughs.delete" => {
+            s.data["demo.library-delete-request"] = params.clone();
             let scope = method.split('.').next().unwrap();
             let source = format!("demo.{scope}");
             if let Some(rows) = s.data[&source].as_array_mut() {

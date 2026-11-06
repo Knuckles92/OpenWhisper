@@ -179,3 +179,45 @@ fn paired_host_search_section_keeps_local_browsing_and_narrow_layout_available()
         }
     }
 }
+
+#[test]
+fn history_deletion_keeps_local_audio_by_default_and_names_host_recordings() {
+    let mut rt = workspace(1220.);
+    rt.update(|s,_| {
+        s.data["history.view"]=json!("list");
+        s.selected=Some("demo-0".into());
+        s.command("history.detail",json!({"id":"demo-0"}));
+        s.confirmation=Some(json!({"scope":"history","id":"demo-0","title":"Retained transcript","stored_on":"","audio_available":true,"delete_audio":false}));
+    });
+    for _ in 0..15 {
+        rt.frame(1. / 60.);
+    }
+    assert_eq!(
+        rt.state.confirmation.as_ref().unwrap()["delete_audio"],
+        false
+    );
+    tap(&mut rt, "history-delete-audio-choice");
+    assert_eq!(
+        rt.state.confirmation.as_ref().unwrap()["delete_audio"],
+        true
+    );
+    tap(&mut rt, "history-confirm-delete");
+    assert_eq!(
+        rt.state.data["demo.library-delete-request"]["delete_audio"],
+        true
+    );
+    rt.update(|s,_| {
+        s.selected=Some("demo-1".into());
+        s.command("history.detail",json!({"id":"demo-1"}));
+        s.confirmation=Some(json!({"scope":"history","id":"remote-1","title":"Host transcript","stored_on":"Office host","audio_available":true}));
+    });
+    for _ in 0..30 {
+        rt.frame(1. / 60.);
+    }
+    assert!(rt.find("history-delete-audio-choice").is_none());
+    assert!(rt.elements().iter().any(|node| {
+        node.text
+            .as_ref()
+            .is_some_and(|text| text.contains("retained recording from Office host"))
+    }));
+}

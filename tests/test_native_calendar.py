@@ -225,3 +225,18 @@ def test_unreachable_host_search_reports_its_error_without_changing_local_histor
     assert event == "history.remote.loaded" and not payload["loading"]
     assert "isn't reachable" in payload["notice"]
     assert dispatch(c, "history.list")["total"] == 1
+
+
+def test_history_delete_can_remove_retained_audio_only_when_explicitly_chosen(calendar_context):
+    from pathlib import Path
+    c = calendar_context
+    folder = Path(c.history.recordings_folder)
+    folder.mkdir(exist_ok=True)
+    for item_id in ("keep-audio", "delete-audio"):
+        (folder / f"{item_id}.wav").write_bytes(b"RIFF")
+        add(c, item_id, "2026-11-02T10:00:00", audio_file=f"{item_id}.wav")
+    dispatch(c, "history.delete", {"id": "keep-audio"})
+    assert (folder / "keep-audio.wav").exists()
+    dispatch(c, "history.delete", {"id": "delete-audio", "delete_audio": True})
+    assert not (folder / "delete-audio.wav").exists()
+    assert dispatch(c, "history.list")["total"] == 0

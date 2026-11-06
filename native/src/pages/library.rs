@@ -172,8 +172,9 @@ pub(super) fn confirm_delete(s: &State, p: &Palette, scope: &'static str) -> El 
     let explanation = if host.is_empty() {
         "This removes the saved item from your library. This action cannot be undone.".to_string()
     } else {
-        format!("This permanently removes the transcript from {host}.")
+        format!("This permanently removes the transcript and any retained recording from {host}.")
     };
+    let delete_audio = confirmation["delete_audio"].as_bool().unwrap_or(false);
     card(p)
         .key(format!("{scope}-delete-confirmation"))
         .border(1., p.danger.alpha(0.45))
@@ -185,6 +186,29 @@ pub(super) fn confirm_delete(s: &State, p: &Palette, scope: &'static str) -> El 
         ))
         .child(label(explanation, 12., 400., p.muted))
         .child(
+            if scope == "history" && host.is_empty() && confirmation["audio_available"] == true {
+                btn(
+                    "history-delete-audio-choice",
+                    if delete_audio {
+                        "✓ Also delete the recording"
+                    } else {
+                        "Also delete the recording"
+                    },
+                    p,
+                    delete_audio,
+                    true,
+                    |s, _| {
+                        if let Some(confirmation) = s.confirmation.as_mut() {
+                            confirmation["delete_audio"] =
+                                json!(confirmation["delete_audio"] != true);
+                        }
+                    },
+                )
+            } else {
+                el()
+            },
+        )
+        .child(
             row()
                 .gap(8.)
                 .flex_wrap()
@@ -195,7 +219,12 @@ pub(super) fn confirm_delete(s: &State, p: &Palette, scope: &'static str) -> El 
                     false,
                     !s.pending,
                     move |s, _| {
-                        s.command(&format!("{scope}.delete"), json!({"id":id}));
+                        let params = if scope == "history" {
+                            json!({"id":id,"delete_audio":delete_audio})
+                        } else {
+                            json!({"id":id})
+                        };
+                        s.command(&format!("{scope}.delete"), params);
                     },
                 ))
                 .child(btn(
@@ -394,6 +423,8 @@ pub fn history(s: &State, p: &Palette, compact: bool) -> El {
         let title = s.detail_title.clone();
         let stored_on = value(detail_result, "stored_on", "").to_string();
         let delete_host = stored_on.clone();
+        let delete_audio_available =
+            matching && detail_result["audio_available"] == true && detail_result["remote"] != true;
         let mut playback_path = if matching {
             value(detail_result, "playback_path", "").to_string()
         } else {
@@ -502,7 +533,7 @@ pub fn history(s: &State, p: &Palette, compact: bool) -> El {
                         can_delete && !s.pending,
                         move |s, _| {
                             s.confirmation =
-                                Some(json!({"scope":"history","id":delete_id,"title":title,"stored_on":delete_host}))
+                                Some(json!({"scope":"history","id":delete_id,"title":title,"stored_on":delete_host,"audio_available":delete_audio_available,"delete_audio":false}))
                         },
                     )),
             )
