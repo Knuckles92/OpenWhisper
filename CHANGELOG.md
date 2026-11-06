@@ -7,6 +7,9 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+- **The full Rune native workspace** — recording and its nonactivating HUD, batch file queues, searchable history with playback/editing, meeting review and reports, walkthrough galleries/review/exports, screenshot crop/annotation tools, a persistent scratchpad, and native settings/model/automation/system controls. The service now has a Qt-free owner-thread runtime and portable document rendering. Standalone native package builds and relocation tests cover Linux, Windows, and macOS. Launch source installs with `python main.py --rune`; see [Rune desktop](docs/rune-desktop.md).
+
 ## [2.8.4] - 2026-11-05
 
 ### Added

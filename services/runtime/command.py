@@ -21,7 +21,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from services.desktop_runtime import QObject, pyqtSignal
 
 from config import config
 from services import dictation_pipeline, focus_context, synthetic_keys, text_rewrite
@@ -36,7 +36,7 @@ from services.settings import (
 )
 from services.text_transforms import find_transform
 from services.transcript_cleanup import CleanupInfo
-from ui_qt.overlay_state import OverlayState
+from services.overlay_state import OverlayState
 
 if TYPE_CHECKING:
     from services.application_controller import ApplicationController

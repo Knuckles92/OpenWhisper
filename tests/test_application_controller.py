@@ -771,6 +771,15 @@ class DummyUIController:
 
 
 def _install_module_stubs(settings_manager, history_manager, keyboard, db_state):
+    from services import desktop_runtime
+
+    runtime_module = types.ModuleType("services.desktop_runtime")
+    runtime_module.__dict__.update(vars(desktop_runtime))
+    runtime_module.QObject = _QObject
+    runtime_module.QTimer = _QTimer
+    runtime_module.Qt = _Qt
+    runtime_module.pyqtSignal = _pyqt_signal
+
     qtcore_module = types.ModuleType("PyQt6.QtCore")
     qtcore_module.QObject = _QObject
     qtcore_module.QTimer = _QTimer
@@ -876,6 +885,7 @@ def _install_module_stubs(settings_manager, history_manager, keyboard, db_state)
     keyboard_module.write = keyboard.write
 
     return {
+        "services.desktop_runtime": runtime_module,
         "PyQt6": pyqt_module,
         "PyQt6.QtCore": qtcore_module,
         "transcriber": transcriber_module,
@@ -1060,9 +1070,8 @@ class TestApplicationController:
     def test_backup_restore_only_requests_restart_after_success(self):
         exits = []
         controller = self._create_controller()
-        qt_widgets = types.ModuleType("PyQt6.QtWidgets")
-        qt_widgets.QApplication = types.SimpleNamespace(exit=exits.append)
-        with patch.dict(sys.modules, {"PyQt6.QtWidgets": qt_widgets}):
+        with patch.object(sys.modules["services.desktop_runtime"], "QCoreApplication",
+                          types.SimpleNamespace(exit=exits.append)):
             controller._on_restore_staged("", "Failed validation")
             assert not exits
             controller._on_restore_staged("test.owbackup", "")

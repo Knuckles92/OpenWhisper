@@ -405,8 +405,11 @@ def recovery_session(folder: Path) -> WalkthroughSession:
             path = local_file(folder, name)
         except ValueError:
             continue  # a crash may precede the PNG write
-        from PyQt6.QtGui import QImage
-        if QImage(str(path)).isNull():
+        from PIL import Image
+        try:
+            with Image.open(path) as image:
+                image.verify()
+        except (OSError, ValueError):
             continue
         session._shots.append(Shot(len(session._shots) + 1, path, stamp))
         saved = Future()

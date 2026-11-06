@@ -134,7 +134,7 @@ def build_documents(
 
 def document_settings(settings=None):
     """The saved ``(DocumentFormat, QPageSize or None)``; None is the locale's paper."""
-    from PyQt6.QtGui import QPageSize
+    import os
 
     from services.settings import (
         WalkthroughPageSize,
@@ -155,6 +155,10 @@ def document_settings(settings=None):
         about=resolve_walkthrough_show_about(settings),
         captions=resolve_walkthrough_show_captions(settings),
     )
+    if os.environ.get("OPENWHISPER_DESKTOP_RUNTIME") == "native":
+        return document_format, resolve_walkthrough_page_size(settings)
+    from PyQt6.QtGui import QPageSize
+
     page_ids = {
         WalkthroughPageSize.LETTER: QPageSize.PageSizeId.Letter,
         WalkthroughPageSize.A4: QPageSize.PageSizeId.A4,

@@ -6,12 +6,22 @@ use serde_json::json;
 
 mod capture;
 mod library;
+mod scratchpad;
+mod screenshot;
 mod settings;
 mod studio;
 
 pub use capture::{files, meetings, walkthrough};
+pub use capture::{meeting_tools_demo, meeting_tools_demo_command, meeting_tools_response};
 pub use library::history;
+pub use library::{library_demo, library_demo_command};
+pub use scratchpad::scratchpad;
+pub use screenshot::{
+    begin_screenshot, finish_screenshot, screenshot, screenshot_finished, screenshot_key,
+};
 pub use settings::settings;
+pub use settings::settings_response;
+pub use settings::{settings_demo, settings_demo_command};
 pub use studio::studio;
 
 fn setting_toggle(s: &State, p: &Palette, key: &'static str, title: &str, description: &str) -> El {
@@ -132,7 +142,7 @@ fn recent(s: &State, p: &Palette) -> El {
         .child(label("Recently captured", 15., 550., p.ink))
         .child(el().grow(1.))
         .child(link("all-history", "View all history →", p, |s, _| {
-            s.page = Page::History
+            s.navigate(Page::History)
         }));
     let mut list = col()
         .radius(12.)

@@ -1,116 +1,142 @@
-# Rune desktop preview
+# Rune desktop
 
-OpenWhisper has an optional native desktop interface built with
-[Anomalyco Rune](https://github.com/anomalyco/rune), pinned to revision
-`781e2b6d87cd5f32d6f4365956fad4baaf24ee50`. It uses Rune's renderer, layout,
-text, springs, accessibility support, and native file dialogs.
+OpenWhisper's native desktop uses [Anomalyco Rune](https://github.com/anomalyco/rune),
+pinned to `781e2b6d87cd5f32d6f4365956fad4baaf24ee50`, with the existing Python
+speech, meeting, automation, and persistence services. The native service does
+not import Qt. The original Qt launcher remains available for compatibility.
 
-The workspace includes Quick record, Audio files, Meetings, Walkthroughs,
-History, and Settings, with light and dark appearances and a compact navigation
-rail for narrow windows.
+## Run from source
 
-## Launch
-
-Set up the existing [Python environment](../README.md#run-from-source), then
-install a current stable Rust toolchain with Cargo. Close any running OpenWhisper
-instance before launching:
+Install Python 3.12, a current stable Rust toolchain, and the native service
+dependencies in a virtual environment. An existing OpenWhisper environment also
+works; the native service selects its Qt-free runtime before importing services.
 
 ```sh
+python -m venv .venv
+# Linux/macOS: source .venv/bin/activate
+# Windows PowerShell: .\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-native.txt
 python main.py --rune
 ```
 
-The launcher builds the locked native dependencies, selects this Python
-interpreter for the audio service, and opens the Rune window. The first build
-takes longer. Later launches rebuild only changed source. If Cargo is unavailable
-but a debug binary already exists, the launcher uses that binary.
+Close any existing OpenWhisper instance first. The launcher builds locked Rust
+dependencies and passes its Python interpreter to the audio service. Later
+launches rebuild changed source. Without Cargo, an existing debug binary can be
+used. `python main.py` continues to start the Qt desktop and requires the full
+`requirements.txt` environment.
 
-On Debian/Ubuntu, native builds additionally need a C toolchain, `pkg-config`,
-`libxkbcommon-dev`, `libwayland-dev`, and a Vulkan driver. The Linux file chooser
-uses the desktop's XDG FileChooser portal; install a portal backend appropriate
-for your desktop. OpenWhisper's existing audio/Qt dependencies are still required
-by its Python service and advanced dialogs.
+Linux builds need a C toolchain, `pkg-config`, ALSA, xkbcommon, Wayland development
+libraries, PortAudio, and a Vulkan driver. For Debian/Ubuntu:
 
-Direct Cargo launches select the checkout's `.venv` Python automatically. Set
-`OPENWHISPER_PYTHON` to use another interpreter and `OPENWHISPER_ROOT` if the binary
-is moved outside its source checkout. `OPENWHISPER_DATA_DIR` continues to select
-the application data directory.
+```sh
+sudo apt-get install build-essential pkg-config libasound2-dev libxkbcommon-dev libwayland-dev libportaudio2 libvulkan1 mesa-vulkan-drivers
+```
 
-## Controls
+The Linux file chooser uses the XDG FileChooser portal; install a backend for
+your desktop. X11 clipboard exchange uses `xclip`; Wayland uses the bundled
+native clipboard helper. Global shortcut and paste support depends on your
+desktop/compositor permissions. Meeting system audio needs
+[PulseAudio or PipeWire-Pulse](linux-system-audio.md). macOS requires microphone,
+screen recording, and Accessibility permission for the corresponding features.
 
-- Quick record starts, stops, and cancels the existing dictation pipeline. Its
-  level display uses microphone measurements; live preview appears on supported
-  engines. Finished transcripts can be selected, copied, or exported as text.
-- Audio files accepts a dropped file or the native file chooser. Selecting a file
-  does not start transcription; choose **Transcribe file** when ready.
-- Meetings starts and ends capture through the existing meeting runtime. Consent
-  and platform prompts remain in the existing dialogs. **Open live dashboard**
-  opens the full meeting dashboard in the browser.
-- Walkthroughs starts/finishes a walkthrough and captures screenshots through
-  the existing runtime. The current recording mode controls which actions are
-  enabled.
-- History searches the titles and previews of the 60 most recent transcripts,
-  with dictation/file filters. Selecting an entry loads its full text for copy,
-  export, and original-text comparison. The existing desktop retains full history
-  search, playback, editing, and deletion.
-- Settings saves cleanup, auto-paste, clipboard, and local-language preferences.
-  Appearance changes also update the existing Qt dialogs and survive restart.
-  **Advanced settings** and **Model downloads** open the existing controls for
-  providers, devices, hotkeys, dictionary, actions, storage, and model management.
+Direct Cargo launches find the checkout's `.venv` or `venv`. Override with
+`OPENWHISPER_PYTHON`; set `OPENWHISPER_ROOT` when moving a source binary.
+`OPENWHISPER_DATA_DIR` selects application data. Both desktops use the same
+settings, history, meeting, and walkthrough formats; run one instance at a time.
 
-Ctrl/Cmd+1–5 opens the five workflow pages, Ctrl/Cmd+, opens Settings, and
-Ctrl/Cmd+K opens and focuses history search. Escape dismisses messages. Buttons,
-switches, file controls, and search support keyboard focus. Existing global
-recording hotkeys continue to work through the Python service.
+## Native workspace
 
-This is a source-only preview. The standard desktop launcher and packaged
-releases keep the existing Qt interface. The web meeting dashboard is unchanged.
-Saved meeting/walkthrough libraries and advanced operations still use the
-existing windows; this preview does not replace every Qt dialog.
+- **Quick record:** dictation, live levels/preview, cleaned/original text,
+  profiles, actions, copy/export, global shortcuts, and a compact recording HUD
+  that leaves the current app focused.
+- **Audio files:** native file selection and drag/drop, multiple-file queues,
+  ordering, related/independent files, combined output, and custom instructions.
+- **Meetings:** capture, pause/resume, live transcript, saved search, participants,
+  brief, evidence/cards, questions, insight review, corrections, tailored reports,
+  and exports. The existing browser dashboard remains available.
+- **Walkthroughs:** screenshots, note hold, pause, step ordering/removal, saved
+  search, screenshot galleries, text review, write-ups, and PDF/DOCX/Markdown/ZIP
+  exports. Native crop/annotation tools provide arrows, boxes, pen, highlight,
+  labels, numbered steps, zoom, and undo/redo.
+- **History:** full database search and pagination, transcript editing/deletion,
+  retained-audio playback, original-text comparison, and TXT/Markdown/JSON/SRT.
+- **Scratchpad:** editable dictation destination with atomic autosave to the
+  existing scratchpad file. Insertion requires the scratchpad window to be
+  active. Copy, export, and clear are available.
+- **Settings:** typed preferences, models/components/downloads, microphones,
+  providers/credentials, shortcut recording, dictionary/snippets, profiles,
+  actions/transforms, app overrides, automation libraries, remote connections,
+  backups, updates, usage, setup, and MCP controls. Credentials are write-only
+  in the service protocol. Settings coverage is inventoried by
+  `settings.coverage`; internal/legacy keys include an explicit reason.
 
-## Architecture
+Light/dark appearance and text scaling persist. The navigation rail collapses
+at narrow widths. Ctrl/Cmd+1–5 opens the workflow pages, Ctrl/Cmd+, opens Settings,
+and Ctrl/Cmd+K focuses history search. Global capture shortcuts retain their
+existing press/release semantics. Closing the window respects the tray setting;
+quitting during capture asks before discarding it.
 
-The native process starts `main.py --rune-backend` as a private child and exchanges
-newline-delimited JSON over its pipes. It creates no network listener and does
-not enable API/MCP access. Stdout is reserved before native library imports;
-application logs go to stderr. Requests are bounded and actions/settings are
-allowlisted in `services/rune_bridge.py`.
+## Standalone packages
 
-The Python process uses the normal application controller, data lease,
-single-instance guard, and shutdown path. Its main window starts hidden. All
-bridge commands execute through the existing Qt-thread relay, so UI callbacks
-and model/recording state keep their current threading contracts. Native UI work
-and bridge I/O run on separate threads. The bridge requests a snapshot every
-700 ms; an unchanged snapshot does not redraw an idle Rune window. The recent
-history list refreshes after persistence events and at most every five seconds
-for changes made in the existing dialogs.
+The native package includes the Rust desktop, a frozen Qt-free Python service,
+document fonts, and platform helpers. End users do not need Python or Rust.
+Speech models and optional runtimes still download through model management.
 
-Closing the native process closes the pipe, allowing Python to stop its services
-and drain persistence. Starting another instance while shutdown is finishing
-continues to respect the existing single-instance/data guards.
+From an environment containing `requirements-native.txt` and PyInstaller:
 
-## Preview and validation
+```sh
+python -m pip install pyinstaller
+python scripts/build_rune_desktop.py
+```
 
-Synthetic preview data never starts the Python service or opens user history:
+Output is under `dist/rune/`: ZIP on Windows, tar.gz on Linux/macOS. Extract the
+whole folder, then run `OpenWhisper.exe`, `OpenWhisper`, or `OpenWhisper.app`.
+macOS builds are ad-hoc signed for testing; public distribution still needs
+Developer ID signing/notarization. Packages built on Linux should target the
+oldest supported distribution to keep glibc requirements compatible.
+
+The [native CI workflow](../.github/workflows/rune-desktop.yml) builds on
+Ubuntu 22.04, Windows 2022, and macOS 14. Each job installs an environment without
+Qt, tests clipboard/runtime behavior, builds a package, relocates it to a path
+with spaces, exercises the frozen service, and renders the native desktop.
+Artifacts are retained for 14 days. Source-only packaging is also available
+with `--source-only` and still requires a Python environment.
+
+## Architecture and validation
+
+The Rust desktop starts `main.py --rune-backend` or the packaged service as a
+private child. Bounded, allowlisted JSON requests and asynchronous events use
+stdin/stdout; logs go to stderr. This transport creates no network listener and
+does not enable remote/MCP access. Separate reader/writer threads keep prompts
+and background progress responsive. Unchanged snapshots avoid idle redraws.
+
+`services.desktop_runtime` chooses either the original Qt classes or the native
+owner-thread event loop, signals, timers, and workers. Native startup owns the
+existing single-instance/data lease, controller, and shutdown sequence.
+EOF drains persistence and stops services. Backup restore restarts the service
+after the restore gate while retaining the native window. Document exports use
+Pillow, ReportLab/HarfBuzz, Markdown, and python-docx, with bundled multilingual
+fonts. See the [command reference](native-desktop-commands.md).
+
+Synthetic scenes never start the service or access user history:
 
 ```sh
 cargo run --locked --manifest-path native/Cargo.toml -- --demo
 cargo run --locked --manifest-path native/Cargo.toml -- --scene studio --snap studio.png
-cargo run --locked --manifest-path native/Cargo.toml -- --scene dark --snap dark.png
-cargo run --locked --manifest-path native/Cargo.toml -- --scene history --snap history.png
-cargo run --locked --manifest-path native/Cargo.toml -- --scene studio --size 760x860 --snap compact.png
-```
-
-Other named scenes: `recording`, `transcript`, `files`, `meetings`, `walkthrough`,
-and `settings`. Rune's `--tree` option writes inspectable layout/accessibility
-data alongside a snapshot.
-
-```sh
+cargo run --locked --manifest-path native/Cargo.toml -- --scene dark --size 760x860 --snap compact.png
 cargo test --locked --manifest-path native/Cargo.toml
 cargo fmt --manifest-path native/Cargo.toml -- --check
-python -m pytest tests/test_rune_bridge.py tests/test_rune_launcher.py tests/test_bootstrap.py
+python -m pytest
 python -m ruff check --select F .
+python scripts/smoke_rune_package.py dist/rune/OpenWhisper-native-linux-x86_64.tar.gz
 ```
 
-Headless layout tests and synthetic previews do not verify physical microphone
-capture, real speech-model inference, system-audio capture, OS-specific dialogs,
-or native installer packaging.
+Scenes also include recording, transcript, files, meetings, walkthrough, history,
+settings, settings-models, settings-keys, settings-remote, settings-backup,
+settings-updates, settings-stats, settings-setup, settings-mcp,
+settings-dictionary, and meeting-review. `--tree` emits accessibility/layout data.
+Linux manual verification uses real pointer/keyboard input, X11 and headless
+Wayland sessions, clipboard ownership, and a relocated frozen package. CI and
+fixtures do not establish physical microphone quality, speech-model accuracy,
+or every permission/compositor combination; those require testing on the target
+desktop with its actual devices.

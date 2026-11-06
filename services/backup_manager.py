@@ -15,7 +15,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from services.desktop_runtime import QObject, QTimer, pyqtSignal
 
 logger = logging.getLogger(__name__)
 PREFERENCES_FILE = "backup-preferences.json"

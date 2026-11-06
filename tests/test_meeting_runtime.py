@@ -1818,6 +1818,30 @@ def test_events_queued_before_background_handoff_are_discarded(
     assert states == []
 
 
+def test_native_live_view_handoff_cannot_route_old_status_to_new_meeting(runtime, monkeypatch):
+    rt, controller = runtime
+    old = SimpleNamespace(meeting_id="m_old", is_active=lambda: False)
+    current = SimpleNamespace(meeting_id="m_new", is_active=lambda: True)
+    rt._engine = old
+    states, statuses = [], []
+    controller.meeting_state_changed.connect(states.append)
+    controller.meeting_status_update.connect(statuses.append)
+    forwarded = MagicMock()
+    monkeypatch.setattr(rt, "_forward_public_event", forwarded)
+
+    def handoff(_kind, _payload):
+        with rt._lock:
+            rt._engine = current
+            controller.meeting_active = True
+
+    controller.ui_controller = SimpleNamespace(on_meeting_live_event=handoff)
+    rt._route_engine_event(old, "status", {"status": "ended", "finalization": {"status": "completed"}})
+
+    assert rt._engine is current and controller.meeting_active is True
+    assert states == [] and statuses == []
+    forwarded.assert_not_called()
+
+
 def test_open_background_meeting_reuses_its_processing_dashboard(
     background_meeting, monkeypatch
 ):

@@ -67,6 +67,7 @@ node_modules/
 *__pycache__*
 .pytest_cache/
 *.spec
+!/native/OpenWhisperService.spec
 # ...but the packaging spec is source, not build output.
 !OpenWhisper.spec
 !OpenWhisperUpdater.spec

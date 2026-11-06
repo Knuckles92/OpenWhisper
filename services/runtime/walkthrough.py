@@ -20,7 +20,7 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from PyQt6.QtCore import QTimer
+from services.desktop_runtime import QTimer
 
 from services.settings import (
     SettingsKey,
@@ -377,6 +377,9 @@ class WalkthroughRuntime:
             session.hold_note(at_s)
         else:
             session.release_note(at_s)
+        note_state = getattr(self._panel, "set_note_held", None)
+        if callable(note_state):
+            note_state(on)
 
     def _shot_removed(self, session: WalkthroughSession, number: int) -> None:
         self.controller.recording_destination_changed.emit(shots_label(session.shot_count))

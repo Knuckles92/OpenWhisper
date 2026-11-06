@@ -1937,6 +1937,15 @@ class MeetingRuntime:
             elif kind == "retry_status":
                 self.controller.meeting_status_update.emit(str(payload["message"]))
             elif engine is self._engine:
+                live_view = getattr(getattr(self.controller, "ui_controller", None), "on_meeting_live_event", None)
+                if callable(live_view):
+                    live_view(kind, payload)
+                # A native view may service a nested user action while it
+                # handles an event. Recheck after that callback: detaching or
+                # starting a meeting there must not route the old event into
+                # the new foreground card.
+                if engine is not self._engine:
+                    return
                 self._on_engine_event(kind, payload)
                 self._forward_public_event(engine, kind, payload)
 

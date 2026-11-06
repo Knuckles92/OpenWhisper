@@ -123,7 +123,7 @@ fn record_card(s: &State, p: &Palette) -> El {
             p,
             false,
             !s.pending,
-            |s, _| s.command("cancel", json!({})),
+            |s, _| s.command("record.cancel", json!({})),
         ));
     }
     let elapsed = if recording {
@@ -194,7 +194,7 @@ fn record_card(s: &State, p: &Palette) -> El {
                     "record-preferences",
                     "Recording settings",
                     p,
-                    |s, _| s.page = Page::Settings,
+                    |s, _| s.navigate(Page::Settings),
                 )),
         )
 }
@@ -229,7 +229,8 @@ fn setup(s: &State, p: &Palette) -> El {
                         .child(label(ui::engine(&s.snapshot.engine), 12., 550., p.ink)),
                 )
                 .child(link("change-model", "Change model →", p, |s, _| {
-                    s.command("window.settings", json!({}))
+                    s.navigate(Page::Settings);
+                    s.selected_tab = "settings:models".into();
                 })),
         )
         .child(divider(p))

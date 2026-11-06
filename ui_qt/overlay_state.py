@@ -1,17 +1,4 @@
-"""Explicit overlay state values used to route UI transitions."""
-from enum import Enum
+"""Compatibility import for the shared application state enum."""
+from services.overlay_state import OverlayState
 
-
-class OverlayState(Enum):
-    """Logical overlay states independent of human-readable status text."""
-
-    NONE = "none"
-    RECORDING = "recording"
-    PROCESSING = "processing"
-    TRANSCRIBING = "transcribing"
-    CLEANING = "cleaning"
-    CANCELING = "canceling"
-    STT_ENABLED = "stt_enabled"
-    STT_DISABLED = "stt_disabled"
-    COMMAND_LISTENING = "command_listening"
-    REWRITING = "rewriting"
+__all__ = ["OverlayState"]

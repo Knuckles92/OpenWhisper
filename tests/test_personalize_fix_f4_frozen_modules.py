@@ -13,6 +13,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / "OpenWhisper.spec"
 PACKAGES = ("services", "ui_qt", "meeting", "transcriber")
@@ -85,7 +87,7 @@ def _shipped(name: str, listed: set[str], roots: set[str]) -> bool:
 
 
 def _references(modules: dict[str, Path]) -> tuple[set[str], dict[str, str]]:
-    """Return modules named by import statements, and by plain strings."""
+    """Return imports (including implicit parent packages), and plain strings."""
     imported: set[str] = set()
     named: dict[str, str] = {}
     sources = list(modules.items()) + [("main", ROOT / "main.py"), ("config", ROOT / "config.py")]
@@ -105,7 +107,41 @@ def _references(modules: dict[str, Path]) -> tuple[set[str], dict[str, str]]:
             elif (isinstance(node, ast.Constant) and isinstance(node.value, str)
                     and "." in node.value and node.value in modules):
                 named.setdefault(node.value, owner)
+    # Python imports every parent package of an explicitly imported module.
+    # PyInstaller therefore sees meeting.state through meeting.state.schema;
+    # an event also named "meeting.state" is not a missing dynamic import.
+    for name in tuple(imported):
+        parts = name.split(".")
+        imported.update(".".join(parts[:length]) for length in range(1, len(parts)))
     return imported, named
+
+
+@pytest.mark.parametrize("statement", [
+    "import meeting.state.schema",
+    "from meeting.state.schema import MeetingState",
+    "from meeting.state import schema",
+    "from .state import schema",
+])
+def test_import_references_include_parents_but_not_unrelated_string_modules(tmp_path, monkeypatch, statement):
+    monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path)
+    modules = {}
+    for name, filename in {
+        "meeting": "meeting/__init__.py", "meeting.state": "meeting/state/__init__.py",
+        "meeting.state.schema": "meeting/state/schema.py", "meeting.state.store": "meeting/state/store.py",
+        "meeting.dynamic": "meeting/dynamic.py", "meeting.consumer": "meeting/consumer.py",
+    }.items():
+        path = tmp_path / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(statement + '\nevent = "meeting.state"\nplugin = "meeting.dynamic"\n'
+                        if name == "meeting.consumer" else "", encoding="utf-8")
+        modules[name] = path
+    for filename in ("main.py", "config.py"):
+        (tmp_path / filename).write_text("", encoding="utf-8")
+    imported, named = _references(modules)
+    assert {"meeting", "meeting.state", "meeting.state.schema"} <= imported
+    assert "meeting.state.store" not in imported
+    assert "meeting.dynamic" not in imported
+    assert named == {"meeting.state": "meeting.consumer", "meeting.dynamic": "meeting.consumer"}
 
 
 def test_every_module_named_in_a_string_ships_in_the_frozen_build():

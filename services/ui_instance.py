@@ -147,6 +147,11 @@ def acquire_ui_instance(data_dir: str) -> Optional[UiInstance]:
     if _PROCESS_INSTANCE is not None:
         return _PROCESS_INSTANCE
     if not sys.platform.startswith("linux"):
+        if os.environ.get("OPENWHISPER_DESKTOP_RUNTIME", "").lower() == "native":
+            from services.native_desktop.instance import acquire
+
+            _PROCESS_INSTANCE = acquire(data_dir)
+            return _PROCESS_INSTANCE
         _PROCESS_INSTANCE = UiInstance()
         return _PROCESS_INSTANCE
 

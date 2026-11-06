@@ -5,6 +5,14 @@ use crate::{
 use rune::{Color, Cx, El, Icon, ScrollSpec, TextStyle, Tx, col, el, icon, row, text};
 use rune_kit::{Button, ButtonVariant, ControlSize, Kit, PaletteSeed, glyphs};
 use serde_json::json;
+use std::cell::Cell;
+mod hotkeys;
+pub use hotkeys::suppress_hotkey;
+
+thread_local! {static TYPE_SCALE:Cell<f32>=const {Cell::new(1.)};}
+fn type_scale() -> f32 {
+    TYPE_SCALE.with(Cell::get)
+}
 
 pub struct Palette {
     pub bg: Color,
@@ -51,6 +59,24 @@ impl Palette {
             accent: hex(accent),
         });
         kit.radius.sm = 7.;
+        let scale = type_scale();
+        for style in [
+            &mut kit.ty.ui,
+            &mut kit.ty.ui_medium,
+            &mut kit.ty.ui_compact,
+            &mut kit.ty.small,
+            &mut kit.ty.small_medium,
+            &mut kit.ty.body,
+            &mut kit.ty.body_medium,
+            &mut kit.ty.text_small,
+            &mut kit.ty.text_small_medium,
+            &mut kit.ty.text_xsmall,
+            &mut kit.ty.text_xsmall_medium,
+            &mut kit.ty.mono,
+        ] {
+            style.size *= scale;
+            style.line_height *= scale;
+        }
         Self {
             bg: hex(bg),
             sidebar: hex(sidebar),
@@ -107,7 +133,7 @@ pub static SHIELD: Icon = Icon {
 
 pub fn label(value: impl Into<String>, size: f32, weight: f32, color: Color) -> El {
     text(value)
-        .font(TextStyle::new(size, weight))
+        .font(TextStyle::new(size * type_scale(), weight))
         .color(color)
         .wrap_anywhere()
         .min_w(0.)
@@ -191,6 +217,8 @@ pub fn page_icon(page: Page) -> &'static Icon {
         Page::Walkthrough => &WALK,
         Page::History => &HISTORY,
         Page::Settings => &SETTINGS,
+        Page::Scratchpad => &glyphs::CURSOR_TEXT,
+        Page::Screenshot => &glyphs::FILE_IMAGE,
     }
 }
 fn logo(p: &Palette) -> El {
@@ -223,7 +251,7 @@ fn nav(s: &State, page: Page, p: &Palette, compact: bool) -> El {
         .fill(if active { p.accent_soft } else { p.sidebar })
         .hover(p.border.alpha(0.5))
         .on_press(move |s: &mut State| {
-            s.page = page;
+            s.navigate(page);
             s.notice = None;
         })
         .child(icon(page_icon(page), 18.).color(if active { p.accent } else { p.muted }));
@@ -254,7 +282,9 @@ fn sidebar(s: &State, p: &Palette, compact: bool) -> El {
     if !compact {
         top = top.child(el().h(14.)).child(eyebrow("LIBRARY", p));
     }
-    top = top.child(nav(s, Page::History, p, compact));
+    top = top
+        .child(nav(s, Page::History, p, compact))
+        .child(nav(s, Page::Scratchpad, p, compact));
     let bottom = col().gap(9.).child(nav(s, Page::Settings, p, compact));
     let bottom = if compact {
         bottom
@@ -294,6 +324,13 @@ fn sidebar(s: &State, p: &Palette, compact: bool) -> El {
         .child(bottom)
 }
 pub fn shell(s: &State, cx: &mut Cx<State>) -> El {
+    let scale = s
+        .data
+        .pointer("/settings.values/values/ui_font_scale")
+        .or_else(|| s.snapshot.settings.get("ui_font_scale"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(100.);
+    TYPE_SCALE.with(|value| value.set((scale as f32 / 100.).clamp(0.9, 1.5)));
     let p = Palette::new(s.dark);
     let size = cx.layout_size("app").unwrap_or([1220., 860.]);
     let compact = size[0] < 1040.;
@@ -321,18 +358,21 @@ pub fn shell(s: &State, cx: &mut Cx<State>) -> El {
             Button::new("Search")
                 .icon(&glyphs::SEARCH)
                 .variant(ButtonVariant::Ghost)
-                .on_press(|s: &mut State| s.page = Page::History)
+                .on_press(|s: &mut State| s.navigate(Page::History))
                 .build(&p.kit)
                 .key("global-search")
                 .help("Search history · Ctrl/Cmd+K"),
         );
+    let mut layer = Vec::new();
     let content = match s.page {
         Page::Record => pages::studio(s, &p, compact),
         Page::Files => pages::files(s, &p),
         Page::Meetings => pages::meetings(s, &p),
         Page::Walkthrough => pages::walkthrough(s, &p),
         Page::History => pages::history(s, &p, compact),
-        Page::Settings => pages::settings(s, &p),
+        Page::Settings => pages::settings(s, &p, &mut layer),
+        Page::Scratchpad => pages::scratchpad(s, &p),
+        Page::Screenshot => pages::screenshot(s, &p),
     };
     let mut body = col()
         .key("page-scroll")
@@ -410,7 +450,7 @@ pub fn shell(s: &State, cx: &mut Cx<State>) -> El {
                 .help(status),
         )
         .child(label("Made for your train of thought.", 10., 400., p.faint));
-    row()
+    let shell = row()
         .key("app")
         .w_full()
         .h_full()
@@ -425,7 +465,17 @@ pub fn shell(s: &State, cx: &mut Cx<State>) -> El {
                 .child(divider(&p))
                 .child(body)
                 .child(footer),
-        )
+        );
+    if let Some(prompt) = crate::dialogs::prompt(s, &p) {
+        layer.push(prompt);
+    }
+    if let Some(quit) = crate::platform::quit_confirmation(s, &p) {
+        layer.push(quit);
+    }
+    if let Some(permission) = crate::platform::permission_prompt(s, &p) {
+        layer.push(permission);
+    }
+    el().w_full().h_full().child(shell).children(layer)
 }
 
 pub fn duration(seconds: f64) -> String {
@@ -457,13 +507,14 @@ pub fn entry_row(entry: &Entry, p: &Palette, selected: bool, small: bool) -> El 
         .radius(8.)
         .fill(if selected { p.accent_soft } else { p.surface })
         .hover(p.soft)
-        .on_press(move |s: &mut State| {
-            s.page = Page::History;
+        .on_press_tx(move |s: &mut State, tx| {
+            s.navigate(Page::History);
             s.selected = Some(id.clone());
             s.detail.clear();
             s.detail_raw.clear();
             s.show_raw = false;
             s.command("history.detail", json!({"id":id}));
+            tx.scroll_key_to("history-detail", 0.);
         })
         .child(
             row().size(34., 34.).center().radius(8.).fill(p.soft).child(

@@ -4,7 +4,7 @@ OpenWhisper includes third-party software. OpenWhisper's own source code is
 provided under the MIT License in `LICENSE`; bundled dependencies remain under
 their respective licenses.
 
-The native Windows and Linux distributions include, among other dependencies:
+The original Qt desktop distributions include, among other dependencies:
 
 - **PyQt6** — GNU General Public License v3 or a commercial Riverbank license.
   The redistributable build includes the wheel's license text at
@@ -25,14 +25,25 @@ Additional Python distributions retain their upstream license files under
 `_internal` (typically in `*.dist-info/licenses`, package-specific `LICENSE`
 files, or both). Copyright and license terms belong to their respective
 authors. This notice does not replace those terms.
-## Rune desktop preview
+## Rune native desktop
 
-The source-only Rune desktop preview uses **Rune and rune-kit** from
+The Rune native desktop uses **Rune and rune-kit** from
 [Anomalyco](https://github.com/anomalyco/rune), under the MIT License. Rune embeds
 **Inter** fonts under the SIL Open Font License 1.1; their upstream license files
 are retained in the pinned Cargo Git dependency. Exact Rust dependency versions
-and source revisions are recorded in `native/Cargo.lock`. This preview is not
-included in the packaged Qt releases.
+and source revisions are recorded in `native/Cargo.lock`. Native packages use
+a separate frozen Python service and exclude Qt/PyQt.
+
+Portable document exports bundle **Inter**, **IBM Plex Mono**, **Noto Sans SC**,
+**Noto Sans Arabic**, and **Noto Sans Devanagari**, under the SIL Open Font License
+1.1. Font files, license texts, and pinned Noto source/hash provenance are under
+`native/assets/fonts`. PDF rendering uses **ReportLab** (BSD), **HarfBuzz** through
+**uharfbuzz** (MIT bindings, HarfBuzz's upstream license), and **python-bidi**
+(LGPL); Markdown parsing uses **markdown-it-py** (MIT), and Word export uses
+**python-docx** (MIT). Their distribution license files remain in the frozen
+service. Rust dependencies retain their upstream license terms; the Wayland
+clipboard helper uses **wl-clipboard-rs** (MIT/Apache-2.0), and audio playback uses
+**rodio** (MIT/Apache-2.0).
 
 ## Optional speech runtimes and model weights
 

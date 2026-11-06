@@ -12,7 +12,7 @@ from pathlib import Path
 def main(arguments: list[str]) -> int:
     root = Path(__file__).resolve().parent.parent
     if getattr(sys, "frozen", False):
-        print("The Rune desktop currently runs from a source checkout. See docs/rune-desktop.md.", file=sys.stderr)
+        print("The Rune desktop is distributed as a separate native package. Launch OpenWhisper from that package, or run python main.py --rune from a source checkout. See docs/rune-desktop.md.", file=sys.stderr)
         return 1
     target = Path(os.environ.get("CARGO_TARGET_DIR", root / "native" / "target"))
     if not target.is_absolute():

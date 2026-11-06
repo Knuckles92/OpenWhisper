@@ -46,7 +46,7 @@ from services.settings import (
     settings_manager,
 )
 
-from ui_qt.overlay_state import OverlayState
+from services.overlay_state import OverlayState
 
 if TYPE_CHECKING:
     from services.application_controller import ApplicationController

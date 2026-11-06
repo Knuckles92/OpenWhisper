@@ -15,9 +15,13 @@ import threading
 import time
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtDBus import QDBusConnection
-from PyQt6.QtWidgets import QApplication
+from services.desktop_runtime import IS_NATIVE, QObject, QTimer, pyqtSignal, pyqtSlot
+if IS_NATIVE:
+    from services.desktop_runtime import QCoreApplication as QApplication
+    from services.native_desktop.session_bus import NativeSessionBus
+else:
+    from PyQt6.QtDBus import QDBusConnection
+    from PyQt6.QtWidgets import QApplication
 
 from services import hyprland
 from services._hotkey_common import is_mouse_key
@@ -119,7 +123,7 @@ class OmarchyControls(QObject):
         self._owned = {}
         self._status = "Starting desktop shortcuts"
         self._active_hotkeys = []
-        self.bus = QDBusConnection.sessionBus()
+        self.bus = NativeSessionBus(self) if IS_NATIVE else QDBusConnection.sessionBus()
         self.status_changed.connect(self._publish_status)
         self._state_timer = QTimer(self)
         self._state_timer.setInterval(250)
@@ -141,13 +145,17 @@ class OmarchyControls(QObject):
     def start(self) -> bool:
         if not hyprland.available() or not shutil.which("gdbus"):
             return False
-        if not self.bus.registerService(SERVICE):
-            return False
-        if not self.bus.registerObject(
-            PATH, INTERFACE, self, QDBusConnection.RegisterOption.ExportAllSlots
-        ):
-            self.bus.unregisterService(SERVICE)
-            return False
+        if IS_NATIVE:
+            if not self.bus.start():
+                return False
+        else:
+            if not self.bus.registerService(SERVICE):
+                return False
+            if not self.bus.registerObject(
+                PATH, INTERFACE, self, QDBusConnection.RegisterOption.ExportAllSlots
+            ):
+                self.bus.unregisterService(SERVICE)
+                return False
         self._thread = threading.Thread(
             target=self._run, name="omarchy-controls", daemon=True
         )
@@ -198,6 +206,7 @@ class OmarchyControls(QObject):
         c = self.controller
         recording = bool(c.recorder.is_recording)
         overlay = getattr(c.ui_controller, "overlay", None)
+        native_state = getattr(c.ui_controller, "state", {}) if IS_NATIVE else {}
         return json.dumps(
             {
                 "recording": recording,
@@ -205,8 +214,8 @@ class OmarchyControls(QObject):
                 "meeting": bool(c.is_meeting_active()),
                 "enabled": bool(c.hotkey_manager.program_enabled),
                 "shortcuts": self._status,
-                "window_active": c.ui_controller.main_window.isActiveWindow(),
-                "hands_free": recording and getattr(overlay, "hands_free", False) is True,
+                "window_active": bool(getattr(c.ui_controller.main_window, "isActiveWindow", lambda: False)()),
+                "hands_free": recording and (native_state.get("hands_free", False) if IS_NATIVE else getattr(overlay, "hands_free", False)) is True,
                 **_language_status(),
             }
         )
@@ -217,7 +226,8 @@ class OmarchyControls(QObject):
         try:
             data = json.loads(self.Status())
             overlay = getattr(self.controller.ui_controller, "overlay", None)
-            data["preview"] = getattr(overlay, "_streaming_preview_text", "")[-1600:]
+            preview = self.controller.ui_controller.state.get("preview", "") if IS_NATIVE else getattr(overlay, "_streaming_preview_text", "")
+            data["preview"] = preview[-1600:]
             data["available"] = not self._stop.is_set()
             now = time.time()
             if data == self._last_state and now - self._last_write < 3:
@@ -317,8 +327,11 @@ class OmarchyControls(QObject):
         self._wake.set()
         if self._thread:
             self._thread.join(timeout=3)
-        self.bus.unregisterObject(PATH)
-        self.bus.unregisterService(SERVICE)
+        if IS_NATIVE:
+            self.bus.close()
+        else:
+            self.bus.unregisterObject(PATH)
+            self.bus.unregisterService(SERVICE)
         self._active_hotkeys = []
         self._publish_status("Desktop shortcuts stopped")
 

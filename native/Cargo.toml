@@ -3,12 +3,27 @@ name = "openwhisper-rune"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+default-run = "openwhisper-rune"
+
+[[bin]]
+name = "openwhisper-clipboard"
+path = "src/clipboard_service.rs"
 
 [dependencies]
 rune = { git = "https://github.com/anomalyco/rune", rev = "781e2b6d87cd5f32d6f4365956fad4baaf24ee50", features = ["native-file-dialog"] }
-rune-kit = { git = "https://github.com/anomalyco/rune", rev = "781e2b6d87cd5f32d6f4365956fad4baaf24ee50" }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "781e2b6d87cd5f32d6f4365956fad4baaf24ee50", features = ["markdown"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+rodio = { version = "0.20", default-features = false, features = ["wav", "mp3", "flac", "vorbis"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tray-icon = { version = "0.21", default-features = false }
+objc2 = "0.5.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wl-clipboard-rs = "0.9"
+base64 = "0.22"
+rustix = { version = "1", features = ["event"] }
 
 [profile.dev]
 debug = 0

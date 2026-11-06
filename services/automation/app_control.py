@@ -19,7 +19,7 @@ from concurrent.futures import TimeoutError as FutureTimeout
 from functools import partial
 from typing import Any, Callable, Optional, TypeVar
 
-from PyQt6.QtCore import QCoreApplication, QObject, Qt, QThread, pyqtSignal, pyqtSlot
+from services.desktop_runtime import QCoreApplication, QObject, Qt, QThread, pyqtSignal, pyqtSlot
 
 from services.automation.control import (
     BUSY,

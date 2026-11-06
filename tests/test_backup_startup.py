@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import queue
 import subprocess
@@ -137,11 +138,70 @@ def test_normal_startup_holds_shared_lease_without_restore(tmp_path, monkeypatch
 
 
 def test_main_gates_restore_after_worker_modes_before_ui_import():
-    source = (ROOT / "main.py").read_text(encoding="utf-8")
-    gate = source.index("_APP_DATA_LEASE = acquire_startup_data_lease(data_root())")
-    assert source.index("_handle_early_cli()") < gate
-    assert source.index("_handle_package_self_test()\n\n# A restore") < gate
-    assert gate < source.index("from ui_qt.bootstrap import main")
+    tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+    startup_calls = {
+        node.value.func.id: node.lineno for node in tree.body
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+    }
+    native_route, = [
+        node for node in tree.body if isinstance(node, ast.If)
+        and any(isinstance(child, ast.ImportFrom)
+                and child.module == "services.native_desktop.bootstrap"
+                and any(alias.name == "main" for alias in child.names)
+                for child in node.body)
+    ]
+    expected_guard = ast.parse("sys.argv[1:] == ['--rune-backend']", mode="eval").body
+    assert ast.dump(native_route.test) == ast.dump(expected_guard)
+    native_import, = [node for node in native_route.body if isinstance(node, ast.ImportFrom)
+                      and node.module == "services.native_desktop.bootstrap"]
+    native_main, = [alias.asname or alias.name for alias in native_import.names if alias.name == "main"]
+    # The native route must terminate here, rather than falling through into
+    # the Qt lease/import path after its backend returns.
+    native_exit = native_route.body[-1]
+    assert isinstance(native_exit, ast.Raise)
+    assert isinstance(native_exit.exc, ast.Call) and isinstance(native_exit.exc.func, ast.Name)
+    assert native_exit.exc.func.id == "SystemExit"
+    assert len(native_exit.exc.args) == 1 and isinstance(native_exit.exc.args[0], ast.Call)
+    assert isinstance(native_exit.exc.args[0].func, ast.Name)
+    assert native_exit.exc.args[0].func.id == native_main
+
+    qt_gate, = [
+        node for node in tree.body if isinstance(node, ast.Try)
+        and any(isinstance(child, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "_APP_DATA_LEASE" for target in child.targets)
+                and isinstance(child.value, ast.Call)
+                and isinstance(child.value.func, ast.Name)
+                and child.value.func.id == "acquire_startup_data_lease"
+                for child in node.body)
+    ]
+    qt_import, = [node for node in tree.body if isinstance(node, ast.ImportFrom) and node.module == "ui_qt.bootstrap"]
+    assert startup_calls["_handle_early_cli"] < startup_calls["_handle_package_self_test"]
+    assert startup_calls["_handle_package_self_test"] < native_route.lineno < qt_gate.lineno < qt_import.lineno
+    assert any(isinstance(node, ast.Raise) for handler in qt_gate.handlers for node in handler.body)
+
+
+def test_native_startup_gates_restore_before_settings_and_controller():
+    tree = ast.parse((ROOT / "services/native_desktop/bootstrap.py").read_text(encoding="utf-8"))
+    main, = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main"]
+    gate, = [node for node in ast.walk(main) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Name) and node.func.id == "acquire_startup_data_lease"]
+    data_imports = [node for node in ast.walk(main) if isinstance(node, ast.ImportFrom)
+                    and node.module in {"services.guided_setup", "services.settings", "services.database",
+                                        "services.application_controller", "services.history_manager", "transcriber"}]
+    assert data_imports
+    assert all(gate.lineno < node.lineno for node in data_imports)
+    for name in ("acquire_ui_instance", "initialize_guided_setup", "NativeUIController", "ApplicationController"):
+        calls = [node for node in ast.walk(main) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == name]
+        assert calls and all(gate.lineno < node.lineno for node in calls), name
+    # The lease protects initialization and the running service, and is also
+    # released when initialization raises or the service returns early.
+    lease_scope, = [node for node in main.body if isinstance(node, ast.Try)
+                    and node.lineno <= gate.lineno <= node.end_lineno]
+    assert any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+               and node.func.id == "release_startup_data_lease"
+               for statement in lease_scope.finalbody for node in ast.walk(statement))
 
 
 def test_restart_command_drops_update_and_restore_args(monkeypatch):

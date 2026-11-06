@@ -86,6 +86,31 @@ fn stale_history_response_does_not_replace_the_selected_transcript() {
 }
 
 #[test]
+fn stale_library_response_does_not_replace_the_open_review() {
+    for method in ["meetings.detail", "walkthroughs.detail"] {
+        let mut s = State::new();
+        s.selected_item = Some("new".into());
+        s.data[method] = json!({"id":"new","title":"Current review"});
+        assert!(!s.receive(
+            method,
+            json!({"result":{"id":"old","title":"Older request"}})
+        ));
+        assert_eq!(s.data[method]["id"], "new");
+    }
+}
+
+#[test]
+fn meeting_acknowledgments_update_live_and_saved_views_and_explain_rejections() {
+    let mut s = State::new();
+    s.selected_item = Some("meeting-1".into());
+    s.data["meetings.current"] = json!({"id":"meeting-1","brief":"Before"});
+    s.receive("meetings.patch", json!({"result":{"ok":true,"item":{"id":"meeting-1","brief":"After"},"results":[{"ok":false,"reason":"That card was already removed"}]}}));
+    assert_eq!(s.data["meetings.current"]["brief"], "After");
+    assert_eq!(s.data["meetings.detail"]["brief"], "After");
+    assert_eq!(s.error.as_deref(), Some("That card was already removed"));
+}
+
+#[test]
 fn visible_text_stays_inside_narrow_and_wide_windows() {
     for size in [(720., 860.), (1220., 980.)] {
         for scene in [

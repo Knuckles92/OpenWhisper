@@ -499,6 +499,9 @@ class WalkthroughSession:
 
 def _write_png(image: "QImage", path: Path) -> bool:
     written = image.save(str(path), "PNG")
+    # Pillow returns None after a successful save; QImage returns a bool.
+    if written is None:
+        written = path.is_file() and path.stat().st_size > 0
     if not written:
         logger.error("Could not write walkthrough screenshot %s", path.name)
         # A full disk leaves a truncated file behind; it is not a screenshot.

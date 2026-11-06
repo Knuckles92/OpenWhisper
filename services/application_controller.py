@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
-from PyQt6.QtCore import QObject, pyqtSignal, QTimer
+from services.desktop_runtime import QObject, pyqtSignal, QTimer
 
 from config import config
 from services.component_runtime import activate_component
@@ -1063,6 +1063,10 @@ class ApplicationController(QObject):
             if dialog is not None and getattr(dialog, "_rule_dictation_state", "idle") != "idle":
                 return "Finish dictating the cleanup rule before backing up or restoring."
             self._backup_in_progress = True
+        flush_notes = getattr(self.ui_controller, "flush_scratchpad", None)
+        if callable(flush_notes) and not flush_notes():
+            self._backup_in_progress = False
+            return "Couldn't save the Scratchpad before backing up or restoring. Check free space and file permissions."
         central = self.ui_controller.main_window.centralWidget()
         self._backup_central_enabled = central.isEnabled() if central else False
         if central:
@@ -1108,11 +1112,11 @@ class ApplicationController(QObject):
 
     def _on_restore_staged(self, _path, error):
         if not error and not self._shutting_down:
-            from PyQt6.QtWidgets import QApplication
+            from services.desktop_runtime import QCoreApplication
             from services.backup_startup import RESTART_EXIT_CODE
 
             # main.py relaunches only after bootstrap closes every data writer.
-            QApplication.exit(RESTART_EXIT_CODE)
+            QCoreApplication.exit(RESTART_EXIT_CODE)
 
     def notify_main_ui_ready(self) -> None:
         """Called by bootstrap once the main window is shown.

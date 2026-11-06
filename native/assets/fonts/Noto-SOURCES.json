@@ -1,0 +1,42 @@
+{
+  "repository": "google/fonts",
+  "revision": "38411257417e616c5d4daa1b9e91a3dbcebe1c2e",
+  "fonts": [
+    {
+      "file": "NotoSansSC-Regular.ttf",
+      "source_url": "https://raw.githubusercontent.com/google/fonts/38411257417e616c5d4daa1b9e91a3dbcebe1c2e/ofl/notosanssc/NotoSansSC%5Bwght%5D.ttf",
+      "source_sha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+      "sha256": "d7fdc1b8144a0913c9863ac0e4bc478d5003e7ca3b47a19ca87a255a24a4edcf",
+      "bytes": 10595892,
+      "axes": {
+        "wght": 400
+      },
+      "license": "SIL Open Font License 1.1"
+    },
+    {
+      "file": "NotoSansArabic-Regular.ttf",
+      "source_url": "https://raw.githubusercontent.com/google/fonts/38411257417e616c5d4daa1b9e91a3dbcebe1c2e/ofl/notosansarabic/NotoSansArabic%5Bwdth%2Cwght%5D.ttf",
+      "source_sha256": "63111b5b2e074dd48cc67692e0a2726d86ee94c1c37fe8598257b7b4e87e869e",
+      "sha256": "1d43d031e8557d1a2b7f1978b19b59a620b17c0241a9effb52dc1d75f01ba16c",
+      "bytes": 194336,
+      "axes": {
+        "wght": 400,
+        "wdth": 100.0
+      },
+      "license": "SIL Open Font License 1.1"
+    },
+    {
+      "file": "NotoSansDevanagari-Regular.ttf",
+      "source_url": "https://raw.githubusercontent.com/google/fonts/38411257417e616c5d4daa1b9e91a3dbcebe1c2e/ofl/notosansdevanagari/NotoSansDevanagari%5Bwdth%2Cwght%5D.ttf",
+      "source_sha256": "14ec4af41f27482216d1c2229f417ff9b1425e1babb014e57d1d40d03229853e",
+      "sha256": "296a8cba3e2f5633410bea8c4555e894d2ac7bd850e2b5738e53059912e7a035",
+      "bytes": 218236,
+      "axes": {
+        "wght": 400,
+        "wdth": 100.0
+      },
+      "license": "SIL Open Font License 1.1"
+    }
+  ],
+  "instancer": "fontTools 4.68.0, instantiateVariableFont, static axes listed per font"
+}

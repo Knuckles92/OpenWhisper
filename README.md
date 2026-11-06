@@ -119,13 +119,15 @@ python main.py
 
 The macOS/Linux launcher selects the virtual environment and handles macOS app-bundle identification for Accessibility. Then follow [Get started](#get-started).
 
-### Optional: Rune desktop preview
+### Optional: Rune native desktop
 
 For the new native interface built with Anomalyco Rune, install a current stable
 Rust toolchain alongside the Python environment, then run `python main.py --rune`.
-It includes recording, files, meetings, walkthroughs, searchable recent history,
-and light/dark settings. Advanced controls still open the existing dialogs.
-See [Rune desktop setup and preview](docs/rune-desktop.md).
+It includes recording, batch files, meeting and walkthrough libraries, full
+history search, scratchpad, screenshot annotations, and native settings/model
+management. The Python service runs without Qt. Standalone native packages can
+also be built for Linux, Windows, and macOS without requiring an end-user Python
+or Rust installation. See [Rune desktop setup and packaging](docs/rune-desktop.md).
 
 ### Optional: launch from any terminal
 

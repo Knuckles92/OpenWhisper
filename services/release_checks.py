@@ -87,8 +87,7 @@ def run_workflow_smoke(*, repeats: int = 5) -> dict:
         raise ValueError("repeats must be between 1 and 1000")
     started = time.perf_counter()
     import numpy as np
-    from PyQt6.QtCore import QObject, Qt, pyqtSignal, pyqtSlot
-    from PyQt6.QtWidgets import QApplication
+    from services.desktop_runtime import IS_NATIVE, QCoreApplication, QObject, Qt, pyqtSignal, pyqtSlot
     from services.audio_processor import AudioProcessor
     from services.database import DatabaseManager
     from services.streaming_transcriber import StreamingTranscriber
@@ -105,7 +104,14 @@ def run_workflow_smoke(*, repeats: int = 5) -> dict:
         def receive(self, text, final):
             self.values.append((text, final))
 
-    qt_app = QApplication.instance() or QApplication([])
+    if IS_NATIVE:
+        qt_app = QCoreApplication.instance() or QCoreApplication([])
+    else:
+        # Keep the Qt workflow widget-capable, including when another release
+        # check opens a dialog later in the same process. A QCoreApplication
+        # cannot be upgraded to QApplication after it has been created.
+        from PyQt6.QtWidgets import QApplication
+        qt_app = QApplication.instance() or QApplication([])
     delivery = Delivery()
     decoder = _FixtureDecoder()
     stream = StreamingTranscriber(SimpleNamespace(model=decoder), chunk_duration_sec=.1, overlap_sec=0)

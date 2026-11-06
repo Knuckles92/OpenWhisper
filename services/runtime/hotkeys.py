@@ -8,12 +8,12 @@ import sys
 import time
 from typing import TYPE_CHECKING, Dict, Optional
 
-from PyQt6.QtCore import QTimer, Qt
+from services.desktop_runtime import IS_NATIVE, QTimer, Qt
 
 from config import config
 from services import synthetic_keys, text_transforms
 from services._hotkey_common import OrderedDispatcher
-from services.hotkey_manager import HotkeyManager, USE_PYNPUT_BACKEND
+from services.hotkey_manager import HotkeyManager, USE_PYNPUT_BACKEND, is_accessibility_trusted
 from services.cleanup_profiles import load_cleanup_profiles
 from services.actions.model import load_actions
 from services.hotkey_conflicts import ACTION, PROFILE, TRANSFORM, hotkey_conflict
@@ -25,7 +25,7 @@ from services.settings import (
     resolve_recording_trigger_mode,
     settings_manager,
 )
-from ui_qt.overlay_state import OverlayState
+from services.overlay_state import OverlayState
 
 if TYPE_CHECKING:
     from services.application_controller import ApplicationController
@@ -58,13 +58,9 @@ _LATCHED = "latched"
 # (macOS/Linux), which cannot suppress global keys. On Windows the keyboard
 # backend swallows hotkeys globally, so none of this machinery is imported or
 # defined there.
-if USE_PYNPUT_BACKEND:
+if USE_PYNPUT_BACKEND and not IS_NATIVE:
     from PyQt6.QtCore import QObject, QEvent
     from PyQt6.QtWidgets import QApplication
-
-    from services.hotkey_manager import (
-        is_accessibility_trusted,
-    )
 
     _MAC_NATIVE_SHIFT = 1 << 17
     _MAC_NATIVE_CTRL = 1 << 18
@@ -469,9 +465,12 @@ class HotkeyRuntime:
             or self._accessibility_intro_seen()
         ):
             return
-        from ui_qt.dialogs.accessibility_dialog import show_accessibility_setup
+        if IS_NATIVE:
+            self.controller.ui_controller.show_accessibility_setup()
+        else:
+            from ui_qt.dialogs.accessibility_dialog import show_accessibility_setup
 
-        show_accessibility_setup(self.controller.ui_controller.main_window)
+            show_accessibility_setup(self.controller.ui_controller.main_window)
 
     def update_hotkeys(self, hotkeys: Dict[str, str]) -> None:
         logger.info(f"Updating hotkeys: {hotkeys}")
@@ -577,7 +576,7 @@ class HotkeyRuntime:
         keys. On Windows the keyboard backend already swallows hotkeys globally
         and its HotkeyManager has no ``handle_hotkey_press`` method.
         """
-        if not USE_PYNPUT_BACKEND:
+        if not USE_PYNPUT_BACKEND or IS_NATIVE:
             return
 
         app = QApplication.instance()

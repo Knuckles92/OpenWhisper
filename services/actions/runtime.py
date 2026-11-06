@@ -37,7 +37,7 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Any, Callable, Optional
 
-from PyQt6.QtCore import QCoreApplication, QObject, pyqtSignal, pyqtSlot
+from services.desktop_runtime import QCoreApplication, QObject, pyqtSignal, pyqtSlot
 
 from services.actions.model import (
     Action,

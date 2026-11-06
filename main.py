@@ -164,7 +164,8 @@ def _handle_early_cli() -> None:
 
         raise SystemExit(rune_main(sys.argv[2:]))
     if sys.argv[1:] == ["--rune-backend"]:
-        from services.rune_bridge import reserve_output
+        os.environ["OPENWHISPER_DESKTOP_RUNTIME"] = "native"
+        from services.native_desktop.bootstrap import reserve_output
 
         reserve_output()
     if sys.argv[1:2] in (["-h"], ["--help"]):
@@ -285,12 +286,13 @@ def _early_update_gate() -> None:
 
 _early_update_gate()
 native_libraries.register_cuda_dll_directories()
-native_libraries.register_qt_icu_directories()
+if sys.argv[1:] != ["--rune-backend"]:
+    native_libraries.register_qt_icu_directories()
 native_libraries.preload_cuda_libraries()
 _activate_downloadable_components()
 _patch_subprocess_for_windows()
 
-if sys.platform.startswith("linux"):
+if sys.platform.startswith("linux") and sys.argv[1:] != ["--rune-backend"]:
     from services.linux_deps import check_linux_dependencies
 
     if check_linux_dependencies() != 0:
@@ -299,6 +301,11 @@ if sys.platform.startswith("linux"):
 # PyQt imports in the self-test must happen only after Windows ICU directories
 # and Linux shared-library preflight have been configured.
 _handle_package_self_test()
+
+if sys.argv[1:] == ["--rune-backend"]:
+    from services.native_desktop.bootstrap import main as native_desktop_main
+
+    raise SystemExit(native_desktop_main())
 
 # A restore must finish before the UI can import settings or open SQLite. Keep
 # the shared data lease for the process lifetime after any pending restore.

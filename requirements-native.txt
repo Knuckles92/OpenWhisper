@@ -1,0 +1,39 @@
+# Runtime dependencies for the Qt-free Rune service.
+# Same speech/automation services as requirements.txt; no Qt package.
+sounddevice>=0.5.0
+numpy>=1.24.0
+keyboard>=0.13.5 ; sys_platform == "win32"
+pynput>=1.7.6 ; sys_platform != "win32"
+pywin32>=311 ; sys_platform == "win32"
+openai>=1.66.0
+certifi>=2024.2.2
+faster-whisper>=1.0.0
+av>=11,<19
+python-dotenv>=1.0.0
+keyring>=25.0
+SecretStorage>=3.3.3 ; sys_platform == "linux"
+sqlalchemy>=2.0.0
+pypdf>=5.0.0
+python-docx>=1.1.0
+Pillow>=11.3.0
+reportlab[shaping]>=4.4.4,<5
+markdown-it-py>=4,<5
+python-pptx>=1.0.0
+openpyxl>=3.1.0
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+mcp>=2.2,<3
+httpx>=0.28.1
+websockets>=13.0
+cryptography>=42.0
+soundcard>=0.4.3 ; sys_platform == "win32" or sys_platform == "linux"
+pyobjc-framework-ScreenCaptureKit>=10.0 ; sys_platform == "darwin"
+pyobjc-framework-CoreMedia>=10.0 ; sys_platform == "darwin"
+pyobjc-framework-Quartz>=10.0 ; sys_platform == "darwin"
+
+# Native Hyprland/Omarchy session controls.
+dbus-next>=0.2.3 ; sys_platform == "linux"
+
+# Unicode PDF shaping and bidirectional text.
+uharfbuzz>=0.57.0
+python-bidi>=0.6.12
