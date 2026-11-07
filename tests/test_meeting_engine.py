@@ -2508,6 +2508,9 @@ def test_background_end_persists_report_while_next_meeting_runs(
         runtime._engine = new
         new.add_listener(lambda kind, payload: runtime._route_engine_event(new, kind, payload))
         new.start()
+        # Speaker readiness emits status from its own startup thread. Let it
+        # settle before observing only the old meeting's completion signals.
+        assert new.wait_for_processing(5)
         controller.meeting_active = True
         controller.meeting_state_changed.reset_mock()
         controller.restore_local_engine.reset_mock()

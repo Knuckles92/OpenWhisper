@@ -10,7 +10,7 @@ from queue import Empty, SimpleQueue
 
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout
+from PyQt6.QtWidgets import QDialog, QVBoxLayout
 
 from meeting.platform import (
     SCREEN_RECORDING_SETTINGS_URL,
@@ -64,7 +64,7 @@ class MeetingSetupDialog(QDialog):
 
         self.audio_status = self._label("Microphone and system audio have not been checked.")
         layout.addWidget(self.audio_status)
-        self.audio_button = Button("Check microphone and system audio")
+        self.audio_button = Button("Check audio")
         self.audio_button.clicked.connect(self._check_audio)
         layout.addWidget(self.audio_button)
         self.audio_settings = Button("Open System Settings")
@@ -74,11 +74,12 @@ class MeetingSetupDialog(QDialog):
         self.audio_settings.hide()
         layout.addWidget(self.audio_settings)
 
-        footer = QHBoxLayout()
+        # Stack actions so enlarged fonts and the microphone-only action fit
+        # without squeezing button labels in a narrow dialog.
+        footer = QVBoxLayout()
         cancel = Button("Back" if starting else "Close")
         cancel.clicked.connect(self.reject)
         footer.addWidget(cancel)
-        footer.addStretch()
         self.skip_button = Button("Start anyway")
         self.skip_button.setVisible(starting)
         self.skip_button.clicked.connect(self.accept)
