@@ -31,6 +31,7 @@ def _written(capture):
 def _wait(review):
     for _ in range(500):
         if not review._busy:
+            assert not review.notice.text().startswith("Couldn't finish:"), review.notice.text()
             return
         QTest.qWait(10)
     pytest.fail("Review worker did not finish")

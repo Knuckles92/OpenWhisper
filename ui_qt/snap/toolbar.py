@@ -21,7 +21,6 @@ from ui_qt.snap.annotations import SWATCHES, Tool
 from ui_qt.snap.chrome import chrome_font, paint_panel
 from ui_qt.snap.icons import paint_icon
 from ui_qt.utils.palette import Palette
-from ui_qt.widgets.capture_delay import CaptureDelay
 
 BUTTON = 34
 SWATCH = 26
@@ -150,6 +149,10 @@ class SnapToolbar(QWidget):
     def __init__(self, parent: QWidget | None, palette: Palette, *, live: bool = False,
                  flags: Qt.WindowType = Qt.WindowType.Widget,
                  mark_shortcuts: dict[str, str] | None = None) -> None:
+        # The delay widget also uses Snap's painting helpers. Defer this
+        # import so opening the Walkthrough tab first cannot form a cycle.
+        from ui_qt.widgets.capture_delay import CaptureDelay
+
         super().__init__(parent, flags)
         if live:
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
