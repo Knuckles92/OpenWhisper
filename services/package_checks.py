@@ -35,6 +35,7 @@ ON_DEMAND_MODULES = (
     "services.walkthrough.finish",
     "services.walkthrough.storage",
     "ui_qt.dialogs.cleanup_levels",
+    "ui_qt.dialogs.meeting_setup",
     "ui_qt.dialogs.settings_microphones",
     "ui_qt.dialogs.stats_dialog",
     "ui_qt.history_actions",

@@ -2555,6 +2555,17 @@ class TestApplicationController:
         assert controller.recorder.is_recording
         assert ui.main_window.is_recording
 
+    def test_dictation_is_refused_while_meeting_setup_owns_audio(self):
+        controller = self._create_controller()
+        ui = controller.ui_controller
+        ui._meeting_setup_open = True
+
+        assert not ui.start_recording()
+
+        assert not controller.recorder.is_recording
+        assert not ui.is_recording
+        assert "Close Meeting Mode setup before using Quick Record." in ui.statuses
+
     def test_toggle_recording_is_refused_during_a_meeting(self):
         controller = self._create_controller()
         controller.meeting_active = True

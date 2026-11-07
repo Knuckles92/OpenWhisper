@@ -2549,6 +2549,9 @@ class ApplicationController(QObject):
         if self._backup_in_progress:
             self.status_update.emit("Wait for backup or restore preparation to finish")
             return True
+        if getattr(getattr(self, "ui_controller", None), "_meeting_setup_open", False) is True:
+            self.status_update.emit("Close Meeting Mode setup before using Quick Record.")
+            return True
         if not self.is_meeting_active():
             return False
         logger.info("Dictation start refused: Meeting Mode is active")

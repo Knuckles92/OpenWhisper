@@ -455,7 +455,8 @@ class TestMeetingSettings:
         self.resolve_port = resolve_meeting_server_port
 
     def test_defaults_come_from_config(self):
-        assert self.resolve_whisper_model({}) == (config.MEETING_ASR_MODEL or config.MEETING_WHISPER_MODEL)
+        settings = {self.keys.SELECTED_MODEL: "local_whisper"}
+        assert self.resolve_whisper_model(settings) == (config.MEETING_ASR_MODEL or config.MEETING_WHISPER_MODEL)
         assert self.resolve_language({}) == config.MEETING_LANGUAGE
         assert self.resolve_provider({}) == "openrouter"
         assert self.resolve_llm_model({}) == config.MEETING_LLM_MODEL
@@ -561,7 +562,7 @@ class TestMeetingSettings:
             self.keys.MEETING_SPEAKER_ID_BACKEND: "not-a-backend",
             self.keys.MEETING_SERVER_BIND: "everywhere",
         }
-        assert self.resolve_whisper_model(saved) == (config.MEETING_ASR_MODEL or config.MEETING_WHISPER_MODEL)
+        assert self.resolve_whisper_model(saved) == self.resolve_whisper_model({})
         assert self.resolve_language(saved) == config.MEETING_LANGUAGE
         assert self.resolve_provider(saved) == "openrouter"
         assert self.resolve_llm_model(saved) == config.MEETING_LLM_MODEL
@@ -985,9 +986,28 @@ def test_mlx_meeting_default_preserves_explicit_selections(monkeypatch):
     from services import settings as module
     from services.settings import resolve_meeting_whisper_model
 
-    defaults = {**module.SETTING_DEFAULTS, SettingsKey.MEETING_ASR_MODEL: "parakeet-v3-mlx"}
+    defaults = {
+        **module.SETTING_DEFAULTS,
+        SettingsKey.SELECTED_MODEL: "parakeet_mlx",
+        SettingsKey.MEETING_ASR_MODEL: "parakeet-v3-mlx",
+    }
     monkeypatch.setattr(module, "SETTING_DEFAULTS", defaults)
     assert resolve_meeting_whisper_model({}) == "parakeet-v3-mlx"
     assert resolve_meeting_whisper_model({SettingsKey.MEETING_WHISPER_MODEL: "auto"}) == "auto"
     assert resolve_meeting_whisper_model({SettingsKey.MEETING_WHISPER_MODEL: "tiny"}) == "tiny"
     assert resolve_meeting_whisper_model({SettingsKey.MEETING_ASR_MODEL: "parakeet-v3"}) == "parakeet-v3"
+
+
+def test_meeting_inherits_quick_record_parakeet_unless_explicitly_set(monkeypatch):
+    from services import settings as module
+
+    monkeypatch.setattr("config.parakeet_default_supported", lambda: True)
+    defaults = {**module.SETTING_DEFAULTS, SettingsKey.SELECTED_MODEL: "parakeet"}
+    monkeypatch.setattr(module, "SETTING_DEFAULTS", defaults)
+    resolve = module.resolve_meeting_whisper_model
+    assert resolve({}) == "parakeet-v3"
+    choices = {SettingsKey.LOCAL_ASR_MODELS: {"parakeet": "orukeet-v0.1"}}
+    assert resolve(choices) == "orukeet-v0.1"
+    assert resolve({**choices, SettingsKey.MEETING_WHISPER_MODEL: "auto"}) == "auto"
+    assert resolve({**choices, SettingsKey.MEETING_ASR_MODEL: "nemotron-3.5"}) == "nemotron-3.5"
+    assert resolve({**choices, SettingsKey.SELECTED_MODEL: "parakeet_unified"}) != "parakeet-unified-en"

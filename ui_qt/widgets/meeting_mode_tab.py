@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from meeting.platform import meeting_mode_supported, meeting_unsupported_os_name
+from meeting.platform import meeting_mode_supported, meeting_setup_available, meeting_unsupported_os_name
 from meeting.time_utils import format_meeting_identity_meta
 from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
 from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton, start_row
@@ -353,6 +353,7 @@ class MeetingModeTab(QWidget):
     """Full-page tab with Meeting Mode session controls."""
 
     start_requested = pyqtSignal(bool, str)  # cloud_enabled, meeting brief
+    setup_requested = pyqtSignal()
     demo_requested = pyqtSignal(bool)  # cloud_enabled
     pause_requested = pyqtSignal()
     resume_requested = pyqtSignal()
@@ -809,6 +810,10 @@ class MeetingModeTab(QWidget):
         )
         self.start_button.clicked.connect(self._on_start_clicked)
         idle_layout.addLayout(start_row(self.start_button))
+        if meeting_setup_available():
+            setup_button = Button("Meeting setup…")
+            setup_button.clicked.connect(self.setup_requested.emit)
+            idle_layout.addLayout(start_row(setup_button))
 
         self.demo_button = Button("Load demo meeting")
         self.demo_button.setObjectName("meetingDemoButton")

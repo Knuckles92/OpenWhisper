@@ -85,6 +85,13 @@ def meeting_mode_supported(
     return False
 
 
+def meeting_setup_available() -> bool:
+    """Include Linux preview hosts with a system-audio implementation."""
+    return meeting_mode_supported() or (
+        sys.platform.startswith("linux") and linux_meeting_implementation_ready()
+    )
+
+
 def meeting_unsupported_os_name(platform: Optional[str] = None) -> str:
     """User-facing OS name for unsupported-platform copy."""
     platform = platform or sys.platform

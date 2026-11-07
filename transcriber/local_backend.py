@@ -224,6 +224,10 @@ class LocalWhisperBackend(TranscriptionBackend):
         """True when construction skipped ``_load_model`` and nothing has tried yet."""
         return self._load_deferred
 
+    def resolve_auto_model(self) -> str:
+        """Resolve the same model the loader would use, without loading it."""
+        return self._detect_hardware()[2]
+
     def _load_model(self, *, cancel_event=None):
         """Load the faster-whisper model from the local cache only.
 

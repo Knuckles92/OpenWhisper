@@ -135,6 +135,8 @@ When a package upgrade or pull replaces the app while it runs, OpenWhisper offer
 
 For meetings, open **Meeting Mode**. Add an optional brief to guide AI notes and the live copilot; you can edit it during the meeting. After transcription, **Continue in the background** lets you start another meeting while reports finish. Find results in **Past Meetings**.
 
+Before the first meeting, setup checks for missing speech runtimes and models and offers to download them. Choose **Check microphone and system audio**, then speak and play sound through the output your calls use. Test audio is discarded. You can start after the check even if setup is incomplete, but missing models or audio may prevent a usable transcript. On macOS, denied system-audio permission offers a microphone-only start. Reopen these checks with **Meeting setup…**; Linux preview hosts include the same setup. Unless you save a meeting-specific model, compatible computers reuse your selected native Parakeet model.
+
 Optional [insight review](docs/meeting-insight-review.md) helps clarify uncertain decisions and commitments. [Fast judgments](docs/typesafe-fast-judgments.md) add citation checks, meaning-based history search, and live meeting cues; enable them under **Meeting Mode → Fast judgments**, with a TypeSafe key, the OpenRouter key you already use, or your own text model. With a model on this computer they send nothing, and live cues and history search work even with AI insights off.
 
 ### Hotkeys

@@ -258,6 +258,7 @@ class UIController(QObject):
 
         self.main_window = MainWindow()
         self._meeting_recovery_scan_dialog: Optional[QMessageBox] = None
+        self._meeting_setup_open = False
         from ui_qt.utils.desktop import is_wayland
 
         self.overlay = WaveformOverlay(self.main_window if is_wayland() else None)
@@ -524,6 +525,7 @@ class UIController(QObject):
 
     def _connect_meeting_tab(self, meeting_tab):
         meeting_tab.start_requested.connect(self._on_meeting_start_requested)
+        meeting_tab.setup_requested.connect(self._open_meeting_setup)
         meeting_tab.demo_requested.connect(self._on_meeting_demo_requested)
         meeting_tab.pause_requested.connect(
             lambda: self.on_meeting_pause and self.on_meeting_pause()
@@ -1888,7 +1890,7 @@ class UIController(QObject):
         """
         import sys
 
-        from meeting.platform import linux_meeting_implementation_ready
+        from meeting.platform import linux_meeting_implementation_ready, meeting_setup_available
         from ui_qt.dialogs.meeting_linux_audio_dialog import (
             MeetingLinuxAudioDialog,
             ensure_meeting_linux_system_audio,
@@ -1902,9 +1904,20 @@ class UIController(QObject):
 
         if not acknowledge_unsupported_meeting_mode(self.main_window):
             return None
+        self.main_window.tabbed_content.unlock_meeting_tab()
+
+        if meeting_setup_available():
+            from services.meeting_setup import setup_complete
+
+            if self._meeting_setup_open:
+                return None
+            if not setup_complete():
+                policy = self._open_meeting_setup(starting=True)
+                if policy != "auto":
+                    return policy
+
         if not ensure_meeting_system_audio_permission(self.main_window):
             return None
-        self.main_window.tabbed_content.unlock_meeting_tab()
 
         # Linux implementation is complete for x86_64/aarch64 even while public
         # promotion remains gated; still run remediation after the ack.
@@ -1916,6 +1929,24 @@ class UIController(QObject):
                 return "disabled"
             return "required"
         return "auto"
+
+    def _open_meeting_setup(self, *, starting: bool = False) -> Optional[str]:
+        from ui_qt.dialogs.meeting_setup import MeetingSetupDialog
+
+        if self._meeting_setup_open or self._meeting_active:
+            return None
+        if self.is_recording:
+            self.set_status("Finish Quick Record before checking meeting audio.")
+            return None
+        self._meeting_setup_open = True
+        try:
+            dialog = MeetingSetupDialog(self.main_window, starting=starting)
+            try:
+                return dialog.system_audio_policy if dialog.exec() else None
+            finally:
+                dialog.deleteLater()
+        finally:
+            self._meeting_setup_open = False
 
     def _on_meeting_start_requested(self, cloud_enabled: bool, intent: str = ""):
         policy = self.ensure_meeting_start_readiness()

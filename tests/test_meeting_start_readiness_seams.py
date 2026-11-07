@@ -166,15 +166,15 @@ def test_hotkey_controller_uses_readiness_once(qapp):
 
 
 
-def test_ensure_meeting_start_readiness_linux_required(qapp):
+@pytest.mark.parametrize("decision,policy", [
+    ("ready", "required"), ("microphone_only", "disabled"), ("cancel", None),
+])
+def test_ensure_meeting_start_readiness_linux_after_setup(qapp, decision, policy):
     from ui_qt.ui_controller import UIController
 
-    ctrl = SimpleNamespace(
-        main_window=SimpleNamespace(
-            tabbed_content=SimpleNamespace(unlock_meeting_tab=MagicMock())
-        )
-    )
-    method = UIController.ensure_meeting_start_readiness.__get__(ctrl, UIController)
+    ctrl = _controller()
+    ctrl._meeting_setup_open = False
+    ctrl._open_meeting_setup = MagicMock()
     with patch("sys.platform", "linux"), patch(
         "ui_qt.dialogs.meeting_unsupported_dialog.acknowledge_unsupported_meeting_mode",
         return_value=True,
@@ -185,57 +185,10 @@ def test_ensure_meeting_start_readiness_linux_required(qapp):
         "meeting.platform.linux_meeting_implementation_ready",
         return_value=True,
     ), patch(
-        "ui_qt.dialogs.meeting_linux_audio_dialog.ensure_meeting_linux_system_audio",
-        return_value="ready",
-    ):
-        assert method() == "required"
-
-
-def test_ensure_meeting_start_readiness_linux_mic_only(qapp):
-    from ui_qt.ui_controller import UIController
-
-    ctrl = SimpleNamespace(
-        main_window=SimpleNamespace(
-            tabbed_content=SimpleNamespace(unlock_meeting_tab=MagicMock())
-        )
-    )
-    method = UIController.ensure_meeting_start_readiness.__get__(ctrl, UIController)
-    with patch("sys.platform", "linux"), patch(
-        "ui_qt.dialogs.meeting_unsupported_dialog.acknowledge_unsupported_meeting_mode",
-        return_value=True,
-    ), patch(
-        "ui_qt.dialogs.meeting_system_audio_dialog.ensure_meeting_system_audio_permission",
-        return_value=True,
-    ), patch(
-        "meeting.platform.linux_meeting_implementation_ready",
-        return_value=True,
+        "services.meeting_setup.setup_complete", return_value=True,
     ), patch(
         "ui_qt.dialogs.meeting_linux_audio_dialog.ensure_meeting_linux_system_audio",
-        return_value="microphone_only",
+        return_value=decision,
     ):
-        assert method() == "disabled"
-
-
-def test_ensure_meeting_start_readiness_linux_cancel(qapp):
-    from ui_qt.ui_controller import UIController
-
-    ctrl = SimpleNamespace(
-        main_window=SimpleNamespace(
-            tabbed_content=SimpleNamespace(unlock_meeting_tab=MagicMock())
-        )
-    )
-    method = UIController.ensure_meeting_start_readiness.__get__(ctrl, UIController)
-    with patch("sys.platform", "linux"), patch(
-        "ui_qt.dialogs.meeting_unsupported_dialog.acknowledge_unsupported_meeting_mode",
-        return_value=True,
-    ), patch(
-        "ui_qt.dialogs.meeting_system_audio_dialog.ensure_meeting_system_audio_permission",
-        return_value=True,
-    ), patch(
-        "meeting.platform.linux_meeting_implementation_ready",
-        return_value=True,
-    ), patch(
-        "ui_qt.dialogs.meeting_linux_audio_dialog.ensure_meeting_linux_system_audio",
-        return_value="cancel",
-    ):
-        assert method() is None
+        assert UIController.ensure_meeting_start_readiness(ctrl) == policy
+    ctrl._open_meeting_setup.assert_not_called()

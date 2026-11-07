@@ -7,6 +7,14 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+
+- **Meeting Mode setup** — prepare missing speech runtimes and models, then check microphone and system audio before the first meeting on supported platforms and Linux preview hosts. Reopen the checks with **Meeting setup…**. Test audio is discarded; downloads require a click and respect offline settings.
+
+### Changed
+
+- **Meeting speech model defaults** — Meeting Mode uses your selected native Parakeet model on compatible computers when no meeting-specific model has been saved.
+
 ## [2.8.5] - 2026-11-06
 
 ### Added

@@ -30,8 +30,9 @@ BLOCK_STALL_S = 3.0
 class CaptureSignalMonitor:
     """Observe one capture channel without blocking the audio callback."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, signal_rms: float = SIGNAL_RMS_INT16) -> None:
         self._lock = threading.Lock()
+        self._signal_rms = signal_rms
         self.signal_windows = 0
         self._generation = 0
         self.reset_stream()
@@ -78,7 +79,7 @@ class CaptureSignalMonitor:
             self._samples += int(frames.size)
             if self._samples >= max(1, int(round(rate * SIGNAL_WINDOW_S))):
                 rms = math.sqrt(self._sum_squares / self._samples)
-                if rms >= SIGNAL_RMS_INT16:
+                if rms >= self._signal_rms:
                     self._consecutive_signal_windows += 1
                     if (self._consecutive_signal_windows >= MIN_CONSECUTIVE_SIGNAL_WINDOWS
                             and (self._last_reported_signal_mono is None

@@ -2162,14 +2162,16 @@ class ComponentCoordinator:
         self._active: Set[str] = set()
         self._cancel_flags: Dict[str, threading.Event] = {}
 
-    def begin_install(self, component_id: str) -> Optional[threading.Event]:
+    def begin_install(
+        self, component_id: str, *, cancel: Optional[threading.Event] = None,
+    ) -> Optional[threading.Event]:
         """Claim an install and return its cancel event, or None if busy."""
         with self._lock:
             if component_id in self._active:
                 logger.debug(f"Install for '{component_id}' already in flight")
                 return None
             self._active.add(component_id)
-            event = threading.Event()
+            event = cancel if cancel is not None else threading.Event()
             self._cancel_flags[component_id] = event
             return event
 

@@ -129,6 +129,7 @@ class SettingsKey:
     UI_THEME: Final[str] = "ui_theme"
     # Optional dictation onboarding; absence on an established install is not new.
     GUIDED_SETUP_STATE: Final[str] = "guided_setup_state"
+    MEETING_SETUP_COMPLETE: Final[str] = "meeting_setup_complete"
     # Legacy keys kept for reading/migrating older settings files
     STREAMING_OVERLAY_ENABLED: Final[str] = "streaming_overlay_enabled"
     STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"
@@ -1641,11 +1642,11 @@ def resolve_meeting_asr_source(settings: Optional[Dict[str, Any]] = None) -> str
 def resolve_meeting_whisper_model(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Return a saved Meeting Mode speech model or the platform default."""
+    """Prefer the saved meeting model, then a compatible Parakeet default."""
     if settings is None:
         settings = settings_manager.load_all_settings()
 
-    from services.local_asr.catalog import MODELS
+    from services.local_asr.catalog import MODELS, selected_model
     extra = settings.get(SettingsKey.MEETING_ASR_MODEL)
     if isinstance(extra, str) and extra in MODELS and MODELS[extra].meeting:
         return extra
@@ -1654,6 +1655,11 @@ def resolve_meeting_whisper_model(
         from services.whisper_sources import custom_models
         if model in [*config.WHISPER_MODEL_CHOICES, *custom_models(settings)]:
             return model
+    from config import parakeet_default_supported
+
+    if (setting_value(SettingsKey.SELECTED_MODEL, settings) == "parakeet"
+            and (sys.platform == "darwin" or parakeet_default_supported())):
+        return selected_model("parakeet", settings)
     return (SETTING_DEFAULTS[SettingsKey.MEETING_ASR_MODEL]
             or SETTING_DEFAULTS[SettingsKey.MEETING_WHISPER_MODEL])
 
