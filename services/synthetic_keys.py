@@ -171,19 +171,25 @@ def _physical_key_reader() -> Optional[Callable[[int], bool]]:
     return lambda vk: bool(state(vk) & 0x8000)
 
 
+def native_windows_modifiers() -> frozenset[str] | None:
+    """OS modifier state, including virtual-key input with no hardware scan code."""
+    physical = _physical_key_reader()
+    if physical is None:
+        return None
+    return frozenset(name for name, keys in _WINDOWS_VIRTUAL_KEYS.items()
+                     if any(physical(vk) for vk in keys))
+
+
 def _windows_modifiers_held() -> bool:
     import keyboard
 
-    held = [name for name in _WINDOWS_MODIFIERS if keyboard.is_pressed(name)]
-    if not held:
-        return False
     # The hook keeps a modifier down when its key-up went to an elevated
-    # window. A copy waits for these keys and is refused while they are
-    # held, so the OS state has the last word.
-    physical = _physical_key_reader()
-    if physical is None:
-        return True
-    return any(physical(vk) for name in held for vk in _WINDOWS_VIRTUAL_KEYS[name])
+    # window, and may miss virtual-key modifiers from accessibility tools.
+    # The OS state has the last word in both directions.
+    native = native_windows_modifiers()
+    if native is not None:
+        return bool(native)
+    return any(keyboard.is_pressed(name) for name in _WINDOWS_MODIFIERS)
 
 
 def _mac_modifiers_held() -> bool:
@@ -206,6 +212,12 @@ def _modifier_probe() -> Optional[Callable[[], bool]]:
     if sys.platform == "darwin":
         return _mac_modifiers_held
     return None
+
+
+def modifiers_held() -> bool:
+    """Check once without waiting; for a scheduled follow-up paste on Qt."""
+    probe = _modifier_probe()
+    return probe is not None and probe()
 
 
 def wait_for_modifiers_released(timeout_s: float = MODIFIER_WAIT_S) -> bool:

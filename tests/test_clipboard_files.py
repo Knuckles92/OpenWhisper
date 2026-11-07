@@ -64,6 +64,18 @@ def test_files_and_their_text_go_on_together(tmp_path):
     assert not mime.hasImage()
 
 
+def test_text_only_has_no_file_format():
+    clipboard = FakeClipboard()
+    temporary = TemporaryClipboard(clipboard)
+
+    assert temporary.write_files([], "Agent instructions")
+
+    mime = clipboard.mimeData()
+    assert mime.text() == "Agent instructions"
+    assert not mime.hasUrls()
+    assert "text/uri-list" not in mime.formats()
+
+
 def test_without_text_only_the_files_go_on(tmp_path):
     clipboard = FakeClipboard()
     temporary = TemporaryClipboard(clipboard)

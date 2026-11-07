@@ -277,6 +277,7 @@ class ApplicationController(QObject):
     paste_last_original_requested = pyqtSignal()
     walkthrough_requested = pyqtSignal()
     screenshot_requested = pyqtSignal()
+    paste_walkthrough_requested = pyqtSignal(object)
     # A shortcut's outcome near the pointer; any thread, shown on the Qt thread.
     notice_requested = pyqtSignal(str, bool)
     # A push-and-hold recording latched into, or left, hands-free.
@@ -2759,6 +2760,7 @@ class ApplicationController(QObject):
         )
         self.walkthrough_requested.connect(lambda: self.walkthrough_runtime.toggle())
         self.screenshot_requested.connect(lambda: self.walkthrough_runtime.snap())
+        self.paste_walkthrough_requested.connect(self.ui_controller.paste_latest_walkthrough)
         self.notice_requested.connect(
             lambda text, done: self.ui_controller.show_notice(text, done=done)
         )

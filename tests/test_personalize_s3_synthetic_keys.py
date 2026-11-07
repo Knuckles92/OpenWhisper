@@ -148,7 +148,11 @@ def test_windows_reads_every_modifier_from_the_keyboard_hook(monkeypatch):
     keyboard = types.SimpleNamespace(is_pressed=lambda name: name in pressed, send=Mock())
     monkeypatch.setitem(sys.modules, "keyboard", keyboard)
     # The OS agrees with the hook; never the real keyboard's state.
-    monkeypatch.setattr(synthetic_keys, "_physical_key_reader", lambda: lambda vk: True)
+    monkeypatch.setattr(
+        synthetic_keys, "_physical_key_reader",
+        lambda: lambda vk: any(vk in keys and name in pressed
+                              for name, keys in synthetic_keys._WINDOWS_VIRTUAL_KEYS.items()),
+    )
 
     assert synthetic_keys._windows_modifiers_held() is False
     for name in ("ctrl", "alt", "shift", "windows"):

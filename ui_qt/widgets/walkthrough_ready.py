@@ -46,12 +46,19 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from services.settings import WalkthroughCopyFormat
+from services.settings import (
+    SettingsKey,
+    WalkthroughCopyFormat,
+    resolve_walkthrough_copy_format,
+    setting_value,
+    settings_manager,
+)
 from services.walkthrough.document import clock
 from ui_qt.utils.desktop import compositor_managed
 from ui_qt.utils.file_reveal import reveal_in_file_manager
 from ui_qt.utils.icons import design_icon
 from ui_qt.widgets.context_menu import context_menu
+from ui_qt.widgets.walkthrough_copy_tips import set_copy_tip
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +173,7 @@ class WalkthroughReadyCard(QWidget):
         self.setWindowTitle("Walkthrough")
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips, True)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setWindowFlags(
             Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
@@ -250,12 +258,16 @@ class WalkthroughReadyCard(QWidget):
             "Copy PDF", lambda: self._copy(WalkthroughCopyFormat.PDF))
         self.copy_agent_action = self._menu_action(
             "Copy for agent", lambda: self._copy(WalkthroughCopyFormat.AGENT_TASK))
-        self.copy_agent_action.setToolTip("The PDF with instructions to carry out the work in it")
         self.copy_word_action = self._menu_action(
             "Copy Word document", lambda: self._copy(WalkthroughCopyFormat.WORD))
         self.copy_markdown_action = self._menu_action(
             "Copy Markdown", lambda: self._copy(WalkthroughCopyFormat.AGENT))
-        self.copy_markdown_action.setToolTip("Markdown text with a file link to each screenshot")
+        for action, copy_format in (
+                (self.copy_pdf_action, WalkthroughCopyFormat.PDF),
+                (self.copy_agent_action, WalkthroughCopyFormat.AGENT_TASK),
+                (self.copy_word_action, WalkthroughCopyFormat.WORD),
+                (self.copy_markdown_action, WalkthroughCopyFormat.AGENT)):
+            set_copy_tip(action, copy_format)
         # The pointer leaves the card for the menu; don't let the card fade under it.
         self.menu.aboutToShow.connect(self._timer.stop)
         self.menu.aboutToHide.connect(self._linger)
@@ -283,6 +295,16 @@ class WalkthroughReadyCard(QWidget):
         if copied:
             self.title.setText(f"{result.name} copied")
             note = "write-up failed, copied as spoken" if result.write_up_error else "paste it into your agent"
+            settings = settings_manager.load_all_settings()
+            if resolve_walkthrough_copy_format(settings) == WalkthroughCopyFormat.AGENT_TASK:
+                if setting_value(SettingsKey.AUTO_PASTE, settings):
+                    note = "preparing to paste PDF, then instructions"
+                    if result.write_up_error:
+                        note = "write-up failed; preparing to paste as-spoken PDF, then instructions"
+                else:
+                    note = "paste instructions, then attach the PDF to your chat"
+                    if result.write_up_error:
+                        note = "write-up failed; paste instructions and attach the as-spoken PDF"
             self.subtitle.setText(f"{count} · {clock(result.duration_s)} — {note}")
         else:
             self.title.setText(f"{result.name} saved")
@@ -303,6 +325,15 @@ class WalkthroughReadyCard(QWidget):
         self.show()
         self.raise_()
         self._timer.start(SHOW_MS)
+
+    def show_paste_status(self, result, status: str) -> None:
+        """Replace manual-copy guidance only for the card being pasted."""
+        if self._result is None or self._result.pdf != result.pdf:
+            return
+        self.title.setText(result.name)
+        self.subtitle.setText(status)
+        self.adjustSize()
+        self._place()
 
     def _place(self) -> None:
         screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()

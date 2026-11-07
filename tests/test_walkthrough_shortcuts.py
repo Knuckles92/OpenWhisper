@@ -6,8 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from PyQt6.QtCore import QCoreApplication, QObject, pyqtSignal
-from PyQt6.QtGui import QColor, QImage
+from PyQt6.QtCore import QCoreApplication, QObject, QPointF, QRect, pyqtSignal
+from PyQt6.QtGui import QColor, QGuiApplication, QImage
 
 from services.hotkey_manager import format_hotkey_display
 from services.runtime import walkthrough as walkthrough_module
@@ -108,7 +108,7 @@ class FakePanel(QObject):
     def set_countdown(self, seconds):
         self.countdowns.append(seconds)
 
-    def add_shot(self, number, image, kept_at_s):
+    def add_shot(self, number, image, kept_at_s, *, source_rect=None):
         self.calls.append(("add", number, kept_at_s))
 
     def remove_shot(self, number):
@@ -122,6 +122,10 @@ class FakeDrawing(QObject):
     arming = pyqtSignal()
     drawn = pyqtSignal(object, object)
     enabled_changed = pyqtSignal(bool)
+    capture_changed = pyqtSignal()
+    capture_delay_changed = pyqtSignal(int)
+    capture_cancelled = pyqtSignal()
+    interaction_changed = pyqtSignal(bool)
 
     def __init__(self, mark_shortcuts):
         super().__init__()
@@ -130,6 +134,16 @@ class FakeDrawing(QObject):
         self.enabled = True
         self.busy = False
         self.mark_actions = []
+        self.capture_region = None
+        self.interacting = False
+        self.pending = False
+        self.countdown = 0
+
+    def set_capture_countdown(self, remaining, total=0):
+        self.countdown = remaining
+
+    def set_capture_pending(self, pending):
+        self.pending = pending
 
     def arm(self):
         if self.enabled and not self.busy:
@@ -149,6 +163,9 @@ class FakeDrawing(QObject):
             self.mark_actions.append(action)
 
     def pinned_at(self, position):
+        return ()
+
+    def pinned_on(self, screen):
         return ()
 
     def set_busy(self, busy):
@@ -324,6 +341,76 @@ def test_auto_mode_coalesces_clicks_and_finishes_after_the_pending_shot(h, auto)
     assert not h.ui.walkthrough_panel.auto_mode
 
 
+@pytest.mark.parametrize("dpr", [1.0, 1.5, 2.0])
+def test_auto_region_crops_clicks_and_drawings_with_marks_at_device_resolution(h, auto, dpr):
+    from ui_qt.snap import export
+    from ui_qt.snap.annotations import Step
+
+    screen = SimpleNamespace(geometry=lambda: QRect(-1920, -500, 1920, 1080))
+    rect = QRect(6, 4, 12, 10)
+    drawing = h.ui.drawing
+    drawing.capture_region = (screen, rect)
+    marks = (Step(QPointF(12, 8), 1, QColor("blue")),)
+    drawing.pinned_on = Mock(return_value=marks)
+    image = QImage(round(24 * dpr), round(16 * dpr), QImage.Format.Format_RGB32)
+    image.setDevicePixelRatio(dpr)
+    image.fill(QColor("#194754"))
+    expected = export.render(image, rect, marks)
+    keep_shot = Mock(wraps=h.runtime._keep_walkthrough_shot)
+    h.runtime._keep_walkthrough_shot = keep_shot
+
+    for make_capture in (lambda: auto.click(-120, 25), lambda: drawing.drawn.emit(screen, marks)):
+        make_capture()
+        if h.runtime._auto_timer.isActive():
+            h.runtime._auto_timer.timeout.emit()
+        snap = h.ui.snaps[-1]
+        assert snap.screen is screen
+        snap.active = False
+        snap.capture_rect = screen.geometry()
+        snap.kept.emit(image)
+        shot = auto.session.saved_shots()[-1]
+        saved = QImage(str(shot.path))
+        assert saved.size() == expected.size()
+        assert all(saved.pixelColor(x, y) == expected.pixelColor(x, y)
+                   for x in range(saved.width()) for y in range(saved.height()))
+        assert keep_shot.call_args.kwargs["source_rect"] == QRect(-1914, -496, 12, 10)
+    drawing.pinned_on.assert_called_once_with(screen)
+
+
+def test_closing_auto_region_discards_pending_capture_and_queued_close_click(h, auto):
+    drawing = h.ui.drawing
+    drawing.capture_region = (QGuiApplication.primaryScreen(), QRect(2, 2, 12, 10))
+    auto.click(20, 40)
+    h.runtime._auto_timer.timeout.emit()
+    pending = h.ui.snaps[-1]
+    close_at = time.monotonic() - 0.01  # A hook release already queued before Qt closes ×.
+    drawing.capture_region = None
+    drawing.capture_changed.emit()
+    h.runtime._on_click(auto.session, 20, 40, close_at)
+    h.runtime._auto_timer.timeout.emit()
+    assert pending.drops == 1
+    assert len(h.ui.snaps) == 1
+    assert not auto.session.saved_shots()
+    assert not h.runtime._auto_timer.isActive()
+
+    auto.click(-120, 25)
+    h.runtime._auto_timer.timeout.emit()
+    assert h.ui.snaps[-1].click_at == (-120, 25)
+    h.ui.snaps[-1].keep()
+    assert len(auto.session.saved_shots()) == 1
+
+
+def test_closing_region_while_finishing_does_not_leave_recording_waiting(h, auto):
+    auto.click(20, 40)
+    h.runtime.finish()
+    h.controller.stop_recording.assert_not_called()
+    h.ui.drawing.capture_region = None
+    h.ui.drawing.capture_changed.emit()
+    h.controller.stop_recording.assert_called_once()
+    assert not h.runtime._auto_timer.isActive()
+    assert not auto.session.saved_shots()
+
+
 def test_auto_mark_shortcuts_follow_the_live_toolbar(h, auto):
     drawing = h.ui.drawing
     register = h.controller.hotkey_manager.set_dynamic_hotkeys
@@ -397,6 +484,113 @@ def test_auto_draw_takes_priority_over_a_pending_click(h, auto):
     assert QImage(str(shot.path)).pixelColor(6, 8) != _image().pixelColor(6, 8)
     assert shot.kept_at_s == 12.5
     assert h.ui.snaps[2].take == WalkthroughSnapMode.REGION
+
+
+def test_delayed_drawings_restart_countdown_and_keep_one_combined_shot(h, auto):
+    from ui_qt.snap.annotations import Step
+
+    h.settings.values[SettingsKey.WALKTHROUGH_CAPTURE_DELAY] = 3
+    drawing = h.ui.drawing
+    drawing.arm()
+    screen = QGuiApplication.primaryScreen()
+    first = Step(QPointF(5, 5), 1, QColor("blue"))
+    second = Step(QPointF(15, 8), 2, QColor("blue"))
+    drawing.drawn.emit(screen, (first,))
+    assert drawing.pending and not drawing.busy
+    assert 2.8 < drawing.countdown <= 3
+    assert h.runtime._auto_timer.interval() == 3000
+    assert not h.ui.snaps
+
+    drawing.interacting = True
+    drawing.interaction_changed.emit(True)
+    assert not h.runtime._auto_timer.isActive()
+    assert drawing.countdown == 0
+    # A queued timeout cannot take a partial stroke.
+    h.runtime._auto_timer.timeout.emit()
+    assert not h.ui.snaps
+    drawing.interacting = False
+    drawing.interaction_changed.emit(False)
+    drawing.drawn.emit(screen, (first, second))
+    assert h.runtime._auto_timer.isActive()
+    assert not drawing.busy
+    assert h.runtime._auto_draw_pending == (screen, (first, second))
+
+    h.recorder.get_recording_duration = lambda: 16.0
+    h.runtime._auto_timer.timeout.emit()
+    (snap,) = h.ui.snaps
+    assert drawing.busy and drawing.pending and drawing.countdown == 0
+    snap.keep()
+    (shot,) = auto.session.saved_shots()
+    assert shot.kept_at_s == 16.0  # Words close at capture, not at the first mark.
+    assert not drawing.pending and not drawing.busy
+
+
+def test_capture_delay_changes_apply_to_pending_clicks_and_drawings(h, auto):
+    h.settings.values[SettingsKey.WALKTHROUGH_CAPTURE_DELAY] = 5
+    drawing = h.ui.drawing
+    auto.click(20, 40)
+    assert h.runtime._auto_timer.interval() == 5000
+    assert 4.8 < drawing.countdown <= 5
+    h.settings.values[SettingsKey.WALKTHROUGH_CAPTURE_DELAY] = 1
+    drawing.capture_delay_changed.emit(1)
+    assert h.runtime._auto_timer.interval() == 1000
+    assert 0.8 < drawing.countdown <= 1
+    auto.click(50, 60)
+    assert h.runtime._auto_position == (50, 60)
+    h.runtime._auto_timer.timeout.emit()
+    (snap,) = h.ui.snaps
+    assert snap.click_at == (50, 60)
+    snap.keep()
+
+    drawing.drawn.emit(QGuiApplication.primaryScreen(), ())
+    assert drawing.pending
+    h.settings.values[SettingsKey.WALKTHROUGH_CAPTURE_DELAY] = 0
+    drawing.capture_delay_changed.emit(0)
+    assert not h.runtime._auto_progress.isActive()
+    assert drawing.countdown == 0
+    h.runtime._auto_timer.timeout.emit()
+    assert len(h.ui.snaps) == 2
+
+
+@pytest.mark.parametrize("cancel", ["escape", "clear", "pause", "end"])
+def test_pending_delayed_drawing_is_cancelled_without_a_stray_capture(h, auto, cancel):
+    h.settings.values[SettingsKey.WALKTHROUGH_CAPTURE_DELAY] = 3
+    drawing = h.ui.drawing
+    drawing.drawn.emit(QGuiApplication.primaryScreen(), ())
+    if cancel in ("escape", "clear"):
+        drawing.capture_cancelled.emit()
+    elif cancel == "pause":
+        h.recorder.pause = lambda: setattr(h.recorder, "paused", True) or True
+        h.runtime.set_paused(True)
+    else:
+        h.controller.stop_recording()
+    assert not h.runtime._auto_timer.isActive()
+    assert not h.runtime._auto_progress.isActive()
+    assert not drawing.pending and drawing.countdown == 0
+    h.runtime._auto_timer.timeout.emit()
+    assert not h.ui.snaps
+
+
+@pytest.mark.parametrize("mid_stroke", [False, True])
+def test_done_keeps_pending_drawing_before_finishing(h, auto, mid_stroke):
+    h.settings.values[SettingsKey.WALKTHROUGH_CAPTURE_DELAY] = 5
+    drawing = h.ui.drawing
+    screen = QGuiApplication.primaryScreen()
+    drawing.drawn.emit(screen, ())
+    drawing.interacting = mid_stroke
+    if mid_stroke:
+        drawing.interaction_changed.emit(True)
+    h.runtime.finish()
+    h.controller.stop_recording.assert_not_called()
+    if mid_stroke:
+        assert not drawing.busy
+        drawing.interacting = False
+        drawing.interaction_changed.emit(False)
+        drawing.drawn.emit(screen, ())
+    (snap,) = h.ui.snaps
+    snap.keep()
+    assert auto.session.shot_count == 1
+    h.controller.stop_recording.assert_called_once()
 
 
 def test_auto_mode_drops_an_in_flight_shot_on_pause_or_end(h, auto):

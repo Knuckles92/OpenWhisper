@@ -44,6 +44,7 @@ class FakeUI:
         self.statuses = []
         self.copied_files = []
         self.ready = []
+        self.pasted_walkthroughs = []
         self.transcripts = []
         self.prefetches = 0
         self.main_window = SimpleNamespace(clear_partial_transcription=lambda: None)
@@ -81,6 +82,10 @@ class FakeUI:
 
     def show_walkthrough_ready(self, result, *, copied):
         self.ready.append((result, copied))
+
+    def paste_walkthrough(self, result, target):
+        assert self.ready[-1][0] is result
+        self.pasted_walkthroughs.append((result, target))
 
     def dismiss_walkthrough_panel(self):
         self.dismissed = getattr(self, "dismissed", 0) + 1
@@ -443,17 +448,66 @@ def test_finished_walkthrough_uses_preferred_copy(h, copy_format, pdf, markdown)
 
 def test_finished_walkthrough_agent_copy_has_pdf_and_action_prompt(h):
     h.settings.values[SettingsKey.WALKTHROUGH_COPY_FORMAT] = "agent_task"
+    h.settings.values[SettingsKey.AUTO_PASTE] = False
     _write_recording(h.audio, [_tone(4.0)])
     _record(h, [2.0], length_s=4.0)
 
     h.runtime.transcribe_audio_file(str(h.audio))
 
     (files, prompt), = h.ui.copied_files
-    assert files == [h.session.folder() / "walkthrough.pdf"]
-    assert str(files[0].resolve()) in prompt
+    assert files == []
+    assert str((h.session.folder() / "walkthrough.pdf").resolve()) in prompt
     assert "carry out the tasks and changes" in prompt
     assert h.ui.ready[0][1] is True
-    assert any("paste it into your agent" in status for status in h.ui.statuses)
+    assert any("paste the instructions, then drag the PDF" in status for status in h.ui.statuses)
+    assert h.ui.pasted_walkthroughs == []
+
+
+@pytest.mark.parametrize("copy_format", ["agent_task", "pdf", "both", "agent", "word"])
+@pytest.mark.parametrize("auto_paste", [True, False])
+def test_only_agent_auto_paste_uses_two_part_delivery(h, monkeypatch, copy_format, auto_paste):
+    h.settings.values[SettingsKey.WALKTHROUGH_COPY_FORMAT] = copy_format
+    h.settings.values[SettingsKey.AUTO_PASTE] = auto_paste
+    target = focus_context.AppIdentity("chat", "Chat", pid=42, window="chat-window")
+    service = SimpleNamespace(current_identity=Mock(return_value=target))
+    monkeypatch.setattr(focus_context, "get_service", lambda: service)
+    _write_recording(h.audio, [_tone(4.0)])
+    _record(h, [2.0], length_s=4.0)
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    if copy_format == "agent_task" and auto_paste:
+        assert h.ui.pasted_walkthroughs == [(h.ui.ready[-1][0], target)]
+    else:
+        assert h.ui.pasted_walkthroughs == []
+        service.current_identity.assert_not_called()
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_agent_auto_paste_waits_for_write_up_and_uses_delivered_pdf(h, monkeypatch, failed):
+    from services.walkthrough.write_up import WriteUpFailed
+
+    def write_up(result, shots, **kwargs):
+        if failed:
+            raise WriteUpFailed("Agent unavailable")
+        return dataclasses.replace(result, pdf=result.folder / "write-up.pdf", written_up=True)
+
+    queued = []
+    h.controller.walkthrough_executor = SimpleNamespace(submit=queued.append)
+    h.settings.values[SettingsKey.WALKTHROUGH_COPY_FORMAT] = "agent_task"
+    target = focus_context.AppIdentity("chat", "Chat", pid=42, window="chat-window")
+    monkeypatch.setattr(focus_context, "get_service", lambda: SimpleNamespace(current_identity=lambda: target))
+    _write_up_on(h, monkeypatch, write_up)
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+    assert h.ui.pasted_walkthroughs == []
+    queued[0]()
+
+    (result, destination), = h.ui.pasted_walkthroughs
+    assert destination == target
+    assert result is h.ui.ready[-1][0]
+    assert result.pdf.name == ("walkthrough.pdf" if failed else "write-up.pdf")
+    assert bool(result.write_up_error) == failed
 
 
 def test_each_section_is_cleaned_up_on_its_own(h, monkeypatch):

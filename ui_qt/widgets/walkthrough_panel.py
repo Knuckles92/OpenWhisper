@@ -27,7 +27,16 @@ import sys
 import time
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import QElapsedTimer, QEvent, QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import (
+    QElapsedTimer,
+    QEvent,
+    QPointF,
+    QRect,
+    QRectF,
+    Qt,
+    QTimer,
+    pyqtSignal,
+)
 from PyQt6.QtGui import (
     QColor,
     QCursor,
@@ -47,6 +56,7 @@ from ui_qt.utils.desktop import compositor_managed
 from ui_qt.utils.drag_move import DragToMove
 from ui_qt.utils.loudness import level_to_height
 from ui_qt.utils.palette import token_color
+from ui_qt.widgets.screenshot_flight import FLIGHT_S, ScreenshotFlight
 from ui_qt.widgets.walkthrough_icons import paint_icon
 
 #: The column's width, and its gap from the screen's right edge.
@@ -367,6 +377,7 @@ class WalkthroughPanel(QWidget):
         self._hover_shot = 0
         # Where the last frame drew each screenshot, by number as kept.
         self._shot_rects: dict[int, QRectF] = {}
+        self._flight: ScreenshotFlight | None = None
         # What Snap takes, the Screenshot shortcut's keys, and the seconds
         # left before an "In 3 seconds" snap (0: none counting down).
         self.snap_mode = WalkthroughSnapMode.REGION
@@ -388,6 +399,7 @@ class WalkthroughPanel(QWidget):
 
     def begin(self) -> None:
         """A walkthrough started recording: an empty column on the pointer's screen."""
+        self.end_capture_animation()
         self.column = WalkthroughColumn()
         self._scroll = self._scrolled_back = 0.0
         self._summary = ""
@@ -411,17 +423,51 @@ class WalkthroughPanel(QWidget):
         if self.state == self.RECORDING:
             self.column.hear(level)
 
-    def add_shot(self, number: int, image: QImage, kept_at_s: float = 0.0) -> None:
+    def add_shot(self, number: int, image: QImage, kept_at_s: float = 0.0,
+                 *, source_rect: QRect | QRectF | None = None) -> None:
         if self.state == self.RECORDING and not image.isNull():
+            self.end_capture_animation()
             # A thumbnail is all the column draws; a full screen is many MB.
             small = image.scaledToWidth(THUMB_PX, Qt.TransformationMode.SmoothTransformation)
             self.column.add_shot(number, small, self._now(), kept_at_s)
             # A new screenshot brings the newest back into view.
             self._scrolled_back = 0.0
+            if source_rect is not None and not source_rect.isEmpty() and self.isVisible():
+                target = self._flight_target(number)
+                if target is not None:
+                    if self._flight is None:
+                        self._flight = ScreenshotFlight(self)
+                    # More detail during lift-off, bounded even for a 4K screen.
+                    flying = image.scaled(1600, 1000, Qt.AspectRatioMode.KeepAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation)
+                    self._flight.start(number, flying, QRectF(source_rect), target)
+            self.update()
+
+    def end_capture_animation(self) -> None:
+        """Land before the next capture, or when the walkthrough closes."""
+        if self._flight is not None:
+            self._flight.land()
+            self.update()
+
+    def _flight_target(self, number: int) -> QRectF | None:
+        body = self._body_rect()
+        for kind, item, top, _height in self._layout(body.width()):
+            if kind == "shot" and item.number == number:
+                w, h = self._shot_size(item, body.width())
+                rect = QRectF(body.left() + (body.width() - w) / 2,
+                              body.top() + top - self._scroll, w, h)
+                return rect.translated(QPointF(self.pos()))
+        return None
+
+    def hideEvent(self, event) -> None:
+        self.end_capture_animation()
+        super().hideEvent(event)
 
     def remove_shot(self, number: int) -> None:
         """Screenshot ``number`` (as kept) left the walkthrough; its words stay."""
         if self.column.remove_shot(number):
+            if self._flight is not None and self._flight.number == number:
+                self.end_capture_animation()
             self._settle_hover()
 
     def move_shot(self, number: int, step: int) -> None:
@@ -474,6 +520,7 @@ class WalkthroughPanel(QWidget):
 
     def finish(self) -> None:
         """The recording stopped: close the ticks into lines while it is written."""
+        self.end_capture_animation()
         self._close_menu()
         self._countdown = 0
         if self.state != self.RECORDING:
@@ -488,12 +535,14 @@ class WalkthroughPanel(QWidget):
         """The document is ready: say what it came to, then fade."""
         if self.state not in (self.RECORDING, self.WRITING):
             return
+        self.end_capture_animation()
         count = f"{result.shots} screenshot{'' if result.shots == 1 else 's'}"
         self._summary = f"{clock(result.duration_s)} · {count}"
         self._enter(self.DONE)
 
     def dismiss(self) -> None:
         """Canceled or failed: fade at once."""
+        self.end_capture_animation()
         self._close_menu()
         self._hold(False)
         if self.state in (self.RECORDING, self.WRITING, self.DONE):
@@ -523,6 +572,14 @@ class WalkthroughPanel(QWidget):
 
     def _advance(self) -> None:
         now = self._now()
+        if self._flight is not None and self._flight.number:
+            shot = next((item for item in self.column.items
+                         if isinstance(item, ShotItem) and item.number == self._flight.number), None)
+            target = self._flight_target(self._flight.number)
+            if shot is None or target is None or now - shot.born >= FLIGHT_S:
+                self.end_capture_animation()
+            else:
+                self._flight.advance((now - shot.born) / FLIGHT_S, target)
         dt, self._last = min(0.1, now - self._last), now
         if self.state == self.RECORDING and not self.paused:
             self.column.advance(dt, now)
@@ -727,6 +784,12 @@ class WalkthroughPanel(QWidget):
         """Where the footer's buttons begin; the rule above them is 12 px higher."""
         return self._inner().bottom() - 2 * FOOT_H - FOOT_GAP
 
+    def _body_rect(self) -> QRectF:
+        inner = self._inner()
+        # Title, recording status, divider and the gap below the header.
+        top = inner.top() + 78
+        return QRectF(inner.left(), top, inner.width(), self._footer_top() - 26 - top)
+
     def _cancel_widening(self) -> float:
         """0 while it records; then Cancel grows to fill its row, the others gone."""
         if self.state == self.WRITING:
@@ -791,10 +854,9 @@ class WalkthroughPanel(QWidget):
         painter.drawRoundedRect(card.adjusted(0.5, 0.5, -0.5, -0.5), RADIUS, RADIUS)
 
         inner = self._inner()
-        top = self._paint_header(painter, inner)
+        self._paint_header(painter, inner)
         foot = self._footer_top() - 12
-        body = QRectF(inner.left(), top, inner.width(), foot - 14 - top)
-        self._paint_body(painter, body)
+        self._paint_body(painter, self._body_rect())
         painter.setPen(QPen(token_color("border"), 1.0))
         painter.drawLine(QPointF(inner.left(), foot), QPointF(inner.right(), foot))
         self._paint_footer(painter)
@@ -1074,6 +1136,15 @@ class WalkthroughPanel(QWidget):
         scale = 0.82 + 0.18 * ease_out_back(t)
         rect = QRectF(left + (width - w) / 2, top, w, h)
         self._shot_rects[shot.number] = rect
+        if self._flight is not None and self._flight.number == shot.number:
+            # Reserve its destination while the real picture travels above
+            # the desktop; there is only one visible copy of the screenshot.
+            painter.save()
+            painter.setPen(QPen(token_color("accent", 90), 1.0, Qt.PenStyle.DashLine))
+            painter.setBrush(token_color("accent", 18))
+            painter.drawRoundedRect(rect, 6, 6)
+            painter.restore()
+            return
         centre = rect.center()
         hovered = self._hover_shot == shot.number
         painter.save()

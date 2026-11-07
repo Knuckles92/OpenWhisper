@@ -98,6 +98,8 @@ class SnapSession(QObject):
         self._keep_when_captured = False
         # The window to keep, in the pointer's screen's logical pixels.
         self._crop: QRect | None = None
+        # Where the kept image came from, in global logical coordinates.
+        self.capture_rect: QRect | None = None
         self._failure = ""
         self._native_capture: macos_capture.Capture | None = None
         # Owned timers: they die with the session, never firing at a dead one.
@@ -225,6 +227,9 @@ class SnapSession(QObject):
             self._fail_soon(CAPTURE_FAILED)
         elif self._keep_when_captured:
             whole = export.render(images[0], self._crop) if self._crop else images[0]
+            area = self._screens[0].geometry()
+            self.capture_rect = (self._crop.translated(area.topLeft())
+                                 if self._crop else QRect(area))
             self._finish(lambda: self.kept.emit(whole))
         else:
             # Another screen that couldn't be captured is left uncovered.
@@ -275,6 +280,11 @@ class SnapSession(QObject):
     # ---- outcome ----
 
     def _on_kept(self, image: QImage) -> None:
+        overlay = self.sender() or self._overlay
+        if overlay is not None:
+            selection = overlay.selection
+            self.capture_rect = (selection if selection is not None else overlay.rect()).translated(
+                overlay.pos())
         self._finish(lambda: self.kept.emit(image))
 
     def _on_dropped(self) -> None:

@@ -167,7 +167,7 @@ def test_agent_copy_includes_selected_pdf_and_action_instructions(tmp_path, file
 
     files, prompt = result.clipboard(WalkthroughCopyFormat.AGENT_TASK)
 
-    assert files == [result.pdf]
+    assert files == []
     assert str(result.pdf.resolve()) in prompt
     assert "screenshots" in prompt
     assert "carry out the tasks and changes" in prompt

@@ -42,6 +42,7 @@ from services.settings import (
     SettingsKey,
     WalkthroughCopyFormat,
     resolve_walkthrough_auto_mode,
+    resolve_walkthrough_capture_delay,
     resolve_walkthrough_copy_format,
     resolve_walkthrough_intro_seen,
     resolve_walkthrough_minimize_to_tray,
@@ -64,10 +65,12 @@ from services.walkthrough.write_up import AGENTS, DEFAULT_INSTRUCTIONS
 from ui_qt.dialogs.settings_destinations import WALKTHROUGHS
 from ui_qt.widgets.agent_picker import FOUND, AgentMark, describe_agent
 from ui_qt.widgets.buttons import SuccessButton, WarningButton, start_row
+from ui_qt.widgets.capture_delay import CaptureDelay
 from ui_qt.widgets.feature_badge import FeatureBadge
 from ui_qt.widgets.no_wheel import NoWheelComboBox
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.settings_switch import SettingsSwitch
+from ui_qt.widgets.walkthrough_copy_tips import set_copy_tip
 from ui_qt.widgets.walkthrough_review import WalkthroughReview
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
@@ -534,14 +537,17 @@ class WalkthroughTab(QWidget):
             lambda on: settings_manager.save_setting(SettingsKey.WALKTHROUGH_AUTO_MODE, on)
         )
         body.addWidget(self.auto_check, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.capture_delay = CaptureDelay()
+        body.addWidget(self.capture_delay, 0, Qt.AlignmentFlag.AlignHCenter)
         self.auto_check.setVisible(sys.platform in ("win32", "darwin"))
+        self.capture_delay.setVisible(sys.platform in ("win32", "darwin"))
 
         # Leads the shortcut row rather than sitting on the Start button, so
         # the button matches the other tabs' Start buttons.
         self.walkthrough_badge = FeatureBadge(
             None,
             "Talk while you take screenshots, then get one document with your "
-            "words and pictures in order, copied to paste into an agent or chat.",
+            "words and pictures in order. The copy mode below controls how it's delivered.",
             column,
         )
         self.walkthrough_badge.set_new(
@@ -646,11 +652,8 @@ class WalkthroughTab(QWidget):
         copy.addWidget(copy_label)
         self.copy_bar = SegmentedBar([(label, "") for _value, label in COPY_CHOICES], compact=True)
         self.copy_bar.setAccessibleName("What's copied when a walkthrough finishes")
-        self.copy_bar.setToolTip(
-            "Agent copies the PDF with instructions to carry out the work described in it. "
-            "Markdown is text with a file link to each screenshot, for pasting into a "
-            "terminal agent. PDF + Markdown copies both at once. Word copies a .docx "
-            "you can edit.")
+        for button, (value, _label) in zip(self.copy_bar.buttons, COPY_CHOICES, strict=True):
+            set_copy_tip(button, value, on_finish=True)
         self.copy_bar.activated.connect(self._on_copy_chosen)
         copy.addWidget(self.copy_bar)
         copy.addSpacing(4)
@@ -797,6 +800,7 @@ class WalkthroughTab(QWidget):
         self.notes_switch.setChecked(resolve_walkthrough_write_up_notes(settings))
         self.minimize_check.setChecked(resolve_walkthrough_minimize_to_tray(settings))
         self.auto_check.setChecked(resolve_walkthrough_auto_mode(settings))
+        self.capture_delay.set_seconds(resolve_walkthrough_capture_delay(settings))
         prompt = resolve_walkthrough_write_up_instructions(settings) or DEFAULT_INSTRUCTIONS
         if self.prompt_edit.toPlainText().strip() != prompt:
             # Only when it differs: setting it moves the cursor to the start.
@@ -971,6 +975,7 @@ class WalkthroughTab(QWidget):
         self.walkthrough_button.set_active(walkthrough_active or not is_recording)
         self.cancel_button.setVisible(walkthrough_active)
         self.auto_check.setEnabled(not is_recording and not walkthrough_active)
+        self.capture_delay.setEnabled(not is_recording and not walkthrough_active)
 
     # ---- the storyboard ----
 

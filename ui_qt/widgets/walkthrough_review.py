@@ -58,6 +58,7 @@ from ui_qt.widgets.context_menu import context_menu
 from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.settings_switch import SettingsSwitch
+from ui_qt.widgets.walkthrough_copy_tips import set_copy_tip
 from ui_qt.widgets.walkthrough_icons import paint_icon
 from ui_qt.widgets.walkthrough_ready import FileChip
 
@@ -73,7 +74,7 @@ SPOKEN_HINT = ("Fix any words, drag a row to move a screenshot and its words, or
 WRITE_UP_HINT = ("Fix the write-up's words or drag a row to move a screenshot. "
                  "Saving rebuilds its PDF and Word document.")
 #: The two versions of a written-up walkthrough, in the switch's order.
-VERSIONS = (("AI write-up", "What the agent wrote: what's copied when it finishes"),
+VERSIONS = (("AI write-up", "What the agent wrote; choose a saved write-up with the version menu"),
             ("As spoken", "Your words as you said them, a section per screenshot"))
 VERSION_BAR_WIDTH = 250
 #: The copy button in a screenshot's corner: its size, and its inset from the corner.
@@ -81,7 +82,7 @@ SHOT_COPY_SIZE, SHOT_COPY_INSET = 28, 6
 _ROW_MIME = "application/x-openwhisper-walkthrough-row"
 _COPIED = {
     WalkthroughCopyFormat.PDF: "PDF copied.",
-    WalkthroughCopyFormat.AGENT_TASK: "PDF and agent instructions copied.",
+    WalkthroughCopyFormat.AGENT_TASK: "Instructions copied. Paste them, then drag the PDF into your chat.",
     WalkthroughCopyFormat.AGENT: "Markdown copied.",
     WalkthroughCopyFormat.WORD: "Word document copied.",
 }
@@ -820,15 +821,14 @@ class WalkthroughReview(QWidget):
         """Copy and the file on the left; Open and More beside them, or below once narrow."""
         self.pdf_button = self._button(
             "Copy PDF", "wlPrimary", lambda: self._copy(WalkthroughCopyFormat.PDF))
-        self.pdf_button.setToolTip("The PDF file, to paste or attach anywhere, agents included")
+        set_copy_tip(self.pdf_button, WalkthroughCopyFormat.PDF)
         self.markdown_button = self._button(
             "Copy Markdown", "wlSecondary", lambda: self._copy(WalkthroughCopyFormat.AGENT))
         self.markdown_button.setIcon(design_icon("copy-gray.svg"))
-        self.markdown_button.setToolTip("The words as Markdown text, with a file link to each "
-                                        "screenshot, for pasting into a terminal agent")
+        set_copy_tip(self.markdown_button, WalkthroughCopyFormat.AGENT)
         self.copy_word_button = self._button(
             "Copy Word", "wlSecondary", lambda: self._copy(WalkthroughCopyFormat.WORD))
-        self.copy_word_button.setToolTip("A .docx you can edit")
+        set_copy_tip(self.copy_word_button, WalkthroughCopyFormat.WORD)
         self.chip = FileChip(self)
         self.chip.clicked.connect(self._open)
         self.open_button = self._button("Open PDF", "wlSecondary", self._open)
@@ -836,9 +836,10 @@ class WalkthroughReview(QWidget):
         self.more_button = self._icon_button("dots-gray.svg", "More")
         self.more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu = context_menu(self)
+        self.menu.setToolTipsVisible(True)
         self.copy_agent_action = self._menu_action(
             "Copy for agent", lambda: self._copy(WalkthroughCopyFormat.AGENT_TASK))
-        self.copy_agent_action.setToolTip("The PDF with instructions to carry out the work in it")
+        set_copy_tip(self.copy_agent_action, WalkthroughCopyFormat.AGENT_TASK)
         self.menu.addSeparator()
         self.open_word_button = self._menu_action("Open Word document", self._open_word)
         self.folder_button = self._menu_action("Show in folder", self._reveal)
@@ -1185,10 +1186,10 @@ class WalkthroughReview(QWidget):
         # The write-ups came from the old words: they stay, and redoing adds one.
         redo = dirty and self._spoken and self._written
         if redo:
-            self.save_text.setText("Saving rebuilds the PDF. Your AI write-ups stay as they "
+            self.save_text.setText("Saving rebuilds the PDF and Word document. Your AI write-ups stay as they "
                                    "are; redo it to write up the new words as well.")
         else:
-            self.save_text.setText("You have unsaved edits. Saving rebuilds the PDF.")
+            self.save_text.setText("You have unsaved edits. Saving rebuilds the PDF and Word document.")
         self.save_button.setObjectName("wlSecondary" if redo else "wlPrimary")
         self.save_button.style().unpolish(self.save_button)
         self.save_button.style().polish(self.save_button)

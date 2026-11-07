@@ -495,7 +495,8 @@ class TemporaryClipboard(QObject):
         return written
 
     def write_files(
-        self, paths: Sequence[Path], text: str = "", *, image: QImage | None = None
+        self, paths: Sequence[Path], text: str = "", *, image: QImage | None = None,
+        marker: bytes = b"",
     ) -> bool:
         """Put ``paths`` on the clipboard as files, with ``text`` and ``image``.
 
@@ -510,11 +511,14 @@ class TemporaryClipboard(QObject):
             logger.error("No Qt clipboard available")
             return False
         mime_data = QMimeData()
-        mime_data.setUrls([QUrl.fromLocalFile(os.path.abspath(p)) for p in paths])
+        if paths:
+            mime_data.setUrls([QUrl.fromLocalFile(os.path.abspath(p)) for p in paths])
         if text:
             mime_data.setText(text)
         if image is not None:
             mime_data.setImageData(image)
+        if marker:
+            mime_data.setData(AUTO_PASTE_MARKER_FORMAT, marker)
         try:
             self._clipboard.setMimeData(mime_data)
         except Exception as exc:

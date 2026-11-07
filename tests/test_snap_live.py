@@ -2,13 +2,102 @@
 
 from unittest.mock import Mock
 
-from PyQt6.QtCore import QEvent, QObject, QPoint, Qt
+from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, Qt
 from PyQt6.QtGui import QGuiApplication, QHelpEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QToolTip
 
 from ui_qt.snap import live
 from ui_qt.snap.annotations import Label, Stroke, Tool
+
+
+def test_auto_region_stays_click_through_until_closed_and_survives_pause(monkeypatch):
+    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
+    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    changes, shots = [], []
+    drawing.capture_changed.connect(lambda: changes.append(True))
+    drawing.drawn.connect(lambda *args: shots.append(args))
+    try:
+        toolbar = drawing._toolbar
+        left = Qt.MouseButton.LeftButton
+        QTest.mouseClick(toolbar, left, pos=toolbar.button_rect("region").center())
+        assert drawing.armed and drawing.selecting_region
+        screen = live.capture.screen_under_cursor()
+        canvas = drawing._canvases[screen]
+        QTest.mousePress(canvas, left, pos=QPoint(180, 160))
+        QTest.mouseMove(canvas, QPoint(50, 80))
+        QTest.mouseRelease(canvas, left, pos=QPoint(50, 80))
+        assert drawing.capture_region == (screen, QRect(50, 80, 130, 80))
+        assert not drawing.armed
+        assert canvas.isVisible()
+        assert canvas.windowFlags() & Qt.WindowType.WindowTransparentForInput
+        assert drawing._region_close.isVisible()
+        assert toolbar._region_active
+        assert not shots
+
+        drawing.select_region()
+        QTest.keyClick(canvas, Qt.Key.Key_Escape)
+        assert drawing.capture_region == (screen, QRect(50, 80, 130, 80))
+        drawing.clear()  # Clearing marks keeps the capture region.
+        assert canvas.isVisible()
+        drawing.set_enabled(False)
+        assert not canvas.isVisible() and not drawing._region_close.isVisible()
+        drawing.set_enabled(True)
+        assert canvas.isVisible() and drawing._region_close.isVisible()
+
+        QTest.mouseClick(drawing._region_close, left)
+        assert drawing.capture_region is None
+        assert not drawing._region_close.isVisible() and not canvas.isVisible()
+        assert not toolbar._region_active
+        assert len(changes) == 2
+        assert not shots
+    finally:
+        drawing.close()
+
+
+def test_tiny_region_drag_does_not_replace_region(monkeypatch):
+    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
+    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        drawing.select_region()
+        canvas = drawing._canvases[live.capture.screen_under_cursor()]
+        QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, pos=QPoint(50, 80))
+        assert drawing.capture_region is None
+        assert drawing.selecting_region
+        assert drawing._region_close is None
+    finally:
+        drawing.close()
+
+
+def test_temporary_marks_survive_a_long_capture_countdown(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr(live, "monotonic", lambda: now)
+    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
+    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        drawing.arm(Tool.PEN)
+        canvas = drawing._canvases[live.capture.screen_under_cursor()]
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(50, 80))
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=QPoint(90, 110))
+        drawing.set_capture_pending(True)
+        now += 10
+        canvas._expire.timeout.emit()
+        assert len(canvas.items()) == 1
+        assert not canvas._expire.isActive()
+        # Holding a temporary mark must not turn it into a pinned one.
+        assert not canvas.items(pinned_only=True)
+        drawing.set_capture_pending(False)
+        now += live.MARK_LIFETIME_S
+        canvas._expire.timeout.emit()
+        assert not canvas.items()
+    finally:
+        drawing.close()
 
 
 def test_live_tool_stays_selected_until_switched_or_toggled_off(monkeypatch):

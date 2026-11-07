@@ -22,7 +22,7 @@ import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QRect, Qt, QTimer, pyqtSignal
 
 from services._mouse_hook_win import MouseButtonHook
 from services._mouse_monitor_mac import MouseClickMonitor
@@ -30,6 +30,7 @@ from services.settings import (
     SettingsKey,
     WalkthroughSnapMode,
     resolve_walkthrough_auto_mode,
+    resolve_walkthrough_capture_delay,
     resolve_walkthrough_snap_mode,
     resolve_walkthrough_write_up,
     settings_manager,
@@ -100,6 +101,12 @@ class WalkthroughRuntime(QObject):
         self._auto_drawing_capture = False
         self._snap_after_drawing: str | None = None
         self._auto_position: tuple[int, int] | None = None
+        self._auto_draw_pending = None
+        self._auto_deadline = 0.0
+        self._auto_delay = 0
+        self._auto_progress = QTimer(self)
+        self._auto_progress.setInterval(33)
+        self._auto_progress.timeout.connect(self._show_auto_countdown)
         # Ignore click signals queued before a pause or a manual screenshot.
         self._auto_after = 0.0
         self._auto_timer = QTimer(self)
@@ -202,9 +209,13 @@ class WalkthroughRuntime(QObject):
             self._finish_after_snap = True
             self._snap.keep()
             return
-        if self._auto_position is not None or self._auto_snap is not None:
+        if (self._auto_position is not None or self._auto_draw_pending is not None
+                or self._auto_snap is not None):
             self._finish_after_snap = True
-            self._live_drawing.set_busy(True)
+            if not self._live_drawing.interacting:
+                self._live_drawing.set_busy(True)
+            if self._auto_draw_pending is not None and not self._live_drawing.interacting:
+                self._capture_click()
             return
         self.controller.stop_recording()
 
@@ -230,7 +241,11 @@ class WalkthroughRuntime(QObject):
                 self._auto_hook = hook
                 self._start_auto_drawing(session, settings)
                 self._live_drawing.arming.connect(self._discard_auto_capture)
+                self._live_drawing.capture_changed.connect(self._on_capture_region_changed)
                 self._live_drawing.drawn.connect(self._capture_drawing)
+                self._live_drawing.capture_delay_changed.connect(self._change_auto_delay)
+                self._live_drawing.capture_cancelled.connect(self._cancel_auto_capture)
+                self._live_drawing.interaction_changed.connect(self._drawing_interaction)
                 if self._panel is not None:
                     self._panel.set_auto_mode(True)
                 return
@@ -287,20 +302,93 @@ class WalkthroughRuntime(QObject):
         if (not self._finish_after_snap and at >= self._auto_after
                 and session is self._session and self._auto_can_capture()):
             self._auto_position = (x, y)
-            self._auto_timer.start()
+            self._schedule_auto_capture()
+
+    def _schedule_auto_capture(self) -> None:
+        self._auto_delay = resolve_walkthrough_capture_delay(settings_manager.load_all_settings())
+        milliseconds = self._auto_delay * 1000 or AUTO_SETTLE_MS
+        self._auto_deadline = time.monotonic() + milliseconds / 1000
+        self._auto_timer.start(milliseconds)
+        if self._auto_delay:
+            self._auto_progress.start()
+        else:
+            self._auto_progress.stop()
+        self._show_auto_countdown()
+
+    def _show_auto_countdown(self) -> None:
+        if self._live_drawing is not None:
+            left = max(.01, self._auto_deadline - time.monotonic()) if self._auto_delay else 0
+            self._live_drawing.set_capture_countdown(left, self._auto_delay)
+
+    def _clear_auto_countdown(self) -> None:
+        self._auto_timer.stop()
+        self._auto_progress.stop()
+        if self._live_drawing is not None:
+            self._live_drawing.set_capture_countdown(0)
+
+    def _change_auto_delay(self, seconds: int) -> None:
+        if self._auto_position is not None or self._auto_draw_pending is not None:
+            self._schedule_auto_capture()
+            if self._live_drawing.interacting:
+                self._drawing_interaction(True)
+
+    def _drawing_interaction(self, active: bool) -> None:
+        if self._auto_draw_pending is None and self._auto_position is None:
+            return
+        if active:
+            # Never capture halfway through a stroke or while a label is being typed.
+            self._clear_auto_countdown()
+        else:
+            self._schedule_auto_capture()
+
+    def _cancel_auto_capture(self) -> None:
+        self._discard_auto_capture()
+        self._finish_if_asked()
 
     def _capture_click(self) -> None:
+        if self._live_drawing is not None and self._live_drawing.interacting:
+            self._clear_auto_countdown()
+            return
+        pending, self._auto_draw_pending = self._auto_draw_pending, None
         position, self._auto_position = self._auto_position, None
-        self._auto_timer.stop()
+        self._clear_auto_countdown()
+        if pending is not None:
+            if self._auto_can_capture(drawing=True):
+                screen, marks = pending
+                self._auto_drawing_capture = True
+                self._live_drawing.set_busy(True)
+                self._capture_automatic(marks, screen=screen,
+                                        kept_at_s=self.controller.recorder.get_recording_duration())
+            else:
+                self._live_drawing.set_capture_pending(False)
+                self._finish_if_asked()
+            return
         if position is None:
             return
         if not self._auto_can_capture():
             self._finish_if_asked()
             return
-        self._capture_automatic(self._live_drawing.pinned_at(position), click_at=position)
+        region = self._live_drawing.capture_region
+        if region is None:
+            self._capture_automatic(self._live_drawing.pinned_at(position), click_at=position)
+        else:
+            screen, _ = region
+            self._capture_automatic(self._live_drawing.pinned_on(screen), screen=screen)
 
     def _capture_drawing(self, screen, marks) -> None:
-        if not self._finish_after_snap and self._auto_can_capture(drawing=True):
+        if self._auto_can_capture(drawing=True):
+            delay = resolve_walkthrough_capture_delay(settings_manager.load_all_settings())
+            if delay:
+                self._auto_position = None
+                self._auto_draw_pending = (screen, marks)
+                self._live_drawing.set_capture_pending(True)
+                self._schedule_auto_capture()
+                if self._finish_after_snap:
+                    self._capture_click()
+                return
+            self._auto_draw_pending = None
+            self._auto_position = None
+            self._clear_auto_countdown()
             self._auto_drawing_capture = True
             self._live_drawing.set_busy(True)
             self._capture_automatic(marks, screen=screen,
@@ -308,14 +396,22 @@ class WalkthroughRuntime(QObject):
 
     def _capture_automatic(self, marks, *, kept_at_s: float | None = None, **location) -> None:
         session = self._session
+        region = self._live_drawing.capture_region
+        crop = source_rect = None
+        if region is not None and location.get("screen") is region[0]:
+            screen, rect = region
+            crop = QRect(rect)
+            source_rect = rect.translated(screen.geometry().topLeft())
         snap = self._ui.start_snap(take=WalkthroughSnapMode.SCREEN, **location)
         self._auto_snap = snap
         snap.kept.connect(lambda image: self._on_auto_outcome(snap, session, image=image,
-                                                             marks=marks, kept_at_s=kept_at_s))
+                                                             marks=marks, kept_at_s=kept_at_s,
+                                                             crop=crop, source_rect=source_rect))
         snap.failed.connect(lambda reason: self._on_auto_outcome(snap, session, reason=reason))
 
     def _on_auto_outcome(self, snap, session: WalkthroughSession, *, image=None, marks=(),
-                         kept_at_s: float | None = None, reason="") -> None:
+                         kept_at_s: float | None = None, reason="", crop=None,
+                         source_rect=None) -> None:
         snap.deleteLater()
         if snap is not self._auto_snap:
             return
@@ -324,23 +420,32 @@ class WalkthroughRuntime(QObject):
         next_snap, self._snap_after_drawing = self._snap_after_drawing, None
         if session is self._session:
             if image is not None:
-                if marks:
+                if marks or crop is not None:
                     from ui_qt.snap import export
 
-                    image = export.render(image, export.logical_rect(image), marks)
-                self._keep_walkthrough_shot(session, image, automatic=True, kept_at_s=kept_at_s)
+                    selection = crop if crop is not None else export.logical_rect(image)
+                    image = export.render(image, selection, marks)
+                self._keep_walkthrough_shot(session, image, automatic=True, kept_at_s=kept_at_s,
+                                            source_rect=source_rect if source_rect is not None
+                                            else getattr(snap, "capture_rect", None))
             elif reason:
                 self._tell(reason)
         self._finish_if_asked()
         if self._live_drawing is not None:
+            self._live_drawing.set_capture_pending(False)
             self._live_drawing.set_busy(False)
             if next_snap is not None:
                 self.snap(next_snap)
 
+    def _on_capture_region_changed(self) -> None:
+        self._discard_auto_capture()
+        self._finish_if_asked()
+
     def _discard_auto_capture(self) -> None:
         self._auto_after = time.monotonic()
-        self._auto_timer.stop()
+        self._clear_auto_countdown()
         self._auto_position = None
+        self._auto_draw_pending = None
         self._auto_drawing_capture = False
         self._snap_after_drawing = None
         snap, self._auto_snap = self._auto_snap, None
@@ -349,6 +454,7 @@ class WalkthroughRuntime(QObject):
                 snap.drop()
             snap.deleteLater()
         if self._live_drawing is not None:
+            self._live_drawing.set_capture_pending(False)
             self._live_drawing.set_busy(False)
 
     def _stop_auto(self) -> None:
@@ -483,9 +589,10 @@ class WalkthroughRuntime(QObject):
         snap.failed.connect(self._on_failed)
 
     def _on_kept(self, image) -> None:
+        source_rect = getattr(self._snap, "capture_rect", None)
         session, self._snap, self._snap_for = self._snap_for, None, None
         self._discard_auto_capture()
-        if session is None or not self._keep_walkthrough_shot(session, image):
+        if session is None or not self._keep_walkthrough_shot(session, image, source_rect=source_rect):
             # A plain screenshot, or the walkthrough stopped while this one
             # was being drawn: either way it goes to the clipboard.
             self._copy_screenshot(image, finished=session is not None)
@@ -493,7 +600,8 @@ class WalkthroughRuntime(QObject):
         self._restore_live_drawing()
 
     def _keep_walkthrough_shot(self, session: WalkthroughSession, image, *,
-                               automatic: bool = False, kept_at_s: float | None = None) -> bool:
+                               automatic: bool = False, kept_at_s: float | None = None,
+                               source_rect=None) -> bool:
         """Add to the storyboard. Return False when the session is closed."""
         try:
             if kept_at_s is None:
@@ -508,7 +616,7 @@ class WalkthroughRuntime(QObject):
         count = session.shot_count
         self.controller.recording_destination_changed.emit(shots_label(count))
         if self._panel is not None:
-            self._panel.add_shot(shot.number, image, shot.kept_at_s)
+            self._panel.add_shot(shot.number, image, shot.kept_at_s, source_rect=source_rect)
         if not automatic:
             self._ui.show_overlay_caption(f"Screenshot {count} added")
         return True

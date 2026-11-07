@@ -185,7 +185,7 @@ class WalkthroughResult:
                 "report what you changed and anything still unresolved.\n\n"
                 f"PDF file (if the attachment is unavailable): {self.pdf.resolve()}"
             )
-            return [self.pdf], prompt
+            return [], prompt
 
         files = {
             WalkthroughCopyFormat.PDF: [self.pdf],

@@ -49,10 +49,10 @@ def test_copy_buttons_send_explicit_clipboard_formats(dialog, capture):
     assert kwargs == {"text": ""}
     dialog.review.copy_agent_action.trigger()
     args, kwargs = dialog.review._copy_files.call_args
-    assert args == ([capture.result.pdf],)
+    assert args == ([],)
     assert "carry out the tasks and changes" in kwargs["text"]
     assert str(capture.result.pdf.resolve()) in kwargs["text"]
-    assert dialog.review.notice.text() == "PDF and agent instructions copied."
+    assert dialog.review.notice.text() == "Instructions copied. Paste them, then drag the PDF into your chat."
 
 
 def test_unsaved_edits_cannot_be_shared_or_written_up(dialog):

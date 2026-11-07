@@ -22,6 +22,7 @@ PRESS_ACTIONS: Tuple[Tuple[str, str], ...] = (
     ("route_record", "on_route_record"),
     ("walkthrough", "on_walkthrough"),
     ("screenshot", "on_screenshot"),
+    ("paste_walkthrough", "on_paste_walkthrough"),
 )
 
 #: Families of shortcuts registered at runtime, as "<namespace>:<id>" actions.

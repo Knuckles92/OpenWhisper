@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from time import monotonic
 
-from PyQt6.QtCore import QEvent, QObject, QPointF, QRect, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QPointF, QRect, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QGuiApplication, QPainter, QScreen
 from PyQt6.QtWidgets import QApplication, QWidget
 
@@ -17,7 +17,15 @@ from services.settings import (
 )
 from ui_qt.snap import affinity, capture, macos, pointed
 from ui_qt.snap.annotations import SWATCHES, Annotation, Step, Tool, new_draft
-from ui_qt.snap.geometry import EDGE_MARGIN, snap_point
+from ui_qt.snap.chrome import (
+    badge_size,
+    chrome_font,
+    paint_badge,
+    paint_frame,
+    paint_panel,
+)
+from ui_qt.snap.geometry import EDGE_MARGIN, snap_point, span
+from ui_qt.snap.icons import paint_icon
 from ui_qt.snap.overlay import (
     _CHORD,
     _COLOR_KEYS,
@@ -44,6 +52,10 @@ class LiveAnnotations(QObject):
     arming = pyqtSignal()
     drawn = pyqtSignal(QScreen, object)
     enabled_changed = pyqtSignal(bool)
+    capture_changed = pyqtSignal()
+    capture_delay_changed = pyqtSignal(int)
+    capture_cancelled = pyqtSignal()
+    interaction_changed = pyqtSignal(bool)
 
     def __init__(
         self, parent: QObject, panel: QWidget | None = None, *,
@@ -54,7 +66,11 @@ class LiveAnnotations(QObject):
         self._canvases: dict[QScreen, _Canvas] = {}
         self._enabled = False
         self.busy = False
+        self._capture_pending = False
         self.tool: Tool | None = None
+        self.selecting_region = False
+        self.capture_region: tuple[QScreen, QRect] | None = None
+        self._region_close: _RegionClose | None = None
         self.color = 0
         self.snap_enabled: bool
         self._keep_marks = resolve_walkthrough_keep_marks()
@@ -74,8 +90,11 @@ class LiveAnnotations(QObject):
         self._toolbar.color_chosen.connect(self.set_color)
         self._toolbar.snap_clicked.connect(self.toggle_snap)
         self._toolbar.keep_marks_clicked.connect(self.toggle_keep_marks)
-        self._toolbar.drop_clicked.connect(self.disarm)
+        self._toolbar.drop_clicked.connect(self.cancel_capture)
+        self._toolbar.capture_delay.changed.connect(self.capture_delay_changed)
+        self._toolbar.capture_delay.cancelled.connect(self.cancel_capture)
         self._toolbar.clear_clicked.connect(self.clear)
+        self._toolbar.region_clicked.connect(self.select_region)
         self._toolbar.set_keep_marks(self._keep_marks)
         QGuiApplication.instance().screenRemoved.connect(self._remove_screen)
         self._sync_toolbar()
@@ -83,10 +102,37 @@ class LiveAnnotations(QObject):
 
     @property
     def armed(self) -> bool:
-        return self.tool is not None
+        return self.tool is not None or self.selecting_region
 
     def windows(self) -> tuple[QWidget, ...]:
-        return (self._toolbar, *self._canvases.values())
+        controls = (self._region_close,) if self._region_close is not None else ()
+        return (self._toolbar, *self._canvases.values(), *controls,
+                *self._toolbar.capture_delay.popup_windows())
+
+    @property
+    def interacting(self) -> bool:
+        return any(canvas._draft is not None or canvas.label_editor is not None
+                   for canvas in self._canvases.values())
+
+    def set_capture_countdown(self, remaining: float, total: float = 0.0) -> None:
+        self._toolbar.capture_delay.set_countdown(remaining, total)
+
+    def set_capture_pending(self, pending: bool) -> None:
+        if self._capture_pending == pending:
+            return
+        self._capture_pending = pending
+        for canvas in self._canvases.values():
+            if pending:
+                canvas._expire.stop()
+            else:
+                # Temporary marks stay visible through the entire countdown.
+                canvas._marks = [(mark, None if expires is None else monotonic() + MARK_LIFETIME_S)
+                                 for mark, expires in canvas._marks]
+                canvas._expire_marks()
+
+    def cancel_capture(self) -> None:
+        self.capture_cancelled.emit()
+        self.disarm()
 
     def set_enabled(self, enabled: bool) -> None:
         if enabled == self._enabled:
@@ -98,11 +144,14 @@ class LiveAnnotations(QObject):
             for canvas in self._canvases.values():
                 canvas.present()
             self._show_toolbar()
+            self._show_region_close()
         else:
             self.disarm()
             self._toolbar.hide()
             for canvas in self._canvases.values():
                 canvas.hide()
+            if self._region_close is not None:
+                self._region_close.hide()
         self.enabled_changed.emit(enabled)
 
     def _show_toolbar(self) -> None:
@@ -111,6 +160,7 @@ class LiveAnnotations(QObject):
         if self._screen is None:
             return
         area = self._screen.geometry()
+        self._toolbar.fit_to_width(area.width() - 2 * EDGE_MARGIN)
         self._toolbar.setScreen(self._screen)
         self._toolbar.move(area.x() + max(0, (area.width() - self._toolbar.width()) // 2),
                            area.y() + EDGE_MARGIN)
@@ -128,6 +178,12 @@ class LiveAnnotations(QObject):
             self.disarm()
         else:
             self.arm(tool)
+
+    def select_region(self) -> None:
+        if self.selecting_region:
+            self.disarm()
+        else:
+            self.arm("region")
 
     def arm(self, tool: Tool | str = Tool.PEN) -> None:
         if not self._enabled or self.busy:
@@ -150,7 +206,8 @@ class LiveAnnotations(QObject):
         elif self.tool != tool:
             for canvas in self._canvases.values():
                 canvas.cancel_draft()
-        self.tool = Tool(tool)
+        self.selecting_region = tool == "region"
+        self.tool = None if self.selecting_region else Tool(tool)
         for canvas in self._canvases.values():
             canvas.present()
         canvas = self._canvases.get(capture.screen_under_cursor())
@@ -170,6 +227,7 @@ class LiveAnnotations(QObject):
             macos.set_level(self._panel, self._panel_level)
             self._panel_level = None
         self.tool = None
+        self.selecting_region = False
         for canvas in self._canvases.values():
             canvas.cancel_draft()
             if self._enabled:
@@ -181,6 +239,8 @@ class LiveAnnotations(QObject):
         if self._panel is not None and self._panel.isVisible():
             self._panel.raise_()
         self._toolbar.raise_()
+        if self._region_close is not None and self._region_close.isVisible():
+            self._region_close.raise_()
 
     def set_color(self, color: int) -> None:
         self.color = color
@@ -219,6 +279,53 @@ class LiveAnnotations(QObject):
 
     def _sync_toolbar(self) -> None:
         self._toolbar.set_state(self.tool, self.color, False, False)
+        self._toolbar.set_region_active(self.selecting_region or self.capture_region is not None)
+
+    def set_region(self, screen: QScreen, rect: QRect) -> None:
+        bounds = QRect(0, 0, screen.geometry().width(), screen.geometry().height())
+        rect = rect.intersected(bounds)
+        if rect.width() < 4 or rect.height() < 4:
+            return
+        self.capture_changed.emit()
+        self.capture_region = (screen, QRect(rect))
+        self.disarm()
+        for canvas in self._canvases.values():
+            if self._enabled:
+                canvas.present()
+        if self._region_close is None:
+            self._region_close = _RegionClose(self)
+        self._show_region_close()
+        self._sync_toolbar()
+
+    def clear_region(self) -> None:
+        # Discard pending captures and queued hook releases before hiding ×.
+        self.capture_changed.emit()
+        self.capture_region = None
+        if self._region_close is not None:
+            self._region_close.hide()
+        for canvas in self._canvases.values():
+            if self._enabled:
+                canvas.present()
+        self._sync_toolbar()
+
+    def _show_region_close(self) -> None:
+        if not self._enabled or self.capture_region is None or self._region_close is None:
+            return
+        screen, rect = self.capture_region
+        close = self._region_close
+        area = screen.geometry()
+        close.setScreen(screen)
+        # Keep the control on screen, including a selection against an edge.
+        x = area.x() + rect.right() - close.width() + 1
+        close.move(max(area.left(), min(area.right() - close.width() + 1, x)),
+                   max(area.y(), area.y() + rect.y() - close.height() - 3))
+        macos.make_nonactivating(close)
+        close.show()
+        macos.join_all_spaces(close)
+        macos.cover(close)
+        macos.set_level(close, macos.PARKED_LEVEL)
+        affinity.keep_out_of_screenshots(close, True)
+        close.raise_()
 
     def _canvas_has_focus(self) -> bool:
         return QApplication.activeWindow() in self._canvases.values()
@@ -233,15 +340,21 @@ class LiveAnnotations(QObject):
 
     def pinned_at(self, position: tuple[int, int]) -> tuple[Annotation, ...]:
         screen = capture.screen_at_click(position)
+        return self.pinned_on(screen)
+
+    def pinned_on(self, screen: QScreen | None) -> tuple[Annotation, ...]:
         canvas = self._canvases.get(screen)
         return canvas.items(pinned_only=True) if canvas is not None else ()
 
     def clear(self) -> None:
+        self.capture_cancelled.emit()
         for canvas in self._canvases.values():
             canvas.clear()
 
     def _remove_screen(self, screen: QScreen) -> None:
         self.disarm()
+        if self.capture_region is not None and self.capture_region[0] is screen:
+            self.clear_region()
         canvas = self._canvases.pop(screen, None)
         if canvas is not None:
             canvas.hide()
@@ -268,6 +381,8 @@ class _Canvas(QWidget):
         self._marks: list[tuple[Annotation, float | None]] = []
         self._next_step = 1
         self._draft: Annotation | None = None
+        self._region_start: QPointF | None = None
+        self._region_draft: QRect | None = None
         self.label_editor: LabelEditor | None = None
         self._pin_label = False
         self._expire = QTimer(self, singleShot=True)
@@ -280,15 +395,20 @@ class _Canvas(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self.setProperty(_HOTKEY_WINDOW_PROPERTY, True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        screen.geometryChanged.connect(self.setGeometry)
+        screen.geometryChanged.connect(self._geometry_changed)
         self.setGeometry(screen.geometry())
+
+    def _geometry_changed(self, rect: QRect) -> None:
+        self.setGeometry(rect)
+        if self.region() is not None:
+            self.live.clear_region()
 
     def present(self) -> None:
         armed = self.live.armed
         flags = _FLOATING if armed else _FLOATING | _PASS_THROUGH
         if (self.windowFlags() & _PASS_THROUGH) != (flags & _PASS_THROUGH):
             self.setWindowFlags(flags)
-        if not armed and not self._marks:
+        if not armed and not self._marks and self.region() is None:
             self.hide()
             return
         self.setScreen(self.screen)
@@ -315,6 +435,10 @@ class _Canvas(QWidget):
         self._expire_marks()
 
     def _expire_marks(self) -> None:
+        if self.live._capture_pending:
+            self._expire.stop()
+            self.update()
+            return
         now = monotonic()
         self._marks = [(mark, expires) for mark, expires in self._marks
                        if expires is None or expires > now]
@@ -322,7 +446,7 @@ class _Canvas(QWidget):
                           default=None)
         if next_expiry is not None:
             self._expire.start(math.ceil((next_expiry - now) * 1000))
-        if not self._marks and not self.live.armed:
+        if not self._marks and not self.live.armed and self.region() is None:
             self.hide()
         self.update()
 
@@ -335,10 +459,12 @@ class _Canvas(QWidget):
 
     def cancel_draft(self) -> None:
         self._draft = None
+        self._region_start = self._region_draft = None
         if self.label_editor is not None:
             self.label_editor.hide()
             self.label_editor.deleteLater()
             self.label_editor = None
+        self.live.interaction_changed.emit(False)
         self.update()
 
     def _point(self, point: QPointF) -> QPointF:
@@ -356,28 +482,43 @@ class _Canvas(QWidget):
         tool = self.live.tool
         color = QColor(SWATCHES[self.live.color].color)
         point = self._point(event.position())
-        if tool is Tool.TEXT:
+        if self.live.selecting_region:
+            self._region_start = point
+            self._region_draft = QRect(point.toPoint(), point.toPoint())
+        elif tool is Tool.TEXT:
             self._open_label(point, color, bool(event.modifiers() & _CTRL))
         elif tool is Tool.STEP:
             self._draft = Step(point, self._next_step, color)
         else:
             self._draft = new_draft(tool, point, color)
+        if self.live.interacting:
+            self.live.interaction_changed.emit(True)
         self.update()
 
     def mouseDoubleClickEvent(self, event) -> None:
         self.mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
+        if self._region_start is not None:
+            self._region_draft = span(self._region_start.toPoint(), self._point(event.position()).toPoint())
+            self.update()
         if self._draft is not None:
             before = self._draft.bounds()
             self._draft.extend(self._point(event.position()))
             self.update(before.united(self._draft.bounds()).toAlignedRect().adjusted(-2, -2, 2, 2))
 
     def mouseReleaseEvent(self, event) -> None:
+        if event.button() == _LEFT and self._region_start is not None:
+            rect = span(self._region_start.toPoint(), self._point(event.position()).toPoint())
+            self._region_start = self._region_draft = None
+            self.live.set_region(self.screen, rect)
+            self.update()
+            return
         if event.button() != _LEFT or self._draft is None:
             return
         draft, self._draft = self._draft, None
         draft.extend(self._point(event.position()))
+        self.live.interaction_changed.emit(False)
         if draft.meaningful():
             self.live.complete(self, draft, bool(event.modifiers() & _CTRL))
         else:
@@ -388,7 +529,7 @@ class _Canvas(QWidget):
             return
         key = event.key()
         if key == Qt.Key.Key_Escape:
-            self.live.disarm()
+            self.live.cancel_capture()
         elif key == Qt.Key.Key_C:
             self.live.clear()
         elif key == Qt.Key.Key_K and not event.isAutoRepeat():
@@ -435,4 +576,54 @@ class _Canvas(QWidget):
             mark.paint(painter)
         if self._draft is not None:
             self._draft.paint(painter)
+        region = self._region_draft if self._region_draft is not None else self.region()
+        if region is not None:
+            paint_frame(painter, region)
+        if self.live.selecting_region:
+            text = "Drag a capture region · Esc to cancel"
+            font = chrome_font(self.font(), 12)
+            size = badge_size(text, font)
+            hint = QRect((self.width() - size.width()) // 2,
+                         self.live._toolbar.height() + 2 * EDGE_MARGIN,
+                         size.width(), size.height())
+            paint_badge(painter, hint, text, font, current_palette())
+        painter.end()
+
+    def region(self) -> QRect | None:
+        region = self.live.capture_region
+        return region[1] if region is not None and region[0] is self.screen else None
+
+
+class _RegionClose(QWidget):
+    """Only this small control takes input; the region frame is click-through."""
+
+    def __init__(self, live: LiveAnnotations) -> None:
+        super().__init__(None, _FLOATING | _NO_FOCUS)
+        self.live = live
+        self.setFixedSize(24, 24)
+        self.setWindowTitle("Close automatic capture region")
+        self.setAccessibleName("Close region and capture the whole screen")
+        self.setToolTip("Close region · capture the whole screen")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips)
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._pressed = False
+
+    def mousePressEvent(self, event) -> None:
+        self._pressed = event.button() == _LEFT
+
+    def mouseReleaseEvent(self, event) -> None:
+        pressed, self._pressed = self._pressed, False
+        if pressed and event.button() == _LEFT and self.rect().contains(event.position().toPoint()):
+            self.live.clear_region()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        palette = current_palette()
+        paint_panel(painter, QRectF(self.rect()), 6, palette, shadow=0)
+        paint_icon(painter, "drop", QRectF(2, 2, 20, 20), palette.color("overlay-text"))
         painter.end()

@@ -325,6 +325,7 @@ class UIController(QObject):
         self.submit_walkthrough_library = None
         self._walkthrough_library = None
         self._walkthrough_ready = None
+        self._walkthrough_paste = None
         # The column that writes a walkthrough as it records; made on first use.
         self._walkthrough_panel = None
         self._walkthrough_drawing = None
@@ -1120,6 +1121,7 @@ class UIController(QObject):
         floating = (self.overlay,) if self.overlay.isWindow() else ()
         keep_out = floating
         if self._walkthrough_panel is not None and self._walkthrough_panel.isVisible():
+            self._walkthrough_panel.end_capture_animation()
             keep_out += (self._walkthrough_panel,)
         if self._walkthrough_drawing is not None:
             keep_out += self._walkthrough_drawing.windows()
@@ -1215,6 +1217,53 @@ class UIController(QObject):
         if (dialog is not None and dialog.isVisible()
                 and not dialog.review._busy and not dialog.review._dirty):
             dialog.refresh(result.folder)
+
+    def paste_latest_walkthrough(self, target) -> None:
+        from ui_qt.walkthrough_paste import latest_result
+
+        if self._walkthrough_paste is not None and self._walkthrough_paste.busy:
+            return
+        try:
+            result = latest_result()
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.set_status(f"Couldn't open the latest walkthrough: {exc}")
+            return
+        if result is None:
+            self.set_status("No completed walkthrough to paste yet")
+            return
+        self.paste_walkthrough(result, target)
+
+    def paste_walkthrough(self, result, target) -> None:
+        """Shared delivery for the shortcut and Agent mode's finish auto-paste."""
+        from services.focus_context import get_service
+        from services.hotkey_manager import send_paste
+        from ui_qt.walkthrough_paste import WalkthroughPaste
+
+        if self._walkthrough_paste is not None and self._walkthrough_paste.busy:
+            self.set_status("Walkthrough saved; another walkthrough paste is in progress")
+            return
+
+        def report(status):
+            warnings = []
+            if result.write_up_error:
+                warnings.append(f"Write-up failed: {result.write_up_error}")
+            if result.lost_shots:
+                warnings.append(f"{result.lost_shots} screenshot(s) couldn't be saved")
+            self.set_status(". ".join([status, *warnings]))
+            if self._walkthrough_ready is not None:
+                self._walkthrough_ready.show_paste_status(result, status)
+
+        if self._walkthrough_paste is None:
+            self._walkthrough_paste = WalkthroughPaste(
+                QApplication.clipboard(), self._temporary_clipboard,
+                identity=lambda: get_service().current_identity(), send_paste=send_paste,
+                report=report, parent=self,
+            )
+        else:
+            self._walkthrough_paste.report = report
+        self._walkthrough_paste.start(result, target)
+        if self._walkthrough_paste.busy:
+            report("Pasting PDF, then instructions…")
 
     def _copy_walkthrough_again(self, result, copy_format: str) -> None:
         from services.walkthrough.library import load_result
@@ -2714,6 +2763,9 @@ class UIController(QObject):
 
     def cleanup(self):
         logger.info("Starting UI Controller cleanup...")
+
+        if self._walkthrough_paste is not None:
+            self._walkthrough_paste.cancel()
 
         try:
             self._temporary_clipboard.cleanup()

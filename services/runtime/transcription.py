@@ -37,6 +37,7 @@ from services.batch_upload import (
 from services.settings import (
     SETTING_DEFAULTS,
     SettingsKey,
+    WalkthroughCopyFormat,
     resolve_walkthrough_copy_format,
     resolve_walkthrough_write_up,
     resolve_transcript_cleanup_model,
@@ -2389,20 +2390,40 @@ class TranscriptionRuntime:
     def _copy_walkthrough(self, ui, result) -> None:
         """Copy a walkthrough's document and show where it is; Qt thread.
 
-        The clipboard holds the chosen document and/or text, including the
-        action prompt for Agent copy. Never pasted: the user chooses where it goes.
+        Agent mode with auto-paste uses the shared PDF-then-instructions paste.
+        Other formats, and Agent mode with auto-paste off, stay on the clipboard.
         """
-        copy_format = resolve_walkthrough_copy_format(settings_manager.load_all_settings())
+        settings = settings_manager.load_all_settings()
+        copy_format = resolve_walkthrough_copy_format(settings)
+        auto_paste = (copy_format == WalkthroughCopyFormat.AGENT_TASK
+                      and setting_value(SettingsKey.AUTO_PASTE, settings))
+        target = None
+        if auto_paste:
+            from services.focus_context import get_service
+
+            # Capture the destination before showing the Ready card. The paste
+            # coordinator checks it again before each clipboard paste.
+            target = get_service().current_identity()
         files, text = result.clipboard(copy_format)
         copied = ui.copy_files_to_clipboard(files, text=text)
         count = f"{result.shots} screenshot{'' if result.shots == 1 else 's'}"
         if result.write_up_error:
             # Ahead of the rest, so a status line cut short still says it;
             # the Ready card shows the whole reason.
-            done = "copied as spoken" if copied else "saved as spoken; copying it failed"
+            if auto_paste:
+                done = "as spoken; preparing to paste PDF, then instructions"
+            elif copied and copy_format == WalkthroughCopyFormat.AGENT_TASK:
+                done = "as spoken; paste instructions and drag the PDF"
+            else:
+                done = "copied as spoken" if copied else "saved as spoken; copying it failed"
             status = f"Write-up failed — {result.name} {done} ({count}): {result.write_up_error}"
         elif copied:
-            destination = "paste it into your agent" if text else "paste it where you need it"
+            if auto_paste:
+                destination = "preparing to paste PDF, then instructions"
+            elif copy_format == WalkthroughCopyFormat.AGENT_TASK:
+                destination = "paste the instructions, then drag the PDF into your chat"
+            else:
+                destination = "paste it into your agent" if text else "paste it where you need it"
             status = f"{result.name} copied ({count}) — {destination}"
         else:
             status = f"{result.name} saved ({count}); copying it failed — drag it from the card"
@@ -2412,6 +2433,8 @@ class TranscriptionRuntime:
             status += f". {shots} couldn't be saved and {'is' if lost == 1 else 'are'} left out"
         ui.set_status(status)
         ui.show_walkthrough_ready(result, copied=copied)
+        if auto_paste:
+            ui.paste_walkthrough(result, target)
 
     def _insert_into_scratchpad(self, ui, transcript: str, status_suffix: str) -> bool:
         """Add the transcript to the focused Scratchpad, if one takes it."""

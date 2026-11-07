@@ -32,6 +32,7 @@ STANDARD_LABELS: dict[str, str] = {
     "route_record": "Route by voice",
     "walkthrough": "Walkthrough",
     "screenshot": "Screenshot",
+    "paste_walkthrough": "Paste latest walkthrough",
 }
 
 

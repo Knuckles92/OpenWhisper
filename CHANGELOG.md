@@ -9,7 +9,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ### Added
 
-- **Walkthrough Agent copy** — copy the PDF with instructions for an agent to carry out the work described in its words and screenshots. Choose **Agent** under **Copy when it finishes**, or **Copy for agent** from a ready card or saved walkthrough's menu.
+- **Paste a walkthrough into your agent with one shortcut** — **Ctrl+Shift+F12** pastes the latest completed walkthrough's PDF, then its instructions, without sending the message. Change **Paste latest walkthrough** under Hotkeys or Walkthroughs. Normal Ctrl+V keeps its usual behavior; changing windows or copying something else during the paste stops the follow-up text.
+- **Walkthrough Agent copy** — choose **Agent** under **Copy when it finishes** to paste the PDF followed by instructions automatically when Auto-paste is enabled, including after AI write-up. With Auto-paste off, or with **Copy for agent** from a ready card or saved walkthrough, copy the instructions and attach the PDF separately.
 - **Meeting Mode setup** — prepare missing speech runtimes and models, then check microphone and system audio before the first meeting on supported platforms and Linux preview hosts. Reopen the checks with **Meeting setup…**. Test audio is discarded; downloads require a click and respect offline settings.
 - **Walkthrough Auto Mode on macOS** — capture left and right clicks outside OpenWhisper and draw on the live desktop, with pinned marks, Retina and external displays, and focus returned to the app you were showing. Turn on **Auto Mode** under **Start Walkthrough**; macOS needs Screen Recording permission. Hold **Cmd** to pin an individual mark.
 
@@ -19,6 +20,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ### Fixed
 
+- **Walkthrough copy tooltips** — fixed an error loading Walkthrough. Copy choices and actions now share wrapped hints that explain automatic delivery and manual copying; ready-card hints also work while another app has focus.
 - **Walkthrough toolbar flashing on macOS** — automatic screenshots on macOS 14 and later exclude the drawing toolbar, live canvas, and recording controls without briefly hiding them after each click.
 - **Walkthrough drawing cursor on macOS** — the crosshair and text cursor stay visible after repeated Auto Mode screenshots while the drawing tool remains selected.
 

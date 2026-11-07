@@ -141,6 +141,7 @@ _GLYPHS: dict[str, Callable[[QPainter, QColor], None]] = {
     "keep": _check,
     "drop": _cross,
     "snap": _snap,
+    "region": _snap,
     "clear": _clear,
 }
 

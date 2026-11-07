@@ -173,6 +173,7 @@ class HotkeyManager:
         self.on_route_record: Optional[Callable] = None
         self.on_walkthrough: Optional[Callable] = None
         self.on_screenshot: Optional[Callable] = None
+        self.on_paste_walkthrough: Optional[Callable] = None
         self.on_status_update: Optional[Callable] = None
         self.on_status_update_auto_hide: Optional[Callable] = None
         self.is_transcribing_fn: Optional[Callable[[], bool]] = None
@@ -514,6 +515,14 @@ class HotkeyManager:
         if not self._matches_main_key(event, hotkey_string):
             return False
         required, _ = parse_hotkey(hotkey_string)
+        if (getattr(event, "scan_code", None) or 0) < 0:
+            # keyboard represents virtual-key SendInput events as -VK. Their
+            # modifier scan codes do not match is_pressed's hardware map.
+            from services.synthetic_keys import native_windows_modifiers
+
+            native = native_windows_modifiers()
+            if native is not None:
+                return frozenset("win" if key == "windows" else key for key in native) == required
         return all(
             keyboard.is_pressed(modifier) == (modifier in required)
             for modifier in _ALL_MODIFIERS
@@ -581,7 +590,8 @@ class HotkeyManager:
                      on_paste_last_original: Callable = None,
                      on_route_record: Callable = None,
                      on_walkthrough: Callable = None,
-                     on_screenshot: Callable = None):
+                     on_screenshot: Callable = None,
+                     on_paste_walkthrough: Callable = None):
         """Set callbacks invoked by hotkey events.
 
         ``on_record_press``/``on_record_release`` and the command pair get the
@@ -603,6 +613,7 @@ class HotkeyManager:
         self.on_route_record = on_route_record
         self.on_walkthrough = on_walkthrough
         self.on_screenshot = on_screenshot
+        self.on_paste_walkthrough = on_paste_walkthrough
         self.on_status_update = on_status_update
         self.on_status_update_auto_hide = on_status_update_auto_hide
         self.is_transcribing_fn = is_transcribing_fn

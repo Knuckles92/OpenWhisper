@@ -257,6 +257,7 @@ class HotkeyRuntime:
             on_route_record=controller.toggle_route_recording,
             on_walkthrough=controller.walkthrough_requested.emit,
             on_screenshot=controller.screenshot_requested.emit,
+            on_paste_walkthrough=self._paste_walkthrough_after_keys_up,
             on_status_update=controller.update_status_with_auto_hide,
             on_status_update_auto_hide=controller.update_status_with_auto_hide,
         )
@@ -298,6 +299,15 @@ class HotkeyRuntime:
             self.controller.status_update.emit(KEYS_STILL_HELD)
             return
         self.controller.paste_last_original_requested.emit()
+
+    def _paste_walkthrough_after_keys_up(self) -> None:
+        from services.focus_context import get_service
+
+        target = get_service().current_identity()
+        if not synthetic_keys.wait_for_modifiers_released():
+            self.controller.status_update.emit("Walkthrough not pasted: the shortcut keys are still held")
+            return
+        self.controller.paste_walkthrough_requested.emit(target)
 
     def _queue_record_press(self, at: float) -> None:
         self._dispatcher.submit(self.record_key_pressed, at)

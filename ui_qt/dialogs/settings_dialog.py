@@ -1547,10 +1547,20 @@ class SettingsDialog(QDialog):
     def _add_walkthrough_shortcut_rows(self, layout: QVBoxLayout, page: str) -> None:
         layout.addWidget(
             self._hotkey_shortcut_row(
+                "paste_walkthrough",
+                "Paste latest walkthrough",
+                "Paste the newest completed walkthrough's PDF, then its agent instructions. "
+                "Click your chat's message box first. The message stays unsent.",
+                optional=True,
+                page=page,
+            )
+        )
+        layout.addWidget(
+            self._hotkey_shortcut_row(
                 "walkthrough",
                 "Walkthrough",
-                "Talk while you take screenshots. Press again for one file with "
-                "your words and pictures, copied to paste into an agent.",
+                "Talk while you take screenshots. Press again to finish the document "
+                "and deliver it using your walkthrough copy settings.",
                 optional=True,
                 page=page,
             )
@@ -1576,11 +1586,13 @@ class SettingsDialog(QDialog):
         self.walkthrough_copy_format_combo.setMinimumHeight(40)
         self.walkthrough_copy_format_tile = FieldTile(
             "Default copy",
-            "What goes on the clipboard when a walkthrough finishes. "
-            "PDF copy (the default) attaches the document. Agent copy adds instructions to "
-            "carry out the work described in the PDF. Markdown copy is text with a file "
-            "link to each screenshot. PDF and Markdown copy copies both at once; "
-            "the app you paste into chooses which format to use.",
+            "What happens when a walkthrough finishes. PDF copy (the default) copies the file "
+            "to paste or attach. Agent with Auto-paste on pastes the PDF, then instructions "
+            "to carry out the work, into your focused chat; the message stays unsent. "
+            "With Auto-paste off, Agent copies only instructions; attach the PDF separately "
+            "or use Paste latest walkthrough for both. Markdown copy is text with a file "
+            "link to each screenshot. PDF and Markdown copy puts both on the clipboard; "
+            "the receiving app chooses which to use. Word copies an editable .docx file.",
             self.walkthrough_copy_format_combo,
             design_icon("copy-gray.svg"),
         )
@@ -1610,7 +1622,7 @@ class SettingsDialog(QDialog):
         self.walkthrough_page_size_combo.setMinimumHeight(40)
         self.walkthrough_page_size_tile = FieldTile(
             "Paper size",
-            "The PDF's page size. The Markdown copy has no pages.",
+            "The PDF and Word document's page size. The Markdown copy has no pages.",
             self.walkthrough_page_size_combo,
             design_icon("stack-slate.svg"),
         )
@@ -1687,8 +1699,8 @@ class SettingsDialog(QDialog):
         self.walkthrough_write_up_tile = SettingTile(
             "Write it up with an AI agent",
             "When a walkthrough finishes, your coding agent lays out a cleaner "
-            "document from your words and screenshots, which is what gets "
-            "copied. It uses your own plan and usually takes under a minute. "
+            "document from your words and screenshots, then delivers it using your "
+            "walkthrough copy settings. It uses your own plan and usually takes under a minute. "
             "The as-spoken PDF is kept beside it.",
             design_icon("wand-purple.svg"),
         )

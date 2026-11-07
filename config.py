@@ -779,6 +779,7 @@ class AppConfig:
                     'minimize_tray': 'ctrl+alt+m',
                     'meeting_toggle': '',
                     **unbound,
+                    'paste_walkthrough': 'ctrl+shift+f12',
                 }
             else:
                 self.DEFAULT_HOTKEYS = {
@@ -788,6 +789,7 @@ class AppConfig:
                     'minimize_tray': 'ctrl+alt+m',
                     'meeting_toggle': '',
                     **unbound,
+                    'paste_walkthrough': 'ctrl+shift+f12',
                 }
 
         if self.MODEL_VALUE_MAP is None:

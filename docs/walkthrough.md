@@ -1,8 +1,8 @@
 # Walkthroughs and screenshots
 
 Explain something out loud while you take screenshots, then get one document:
-your words with each screenshot right after what you said about it, copied
-so you can paste it into an agent. Outside a walkthrough the same screenshot
+your words with each screenshot right after what you said about it, ready
+to share with an agent. Outside a walkthrough the same screenshot
 tool copies a single annotated screenshot.
 
 Code: `services/runtime/walkthrough.py` (what each shortcut press does),
@@ -25,8 +25,8 @@ shortcut. On Wayland, where there is no column, the recording overlay offers
 **Snap** and **Done** instead. Both shortcuts start unassigned: the tab shows them (or **Not set**)
 under the button, and **Walkthrough settings** opens **Settings → Dictation →
 Walkthroughs** to set them. The tray menu has **Start Walkthrough** and
-**Take Screenshot** too. Hovering the button shows its shortcut; the badge at
-its right end (**New** until your first walkthrough, then **?**) says what it
+**Take Screenshot** too. Hovering the button shows its shortcut; the badge in
+the shortcut row (**New** until your first walkthrough, then **?**) says what it
 does.
 
 Beside the button, **When it finishes** says what happens after a walkthrough:
@@ -35,8 +35,10 @@ window goes to the tray as one starts. In a narrow window it moves under the
 button. Below them, the tab holds the choices themselves, saved to the same
 settings as **Settings → Dictation → Walkthroughs**:
 
-- **Copy when it finishes**: **PDF**, **PDF + Markdown**, **Markdown** or
-  **Word** (see below).
+- **Copy when it finishes**: **PDF**, **Agent**, **PDF + Markdown**, **Markdown** or
+  **Word** (see below). Hover a choice for a wrapped explanation. **Agent**
+  explains delivery with Auto-paste on or off; **Copy for agent** in the ready
+  card or review explains the manual copy action.
 - **AI write-up**: a switch, and one card each for Claude Code, Codex and
   OpenCode saying whether the last scan of this computer found it. Picking an
   agent turns the write-up on.
@@ -158,6 +160,18 @@ Auto Mode waits briefly for the screen to update and saves the clicked
 monitor. Several quick clicks become one screenshot. Each saved image
 closes a section of narration and appears in the live column.
 
+Use **Delay** under Auto Mode before starting, or in the drawing toolbar
+while recording, to choose **Instant**, **1s**, **2s**, **3s**, **5s** or
+**10s**. The choice is remembered. A delay groups successive clicks or marks
+into one screenshot: each completed mark restarts the countdown, giving you
+time to add several annotations. The small delay chip shows **Snap in…**
+with a shrinking ring; starting another stroke or typing a label waits until
+you finish. Temporary marks stay visible through the countdown. Click the
+chip to change the delay, or its **×** to cancel the pending screenshot.
+**Esc** while drawing and **Clear marks** also cancel it. **Done** keeps the
+pending drawing before finishing; pausing or cancelling discards it.
+**Instant** keeps the existing capture-on-release behavior.
+
 On macOS, allow **Screen & System Audio Recording** in **System Settings
 › Privacy & Security**, then reopen OpenWhisper. Auto Mode uses macOS's
 passive mouse monitor; watching clicks needs no additional Accessibility or
@@ -170,9 +184,18 @@ canvas, and recording controls while keeping them visible on your desktop.
 Older macOS versions briefly hide these windows to leave them out of captures.
 
 The drawing toolbar opens at the top center of the screen where you start.
+Whole-screen capture remains the default. Choose **Region** in that toolbar
+and drag an area on any monitor to keep capturing just that area after clicks.
+The outline stays on the live desktop and lets clicks through. Click its small
+**×** to return to capturing the whole clicked monitor; choosing, drawing the
+region, and closing it do not save screenshots. Press **Esc** to cancel a new
+selection. The region stays selected through pauses and manual screenshots,
+and resets when the walkthrough ends. Drawings on its monitor are cropped to
+the region too. The outline and **×** are left out of saved images.
+
 Choose a tool there, or click **Draw** in the column to pick the pen. Draw on
 any monitor and release the mouse to save an annotated screenshot of that
-monitor. For text, press **Enter** after typing. The tool stays selected so
+monitor, after the chosen delay. For text, press **Enter** after typing. The tool stays selected so
 you can draw again, with the crosshair or text cursor restored after each
 capture. Choose another tool to switch, or click the selected
 tool again or press **Esc** to return to the desktop.
@@ -232,8 +255,8 @@ Whatever you say after the last screenshot comes last.
   a paired host. No engine has to report timestamps.
 - Your dictionary, snippets and AI cleanup run on each section separately,
   so cleanup can never move a sentence across a screenshot. The app you
-  started in and the text near your cursor play no part: a walkthrough
-  becomes a document, not a paste.
+  started in and the text near your cursor play no part in that cleanup.
+  Delivery follows the walkthrough copy settings described below.
 
 ## What you get
 
@@ -250,7 +273,8 @@ folder (next to `meetings`):
 | `write-up.pdf`, `write-up.md`, `write-up.docx` | Your agent's write-up, when it is turned on (see below). |
 
 **Settings → Dictation → Walkthroughs** holds everything about walkthroughs:
-its two shortcuts (also on **Settings → Hotkeys**), and under **Document** how the
+its three shortcuts (start/finish, screenshot, and paste latest, also on
+**Settings → Hotkeys**), and under **Document** how the
 PDF, Word document and Markdown look:
 the title (empty for none), the line with the date, length and screenshot
 count, the note on how to read the document, the screenshot captions, and
@@ -258,34 +282,62 @@ the paper size of the PDF and Word document (Letter or A4 by your region unless 
 Your words and screenshots are always in, and `walkthrough.json` always
 keeps everything. Changes apply to the next walkthrough.
 
-Under **Copy**, the **Default copy** dropdown chooses what goes on the
-clipboard when a walkthrough finishes: **PDF copy** (the default),
-**Agent copy (PDF + instructions)**, **PDF and Markdown copy**, **Markdown copy**,
+Under **Copy**, the **Default copy** dropdown chooses how a finished walkthrough
+is delivered: **PDF copy** (the default),
+**Agent (PDF + instructions)**, **PDF and Markdown copy**, **Markdown copy**,
 or **Word document copy**. Every
 document is always saved, and the ready card and library still let you copy
 each format separately.
 
-**Agent** on the Walkthrough tab (or **Copy for agent** in the ready card's
-or saved walkthrough's **⋯** menu) copies the PDF file and a text prompt asking
-the receiving agent to read the words and screenshots, carry out the requested
-work, verify it, and report the result. The prompt includes the PDF's full path
-for a local agent when no attachment comes through. Copy uses the version
-currently shown in Review. This copy style does not run an agent itself.
-The receiving app decides whether it pastes the file, the prompt, or both.
+With **Agent (PDF + instructions)** selected and **Auto-paste** enabled,
+finishing a walkthrough automatically pastes its PDF, then its instructions,
+using the same sequence as **Paste latest walkthrough**. Keep your chat's message
+box focused when the document is ready. If AI write-up is enabled, delivery waits
+for it and uses the write-up PDF (or the as-spoken PDF if writing fails). The
+message is left unsent. With Auto-paste off, Agent mode copies only the
+instructions for manual pasting; attach the PDF separately or use the shortcut.
+
+**Copy for agent** in the ready card's or saved walkthrough's **⋯** menu is a
+manual copy action, even with Auto-paste on. It copies only instructions asking
+the agent to read the PDF, carry out the work, verify it, and report the result.
+Paste those instructions and attach that walkthrough's PDF by dragging its chip
+or copying and pasting the PDF separately. The prompt includes the PDF's full
+path for a local agent. Review copies the version currently shown; the ready
+card copies the latest version of its walkthrough. This action does not run an
+agent itself. Separate file and text pastes let chat apps receive both even
+when they would choose only one format from a combined clipboard.
+
+For both in one action, click your chat's message box and press
+**Ctrl+Shift+F12** (**Paste latest walkthrough**). OpenWhisper pastes the newest
+completed walkthrough's PDF, waits briefly for the chat to read it, then pastes
+the instructions. An AI write-up is used when available. This works independently
+of the default copy format and the Auto-paste setting, and does not send the
+message or change normal Ctrl+V. It always uses the newest completed walkthrough,
+even if an older walkthrough is open in Review.
+Change or clear this shortcut in **Settings → Hotkeys** or **Settings → Walkthroughs**.
+The instructions remain on the clipboard afterward. If the focused window or
+clipboard changes between the two pastes, the instructions are not pasted and
+the status explains why. The destination must accept pasted PDF files and the
+desktop must support identifying the focused window. Verified in the Windows
+chat composer; attachment processing speed can vary between apps.
+
+For a desktop smoke test without starting speech recognition, run
+`python scripts/check_walkthrough_paste.py --folder captures/<walkthrough>` and
+press the shortcut in an empty chat composer. It registers only this shortcut
+for four minutes and never sends the draft.
 
 With **PDF and Markdown copy**, the clipboard gets two things at once:
 
-- **The PDF as a file.** Apps that take files on paste attach it, and so
-  does a folder. Claude reads both the words and the pictures in a PDF of up
-  to 100 pages.
+- **The PDF as a file.** Apps that take files on paste can attach it; pasting
+  into a folder copies the file there.
 - **The Markdown as text, with each screenshot's full path.** A terminal
   pastes this, which is what agents such as Claude Code and Codex need: they
   read the words straight from the prompt and open the full-resolution
   screenshots by path.
 
-A card in the corner of the screen says it's ready, with **Open**, **Show in
+A card in the corner of the screen says it's ready, with **Open PDF**, **Show in
 folder**, and the PDF as a chip you can drag into any app. Dragging works
-even where pasting a file doesn't. **Review / Retry write-up** opens the
+even where pasting a file doesn't. **Review** opens the
 Walkthrough tab on the saved document; **Copy PDF** copies only the file, **Copy Word document** copies the
 `.docx` file to paste into an email or a folder, and **Copy Markdown** copies only
 the Markdown with a file link to each screenshot. **Open Word document** opens it
@@ -373,8 +425,9 @@ walkthrough up for you: Claude Code, Codex or OpenCode, whichever you choose
 under **Agent**, if you have it installed and signed in. It is off by
 default. Once the as-spoken documents are written, the agent replies with a
 document in Markdown. OpenWhisper lays that out in the same style as
-`write-up.pdf`, `write-up.docx` and `write-up.md`, and those are what get copied. The card
-and the status say **Write-up copied**.
+`write-up.pdf`, `write-up.docx` and `write-up.md`, and those are what get delivered.
+The card and status report the copy or, for Agent with Auto-paste on, the
+PDF-then-instructions paste.
 
 - **The instructions are yours.** By default the agent is asked to organize
   your words and screenshots into a simple but good-looking walkthrough
@@ -419,14 +472,14 @@ and the status say **Write-up copied**.
   falls back to the usual one. Links keep their own colour.
 - **It uses your own plan** and usually takes 10 to 60 seconds. It runs
   after the walkthrough's transcription job, so dictation keeps working
-  meanwhile; the document is copied once the write-up is done. A new
+  meanwhile; the document is delivered using your copy settings once the write-up is done. A new
   walkthrough, a recovery, a backup or a library edit waits for it.
 - **The as-spoken files always stay.** If the write-up fails (the agent
   missing or signed out, a timeout, or no usable reply), the walkthrough is
-  copied as spoken and the status says why. **Cancel** on the column, or
+  delivered as spoken and the status says why. **Cancel** on the column, or
   the Cancel shortcut when nothing is being recorded or transcribed, stops
   the write-up the same way: the walkthrough is already in History, so it
-  is kept and copied as spoken.
+  is kept and delivered as spoken.
 
 ## Where it works
 

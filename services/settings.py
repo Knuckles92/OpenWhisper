@@ -358,6 +358,7 @@ class SettingsKey:
     # menu: the Snap button and the Screenshot shortcut repeat it.
     WALKTHROUGH_SNAP_MODE: Final[str] = "walkthrough_snap_mode"
     WALKTHROUGH_AUTO_MODE: Final[str] = "walkthrough_auto_mode"
+    WALKTHROUGH_CAPTURE_DELAY: Final[str] = "walkthrough_capture_delay"
     WALKTHROUGH_KEEP_MARKS: Final[str] = "walkthrough_keep_marks"
     SNAP_TO_EDGES: Final[str] = "snap_to_edges"
     # The capture folder name of the walkthrough last closed on the Walkthrough
@@ -439,7 +440,7 @@ class WalkthroughCopyFormat:
     ALL: Final[tuple[str, ...]] = (PDF, AGENT_TASK, BOTH, AGENT, WORD)
     LABELS: Final[dict[str, str]] = {
         PDF: "PDF copy",
-        AGENT_TASK: "Agent copy (PDF + instructions)",
+        AGENT_TASK: "Agent (PDF + instructions)",
         BOTH: "PDF and Markdown copy",
         AGENT: "Markdown copy",
         WORD: "Word document copy",
@@ -887,6 +888,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.WALKTHROUGH_WRITE_UP_NOTES: False,
     SettingsKey.WALKTHROUGH_SNAP_MODE: WalkthroughSnapMode.REGION,
     SettingsKey.WALKTHROUGH_AUTO_MODE: False,
+    SettingsKey.WALKTHROUGH_CAPTURE_DELAY: 0,
     SettingsKey.WALKTHROUGH_KEEP_MARKS: False,
     SettingsKey.SNAP_TO_EDGES: True,
     SettingsKey.WALKTHROUGH_CLOSED: "",
@@ -1433,6 +1435,15 @@ resolve_walkthrough_snap_mode = _choice_resolver(
 resolve_walkthrough_auto_mode = _bool_resolver(SettingsKey.WALKTHROUGH_AUTO_MODE)
 resolve_walkthrough_keep_marks = _bool_resolver(SettingsKey.WALKTHROUGH_KEEP_MARKS)
 resolve_snap_to_edges = _bool_resolver(SettingsKey.SNAP_TO_EDGES)
+
+
+WALKTHROUGH_CAPTURE_DELAYS = (0, 1, 2, 3, 5, 10)
+
+
+def resolve_walkthrough_capture_delay(settings: Mapping[str, Any] | None = None) -> int:
+    """Seconds of quiet after an automatic click or drawing; zero keeps instant capture."""
+    raw = setting_value(SettingsKey.WALKTHROUGH_CAPTURE_DELAY, settings)
+    return raw if type(raw) is int and raw in WALKTHROUGH_CAPTURE_DELAYS else 0
 
 
 def resolve_walkthrough_title(settings: Optional[Mapping[str, Any]] = None) -> str:
