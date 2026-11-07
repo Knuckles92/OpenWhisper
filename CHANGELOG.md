@@ -16,6 +16,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 - **Meeting speech model defaults** — Meeting Mode uses your selected native Parakeet model on compatible computers when no meeting-specific model has been saved.
 
+### Fixed
+
+- **Walkthrough drawing cursor on macOS** — the crosshair and text cursor stay visible after repeated Auto Mode screenshots while the drawing tool remains selected.
+
 ## [2.8.5] - 2026-11-06
 
 ### Added

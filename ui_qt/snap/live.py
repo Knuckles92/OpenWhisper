@@ -295,6 +295,9 @@ class _Canvas(QWidget):
         self.setGeometry(self.screen.geometry())
         self.setCursor(Qt.CursorShape.IBeamCursor if self.live.tool is Tool.TEXT
                        else Qt.CursorShape.CrossCursor)
+        # Cocoa's show animation can reset the cursor after focus is restored.
+        # Apply before showing, including after flags recreate the native window.
+        macos.disable_animation(self)
         self.show()
         macos.join_all_spaces(self)
         macos.cover(self)

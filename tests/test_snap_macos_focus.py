@@ -115,3 +115,64 @@ def test_live_windows_can_join_full_screen_spaces_without_conflicting_flags(monk
     monkeypatch.setattr(macos, "_ns_window", lambda _: window)
     macos.join_all_spaces(object())
     window.setCollectionBehavior_.assert_called_once_with(1 | 8 | 256)
+
+
+def test_mac_drawing_window_animation_is_disabled(monkeypatch):
+    window = Mock()
+    monkeypatch.setitem(sys.modules, "AppKit", SimpleNamespace(NSWindowAnimationBehaviorNone=2))
+    monkeypatch.setattr(macos, "_on_macos", lambda: True)
+    monkeypatch.setattr(macos, "_ns_window", lambda _: window)
+    macos.disable_animation(object())
+    window.setAnimationBehavior_.assert_called_once_with(2)
+
+
+@pytest.mark.parametrize("tool", [Tool.PEN, Tool.TEXT])
+def test_mac_live_cursor_survives_repeated_captures(tool, monkeypatch):
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtGui import QCursor, QImage
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QApplication
+
+    from ui_qt.snap import capture, session
+
+    if QApplication.platformName() != "cocoa":
+        pytest.skip("Run with QT_QPA_PLATFORM=cocoa to check the native cursor")
+    import AppKit
+
+    # Use the real capture window lifecycle without reading desktop pixels.
+    image = QImage(100, 100, QImage.Format.Format_RGB32)
+    image.fill(Qt.GlobalColor.black)
+    monkeypatch.setattr(capture, "grab", lambda _: image)
+    monkeypatch.setattr(session, "snap_support", lambda: (True, ""))
+    original_pos = QCursor.pos()
+    owner = QWidget()
+    drawing = live.LiveAnnotations(owner)
+    snap = None
+    try:
+        drawing.arm(tool)
+        canvas = drawing._canvases[capture.screen_under_cursor()]
+        QCursor.setPos(canvas.mapToGlobal(QPoint(150, 150)))
+        QTest.qWait(150)
+        expected = (AppKit.NSCursor.IBeamCursor() if tool is Tool.TEXT
+                    else AppKit.NSCursor.crosshairCursor())
+        for _ in range(12):
+            drawing.set_busy(True)
+            snap = session.start_snap(keep_out=drawing.windows(), take=session.SCREEN,
+                                      screen=canvas.screen)
+            snap.kept.connect(lambda _: drawing.set_busy(False))
+            QTest.qWait(capture.settle_ms(canvas.screen) + 100)
+            assert not snap.active and not drawing.busy
+            assert drawing.tool is drawing._toolbar._tool is tool
+            assert QApplication.activeWindow() is canvas
+            assert AppKit.NSCursor.currentCursor().isEqual_(expected)
+            snap.deleteLater()
+            snap = None
+    finally:
+        if snap is not None:
+            if snap.active:
+                snap.drop()
+            snap.deleteLater()
+        drawing.close()
+        owner.close()
+        QCursor.setPos(original_pos)
+        QApplication.processEvents()

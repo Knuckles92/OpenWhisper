@@ -139,6 +139,18 @@ def join_all_spaces(widget: QWidget) -> None:
         logger.warning("Letting walkthrough windows follow Spaces failed", exc_info=True)
 
 
+def disable_animation(widget: QWidget) -> None:
+    """Keep capture hide/show cycles from resetting a live canvas's cursor."""
+    if not _on_macos():
+        return
+    try:
+        import AppKit
+
+        _ns_window(widget).setAnimationBehavior_(AppKit.NSWindowAnimationBehaviorNone)
+    except Exception:
+        logger.warning("Disabling the drawing window's animation failed", exc_info=True)
+
+
 def make_nonactivating(widget: QWidget) -> bool:
     """Let ``widget``'s panel take clicks without activating OpenWhisper.
 

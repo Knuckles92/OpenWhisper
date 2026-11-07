@@ -170,7 +170,8 @@ The drawing toolbar opens at the top center of the screen where you start.
 Choose a tool there, or click **Draw** in the column to pick the pen. Draw on
 any monitor and release the mouse to save an annotated screenshot of that
 monitor. For text, press **Enter** after typing. The tool stays selected so
-you can draw again. Choose another tool to switch, or click the selected
+you can draw again, with the crosshair or text cursor restored after each
+capture. Choose another tool to switch, or click the selected
 tool again or press **Esc** to return to the desktop.
 
 Marks disappear after about 1.5 seconds by default. Click **Keep marks** in
