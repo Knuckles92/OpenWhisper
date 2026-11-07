@@ -420,7 +420,13 @@ class TestMainWindowCompactMode:
         for widget in (tab.walkthrough_button, tab.copy_bar, *tab.agent_choices.values()):
             box = widget.rect().translated(widget.mapTo(viewport, widget.rect().topLeft()))
             assert viewport.rect().contains(box), widget
-        assert tab.copy_bar.buttons[-1].y() == tab.copy_bar.buttons[0].y()
+        # The five copy choices may wrap at this width. Each must still fit
+        # inside the bar and be selectable, including choices on a later row.
+        for index, button in enumerate(tab.copy_bar.buttons):
+            assert tab.copy_bar.rect().contains(button.geometry()), button.text()
+            assert button.width() >= button.natural_width(), button.text()
+            button.click()
+            assert tab.copy_bar.currentIndex() == index
 
     def test_clamp_keeps_footer_on_short_screen(self):
         """1280x800 available geometry must not grow the window to 840px."""
