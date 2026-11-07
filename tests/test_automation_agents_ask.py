@@ -213,13 +213,14 @@ def _alive(pid):
             return bool(api.GetExitCodeProcess(handle, c.byref(code))) and code.value == 259
         finally:
             api.CloseHandle(handle)
-    stat = Path(f"/proc/{pid}/stat")
-    if stat.exists() and stat.read_text().split(") ", 1)[1].startswith("Z"):
-        return False
     try:
+        stat = Path(f"/proc/{pid}/stat")
+        if stat.exists() and stat.read_text().split(") ", 1)[1].startswith("Z"):
+            return False
         os.kill(pid, 0)
         return True
-    except ProcessLookupError:
+    except (FileNotFoundError, ProcessLookupError):
+        # The process can disappear during either /proc lookup or the signal probe.
         return False
 
 
@@ -239,6 +240,19 @@ def _kill(pid):
     else:
         import signal
         os.kill(pid, signal.SIGKILL)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process probe")
+@pytest.mark.parametrize("operation", ["exists", "read_text"])
+@pytest.mark.parametrize("error", [FileNotFoundError, ProcessLookupError])
+def test_alive_handles_a_process_exiting_during_proc_lookup(monkeypatch, operation, error):
+    monkeypatch.setattr(Path, "exists", lambda self: True)
+
+    def gone(self):
+        raise error("process exited")
+
+    monkeypatch.setattr(Path, operation, gone)
+    assert not _alive(12345)
 
 
 # ---- command lines ----
