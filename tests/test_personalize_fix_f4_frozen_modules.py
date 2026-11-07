@@ -49,7 +49,7 @@ FLOW_PLATFORM = {
         "services.focus_context._win",
         "services.focus_context._win_uia",
     },
-    "darwin": {"services.focus_context._mac"},
+    "darwin": {"services._mouse_monitor_mac", "services.focus_context._mac"},
     "linux": {"services.focus_context._linux"},
 }
 

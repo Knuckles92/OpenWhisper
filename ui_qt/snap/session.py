@@ -167,7 +167,7 @@ class SnapSession(QObject):
         elif click_at is None:
             screens = capture.screens_to_cover()
         else:
-            screen = capture.screen_at_windows_point(click_at)
+            screen = capture.screen_at_click(click_at)
             screens = [screen] if screen is not None else []
         if not screens:
             self._fail_soon(NO_SCREEN)

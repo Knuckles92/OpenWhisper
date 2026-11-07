@@ -7,7 +7,7 @@ import math
 from collections.abc import Iterable
 
 from PyQt6 import sip
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QCursor, QGuiApplication, QImage, QScreen
 from PyQt6.QtWidgets import QWidget
 
@@ -58,6 +58,13 @@ def screen_at_windows_point(point: tuple[int, int]) -> QScreen | None:
     # Qt scales screen sizes on Windows but leaves their desktop origins intact.
     return next((screen for screen in QGuiApplication.screens()
                  if (screen.geometry().x(), screen.geometry().y()) == (left, top)), None)
+
+
+def screen_at_click(point: tuple[int, int]) -> QScreen | None:
+    """Resolve a native click without following the pointer after its release."""
+    if support._platform() == "win32":
+        return screen_at_windows_point(point)
+    return QGuiApplication.screenAt(QPoint(*point))
 
 
 def screens_to_cover() -> list[QScreen]:

@@ -150,13 +150,21 @@ screenshot that couldn't be saved, still appear at the pointer. On Wayland,
 where there is no column, the overlay is part of the main window and shows
 the walkthrough with its **Snap** and **Done**.
 
-### Auto Mode on Windows
+### Auto Mode on Windows and macOS
 
 Turn on **Auto Mode** under **Start Walkthrough**, then start recording.
 Keep talking as you work. After a left or right click outside OpenWhisper,
 Auto Mode waits briefly for the screen to update and saves the clicked
 monitor. Several quick clicks become one screenshot. Each saved image
 closes a section of narration and appears in the live column.
+
+On macOS, allow **Screen & System Audio Recording** in **System Settings
+› Privacy & Security**, then reopen OpenWhisper. Auto Mode uses macOS's
+passive mouse monitor; watching clicks needs no additional Accessibility or
+Input Monitoring grant. The toolbar stays visible while you work in another
+app, including full-screen Spaces. Leaving drawing returns focus to that
+app. Retina and external displays use the monitor where the click or
+drawing happened, even if you move the pointer before capture.
 
 The drawing toolbar opens at the top center of the screen where you start.
 Choose a tool there, or click **Draw** in the column to pick the pen. Draw on
@@ -167,10 +175,10 @@ tool again or press **Esc** to return to the desktop.
 
 Marks disappear after about 1.5 seconds by default. Click **Keep marks** in
 the drawing toolbar or press **F8** to pin each new mark. Auto Mode remembers
-this choice between walkthroughs. With **Keep marks** off, hold **Ctrl** when
-releasing the mouse to pin an individual mark. For text, hold it when placing
-the label or pressing **Enter**. Pinned marks appear in later automatic
-screenshots on that screen.
+this choice between walkthroughs. With **Keep marks** off, hold **Ctrl**
+(**Cmd** on macOS) when releasing the mouse to pin an individual mark. For
+text, hold it when placing the label or pressing **Enter**. Pinned marks
+appear in later automatic screenshots on that screen.
 
 Click **Clear marks** in the toolbar or press **F9** to remove all marks
 from the desktop. Saved screenshots keep their annotations. **F8** and
@@ -183,6 +191,13 @@ Tool keys and **S** work while drawing.
 The arrow beside Draw and the Screenshot shortcut take manual screenshots.
 **Pause** pauses automatic screenshots, and **Undo** removes the most recent
 image and keeps its words.
+
+For macOS development, `uv run --locked python scripts/check_walkthrough_desktop.py`
+checks native mouse-monitor installation and cleanup, live drawing, pinned-mark
+export, and exclusion of the drawing windows from real captures. It uses a test
+card and no microphone. Also check physical mouse/trackpad clicks in another
+app, focus after drawing and **Esc**, full-screen Spaces, and each attached
+display; these need a real macOS desktop.
 
 ## How your words line up with the screenshots
 

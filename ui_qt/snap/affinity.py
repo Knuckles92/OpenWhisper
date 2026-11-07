@@ -1,4 +1,4 @@
-"""Window plumbing for Snap: Windows capture exclusion and foreground focus.
+"""Window plumbing for Snap: capture exclusion and foreground focus.
 
 Windows 10 2004 and later can leave a window out of every screen capture
 (``SetWindowDisplayAffinity`` with ``WDA_EXCLUDEFROMCAPTURE``): the user
@@ -13,9 +13,9 @@ import functools
 import logging
 
 from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import QWidget
+from PyQt6.QtWidgets import QApplication, QWidget
 
-from ui_qt.snap import support
+from ui_qt.snap import macos, support
 
 logger = logging.getLogger(__name__)
 
@@ -116,14 +116,21 @@ def bring_to_front(window: QWidget) -> None:
         logger.warning("Bringing the snap overlay to the front failed", exc_info=True)
 
 
-def foreground_window() -> int | None:
+def foreground_window():
+    """The Windows handle or macOS app to restore after live drawing."""
     if QGuiApplication.platformName() == "windows":
         return _user32().GetForegroundWindow()
+    if QGuiApplication.platformName() == "cocoa":
+        return macos.foreground_app()
     return None
 
 
-def return_foreground(previous: int | None, windows: list[QWidget]) -> None:
+def return_foreground(previous, windows: list[QWidget]) -> None:
     """Return focus when one of our temporary drawing surfaces still has it."""
+    if QGuiApplication.platformName() == "cocoa":
+        if QApplication.activeWindow() in windows:
+            macos.return_focus_to(previous)
+        return
     current = foreground_window()
     if previous and current and any(w.isVisible() and int(w.winId()) == current
                                     for w in windows):

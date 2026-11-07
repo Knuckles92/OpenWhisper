@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Optional
 from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
 
 from services._mouse_hook_win import MouseButtonHook
+from services._mouse_monitor_mac import MouseClickMonitor
 from services.settings import (
     SettingsKey,
     WalkthroughSnapMode,
@@ -93,7 +94,7 @@ class WalkthroughRuntime(QObject):
         self._panel = None
         # Who asked for the snap being taken (see snap's ``source``).
         self._source = "hotkey"
-        self._auto_hook: MouseButtonHook | None = None
+        self._auto_hook: MouseButtonHook | MouseClickMonitor | None = None
         self._live_drawing = None
         self._auto_snap = None
         self._auto_drawing_capture = False
@@ -161,7 +162,7 @@ class WalkthroughRuntime(QObject):
         # The pill keeps showing what is being recorded, but never in the
         # screenshots themselves.
         self._out_of_screenshots = self._ui.keep_overlay_out_of_screenshots(True)
-        if sys.platform == "win32" and resolve_walkthrough_auto_mode(settings):
+        if sys.platform in ("win32", "darwin") and resolve_walkthrough_auto_mode(settings):
             self._start_auto(session, settings)
         logger.info("Walkthrough started")
 
@@ -210,10 +211,19 @@ class WalkthroughRuntime(QObject):
     # ---- Auto Mode ----
 
     def _start_auto(self, session: WalkthroughSession, settings: dict) -> None:
-        hook = MouseButtonHook(
-            lambda *_: False, lambda *_: None,
-            on_click=lambda x, y, at: self._click_received.emit(session, x, y, at),
-        )
+        supported, reason = self._ui.snap_support()
+        if not supported:
+            self._tell(reason)
+            self._ui.request_snap_access()
+            return
+
+        def on_click(x, y, at):
+            self._click_received.emit(session, x, y, at)
+
+        if sys.platform == "darwin":
+            hook = MouseClickMonitor(on_click=on_click)
+        else:
+            hook = MouseButtonHook(lambda *_: False, lambda *_: None, on_click=on_click)
         try:
             hook.start()
             if hook.wait_until_installed():
@@ -224,9 +234,12 @@ class WalkthroughRuntime(QObject):
                 if self._panel is not None:
                     self._panel.set_auto_mode(True)
                 return
-        except OSError:
-            logger.exception("Could not start the walkthrough's mouse hook")
-        hook.stop()
+        except Exception:
+            logger.exception("Could not start walkthrough Auto Mode")
+        if self._auto_hook is hook:
+            self._stop_auto()
+        else:
+            hook.stop()
         self._tell("Auto Mode couldn't watch for clicks. You can still use Snap.")
 
     def _start_auto_drawing(self, session: WalkthroughSession, settings: dict) -> None:

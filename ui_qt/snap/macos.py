@@ -121,6 +121,24 @@ def cover(widget: QWidget) -> None:
         logger.warning("Letting the snap overlay join full-screen Spaces failed", exc_info=True)
 
 
+def join_all_spaces(widget: QWidget) -> None:
+    """Keep live walkthrough controls and marks on the user's current Space."""
+    if not _on_macos():
+        return
+    try:
+        import AppKit
+
+        window = _ns_window(widget)
+        # AppKit rejects CanJoinAllSpaces together with MoveToActiveSpace.
+        window.setCollectionBehavior_(
+            (window.collectionBehavior() & ~AppKit.NSWindowCollectionBehaviorMoveToActiveSpace)
+            | AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
+            | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
+        )
+    except Exception:
+        logger.warning("Letting walkthrough windows follow Spaces failed", exc_info=True)
+
+
 def make_nonactivating(widget: QWidget) -> bool:
     """Let ``widget``'s panel take clicks without activating OpenWhisper.
 
@@ -144,20 +162,25 @@ def make_nonactivating(widget: QWidget) -> bool:
     return True
 
 
-def remember_focus() -> None:
-    """Note the frontmost app, before a snap makes OpenWhisper active."""
-    global _focus_owner
+def foreground_app():
+    """The other app in front, or None if OpenWhisper already has focus."""
     if not _on_macos():
-        return
+        return None
     try:
         import AppKit
 
         front = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
         mine = AppKit.NSRunningApplication.currentApplication()
-        _focus_owner = None if front is None or front.isEqual_(mine) else front
+        return None if front is None or front.isEqual_(mine) else front
     except Exception:
         logger.warning("Could not tell which app had the focus", exc_info=True)
-        _focus_owner = None
+        return None
+
+
+def remember_focus() -> None:
+    """Note the frontmost app, before a snap makes OpenWhisper active."""
+    global _focus_owner
+    _focus_owner = foreground_app()
 
 
 def return_focus() -> None:
@@ -168,6 +191,11 @@ def return_focus() -> None:
     """
     global _focus_owner
     owner, _focus_owner = _focus_owner, None
+    return_focus_to(owner)
+
+
+def return_focus_to(owner) -> None:
+    """Hand focus back only while OpenWhisper still owns it."""
     if owner is None or not _on_macos() or owner.isTerminated():
         return
     try:

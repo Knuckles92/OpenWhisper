@@ -10,6 +10,7 @@ margin around it swallows clicks meant for the screenshot.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, pyqtSignal
@@ -72,7 +73,7 @@ def _layout(
 
     for tool, tip in _TOOLS:
         if live:
-            tip += " · Hold Ctrl to pin"
+            tip += f" · Hold {'Cmd' if sys.platform == 'darwin' else 'Ctrl'} to pin"
         add("tool", tool.value, tip)
     separate()
     if not live:

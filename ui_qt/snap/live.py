@@ -15,7 +15,7 @@ from services.settings import (
     resolve_walkthrough_keep_marks,
     settings_manager,
 )
-from ui_qt.snap import affinity, capture, pointed
+from ui_qt.snap import affinity, capture, macos, pointed
 from ui_qt.snap.annotations import SWATCHES, Annotation, Step, Tool, new_draft
 from ui_qt.snap.geometry import EDGE_MARGIN, snap_point
 from ui_qt.snap.overlay import (
@@ -59,6 +59,7 @@ class LiveAnnotations(QObject):
         self.snap_enabled: bool
         self._keep_marks = resolve_walkthrough_keep_marks()
         self._previous_focus = None
+        self._panel_level: int | None = None
         self._screen = capture.screen_under_cursor()
         self._toolbar = SnapToolbar(None, current_palette(), live=True,
                                     flags=_FLOATING | _NO_FOCUS, mark_shortcuts=mark_shortcuts)
@@ -66,6 +67,9 @@ class LiveAnnotations(QObject):
         self._toolbar.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self._toolbar.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips)
         self._toolbar.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        self._toolbar.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
+        if self._panel is not None:
+            macos.join_all_spaces(self._panel)
         self._toolbar.tool_chosen.connect(self.toggle_tool)
         self._toolbar.color_chosen.connect(self.set_color)
         self._toolbar.snap_clicked.connect(self.toggle_snap)
@@ -110,7 +114,11 @@ class LiveAnnotations(QObject):
         self._toolbar.setScreen(self._screen)
         self._toolbar.move(area.x() + max(0, (area.width() - self._toolbar.width()) // 2),
                            area.y() + EDGE_MARGIN)
+        macos.make_nonactivating(self._toolbar)
         self._toolbar.show()
+        macos.join_all_spaces(self._toolbar)
+        macos.cover(self._toolbar)
+        macos.set_level(self._toolbar, macos.PARKED_LEVEL)
         if not affinity.is_kept_out(self._toolbar):
             affinity.keep_out_of_screenshots(self._toolbar, True)
         self._toolbar.raise_()
@@ -130,6 +138,8 @@ class LiveAnnotations(QObject):
         if not self.armed:
             self.arming.emit()
             self._previous_focus = affinity.foreground_window()
+            if self._panel is not None:
+                self._panel_level = macos.set_level(self._panel, macos.PARKED_LEVEL)
             for screen in screens:
                 if screen not in self._canvases:
                     self._canvases[screen] = _Canvas(self, screen)
@@ -156,6 +166,9 @@ class LiveAnnotations(QObject):
             return
         affinity.return_foreground(self._previous_focus, list(self._canvases.values()))
         self._previous_focus = None
+        if self._panel is not None and self._panel_level is not None:
+            macos.set_level(self._panel, self._panel_level)
+            self._panel_level = None
         self.tool = None
         for canvas in self._canvases.values():
             canvas.cancel_draft()
@@ -219,7 +232,7 @@ class LiveAnnotations(QObject):
         self.drawn.emit(canvas.screen, canvas.items())
 
     def pinned_at(self, position: tuple[int, int]) -> tuple[Annotation, ...]:
-        screen = capture.screen_at_windows_point(position)
+        screen = capture.screen_at_click(position)
         canvas = self._canvases.get(screen)
         return canvas.items(pinned_only=True) if canvas is not None else ()
 
@@ -264,6 +277,7 @@ class _Canvas(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self.setProperty(_HOTKEY_WINDOW_PROPERTY, True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         screen.geometryChanged.connect(self.setGeometry)
@@ -282,6 +296,8 @@ class _Canvas(QWidget):
         self.setCursor(Qt.CursorShape.IBeamCursor if self.live.tool is Tool.TEXT
                        else Qt.CursorShape.CrossCursor)
         self.show()
+        macos.join_all_spaces(self)
+        macos.cover(self)
         if not affinity.is_kept_out(self):
             affinity.keep_out_of_screenshots(self, True)
         self.update()

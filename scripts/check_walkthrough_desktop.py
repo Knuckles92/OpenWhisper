@@ -27,6 +27,69 @@ from ui_qt.snap import affinity, support
 from ui_qt.snap.session import start_snap
 
 
+def _check_mac_auto_capture(app, card, keep_out):
+    import AppKit
+
+    from services._mouse_monitor_mac import MouseClickMonitor
+    from ui_qt.snap import export, macos
+    from ui_qt.snap.annotations import Tool
+    from ui_qt.snap.live import LiveAnnotations
+
+    monitor = MouseClickMonitor(lambda *_: None)
+    drawing = None
+    snap = None
+    try:
+        monitor.start()
+        assert monitor.wait_until_installed(), "Native mouse monitors did not install"
+        monitor.stop()
+        assert not monitor.running, "Native mouse monitors did not stop"
+        drawing = LiveAnnotations(card)
+        toolbar, = drawing.windows()
+        assert not macos._ns_window(toolbar).hidesOnDeactivate(), "Drawing toolbar hides in other apps"
+        assert macos._ns_window(toolbar).level() == macos.PARKED_LEVEL
+        assert (macos._ns_window(toolbar).collectionBehavior()
+                & AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces), "Toolbar cannot follow Spaces"
+        drawing.arm(Tool.PEN)
+        canvas = drawing._canvases[card.screen()]
+        assert macos._ns_window(canvas).level() == macos.COVER_LEVEL
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(90, 130))
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton,
+                           Qt.KeyboardModifier.ControlModifier, QPoint(210, 130))
+        area = card.screen().geometry()
+        at = area.x() + 150, area.y() + 130
+        marks = drawing.pinned_at(at)
+        assert len(marks) == 1, "The pinned mark did not follow the clicked display"
+        assert drawing.tool is Tool.PEN, "Drawing did not keep the selected tool"
+        QTest.keyClick(canvas, Qt.Key.Key_Escape)
+        assert not drawing.armed, "Esc did not return desktop input"
+        snap = start_snap(keep_out=(*keep_out, *drawing.windows()), take="screen", click_at=at)
+        kept, failed = [], []
+        snap.kept.connect(kept.append)
+        snap.failed.connect(failed.append)
+        for _ in range(100):
+            QTest.qWait(30)
+            if kept or failed:
+                break
+        assert not failed, failed
+        assert kept, "Automatic capture did not complete"
+        raw = kept[0]
+        dpr = raw.devicePixelRatio()
+        assert raw.pixelColor(round(150 * dpr), round(130 * dpr)).name() == "#194754", (
+            "The live canvas entered the capture")
+        annotated = export.render(raw, export.logical_rect(raw), marks)
+        assert annotated.pixelColor(round(150 * dpr), round(130 * dpr)) != raw.pixelColor(
+            round(150 * dpr), round(130 * dpr)), "The saved image lost its pinned mark"
+        assert all(window.isVisible() for window in drawing.windows()), "Live windows were not restored"
+        return "passed (physical click delivery and Spaces need manual checks)"
+    finally:
+        monitor.stop()
+        if snap is not None and snap.active:
+            snap.drop()
+        if drawing is not None:
+            drawing.close()
+        app.processEvents()
+
+
 def main():
     app = QApplication.instance() or QApplication([])
     supported, reason = support.snap_support()
@@ -92,7 +155,8 @@ def main():
         # Keep the capture deferred until signals are connected. The test card
         # stays visible throughout; no desktop pixels are saved to disk.
         snap = start_snap(keep_out=(marker, *real_overlays), hint="Desktop smoke test",
-                          float_above=(real_overlays[0],) if real_overlays else ())
+                          float_above=(real_overlays[0],) if real_overlays else (),
+                          screen=card.screen())
         kept, failed = [], []
         snap.kept.connect(kept.append)
         snap.failed.connect(failed.append)
@@ -130,6 +194,8 @@ def main():
                                       round(y * image.devicePixelRatio()))
             assert sum(abs(colour.getRgb()[i] - expected.getRgb()[i]) for i in range(3)) < 20, (
                 f"A walkthrough overlay entered the capture: {colour.name()}")
+        auto_capture = (_check_mac_auto_capture(app, card, (marker, *real_overlays))
+                        if app.platformName() == "cocoa" else "macOS only")
         with tempfile.TemporaryDirectory(prefix="openwhisper-desktop-smoke-") as root:
             folder = Path(root) / "2026-10-21_14-32-05"
             folder.mkdir()
@@ -149,6 +215,7 @@ def main():
                               overlay_exclusion="native" if excluded else "hide before grab",
                               width=image.width(), height=image.height(),
                               ratio=image.devicePixelRatio(), pixel=sample.name(),
+                              auto_capture=auto_capture,
                               capture_keep_review_pdf="passed")))
     finally:
         if snap is not None and snap.active:

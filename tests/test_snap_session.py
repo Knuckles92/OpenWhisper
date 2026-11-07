@@ -175,7 +175,7 @@ class TestOutcomes:
             clicked_at.append(point)
             return monitor
 
-        monkeypatch.setattr(capture, "screen_at_windows_point", screen_at)
+        monkeypatch.setattr(capture, "screen_at_click", screen_at)
         snap = start_snap(take=SCREEN, click_at=(-500, 100))
         kept = Spy(snap.kept)
 

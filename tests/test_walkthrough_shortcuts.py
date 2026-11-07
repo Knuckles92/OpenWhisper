@@ -279,14 +279,15 @@ def _begin(h):
     return session
 
 
-@pytest.fixture
-def auto(h, monkeypatch):
+@pytest.fixture(params=["win32", "darwin"])
+def auto(h, monkeypatch, request):
     h.settings.values[SettingsKey.WALKTHROUGH_AUTO_MODE] = True
-    monkeypatch.setattr(walkthrough_module, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(walkthrough_module, "sys", SimpleNamespace(platform=request.param))
     hook = Mock()
     hook.wait_until_installed.return_value = True
     factory = Mock(return_value=hook)
-    monkeypatch.setattr(walkthrough_module, "MouseButtonHook", factory)
+    name = "MouseClickMonitor" if request.param == "darwin" else "MouseButtonHook"
+    monkeypatch.setattr(walkthrough_module, name, factory)
     session = _begin(h)
     on_click = factory.call_args.kwargs["on_click"]
 
@@ -424,6 +425,48 @@ def test_auto_mode_drops_an_in_flight_shot_on_pause_or_end(h, auto):
     assert auto.session.shot_count == 0
     assert not h.ui.copied
     auto.hook.stop.assert_called_once()
+
+
+def test_mac_auto_mode_requests_screen_recording_before_watching_clicks(h, monkeypatch):
+    h.settings.values[SettingsKey.WALKTHROUGH_AUTO_MODE] = True
+    monkeypatch.setattr(walkthrough_module, "sys", SimpleNamespace(platform="darwin"))
+    monitor = Mock()
+    monkeypatch.setattr(walkthrough_module, "MouseClickMonitor", monitor)
+    h.ui.supported = False, "Screen Recording is required"
+    session = _begin(h)
+    try:
+        monitor.assert_not_called()
+        assert h.ui.access_requests == 1
+        assert (h.ui.supported[1], False) in h.ui.notices
+        assert not h.ui.walkthrough_panel.auto_mode
+        assert h.ui.drawing is None
+        assert h.recorder.is_recording
+    finally:
+        session.end()
+
+
+@pytest.mark.parametrize("failure", ["monitor", "drawing"])
+def test_mac_auto_startup_failure_leaves_manual_snap_available(h, monkeypatch, failure):
+    h.settings.values[SettingsKey.WALKTHROUGH_AUTO_MODE] = True
+    monkeypatch.setattr(walkthrough_module, "sys", SimpleNamespace(platform="darwin"))
+    hook = Mock()
+    hook.wait_until_installed.return_value = failure != "monitor"
+    monkeypatch.setattr(walkthrough_module, "MouseClickMonitor", Mock(return_value=hook))
+    if failure == "drawing":
+        monkeypatch.setattr(h.ui, "start_walkthrough_drawing", Mock(side_effect=RuntimeError("drawing unavailable")))
+    session = _begin(h)
+    try:
+        hook.stop.assert_called_once()
+        assert h.runtime._auto_hook is None
+        assert not h.ui.walkthrough_panel.auto_mode
+        assert h.ui.drawing is None
+        h.runtime.snap()
+        h.ui.snaps[0].keep()
+        assert session.shot_count == 1
+        assert h.recorder.is_recording
+    finally:
+        h.runtime.cleanup()
+        session.end()
 
 
 def test_the_shortcut_starts_a_walkthrough_kept_out_of_its_own_screenshots(h):

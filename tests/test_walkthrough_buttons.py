@@ -21,6 +21,7 @@ from ui_qt.overlays import waveform_overlay
 from ui_qt.overlays.waveform_overlay import WaveformOverlay
 from ui_qt.ui_controller import UIController
 from ui_qt.widgets.walkthrough_tab import COPY_CHOICES, OWN_PROMPT, WalkthroughTab
+from ui_qt.widgets import walkthrough_tab
 
 #: The styles a new install picks from: the default, then the starters.
 STYLES = load_styles({})
@@ -81,6 +82,18 @@ def test_auto_mode_is_opt_in_and_set_before_recording(tab):
     assert not tab.auto_check.isEnabled()
     tab.set_recording_state(False, False)
     assert tab.auto_check.isEnabled()
+
+
+@pytest.mark.parametrize("desktop", ["classic", "omarchy"])
+@pytest.mark.parametrize("platform,visible", [("darwin", True), ("win32", True), ("linux", False)])
+def test_auto_mode_is_offered_on_supported_desktops(monkeypatch, desktop, platform, visible):
+    monkeypatch.setenv("OPENWHISPER_UI", desktop)
+    monkeypatch.setattr(walkthrough_tab, "sys", SimpleNamespace(platform=platform))
+    widget = WalkthroughTab()
+    try:
+        assert widget.auto_check.isVisibleTo(widget) is visible
+    finally:
+        widget.close()
 
 
 def test_during_a_walkthrough_the_tab_finishes_or_cancels_it(tab):

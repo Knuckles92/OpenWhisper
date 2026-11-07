@@ -187,3 +187,74 @@ def test_live_text_saves_on_commit(monkeypatch):
     finally:
         drawing.close()
         QGuiApplication.processEvents()
+
+
+def test_pinned_marks_follow_the_clicked_screen_and_are_rendered_once(monkeypatch):
+    from PyQt6.QtGui import QColor, QImage
+    from PyQt6.QtWidgets import QApplication, QWidget
+
+    from ui_qt.snap import export, session, support
+
+    monkeypatch.setattr(support, "_platform", lambda: "darwin")
+    monkeypatch.setattr(session, "snap_support", lambda: (True, ""))
+    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
+    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+    panel = QWidget()
+    panel.show()
+    drawing = live.LiveAnnotations(panel, panel)
+    snap = None
+    try:
+        screen = live.capture.screen_under_cursor()
+        monkeypatch.setattr(live.capture, "screen_at_click", lambda _: screen)
+        drawing.arm(Tool.PEN)
+        canvas = drawing._canvases[screen]
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(50, 80))
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton,
+                           Qt.KeyboardModifier.ControlModifier, QPoint(90, 110))
+        assert drawing.tool is Tool.PEN
+        QTest.keyClick(canvas, Qt.Key.Key_Escape)
+        assert not drawing.armed
+        (mark,) = drawing.pinned_at((-120, 25))
+        windows = (panel, *drawing.windows())
+        visible = []
+
+        def grab(target):
+            assert target is screen
+            visible.extend(w for w in windows if w.isVisible())
+            image = QImage(screen.geometry().size() * 2, QImage.Format.Format_RGB32)
+            image.fill(QColor("#194754"))
+            return image
+
+        monkeypatch.setattr(live.capture, "_grab_screen", grab)
+        snap = session.start_snap(take=session.SCREEN, click_at=(-120, 25), keep_out=windows)
+        kept = []
+        snap.kept.connect(kept.append)
+        QTest.qWait(100)
+        QApplication.processEvents()
+        (raw,) = kept
+        assert not visible
+        assert raw.devicePixelRatio() == 2
+        assert all(w.isVisible() for w in windows)
+        result = export.render(raw, export.logical_rect(raw), (mark,))
+        assert result.pixelColor(140, 190) != raw.pixelColor(140, 190)
+        assert result.devicePixelRatio() == 2
+    finally:
+        if snap is not None and snap.active:
+            snap.drop()
+        drawing.close()
+        panel.close()
+
+
+def test_mac_live_toolbar_explains_command_to_pin(monkeypatch):
+    from types import SimpleNamespace
+
+    from ui_qt.snap import toolbar
+
+    monkeypatch.setattr(toolbar, "sys", SimpleNamespace(platform="darwin"))
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        tooltips = [button.tip for button in drawing._toolbar._buttons if button.kind == "tool"]
+        assert tooltips and all("Hold Cmd to pin" in tip for tip in tooltips)
+    finally:
+        drawing.close()
