@@ -155,3 +155,21 @@ def test_word_documents_are_written_beside_the_pdf_and_copied_as_files(tmp_path)
 def test_the_word_document_is_sized_in_points_like_the_pdf(tmp_path):
     word = Document(str(write_docx(Walkthrough(STARTED, 5, (Section("Words."),)), tmp_path)))
     assert word.styles["Normal"].font.size == Pt(11)
+
+
+@pytest.mark.parametrize("filename", ["walkthrough.pdf", "write-up.pdf", "write-up-1.pdf"])
+def test_agent_copy_includes_selected_pdf_and_action_instructions(tmp_path, filename):
+    folder = tmp_path / "Walkthrough with spaces"
+    result = WalkthroughResult(folder=folder, pdf=folder / filename,
+                               markdown=folder / "document.md", clipboard_text="Markdown body",
+                               history_text="", history_raw=None, shots=0, duration_s=1.0,
+                               first_shot=None)
+
+    files, prompt = result.clipboard(WalkthroughCopyFormat.AGENT_TASK)
+
+    assert files == [result.pdf]
+    assert str(result.pdf.resolve()) in prompt
+    assert "screenshots" in prompt
+    assert "carry out the tasks and changes" in prompt
+    assert "verify the result" in prompt
+    assert "Markdown body" not in prompt

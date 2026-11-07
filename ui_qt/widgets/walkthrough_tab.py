@@ -85,10 +85,10 @@ STORYBOARD_WIDTH = 900
 #: How long typing in the prompt pauses before it is saved.
 PROMPT_SAVE_DELAY_MS = 400
 
-#: Copy choices in the order the bar shows them, short enough that the four
-#: share one row at the window's minimum width.
+#: Copy choices in the order the bar shows them; the bar wraps when narrow.
 COPY_CHOICES = (
     (WalkthroughCopyFormat.PDF, "PDF"),
+    (WalkthroughCopyFormat.AGENT_TASK, "Agent"),
     (WalkthroughCopyFormat.BOTH, "PDF + Markdown"),
     (WalkthroughCopyFormat.AGENT, "Markdown"),
     (WalkthroughCopyFormat.WORD, "Word"),
@@ -647,6 +647,7 @@ class WalkthroughTab(QWidget):
         self.copy_bar = SegmentedBar([(label, "") for _value, label in COPY_CHOICES], compact=True)
         self.copy_bar.setAccessibleName("What's copied when a walkthrough finishes")
         self.copy_bar.setToolTip(
+            "Agent copies the PDF with instructions to carry out the work described in it. "
             "Markdown is text with a file link to each screenshot, for pasting into a "
             "terminal agent. PDF + Markdown copies both at once. Word copies a .docx "
             "you can edit.")

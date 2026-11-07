@@ -2389,8 +2389,8 @@ class TranscriptionRuntime:
     def _copy_walkthrough(self, ui, result) -> None:
         """Copy a walkthrough's document and show where it is; Qt thread.
 
-        The clipboard holds the preferred PDF file, Markdown with absolute
-        image paths, or both. Never pasted: the user chooses where it goes.
+        The clipboard holds the chosen document and/or text, including the
+        action prompt for Agent copy. Never pasted: the user chooses where it goes.
         """
         copy_format = resolve_walkthrough_copy_format(settings_manager.load_all_settings())
         files, text = result.clipboard(copy_format)

@@ -81,6 +81,7 @@ SHOT_COPY_SIZE, SHOT_COPY_INSET = 28, 6
 _ROW_MIME = "application/x-openwhisper-walkthrough-row"
 _COPIED = {
     WalkthroughCopyFormat.PDF: "PDF copied.",
+    WalkthroughCopyFormat.AGENT_TASK: "PDF and agent instructions copied.",
     WalkthroughCopyFormat.AGENT: "Markdown copied.",
     WalkthroughCopyFormat.WORD: "Word document copied.",
 }
@@ -754,6 +755,7 @@ class WalkthroughReview(QWidget):
         self.actions = [self.save_button, self.save_redo_button, self.discard_button,
                         self.pdf_button, self.markdown_button, self.copy_word_button,
                         self.open_button, self.open_word_button, self.folder_button,
+                        self.copy_agent_action,
                         self.retry_button, self.style_button, self.prompt_button,
                         self.delete_button, self.recover_button, self.close_button,
                         self.version_bar, self.version_picker]
@@ -834,6 +836,10 @@ class WalkthroughReview(QWidget):
         self.more_button = self._icon_button("dots-gray.svg", "More")
         self.more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu = context_menu(self)
+        self.copy_agent_action = self._menu_action(
+            "Copy for agent", lambda: self._copy(WalkthroughCopyFormat.AGENT_TASK))
+        self.copy_agent_action.setToolTip("The PDF with instructions to carry out the work in it")
+        self.menu.addSeparator()
         self.open_word_button = self._menu_action("Open Word document", self._open_word)
         self.folder_button = self._menu_action("Show in folder", self._reveal)
         self.menu.addSeparator()
@@ -1101,7 +1107,7 @@ class WalkthroughReview(QWidget):
         for widget in self.actions:
             widget.setEnabled(True)
         for button in (self.save_button, self.discard_button, self.pdf_button,
-                       self.markdown_button, self.retry_button, self.style_button,
+                       self.markdown_button, self.copy_agent_action, self.retry_button, self.style_button,
                        self.prompt_button, self.open_button):
             button.setEnabled(ready)
         # A draft has no document yet: nothing to copy, open or edit.

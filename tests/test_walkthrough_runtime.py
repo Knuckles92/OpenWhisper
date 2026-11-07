@@ -441,6 +441,21 @@ def test_finished_walkthrough_uses_preferred_copy(h, copy_format, pdf, markdown)
         assert any("paste it where you need it" in status for status in h.ui.statuses)
 
 
+def test_finished_walkthrough_agent_copy_has_pdf_and_action_prompt(h):
+    h.settings.values[SettingsKey.WALKTHROUGH_COPY_FORMAT] = "agent_task"
+    _write_recording(h.audio, [_tone(4.0)])
+    _record(h, [2.0], length_s=4.0)
+
+    h.runtime.transcribe_audio_file(str(h.audio))
+
+    (files, prompt), = h.ui.copied_files
+    assert files == [h.session.folder() / "walkthrough.pdf"]
+    assert str(files[0].resolve()) in prompt
+    assert "carry out the tasks and changes" in prompt
+    assert h.ui.ready[0][1] is True
+    assert any("paste it into your agent" in status for status in h.ui.statuses)
+
+
 def test_each_section_is_cleaned_up_on_its_own(h, monkeypatch):
     _write_recording(h.audio, [_tone(5.0)])
     seen = []

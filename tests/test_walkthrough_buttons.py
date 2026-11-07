@@ -278,14 +278,17 @@ def test_the_tab_opens_on_the_saved_choices():
         tab.close()
 
 
-def test_the_copy_choice_is_saved(tab):
+@pytest.mark.parametrize("copy_format", WalkthroughCopyFormat.ALL)
+def test_the_copy_choice_is_saved(tab, copy_format):
     index = next(i for i, (value, _label) in enumerate(COPY_CHOICES)
-                 if value == WalkthroughCopyFormat.AGENT)
+                 if value == copy_format)
 
     tab.copy_bar.buttons[index].click()
 
     assert (settings_manager.load_all_settings()[SettingsKey.WALKTHROUGH_COPY_FORMAT]
-            == WalkthroughCopyFormat.AGENT)
+            == copy_format)
+    tab.load_settings()
+    assert COPY_CHOICES[tab.copy_bar.currentIndex()][0] == copy_format
 
 
 def test_minimizing_to_tray_on_start_is_off_until_ticked_and_then_saved(tab):

@@ -175,6 +175,18 @@ class WalkthroughResult:
         """
         from services.settings import WalkthroughCopyFormat
 
+        if copy_format == WalkthroughCopyFormat.AGENT_TASK:
+            prompt = (
+                "Read the attached walkthrough PDF, including its screenshots, and carry out "
+                "the tasks and changes I describe in it. Use the words and screenshots "
+                "together to understand the intended result. Implement the requested work "
+                "rather than only summarizing the document. Ask for clarification if a "
+                "required detail is missing; otherwise proceed, verify the result, and "
+                "report what you changed and anything still unresolved.\n\n"
+                f"PDF file (if the attachment is unavailable): {self.pdf.resolve()}"
+            )
+            return [self.pdf], prompt
+
         files = {
             WalkthroughCopyFormat.PDF: [self.pdf],
             WalkthroughCopyFormat.BOTH: [self.pdf],

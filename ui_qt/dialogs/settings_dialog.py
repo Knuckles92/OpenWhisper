@@ -1577,7 +1577,8 @@ class SettingsDialog(QDialog):
         self.walkthrough_copy_format_tile = FieldTile(
             "Default copy",
             "What goes on the clipboard when a walkthrough finishes. "
-            "PDF copy (the default) attaches the document; Markdown copy is text with a file "
+            "PDF copy (the default) attaches the document. Agent copy adds instructions to "
+            "carry out the work described in the PDF. Markdown copy is text with a file "
             "link to each screenshot. PDF and Markdown copy copies both at once; "
             "the app you paste into chooses which format to use.",
             self.walkthrough_copy_format_combo,

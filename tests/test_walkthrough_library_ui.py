@@ -47,11 +47,18 @@ def test_copy_buttons_send_explicit_clipboard_formats(dialog, capture):
     args, kwargs = dialog.review._copy_files.call_args
     assert args == ([capture.result.pdf],)
     assert kwargs == {"text": ""}
+    dialog.review.copy_agent_action.trigger()
+    args, kwargs = dialog.review._copy_files.call_args
+    assert args == ([capture.result.pdf],)
+    assert "carry out the tasks and changes" in kwargs["text"]
+    assert str(capture.result.pdf.resolve()) in kwargs["text"]
+    assert dialog.review.notice.text() == "PDF and agent instructions copied."
 
 
 def test_unsaved_edits_cannot_be_shared_or_written_up(dialog):
     dialog.review._editors[0].setPlainText("corrected")
     dialog.review.markdown_button.click()
+    dialog.review.copy_agent_action.trigger()
     dialog.review._copy_files.assert_not_called()
     assert "Save" in dialog.review.notice.text()
     dialog.review.retry_button.trigger()
@@ -134,10 +141,12 @@ def test_ready_card_exposes_review_and_every_copy_format(capture):
     card.copy_pdf_action.trigger()
     card.copy_word_action.trigger()
     card.copy_markdown_action.trigger()
+    card.copy_agent_action.trigger()
     assert [list(args) for args in copied] == [
         [capture.result, WalkthroughCopyFormat.PDF],
         [capture.result, WalkthroughCopyFormat.WORD],
         [capture.result, WalkthroughCopyFormat.AGENT],
+        [capture.result, WalkthroughCopyFormat.AGENT_TASK],
     ]
     card.review_button.click()
     assert review[0] == [capture.folder]

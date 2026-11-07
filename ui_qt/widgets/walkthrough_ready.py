@@ -248,6 +248,9 @@ class WalkthroughReadyCard(QWidget):
         self.menu.addSeparator()
         self.copy_pdf_action = self._menu_action(
             "Copy PDF", lambda: self._copy(WalkthroughCopyFormat.PDF))
+        self.copy_agent_action = self._menu_action(
+            "Copy for agent", lambda: self._copy(WalkthroughCopyFormat.AGENT_TASK))
+        self.copy_agent_action.setToolTip("The PDF with instructions to carry out the work in it")
         self.copy_word_action = self._menu_action(
             "Copy Word document", lambda: self._copy(WalkthroughCopyFormat.WORD))
         self.copy_markdown_action = self._menu_action(

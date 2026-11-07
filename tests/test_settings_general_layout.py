@@ -86,7 +86,8 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                         [combo.itemData(i) for i in range(combo.count())],
                         list(WalkthroughCopyFormat.ALL),
                     )
-                    for value in (WalkthroughCopyFormat.AGENT, WalkthroughCopyFormat.BOTH):
+                    for value in (WalkthroughCopyFormat.AGENT, WalkthroughCopyFormat.BOTH,
+                                  WalkthroughCopyFormat.AGENT_TASK):
                         combo.setCurrentIndex(combo.findData(value))
                         self.assertEqual(manager.get(SettingsKey.WALKTHROUGH_COPY_FORMAT), value)
                 finally:
@@ -95,7 +96,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                 try:
                     dialog.ensure_page(WALKTHROUGHS)
                     self.assertEqual(
-                        dialog.walkthrough_copy_format_combo.currentData(), WalkthroughCopyFormat.BOTH
+                        dialog.walkthrough_copy_format_combo.currentData(), WalkthroughCopyFormat.AGENT_TASK
                     )
                 finally:
                     dialog.close()

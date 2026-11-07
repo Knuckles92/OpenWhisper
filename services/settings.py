@@ -431,13 +431,15 @@ class WalkthroughCopyFormat:
     """Clipboard contents when a walkthrough finishes."""
 
     BOTH: Final[str] = "both"
-    AGENT: Final[str] = "agent"
+    AGENT: Final[str] = "agent"  # Legacy Markdown copy preference.
+    AGENT_TASK: Final[str] = "agent_task"
     PDF: Final[str] = "pdf"
     WORD: Final[str] = "word"
 
-    ALL: Final[tuple[str, ...]] = (PDF, BOTH, AGENT, WORD)
+    ALL: Final[tuple[str, ...]] = (PDF, AGENT_TASK, BOTH, AGENT, WORD)
     LABELS: Final[dict[str, str]] = {
         PDF: "PDF copy",
+        AGENT_TASK: "Agent copy (PDF + instructions)",
         BOTH: "PDF and Markdown copy",
         AGENT: "Markdown copy",
         WORD: "Word document copy",

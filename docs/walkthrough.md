@@ -260,9 +260,18 @@ keeps everything. Changes apply to the next walkthrough.
 
 Under **Copy**, the **Default copy** dropdown chooses what goes on the
 clipboard when a walkthrough finishes: **PDF copy** (the default),
-**PDF and Markdown copy**, **Markdown copy**, or **Word document copy**. Every
+**Agent copy (PDF + instructions)**, **PDF and Markdown copy**, **Markdown copy**,
+or **Word document copy**. Every
 document is always saved, and the ready card and library still let you copy
 each format separately.
+
+**Agent** on the Walkthrough tab (or **Copy for agent** in the ready card's
+or saved walkthrough's **⋯** menu) copies the PDF file and a text prompt asking
+the receiving agent to read the words and screenshots, carry out the requested
+work, verify it, and report the result. The prompt includes the PDF's full path
+for a local agent when no attachment comes through. Copy uses the version
+currently shown in Review. This copy style does not run an agent itself.
+The receiving app decides whether it pastes the file, the prompt, or both.
 
 With **PDF and Markdown copy**, the clipboard gets two things at once:
 

@@ -9,6 +9,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ### Added
 
+- **Walkthrough Agent copy** — copy the PDF with instructions for an agent to carry out the work described in its words and screenshots. Choose **Agent** under **Copy when it finishes**, or **Copy for agent** from a ready card or saved walkthrough's menu.
 - **Meeting Mode setup** — prepare missing speech runtimes and models, then check microphone and system audio before the first meeting on supported platforms and Linux preview hosts. Reopen the checks with **Meeting setup…**. Test audio is discarded; downloads require a click and respect offline settings.
 - **Walkthrough Auto Mode on macOS** — capture left and right clicks outside OpenWhisper and draw on the live desktop, with pinned marks, Retina and external displays, and focus returned to the app you were showing. Turn on **Auto Mode** under **Start Walkthrough**; macOS needs Screen Recording permission. Hold **Cmd** to pin an individual mark.
 
