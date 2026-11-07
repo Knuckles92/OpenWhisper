@@ -49,7 +49,9 @@ class _Button:
     label: str
 
 
-def _layout(live: bool, label_metrics: QFontMetrics) -> tuple[list[_Button], list[int]]:
+def _layout(
+    live: bool, label_metrics: QFontMetrics, mark_shortcuts: dict[str, str],
+) -> tuple[list[_Button], list[int]]:
     """Buttons left to right, and the x of each group separator, inside the panel."""
     buttons: list[_Button] = []
     separators: list[int] = []
@@ -83,8 +85,10 @@ def _layout(live: bool, label_metrics: QFontMetrics) -> tuple[list[_Button], lis
     add("snap", "snap", "Snap to corners and window edges (S)")
     if live:
         separate()
-        add("keep_marks", "keep_marks", "Keep new marks visible until cleared", label="Keep marks")
-        add("clear", "clear", "Clear marks (C while drawing)", label="Clear marks")
+        keep_key = mark_shortcuts.get("keep_marks", "K while drawing")
+        clear_key = mark_shortcuts.get("clear", "C while drawing")
+        add("keep_marks", "keep_marks", f"Keep marks ({keep_key})", label="Keep marks")
+        add("clear", "clear", f"Clear marks ({clear_key})", label="Clear marks")
         add("drop", "drop", "Return to the desktop (Esc)")
     else:
         add("drop", "drop", "Cancel (Esc)")
@@ -106,12 +110,15 @@ class SnapToolbar(QWidget):
     clear_clicked = pyqtSignal()
 
     def __init__(self, parent: QWidget | None, palette: Palette, *, live: bool = False,
-                 flags: Qt.WindowType = Qt.WindowType.Widget) -> None:
+                 flags: Qt.WindowType = Qt.WindowType.Widget,
+                 mark_shortcuts: dict[str, str] | None = None) -> None:
         super().__init__(parent, flags)
         self.setObjectName("snapToolbar")
         self._palette = palette
         self._label_font = chrome_font(self.font(), 12)
-        self._buttons, self._separators = _layout(live, QFontMetrics(self._label_font))
+        self._buttons, self._separators = _layout(
+            live, QFontMetrics(self._label_font), mark_shortcuts or {}
+        )
         self.setFixedSize(self._buttons[-1].rect.right() + 1 + PAD, BUTTON + 2 * PAD)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setMouseTracking(True)

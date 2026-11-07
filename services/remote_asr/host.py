@@ -62,6 +62,9 @@ APPROVAL_WINDOW_S = 600.0
 #: How long turning sharing off waits for a waiting request to hear why.
 STOP_ANSWER_GRACE_S = 2.0
 _ENGINE_LOADING_MESSAGE = "The host is loading its speech engine."
+HOST_UPDATE_HOLD_S = 60.0
+_RECORDING_RECONNECT_GRACE_S = 15.0
+HOST_UPDATE_MESSAGE = "The host is preparing an OpenWhisper update. Try again shortly."
 
 HostEvent = Callable[[str, dict], None]
 
@@ -240,6 +243,8 @@ class _Client:
     engine_identity: tuple = ()
     #: Handling any request of this client's, a model switch included.
     in_request: bool = False
+    reports_recording: bool = False
+    recording_id: str = ""
     #: When it connected, by the wall clock (for the host dashboard).
     since: float = 0.0
 
@@ -418,6 +423,9 @@ class SpeechHost:
         #: start() was given a discovery port.
         self.discovery = discovery.DiscoveryResponder(self._discovery_info)
         self._clients: Dict[str, _Client] = {}
+        self._update_token = ""
+        self._update_until = 0.0
+        self._reconnecting_recordings: Dict[tuple[str, str], float] = {}
         self._connection_slots = threading.BoundedSemaphore(max(1, int(max_connections)))
         self._handshake_slots = threading.BoundedSemaphore(max(1, int(max_handshakes)))
         self._work_admission = _WorkAdmission(
@@ -501,6 +509,9 @@ class SpeechHost:
         with self._lock:
             sockets = [client.ws for client in self._clients.values()]
             self._clients.clear()
+            self._update_token = ""
+            self._update_until = 0.0
+            self._reconnecting_recordings.clear()
         for ws in sockets:
             try:
                 ws.close(1001, "host stopped sharing")
@@ -566,9 +577,55 @@ class SpeechHost:
         with self._lock:
             return [
                 {"device_id": c.device_id, "name": c.name, "address": c.address,
-                 "busy": c.busy, "since": c.since}
+                 "busy": c.busy, "since": c.since, "recording": bool(c.recording_id)}
                 for c in self._clients.values()
             ]
+
+    def update_active(self) -> bool:
+        with self._lock:
+            return time.monotonic() < self._update_until
+
+    def update_status(self) -> dict:
+        with self._lock:
+            now = time.monotonic()
+            return {
+                "recordings": sum(bool(c.recording_id) for c in self._clients.values()),
+                "requests": sum(c.in_request for c in self._clients.values()),
+                "untracked_clients": sum(not c.reports_recording for c in self._clients.values()),
+                "reconnecting_recording": self._recording_reconnecting(now),
+                "maintenance": now < self._update_until,
+            }
+
+    def _recording_reconnecting(self, now: float) -> bool:
+        self._reconnecting_recordings = {
+            key: deadline for key, deadline in self._reconnecting_recordings.items() if deadline > now
+        }
+        return bool(self._reconnecting_recordings)
+
+    def prepare_update(self) -> dict:
+        """Reserve an idle host against new work until the updater restarts it."""
+        with self._lock:
+            now = time.monotonic()
+            if not self.running or not self._engine_settled():
+                return {"reason": "The speech host is starting or reloading"}
+            if now < self._update_until:
+                return {"reason": "Another update already reserved the host"}
+            if (self._recording_reconnecting(now)
+                    or any(c.recording_id or c.in_request for c in self._clients.values())):
+                return {"reason": "A paired client is recording or using the speech host"}
+            if any(not c.reports_recording for c in self._clients.values()):
+                return {"reason": "A connected client cannot report its recording state"}
+            self._update_token = secrets.token_hex(16)
+            self._update_until = now + HOST_UPDATE_HOLD_S
+            return {"token": self._update_token, "expires_in": HOST_UPDATE_HOLD_S}
+
+    def cancel_update(self, token: str) -> bool:
+        with self._lock:
+            if not token or token != self._update_token:
+                return False
+            self._update_token = ""
+            self._update_until = 0.0
+            return True
 
     def _set_busy(self, connection_id: str, busy: bool) -> None:
         with self._lock:
@@ -1024,6 +1081,7 @@ class SpeechHost:
         engine = self._engine()
         identity = engine.identity
         ready = self._ready_message(device, engine)
+        capabilities = message.get("capabilities")
         connection_id = uuid.uuid4().hex[:8]
         with self._lock:
             if self._server is None:
@@ -1033,7 +1091,11 @@ class SpeechHost:
             self._clients[connection_id] = _Client(
                 device["id"], device["name"], address, time.monotonic(), ws,
                 engine_identity=identity, since=time.time(),
+                reports_recording=(isinstance(capabilities, dict)
+                                   and capabilities.get("recording_activity") is True),
             )
+            if time.monotonic() < self._update_until:
+                ready["engine"] = {**ready["engine"], "available": False, "status": HOST_UPDATE_MESSAGE}
         self.activity.connected(device["id"], device["name"])
         self._emit("clients", {})
         streams: set = set()
@@ -1078,12 +1140,14 @@ class SpeechHost:
             "capabilities": {"model_management": self._can_manage_models(),
                              "runtime_installation": self._can_manage_models(),
                              "engine_controls": self._configure_runtime is not None,
-                             "recognition_hints": getattr(engine, "accepts_phrases", False) is True},
+                             "recognition_hints": getattr(engine, "accepts_phrases", False) is True,
+                             "recording_activity": True},
         }
-        if not self._engine_settled():
+        maintenance = self.update_active()
+        if maintenance or not self._engine_settled():
             ready["engine"] = {
                 **ready["engine"], "available": False,
-                "status": _ENGINE_LOADING_MESSAGE,
+                "status": HOST_UPDATE_MESSAGE if maintenance else _ENGINE_LOADING_MESSAGE,
             }
         if self._mcp is not None:
             ready["capabilities"]["mcp_control"] = self._controls_mcp()
@@ -1103,6 +1167,12 @@ class SpeechHost:
                 logger.debug("Could not cancel remote stream %s", session, exc_info=True)
         with self._lock:
             client = self._clients.pop(connection_id, None)
+            if client is not None and client.recording_id:
+                now = time.monotonic()
+                self._recording_reconnecting(now)
+                self._reconnecting_recordings[client.device_id, client.recording_id] = (
+                    now + _RECORDING_RECONNECT_GRACE_S
+                )
         self.activity.disconnected(device["id"], client.name if client else device["name"])
         self._emit("clients", {})
 
@@ -1127,9 +1197,14 @@ class SpeechHost:
             return {"id": None, "error": str(exc), "code": "bad_request"}
         request_id = header.get("id")
         op = header.get("op")
+        if op in ("recording_begin", "recording_end"):
+            return self._recording_request(header, payload, connection_id)
         costly = op in ("transcribe", "stream", "select_model", "configure_runtime",
                         "model_catalog", "download_model", "install_runtime")
         if costly:
+            if self.update_active():
+                return {"id": request_id, "code": protocol.ENGINE_RELOADING,
+                        "error": HOST_UPDATE_MESSAGE}
             from websockets.protocol import State
 
             def still_connected() -> bool:
@@ -1150,6 +1225,24 @@ class SpeechHost:
             header, payload, engine, identity, connection_id, streams,
             device_name, device_id,
         )
+
+    def _recording_request(self, header: dict, payload: bytes, connection_id: str) -> dict:
+        request_id, recording_id = header.get("id"), header.get("recording_id")
+        if payload or not isinstance(recording_id, str) or not re.fullmatch(r"[0-9a-f]{32}", recording_id):
+            return {"id": request_id, "code": "bad_request", "error": "Invalid recording ID"}
+        with self._lock:
+            client = self._clients.get(connection_id)
+            if client is None or not client.reports_recording:
+                return {"id": request_id, "code": "bad_request", "error": "Recording activity is disabled"}
+            if header["op"] == "recording_begin":
+                if time.monotonic() < self._update_until:
+                    return {"id": request_id, "code": protocol.ENGINE_RELOADING,
+                            "error": HOST_UPDATE_MESSAGE}
+                client.recording_id = recording_id
+                self._reconnecting_recordings.pop((client.device_id, recording_id), None)
+            elif client.recording_id == recording_id:
+                client.recording_id = ""
+        return {"id": request_id, "result": {}}
 
     def _dispatch_unpacked(self, header: dict, payload: bytes, engine: HostEngine,
                            identity: tuple, connection_id: str, streams: set,

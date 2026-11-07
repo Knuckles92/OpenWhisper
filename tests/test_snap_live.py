@@ -1,14 +1,17 @@
 """Live annotation input, screenshot boundaries and mark lifetime."""
 
-from PyQt6.QtCore import QObject, QPoint, Qt
-from PyQt6.QtGui import QGuiApplication
+from unittest.mock import Mock
+
+from PyQt6.QtCore import QEvent, QObject, QPoint, Qt
+from PyQt6.QtGui import QGuiApplication, QHelpEvent
 from PyQt6.QtTest import QTest
+from PyQt6.QtWidgets import QApplication, QToolTip
 
 from ui_qt.snap import live
 from ui_qt.snap.annotations import Label, Stroke, Tool
 
 
-def test_live_release_pins_with_ctrl_and_returns_desktop_input(monkeypatch):
+def test_live_tool_stays_selected_until_switched_or_toggled_off(monkeypatch):
     now = 100.0
     monkeypatch.setattr(live, "monotonic", lambda: now)
     # Verify Qt behavior without changing the desktop foreground in this test.
@@ -26,20 +29,22 @@ def test_live_release_pins_with_ctrl_and_returns_desktop_input(monkeypatch):
         assert toolbar.geometry().top() == area.top() + live.EDGE_MARGIN
         assert not drawing.armed
 
-        drawing.arm(Tool.PEN)
+        left = Qt.MouseButton.LeftButton
+        pen = toolbar.button_rect("tool", Tool.PEN).center()
+        box = toolbar.button_rect("tool", Tool.BOX).center()
+        QTest.mouseClick(toolbar, left, pos=pen)
         canvas = drawing._canvases[screen]
         assert not canvas.windowFlags() & Qt.WindowType.WindowTransparentForInput
-        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(50, 80))
-        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=QPoint(90, 110))
+        QTest.mousePress(canvas, left, pos=QPoint(50, 80))
+        QTest.mouseRelease(canvas, left, pos=QPoint(90, 110))
         assert len(shots) == 1
         assert shots[0][0] is screen
         assert isinstance(shots[0][1][0], Stroke)
-        assert canvas.windowFlags() & Qt.WindowType.WindowTransparentForInput
-        assert not drawing.armed
+        assert drawing.tool is toolbar._tool is Tool.PEN
+        assert not canvas.windowFlags() & Qt.WindowType.WindowTransparentForInput
 
-        drawing.arm(Tool.PEN)
-        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(50, 80))
-        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton,
+        QTest.mousePress(canvas, left, pos=QPoint(50, 80))
+        QTest.mouseRelease(canvas, left,
                            Qt.KeyboardModifier.ControlModifier, QPoint(90, 110))
         assert len(shots) == 2
         assert canvas._expire.isActive()
@@ -49,7 +54,14 @@ def test_live_release_pins_with_ctrl_and_returns_desktop_input(monkeypatch):
         assert len(pinned) == 1
         assert canvas.items() == pinned
 
-        drawing.arm(Tool.PEN)
+        QTest.mouseClick(toolbar, left, pos=box)
+        assert drawing.tool is toolbar._tool is Tool.BOX
+        QTest.mouseClick(toolbar, left, pos=box)
+        assert drawing.tool is toolbar._tool is None
+        assert canvas.windowFlags() & Qt.WindowType.WindowTransparentForInput
+        assert canvas.items() == pinned
+
+        QTest.mouseClick(toolbar, left, pos=pen)
         QTest.keyClick(canvas, Qt.Key.Key_C)
         assert not canvas.items()
         QTest.keyClick(canvas, Qt.Key.Key_Escape)
@@ -87,9 +99,8 @@ def test_live_toolbar_keeps_new_marks_and_clears_them_without_arming(monkeypatch
         (pinned,) = canvas.items(pinned_only=True)
         assert not canvas._expire.isActive()
 
-        QTest.mouseClick(toolbar, left, pos=keep)
+        QTest.keyClick(canvas, Qt.Key.Key_K)
         assert not live.resolve_walkthrough_keep_marks()
-        drawing.arm(Tool.PEN)
         QTest.mousePress(canvas, left, pos=QPoint(60, 90))
         QTest.mouseRelease(canvas, left, pos=QPoint(100, 120))
         assert canvas._expire.isActive()
@@ -99,11 +110,56 @@ def test_live_toolbar_keeps_new_marks_and_clears_them_without_arming(monkeypatch
         assert canvas.items() == (pinned,)
 
         QTest.mouseClick(toolbar, left, pos=clear)
-        assert not drawing.armed
-        assert not canvas.isVisible()
+        assert drawing.tool is Tool.PEN
+        assert canvas.isVisible()
         assert not canvas.items()
         assert not canvas._expire.isActive()
         assert len(shots) == 2
+    finally:
+        drawing.close()
+
+
+def test_live_toolbar_tooltips_show_the_active_shortcuts(monkeypatch):
+    show_tooltip = Mock()
+    monkeypatch.setattr(QToolTip, "showText", show_tooltip)
+    owner = QObject()
+    drawing = live.LiveAnnotations(
+        owner, mark_shortcuts={"keep_marks": "F8", "clear": "F9"}
+    )
+    try:
+        toolbar, = drawing.windows()
+        assert toolbar.testAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips)
+        for button, tip in (("keep_marks", "Keep marks (F8)"), ("clear", "Clear marks (F9)")):
+            pos = toolbar.button_rect(button).center()
+            QApplication.sendEvent(
+                toolbar, QHelpEvent(QEvent.Type.ToolTip, pos, toolbar.mapToGlobal(pos))
+            )
+            assert show_tooltip.call_args.args[1] == tip
+    finally:
+        drawing.close()
+
+
+def test_live_tool_survives_focus_loss_while_capturing(monkeypatch):
+    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
+    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        drawing.arm(Tool.PEN)
+        canvas = drawing._canvases[live.capture.screen_under_cursor()]
+        QApplication.setActiveWindow(canvas)
+
+        drawing.set_busy(True)
+        canvas.hide()
+        QApplication.setActiveWindow(None)
+        drawing.check_focus()
+        assert drawing.tool is Tool.PEN
+
+        canvas.show()
+        drawing.set_busy(False)
+        QGuiApplication.processEvents()
+        assert QApplication.activeWindow() is canvas
+        assert drawing.tool is Tool.PEN
     finally:
         drawing.close()
 
@@ -127,7 +183,7 @@ def test_live_text_saves_on_commit(monkeypatch):
         (label,) = marks
         assert isinstance(label, Label)
         assert label.text == "This field"
-        assert not drawing.armed
+        assert drawing.tool is Tool.TEXT
     finally:
         drawing.close()
         QGuiApplication.processEvents()

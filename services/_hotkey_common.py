@@ -25,7 +25,7 @@ PRESS_ACTIONS: Tuple[Tuple[str, str], ...] = (
 )
 
 #: Families of shortcuts registered at runtime, as "<namespace>:<id>" actions.
-DYNAMIC_NAMESPACES: Tuple[str, ...] = ("profile", "transform", "action")
+DYNAMIC_NAMESPACES: Tuple[str, ...] = ("profile", "transform", "action", "walkthrough_marks")
 
 
 def is_mouse_key(main_key: Optional[str]) -> bool:

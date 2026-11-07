@@ -1524,6 +1524,63 @@ class TestApplicationController:
             for status in controller.ui_controller.statuses
         )
 
+    @pytest.mark.parametrize("outcome", ["saved", "canceled", "start_failed", "updating"])
+    def test_remote_capture_reservation_lasts_through_history(self, outcome):
+        controller = self._create_controller()
+        backend = controller.current_backend
+        backend.is_remote = True
+        backend.should_cancel = False
+        backend.reserve_recording = Mock(return_value="capture-1")
+        backend.release_recording = Mock()
+        controller._streaming_enabled = False
+        if outcome == "updating":
+            backend.reserve_recording.side_effect = RuntimeError("Host is preparing an update")
+        start = controller.recorder.start_recording
+        controller.recorder.start_should_fail = outcome == "start_failed"
+
+        def start_capture():
+            backend.reserve_recording.assert_called_once_with()
+            return start()
+
+        controller.recorder.start_recording = Mock(side_effect=start_capture)
+        assert controller.start_recording() is (outcome in ("saved", "canceled"))
+        if outcome == "updating":
+            controller.recorder.start_recording.assert_not_called()
+            backend.release_recording.assert_not_called()
+            return
+        if outcome == "saved":
+            controller.stop_recording()
+            backend.release_recording.assert_not_called()
+            controller._on_transcription_complete("saved text")
+        elif outcome == "canceled":
+            controller.transcription_runtime.cancel()
+        backend.release_recording.assert_called_once_with("capture-1")
+
+    def test_host_update_reservation_protects_local_recording_and_processing(self):
+        controller = self._create_controller()
+        runtime = controller.transcription_runtime
+        active = False
+
+        def reserve_update():
+            nonlocal active
+            active = True
+            return {"token": "update"}
+
+        reserve = Mock(side_effect=reserve_update)
+        controller.remote_engine = types.SimpleNamespace(
+            update_active=lambda: active, prepare_update=reserve,
+        )
+        assert controller.start_recording()
+        assert "reason" in runtime.prepare_host_update()
+        controller.stop_recording()
+        assert "reason" in runtime.prepare_host_update()
+        reserve.assert_not_called()
+        controller._on_transcription_complete("finished text")
+
+        assert runtime.prepare_host_update() == {"token": "update"}
+        assert not controller.start_recording()
+        assert not runtime._claim_job()
+
     def test_empty_asr_skips_history_clipboard_and_paste(self):
         controller = self._create_controller()
         controller._pending_audio_path = "source.wav"

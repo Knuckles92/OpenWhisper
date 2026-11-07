@@ -687,6 +687,10 @@ class MeetingRuntime:
         with self._lock:
             finalizing = self._finalizing
             busy = self._starting or self.controller.meeting_active or self.is_active
+            update_active = getattr(self.controller, "host_update_active", None)
+            if callable(update_active) and update_active() is True:
+                self.controller.meeting_status_update.emit("OpenWhisper is preparing an update. Try again shortly.")
+                return
             if getattr(self.controller, "_backup_in_progress", False) is True:
                 self.controller.meeting_status_update.emit("Wait for backup or restore preparation to finish")
                 return

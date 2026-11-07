@@ -161,18 +161,23 @@ closes a section of narration and appears in the live column.
 The drawing toolbar opens at the top center of the screen where you start.
 Choose a tool there, or click **Draw** in the column to pick the pen. Draw on
 any monitor and release the mouse to save an annotated screenshot of that
-monitor. For text, press **Enter** after typing. The desktop is ready for
-clicks again after each mark. **Esc** exits drawing early.
+monitor. For text, press **Enter** after typing. The tool stays selected so
+you can draw again. Choose another tool to switch, or click the selected
+tool again or press **Esc** to return to the desktop.
 
-Marks disappear after about 1.5 seconds by default. Turn on **Keep marks** in
-the drawing toolbar to pin each new mark. Auto Mode remembers this choice
-between walkthroughs. With **Keep marks** off, hold **Ctrl** when releasing
-the mouse to pin an individual mark. For text, hold it when placing the
-label or pressing **Enter**. Pinned marks appear in later automatic
+Marks disappear after about 1.5 seconds by default. Click **Keep marks** in
+the drawing toolbar or press **F8** to pin each new mark. Auto Mode remembers
+this choice between walkthroughs. With **Keep marks** off, hold **Ctrl** when
+releasing the mouse to pin an individual mark. For text, hold it when placing
+the label or pressing **Enter**. Pinned marks appear in later automatic
 screenshots on that screen.
 
-Click **Clear marks** in the toolbar, or press **C** while drawing, to remove
-all marks from the desktop. Saved screenshots keep their annotations.
+Click **Clear marks** in the toolbar or press **F9** to remove all marks
+from the desktop. Saved screenshots keep their annotations. **F8** and
+**F9** work while the drawing toolbar is open, even with another app in
+focus. Hover over either button to see its shortcut. While drawing, you can
+also use **K** for Keep marks and **C** for Clear marks. The tooltip shows
+the drawing shortcut if the function key is already assigned in OpenWhisper.
 Tool keys and **S** work while drawing.
 
 The arrow beside Draw and the Screenshot shortcut take manual screenshots.

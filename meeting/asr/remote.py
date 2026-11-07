@@ -69,6 +69,8 @@ def _is_this_computer(fingerprint: str) -> bool:
 class MeetingRemoteBackend(RemoteSpeechBackend):
     """Independent of dictation; never switches the host's shared engine."""
 
+    reports_recording = False
+
     def __init__(self, route: dict):
         super().__init__()
         self.route = dict(route)

@@ -844,6 +844,26 @@ class RemoteEngineService:
             host = self._host
         return host.connected_clients() if host is not None and host.running else []
 
+    def update_active(self) -> bool:
+        host = self._host
+        return host is not None and host.update_active()
+
+    def prepare_update(self) -> dict:
+        host = self._host
+        return host.prepare_update() if host is not None else {"reason": "Speech sharing is off"}
+
+    def cancel_update(self, token: str) -> bool:
+        host = self._host
+        return host is not None and host.cancel_update(token)
+
+    def update_status(self) -> dict:
+        host = self._host
+        running = host is not None and host.running
+        activity = host.update_status() if running else {}
+        ready = bool(running and not activity["maintenance"] and self._engine_settled()
+                     and self._engine().describe().get("available"))
+        return {**activity, "running": running, "engine_ready": ready}
+
     def host_activity(self, events: Optional[int] = None) -> dict:
         """What paired computers asked of this host since sharing started.
 

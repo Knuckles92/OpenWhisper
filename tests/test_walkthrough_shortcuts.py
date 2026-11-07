@@ -121,12 +121,15 @@ class FakePanel(QObject):
 class FakeDrawing(QObject):
     arming = pyqtSignal()
     drawn = pyqtSignal(object, object)
+    enabled_changed = pyqtSignal(bool)
 
-    def __init__(self):
+    def __init__(self, mark_shortcuts):
         super().__init__()
+        self.mark_shortcuts = mark_shortcuts
         self.armed = False
         self.enabled = True
         self.busy = False
+        self.mark_actions = []
 
     def arm(self):
         if self.enabled and not self.busy:
@@ -134,9 +137,16 @@ class FakeDrawing(QObject):
             self.armed = True
 
     def set_enabled(self, enabled):
+        if self.enabled == enabled:
+            return
         self.enabled = enabled
         if not enabled:
             self.armed = False
+        self.enabled_changed.emit(enabled)
+
+    def handle_mark_shortcut(self, action):
+        if self.enabled:
+            self.mark_actions.append(action)
 
     def pinned_at(self, position):
         return ()
@@ -172,11 +182,12 @@ class FakeUI:
         self.snaps.append(snap)
         return snap
 
-    def start_walkthrough_drawing(self):
-        self.drawing = FakeDrawing()
+    def start_walkthrough_drawing(self, *, mark_shortcuts):
+        self.drawing = FakeDrawing(mark_shortcuts)
         return self.drawing
 
     def stop_walkthrough_drawing(self):
+        self.drawing.set_enabled(False)
         self.drawing = None
 
     def keep_overlay_out_of_screenshots(self, enabled):
@@ -227,6 +238,7 @@ def h(tmp_path, monkeypatch):
     recorder = SimpleNamespace(is_recording=False, capture_canceled=False, paused=False,
                                get_recording_duration=lambda: 12.5)
     controller = SimpleNamespace(
+        hotkey_manager=Mock(hotkeys={}),
         ui_controller=ui,
         transcription_runtime=transcription,
         recorder=recorder,
@@ -311,6 +323,44 @@ def test_auto_mode_coalesces_clicks_and_finishes_after_the_pending_shot(h, auto)
     assert not h.ui.walkthrough_panel.auto_mode
 
 
+def test_auto_mark_shortcuts_follow_the_live_toolbar(h, auto):
+    drawing = h.ui.drawing
+    register = h.controller.hotkey_manager.set_dynamic_hotkeys
+    family, keys, on_shortcut = register.call_args.args
+    assert keys == {"keep_marks": "f8", "clear": "f9"}
+    assert drawing.mark_shortcuts == {"keep_marks": "F8", "clear": "F9"}
+    assert not drawing.armed
+
+    on_shortcut("keep_marks")
+    on_shortcut("clear")
+    assert not drawing.mark_actions
+    QCoreApplication.processEvents()
+    assert drawing.mark_actions == ["keep_marks", "clear"]
+
+    h.runtime.snap()
+    assert register.call_args.args[:2] == (family, {})
+    h.ui.snaps[-1].drop()
+    assert register.call_args.args[:2] == (family, keys)
+
+    on_shortcut("clear")
+    h.controller.stop_recording()
+    assert register.call_args.args[:2] == (family, {})
+    QCoreApplication.processEvents()
+    assert drawing.mark_actions == ["keep_marks", "clear"]
+
+
+def test_mark_shortcuts_respect_an_existing_binding(h):
+    session = _begin(h)
+    h.controller.hotkey_manager.hotkeys["screenshot"] = "f8"
+    try:
+        h.runtime._start_auto_drawing(session, h.settings.load_all_settings())
+        assert h.ui.drawing.mark_shortcuts == {"clear": "F9"}
+        registered = h.controller.hotkey_manager.set_dynamic_hotkeys.call_args.args[1]
+        assert registered == {"clear": "f9"}
+    finally:
+        h.controller.stop_recording()
+
+
 def test_auto_draw_takes_priority_over_a_pending_click(h, auto):
     from PyQt6.QtCore import QPointF
 
@@ -326,20 +376,26 @@ def test_auto_draw_takes_priority_over_a_pending_click(h, auto):
     h.runtime._auto_timer.timeout.emit()
     assert not h.ui.snaps
 
-    h.ui.drawing.armed = False
     screen = object()
-    h.ui.drawing.drawn.emit(screen, (Step(QPointF(12, 8), 1, QColor("blue")),))
+    marks = (Step(QPointF(12, 8), 1, QColor("blue")),)
+    h.ui.drawing.drawn.emit(screen, marks)
     (snap,) = h.ui.snaps
     assert snap.take == WalkthroughSnapMode.SCREEN
     assert snap.screen is screen
-    h.runtime.snap()
-    assert h.ui.snaps == [snap]
-    h.recorder.get_recording_duration = lambda: 13.0
     snap.keep()
-    (shot,) = auto.session.saved_shots()
+    assert h.ui.drawing.armed
+    assert not h.ui.drawing.busy
+
+    h.ui.drawing.drawn.emit(screen, marks)
+    _, next_snap = h.ui.snaps
+    h.runtime.snap()
+    assert h.ui.snaps == [snap, next_snap]
+    h.recorder.get_recording_duration = lambda: 13.0
+    next_snap.keep()
+    _, shot = auto.session.saved_shots()
     assert QImage(str(shot.path)).pixelColor(6, 8) != _image().pixelColor(6, 8)
     assert shot.kept_at_s == 12.5
-    assert h.ui.snaps[1].take == WalkthroughSnapMode.REGION
+    assert h.ui.snaps[2].take == WalkthroughSnapMode.REGION
 
 
 def test_auto_mode_drops_an_in_flight_shot_on_pause_or_end(h, auto):

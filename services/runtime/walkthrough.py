@@ -50,6 +50,8 @@ WAIT_FOR_WRITE_UP = "Wait for the last walkthrough's write-up, or cancel it"
 COUNTDOWN_S = 3
 # Let the clicked app update and combine rapid clicks into one screenshot.
 AUTO_SETTLE_MS = 350
+_AUTO_MARK_HOTKEYS = {"keep_marks": "f8", "clear": "f9"}
+_MARK_SHORTCUT_FAMILY = "walkthrough_marks"
 
 
 def shots_label(count: int) -> str:
@@ -65,6 +67,7 @@ class WalkthroughRuntime(QObject):
     """Starts and finishes walkthroughs and takes their screenshots; Qt thread."""
 
     _click_received = pyqtSignal(object, int, int, float)
+    _mark_shortcut_received = pyqtSignal(object, str)
 
     def __init__(self, controller: "ApplicationController"):
         super().__init__()
@@ -104,6 +107,9 @@ class WalkthroughRuntime(QObject):
         self._auto_timer.setInterval(AUTO_SETTLE_MS)
         self._auto_timer.timeout.connect(self._capture_click)
         self._click_received.connect(self._on_click, Qt.ConnectionType.QueuedConnection)
+        self._mark_shortcut_received.connect(
+            self._on_mark_shortcut, Qt.ConnectionType.QueuedConnection
+        )
 
     @property
     def _ui(self):
@@ -156,7 +162,7 @@ class WalkthroughRuntime(QObject):
         # screenshots themselves.
         self._out_of_screenshots = self._ui.keep_overlay_out_of_screenshots(True)
         if sys.platform == "win32" and resolve_walkthrough_auto_mode(settings):
-            self._start_auto(session)
+            self._start_auto(session, settings)
         logger.info("Walkthrough started")
 
     def _attach(self, panel) -> None:
@@ -203,7 +209,7 @@ class WalkthroughRuntime(QObject):
 
     # ---- Auto Mode ----
 
-    def _start_auto(self, session: WalkthroughSession) -> None:
+    def _start_auto(self, session: WalkthroughSession, settings: dict) -> None:
         hook = MouseButtonHook(
             lambda *_: False, lambda *_: None,
             on_click=lambda x, y, at: self._click_received.emit(session, x, y, at),
@@ -212,7 +218,7 @@ class WalkthroughRuntime(QObject):
             hook.start()
             if hook.wait_until_installed():
                 self._auto_hook = hook
-                self._live_drawing = self._ui.start_walkthrough_drawing()
+                self._start_auto_drawing(session, settings)
                 self._live_drawing.arming.connect(self._discard_auto_capture)
                 self._live_drawing.drawn.connect(self._capture_drawing)
                 if self._panel is not None:
@@ -223,11 +229,45 @@ class WalkthroughRuntime(QObject):
         hook.stop()
         self._tell("Auto Mode couldn't watch for clicks. You can still use Snap.")
 
-    def _auto_can_capture(self) -> bool:
+    def _start_auto_drawing(self, session: WalkthroughSession, settings: dict) -> None:
+        from services.hotkey_conflicts import hotkey_conflict
+        from services.hotkey_manager import format_hotkey_display
+
+        manager = self.controller.hotkey_manager
+        shortcuts = {
+            action: hotkey for action, hotkey in _AUTO_MARK_HOTKEYS.items()
+            if manager is not None and not hotkey_conflict(
+                hotkey, settings, standard_hotkeys=manager.hotkeys
+            )
+        }
+        drawing = self._live_drawing = self._ui.start_walkthrough_drawing(
+            mark_shortcuts={action: format_hotkey_display(key) for action, key in shortcuts.items()}
+        )
+        if manager is None or not shortcuts:
+            return
+
+        def on_shortcut(action: str) -> None:
+            self._mark_shortcut_received.emit(session, action)
+
+        def register(enabled: bool) -> None:
+            manager.set_dynamic_hotkeys(
+                _MARK_SHORTCUT_FAMILY,
+                shortcuts if enabled else {},
+                on_shortcut if enabled else lambda _: None,
+            )
+
+        drawing.enabled_changed.connect(register)
+        register(True)
+
+    def _on_mark_shortcut(self, session: WalkthroughSession, action: str) -> None:
+        if self._live_drawing is not None and session is self._session:
+            self._live_drawing.handle_mark_shortcut(action)
+
+    def _auto_can_capture(self, *, drawing: bool = False) -> bool:
         return (self._auto_hook is not None and self._session is not None
                 and not self.controller.recorder.paused and self._snap is None
                 and self._auto_snap is None and not self._countdown_left
-                and not self._live_drawing.armed
+                and (drawing or not self._live_drawing.armed)
                 and not (self._tray_timer is not None and self._tray_timer.isActive()))
 
     def _on_click(self, session: WalkthroughSession, x: int, y: int, at: float) -> None:
@@ -247,7 +287,7 @@ class WalkthroughRuntime(QObject):
         self._capture_automatic(self._live_drawing.pinned_at(position), click_at=position)
 
     def _capture_drawing(self, screen, marks) -> None:
-        if not self._finish_after_snap and self._auto_can_capture():
+        if not self._finish_after_snap and self._auto_can_capture(drawing=True):
             self._auto_drawing_capture = True
             self._live_drawing.set_busy(True)
             self._capture_automatic(marks, screen=screen,

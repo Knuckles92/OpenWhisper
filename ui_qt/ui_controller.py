@@ -1091,10 +1091,12 @@ class UIController(QObject):
 
         request_access()
 
-    def start_walkthrough_drawing(self):
+    def start_walkthrough_drawing(self, *, mark_shortcuts: dict[str, str]):
         from ui_qt.snap.live import LiveAnnotations
 
-        self._walkthrough_drawing = LiveAnnotations(self, self._walkthrough_panel)
+        self._walkthrough_drawing = LiveAnnotations(
+            self, self._walkthrough_panel, mark_shortcuts=mark_shortcuts
+        )
         return self._walkthrough_drawing
 
     def stop_walkthrough_drawing(self) -> None:

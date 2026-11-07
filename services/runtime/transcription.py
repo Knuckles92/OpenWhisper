@@ -181,6 +181,7 @@ class TranscriptionRuntime:
         # Copy buttons. Set per job after the slot is claimed.
         self._deliver_to_clipboard = True
         self._retry_entry_id: Optional[str] = None
+        self._remote_recording = None
         self._remote_retry_exhausted = False
         self._recording_profile = None
         self._profile_settings = None
@@ -277,11 +278,13 @@ class TranscriptionRuntime:
             self._write_up_cancel.set()
         self._incremental.discard()
 
-    def _claim_job(self, job: Optional[dictation_pipeline.DictationJob] = None) -> bool:
+    def _claim_job(self, job: Optional[dictation_pipeline.DictationJob] = None, *, require_idle_recorder: bool = False) -> bool:
         """Atomically reserve the single transcription workflow slot for ``job``."""
-        with self._job_lock:
+        with self._capture_lock, self._job_lock:
             if (self._job_active or getattr(self.controller, '_shutting_down', False) is True
-                    or getattr(self.controller, '_backup_in_progress', False) is True):
+                    or getattr(self.controller, '_backup_in_progress', False) is True
+                    or self._host_update_active()
+                    or (require_idle_recorder and self.controller.recorder.is_recording)):
                 return False
             self._job_active = True
             self._active_job = job
@@ -293,8 +296,23 @@ class TranscriptionRuntime:
         self._rearm_remote_engine()
         return True
 
+    def _host_update_active(self) -> bool:
+        active = getattr(self.controller, "host_update_active", None)
+        return callable(active) and active() is True
+
+    def prepare_host_update(self) -> dict:
+        """Check local work and reserve the remote host before admitting new jobs."""
+        c = self.controller
+        with self._capture_lock, self._job_lock:
+            if (self._job_active or c.recorder.is_recording or c.is_meeting_active()
+                    or getattr(c.current_backend, "is_transcribing", False)
+                    or c._backup_in_progress or c._shutting_down):
+                return {"reason": "OpenWhisper is in use on this computer"}
+            return c.remote_engine.prepare_update()
+
     def _forget_recording(self) -> None:
         """Drop the recording's job and profile so no later job inherits them."""
+        self._release_remote_recording()
         with self._job_lock:
             self._job = None
             self._previewing = None
@@ -369,6 +387,7 @@ class TranscriptionRuntime:
             from services.diagnostics import record_metrics
             record_metrics(cancel_s=time.monotonic() - self._cancel_started_at)
             self._cancel_started_at = 0.0
+        self._release_remote_recording()
         with self._job_lock:
             self._recording_profile = None
             self._profile_settings = None
@@ -389,7 +408,9 @@ class TranscriptionRuntime:
             self._remote_retry_exhausted = False
 
     def _report_busy(self, action: str) -> str:
-        message = f"A transcription is already in progress — wait before {action}"
+        message = ("OpenWhisper is preparing an update. Try again shortly."
+                   if self._host_update_active() else
+                   f"A transcription is already in progress — wait before {action}")
         self.controller.status_update.emit(message)
         logger.info(message)
         return message
@@ -534,7 +555,24 @@ class TranscriptionRuntime:
             audio_player.stop_playback()
         except Exception:
             logger.debug("Could not stop playback before recording", exc_info=True)
-        if not self.controller.recorder.start_recording():
+        backend = self.controller.current_backend
+        if getattr(backend, "is_remote", False) is True:
+            try:
+                recording_id = backend.reserve_recording()
+            except RuntimeError as exc:
+                message = str(exc)
+                self.controller.status_update.emit(message)
+                self._notify(message)
+                return False
+            if recording_id:
+                self._remote_recording = (backend, recording_id)
+        try:
+            started = self.controller.recorder.start_recording()
+        except Exception:
+            self._release_remote_recording()
+            raise
+        if not started:
+            self._release_remote_recording()
             self._report_start_failure()
             return False
         # Snapshot before publishing Recording: edits and other shortcuts
@@ -581,10 +619,19 @@ class TranscriptionRuntime:
             self.controller.ui_controller.prefetch_clipboard_snapshot()
         return True
 
+    def _release_remote_recording(self) -> None:
+        recording, self._remote_recording = self._remote_recording, None
+        if recording is not None:
+            backend, recording_id = recording
+            backend.release_recording(recording_id)
+
     def _can_start_recording(self) -> bool:
         """Whether a recording may start now; the status line says why not."""
         if getattr(self.controller, "_backup_in_progress", False) is True:
             self.controller.status_update.emit("Wait for backup or restore preparation to finish")
+            return False
+        if self._host_update_active():
+            self._notify("OpenWhisper is preparing an update. Try again shortly.")
             return False
         if self.controller.is_meeting_active():
             self.controller.status_update.emit(
@@ -999,7 +1046,7 @@ class TranscriptionRuntime:
         if self.controller.recorder.is_recording:
             self._report_busy("re-transcribing audio")
             return
-        if not self._claim_job():
+        if not self._claim_job(require_idle_recorder=True):
             self._report_busy("re-transcribing audio")
             return
         self._forget_recording()
@@ -1048,7 +1095,7 @@ class TranscriptionRuntime:
             self.controller.status_update.emit(f"Couldn't recover the walkthrough: {exc}")
             return
         job = self._begin_job(JobMode.WALKTHROUGH, None, "")
-        if not self._claim_job(job):
+        if not self._claim_job(job, require_idle_recorder=True):
             self._report_busy("recovering a walkthrough")
             return
         self._forget_recording()
@@ -1084,7 +1131,7 @@ class TranscriptionRuntime:
         if self.controller.recorder.is_recording:
             self._report_busy("uploading audio")
             return
-        if not self._claim_job():
+        if not self._claim_job(require_idle_recorder=True):
             self._report_busy("uploading audio")
             return
         self._forget_recording()
@@ -1135,7 +1182,7 @@ class TranscriptionRuntime:
         if self.controller.recorder.is_recording:
             self._report_busy("uploading audio")
             return
-        if not self._claim_job():
+        if not self._claim_job(require_idle_recorder=True):
             self._report_busy("uploading audio")
             return
         self._forget_recording()
@@ -2670,7 +2717,7 @@ class TranscriptionRuntime:
             self._capture_lock.release()
 
     def _begin_rewrite_job(self, job, *, source_name: str) -> bool:
-        if self.controller.recorder.is_recording or not self._claim_job(job):
+        if self.controller.recorder.is_recording or not self._claim_job(job, require_idle_recorder=True):
             self._refuse_rewrite(job)
             return False
         self._forget_recording()

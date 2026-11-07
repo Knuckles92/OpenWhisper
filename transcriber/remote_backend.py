@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -146,6 +147,7 @@ def _serves(ready: dict, model: HostModel) -> bool:
 
 class RemoteSpeechBackend(LocalSpeechBackend):
     is_remote = True
+    reports_recording = True
 
     def __init__(self):
         # LocalSpeechBackend.__init__ resolves a local model from settings;
@@ -158,6 +160,9 @@ class RemoteSpeechBackend(LocalSpeechBackend):
         self._generation = 0
         self._state_lock = threading.RLock()
         self._decode_lock = threading.Lock()
+        self._recording_lock = threading.Lock()
+        self._recording_id = ""
+        self._recording_connections = set()
         self.model = None
         self.last_error = ""
         self.runtime_component = None
@@ -517,14 +522,68 @@ class RemoteSpeechBackend(LocalSpeechBackend):
 
         connection = RemoteConnection(
             pairing.host, pairing.port, token, pairing.fingerprint,
-            alternates=pairing.alternates,
+            alternates=pairing.alternates, reports_recording=self.reports_recording,
         )
         if generation is not None:
             with self._state_lock:
                 if generation != self._generation:
                     raise RuntimeError("Transcription canceled")
                 self._pending = connection
-        return connection, connection.connect()
+        ready = connection.connect()
+        try:
+            with self._recording_lock:
+                if (self._recording_id and (ready.get("engine") or {}).get("available")
+                        and self._tracks_recording(connection)):
+                    connection.recording_activity("recording_begin", self._recording_id)
+                    self._recording_connections = {
+                        process for process in self._recording_connections if not process.closed
+                    }
+                    self._recording_connections.add(connection)
+        except Exception:
+            connection.close()
+            raise
+        return connection, ready
+
+    @staticmethod
+    def _tracks_recording(connection) -> bool:
+        return (connection.ready.get("capabilities") or {}).get("recording_activity") is True
+
+    def reserve_recording(self) -> str:
+        """Tell the host about a capture before the microphone opens."""
+        from services.remote_asr.client import RemoteEngineError
+
+        with self._recording_lock:
+            connection = self._process
+            if connection is None:
+                raise RemoteEngineError(self.device_info)
+            if not self._tracks_recording(connection):
+                return ""  # Older hosts do not understand reservations.
+            recording_id = uuid.uuid4().hex
+            connection.recording_activity("recording_begin", recording_id)
+            self._recording_id = recording_id
+            self._recording_connections = {connection}
+            return recording_id
+
+    def release_recording(self, recording_id: str) -> None:
+        with self._recording_lock:
+            if self._recording_id != recording_id:
+                return
+            self._recording_id = ""
+            connections, self._recording_connections = self._recording_connections, set()
+
+        def release():
+            for connection in connections:
+                with self._recording_lock:
+                    if connection.closed or connection in self._recording_connections:
+                        continue  # A new reservation on this link replaced the old one.
+                    try:
+                        connection.recording_activity("recording_end", recording_id)
+                    except RuntimeError:
+                        # Closing a link also releases its reservation.
+                        logger.debug("Could not release remote recording reservation", exc_info=True)
+                        connection.close()
+
+        threading.Thread(target=release, name="remote-recording-release", daemon=True).start()
 
     def _switch_host(self, connection, pairing, token, requested: HostModel, generation, runtime=None):
         """Ask the host to load ``requested``, then reconnect to what it runs.

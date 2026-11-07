@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -22,6 +23,19 @@ def test_native_binding_keys(hotkey, expected):
 def controls(hotkeys):
     manager = SimpleNamespace(_all_hotkeys=lambda: hotkeys, capture_suspended=False)
     return OmarchyControls(SimpleNamespace(hotkey_manager=manager))
+
+
+def test_update_controls_return_host_activity_and_reservation():
+    remote = SimpleNamespace(update_status=lambda: {"recordings": 1}, cancel_update=Mock(return_value=True))
+    reserve = Mock(side_effect=[{"reason": "Recording"}, {"token": "update"}])
+    native = OmarchyControls(SimpleNamespace(
+        remote_engine=remote, transcription_runtime=SimpleNamespace(prepare_host_update=reserve),
+    ))
+    assert json.loads(native.UpdateStatus()) == {"recordings": 1}
+    assert json.loads(native.PrepareUpdate()) == {"reason": "Recording"}
+    assert json.loads(native.PrepareUpdate()) == {"token": "update"}
+    assert native.CancelUpdate("update")
+    remote.cancel_update.assert_called_once_with("update")
 
 
 def test_never_claims_or_removes_an_existing_desktop_binding(monkeypatch):

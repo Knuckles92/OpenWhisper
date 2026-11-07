@@ -18,6 +18,12 @@ after that wait, so their replies count it as network time.
 While its engine loads, a host can advertise it as unavailable in ``ready``
 and return ``engine_reloading`` to audio requests it refused before decoding.
 
+Clients and hosts advertise ``recording_activity`` in hello and ready
+capabilities. A paired client reserves its recording with ``recording_begin``
+before capture and releases it with ``recording_end`` after saving or canceling.
+Both send a ``recording_id`` and no audio. The reservation belongs to the
+speech connection, and a reconnect can reassert it with the same ID.
+
 Opt-in model management is advertised only to authenticated clients as
 ``ready.capabilities.model_management`` (missing means unsupported).
 ``model_catalog`` returns bundled models, cache/runtime readiness, the active

@@ -211,6 +211,18 @@ class OmarchyControls(QObject):
             }
         )
 
+    @pyqtSlot(result=str)
+    def UpdateStatus(self) -> str:
+        return json.dumps(self.controller.remote_engine.update_status())
+
+    @pyqtSlot(result=str)
+    def PrepareUpdate(self) -> str:
+        return json.dumps(self.controller.transcription_runtime.prepare_host_update())
+
+    @pyqtSlot(str, result=bool)
+    def CancelUpdate(self, token: str) -> bool:
+        return self.controller.remote_engine.cancel_update(token)
+
     def _write_state(self):
         if self._state_path is None:
             return

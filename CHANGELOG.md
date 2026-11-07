@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+
+- **Recording-aware host updates** — paired Quick Record clients report recording activity even with live preview off. Omarchy updaters can reserve the host for a restart once local and remote speech activity has finished.
+
 ### Changed
 
 - **Source setup uses uv** — run `uv sync --locked` to install dependencies in `.venv/`. The `ow` and `openwhisper` launchers look there first and fall back to `venv/` for existing pip setups.

@@ -412,7 +412,8 @@ class RemoteConnection:
     _last_good_lock = threading.Lock()
 
     def __init__(self, host: str, port: int, token: str, fingerprint: str, *,
-                 alternates=(), timeout: float = CONNECT_TIMEOUT_S, history_enabled=None):
+                 alternates=(), timeout: float = CONNECT_TIMEOUT_S, history_enabled=None,
+                 reports_recording: bool = False):
         self.host = host
         self.port = port
         self._hosts = tuple(dict.fromkeys([host, *[a for a in alternates if a]]))
@@ -420,6 +421,7 @@ class RemoteConnection:
         self._fingerprint = (fingerprint or "").upper()
         self._timeout = timeout
         self._history_enabled = history_enabled
+        self._reports_recording = reports_recording
         self._lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._serial = 0
@@ -600,6 +602,8 @@ class RemoteConnection:
             }
             if self._history_enabled is not None:
                 hello.update(purpose="history", history_enabled=self._history_enabled is True)
+            elif self._reports_recording:
+                hello["capabilities"] = {"recording_activity": True}
             try:
                 ws.send(json.dumps(hello))
             except ConnectionClosed:
@@ -665,6 +669,18 @@ class RemoteConnection:
     def request(self, op: str, *, timeout: float = 180.0, audio=None,
                 payload: Optional[bytes] = None, **fields) -> dict:
         return self.request_timed(op, timeout=timeout, audio=audio, payload=payload, **fields)[0]
+
+    def recording_activity(self, op: str, recording_id: str) -> None:
+        """A capture start should wait only briefly for its reservation."""
+        timeout = 0.75
+        deadline = time.monotonic() + timeout
+        if not self._lock.acquire(timeout=timeout):
+            raise RemoteEngineError("The remote speech connection is busy. Try again shortly.")
+        try:
+            ws, serial = self._send_request(op, None, None, {"recording_id": recording_id})
+            self._await_reply(ws, serial, deadline)
+        finally:
+            self._lock.release()
 
     def receive_history(self, timeout=1):
         if self._history_enabled is None or self.closed:

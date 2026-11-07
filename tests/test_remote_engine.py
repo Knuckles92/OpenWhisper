@@ -480,6 +480,77 @@ def test_remote_backend_reports_a_host_without_a_ready_engine(paired_backend, en
     assert paired_backend.device_info == "devbox: not loaded"
 
 
+def test_recording_reservation_blocks_updates_without_any_preview(paired_backend, host, engine):
+    from services.remote_asr import protocol
+    from services.remote_asr.client import RemoteRequestError
+
+    backend = paired_backend
+    backend.reload_model()
+    recording_id = backend.reserve_recording()
+    assert recording_id and host.update_status()["recordings"] == 1
+    assert engine.calls == []
+    assert "reason" in host.prepare_update()
+
+    backend._process.close()
+    assert _wait_for(lambda: host.update_status()["reconnecting_recording"])
+    assert "reason" in host.prepare_update()
+    assert backend.restore_link() == "connected"
+    assert host.update_status()["recordings"] == 1
+    assert not host.update_status()["reconnecting_recording"]
+    backend.release_recording(recording_id)
+    assert _wait_for(lambda: not (host.update_status()["recordings"] or host.update_status()["requests"]))
+
+    update = host.prepare_update()
+    assert update["token"]
+    with pytest.raises(RemoteRequestError) as failure:
+        backend.reserve_recording()
+    assert failure.value.code == protocol.ENGINE_RELOADING
+    with pytest.raises(RemoteRequestError) as failure:
+        backend._process.request("transcribe", audio=_tone(160))
+    assert failure.value.code == protocol.ENGINE_RELOADING
+    assert engine.calls == []
+
+    assert not host.cancel_update("another token")
+    assert host.cancel_update(update["token"])
+    assert backend.reserve_recording()
+
+
+def test_updates_defer_when_connected_client_cannot_report_recordings(host):
+    connection = _connect(host, _pair(host))
+    try:
+        assert host.update_status()["untracked_clients"] == 1
+        assert "cannot report" in host.prepare_update()["reason"]
+    finally:
+        connection.close()
+
+
+def test_updates_defer_during_remote_decode_without_a_recording(paired_backend, host, engine):
+    from unittest.mock import Mock
+
+    entered, finish = threading.Event(), threading.Event()
+    transcribe = engine.transcribe
+
+    def decode(audio, language):
+        entered.set()
+        assert finish.wait(5)
+        return transcribe(audio, language)
+
+    engine.transcribe = decode
+    paired_backend.reload_model()
+    result = Mock()
+    worker = threading.Thread(target=lambda: result(paired_backend.decode_window(_tone(160))))
+    worker.start()
+    try:
+        assert entered.wait(3)
+        assert host.update_status()["recordings"] == 0
+        assert host.update_status()["requests"] == 1
+        assert "reason" in host.prepare_update()
+    finally:
+        finish.set()
+        worker.join(5)
+    result.assert_called_once_with("heard 160")
+
+
 def test_host_reports_a_reload_and_refuses_audio_before_decoding(paired_backend, host, engine):
     from services.remote_asr.client import RemoteDecodeNotStarted
 
@@ -1386,7 +1457,7 @@ def test_a_queued_reload_is_unsettled_until_it_starts_and_ends():
     )
     for name in ("status_update", "engine_busy_changed", "reload_debounce_requested"):
         setattr(controller, name, _Signal(name, events))
-    for name in ("reload_whisper_model", "_do_reload_whisper_model", "_engine_settled"):
+    for name in ("reload_whisper_model", "_do_reload_whisper_model", "_engine_settled", "host_update_active"):
         setattr(controller, name, getattr(ApplicationController, name).__get__(controller))
     assert controller._engine_settled()
     controller.reload_whisper_model()

@@ -1,4 +1,4 @@
-"""Draw one mark on the live desktop, then give mouse and keyboard input back."""
+"""Draw on the live desktop while a drawing tool is selected."""
 
 from __future__ import annotations
 
@@ -43,12 +43,17 @@ class LiveAnnotations(QObject):
 
     arming = pyqtSignal()
     drawn = pyqtSignal(QScreen, object)
+    enabled_changed = pyqtSignal(bool)
 
-    def __init__(self, parent: QObject, panel: QWidget | None = None) -> None:
+    def __init__(
+        self, parent: QObject, panel: QWidget | None = None, *,
+        mark_shortcuts: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(parent)
         self._panel = panel
         self._canvases: dict[QScreen, _Canvas] = {}
         self._enabled = False
+        self.busy = False
         self.tool: Tool | None = None
         self.color = 0
         self.snap_enabled: bool
@@ -56,11 +61,12 @@ class LiveAnnotations(QObject):
         self._previous_focus = None
         self._screen = capture.screen_under_cursor()
         self._toolbar = SnapToolbar(None, current_palette(), live=True,
-                                    flags=_FLOATING | _NO_FOCUS)
+                                    flags=_FLOATING | _NO_FOCUS, mark_shortcuts=mark_shortcuts)
         self._toolbar.setWindowTitle("OpenWhisper Walkthrough Drawing")
         self._toolbar.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self._toolbar.setAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips)
         self._toolbar.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
-        self._toolbar.tool_chosen.connect(self.arm)
+        self._toolbar.tool_chosen.connect(self.toggle_tool)
         self._toolbar.color_chosen.connect(self.set_color)
         self._toolbar.snap_clicked.connect(self.toggle_snap)
         self._toolbar.keep_marks_clicked.connect(self.toggle_keep_marks)
@@ -93,6 +99,7 @@ class LiveAnnotations(QObject):
             self._toolbar.hide()
             for canvas in self._canvases.values():
                 canvas.hide()
+        self.enabled_changed.emit(enabled)
 
     def _show_toolbar(self) -> None:
         if self._screen is None:
@@ -108,8 +115,14 @@ class LiveAnnotations(QObject):
             affinity.keep_out_of_screenshots(self._toolbar, True)
         self._toolbar.raise_()
 
+    def toggle_tool(self, tool: str) -> None:
+        if self.tool == tool:
+            self.disarm()
+        else:
+            self.arm(tool)
+
     def arm(self, tool: Tool | str = Tool.PEN) -> None:
-        if not self._enabled or not self._toolbar.isEnabled():
+        if not self._enabled or self.busy:
             return
         screens = QGuiApplication.screens()
         if not screens:
@@ -174,21 +187,36 @@ class LiveAnnotations(QObject):
         self._keep_marks = keep_marks
         self._toolbar.set_keep_marks(keep_marks)
 
+    def handle_mark_shortcut(self, action: str) -> None:
+        if not self._enabled:
+            return
+        if action == "keep_marks":
+            self.toggle_keep_marks()
+        elif action == "clear":
+            self.clear()
+
     def set_busy(self, busy: bool) -> None:
+        if busy == self.busy:
+            return
+        self.busy = busy
         self._toolbar.setEnabled(not busy)
+        if not busy and self.tool is not None and not self._canvas_has_focus():
+            # A screenshot can temporarily hide the canvas that had focus.
+            self.arm(self.tool)
 
     def _sync_toolbar(self) -> None:
         self._toolbar.set_state(self.tool, self.color, False, False)
 
+    def _canvas_has_focus(self) -> bool:
+        return QApplication.activeWindow() in self._canvases.values()
+
     def check_focus(self) -> None:
-        if self.armed and QApplication.activeWindow() not in self._canvases.values():
+        if self.armed and not self.busy and not self._canvas_has_focus():
             self.disarm()
 
     def complete(self, canvas: _Canvas, mark: Annotation, pinned: bool) -> None:
         canvas.add(mark, pinned or self._keep_marks)
-        marks = canvas.items()
-        self.disarm()
-        self.drawn.emit(canvas.screen, marks)
+        self.drawn.emit(canvas.screen, canvas.items())
 
     def pinned_at(self, position: tuple[int, int]) -> tuple[Annotation, ...]:
         screen = capture.screen_at_windows_point(position)
@@ -301,7 +329,7 @@ class _Canvas(QWidget):
                        min(max(point.y(), 0), self.height()))
 
     def mousePressEvent(self, event) -> None:
-        if event.button() != _LEFT or not self.live.armed:
+        if event.button() != _LEFT or not self.live.armed or self.live.busy:
             return
         if self.label_editor is not None:
             self._commit_label()
@@ -344,6 +372,8 @@ class _Canvas(QWidget):
             self.live.disarm()
         elif key == Qt.Key.Key_C:
             self.live.clear()
+        elif key == Qt.Key.Key_K and not event.isAutoRepeat():
+            self.live.toggle_keep_marks()
         elif key == Qt.Key.Key_S:
             self.live.toggle_snap()
         elif key in _TOOL_KEYS and self._draft is None:
@@ -353,7 +383,8 @@ class _Canvas(QWidget):
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
-        if event.type() == QEvent.Type.ActivationChange and not self.isActiveWindow():
+        if (event.type() == QEvent.Type.ActivationChange and not self.isActiveWindow()
+                and not self.live.busy):
             # A click on another monitor can move focus between our canvases.
             QTimer.singleShot(0, self.live.check_focus)
 

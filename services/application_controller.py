@@ -640,7 +640,7 @@ class ApplicationController(QObject):
         self._reload_timer.start(config.WHISPER_RELOAD_DEBOUNCE_MS)
 
     def _do_reload_whisper_model(self) -> None:
-        if self.recorder.is_recording or self.is_transcribing():
+        if self.recorder.is_recording or self.is_transcribing() or self.host_update_active():
             self._reload_timer.start(config.WHISPER_RELOAD_DEBOUNCE_MS)
             return
         if self.is_meeting_active():
@@ -665,6 +665,10 @@ class ApplicationController(QObject):
     def _engine_settled(self) -> bool:
         """No reload running or queued. Safe to call from any thread."""
         return not self._reload_in_flight and not self._reload_pending
+
+    def host_update_active(self) -> bool:
+        active = getattr(getattr(self, "remote_engine", None), "update_active", None)
+        return callable(active) and active() is True
 
     def _reload_worker(self) -> None:
         if self._shutting_down:
@@ -2626,6 +2630,8 @@ class ApplicationController(QObject):
         """
         if self._backup_in_progress:
             raise RuntimeError("Wait for backup or restore preparation to finish")
+        if self.host_update_active():
+            raise RuntimeError("OpenWhisper is preparing an update. Try again shortly.")
         if self.is_meeting_active():
             # Exclusive mode: the meeting owns the microphone and a dedicated
             # Whisper instance; a second capture stream and model would fight

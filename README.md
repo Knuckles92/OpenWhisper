@@ -204,6 +204,8 @@ The host's selected engine handles transcription. Traffic is encrypted and limit
 
 While the host is loading its speech engine, it tells paired clients to retry audio requests that have yet to start. Quick Record keeps the recording on the client through a brief restart and makes it available in History if the connection stays down.
 
+Remote Quick Record reserves the host from the start of capture through saving, even with live preview off. On Omarchy, an unattended updater can [reserve the idle host for a restart](docs/host-updates.md) without using a fixed maintenance window.
+
 If macOS Keychain refuses to save the connection key, click **Retry Keychain access** and choose **Allow** or **Always Allow** when macOS asks. If no prompt appears, use **Open Keychain Access**, unlock the **login** keychain and check the **OpenWhisper** item's **Access Control**, then retry. The approved connection stays in memory while OpenWhisper is running, so retrying does not need another pairing code or approval from the host. The connection key is only saved in the OS credential store.
 
 - **Meetings:** Select **Remote computer** in **Settings → Meeting Mode → Voice & speakers → Speech engine**. Audio goes to the host for transcription; capture, recordings, and transcripts stay on the computer running the meeting.
