@@ -7,17 +7,25 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.5] - 2026-11-06
+
 ### Added
 
+- **Walkthrough Auto Mode on Windows** — capture screenshots automatically after clicks while you narrate. Draw arrows, boxes, highlights, or text on the live desktop to capture an annotated screenshot. **Keep marks** pins annotations for later screenshots and remembers your preference between walkthroughs.
+- **Screenshot edge snapping** — snap a capture region, arrow, or box to window edges on Windows and macOS. Toggle snapping with **S**.
 - **Recording-aware host updates** — paired Quick Record clients report recording activity even with live preview off. Omarchy updaters can reserve the host for a restart once local and remote speech activity has finished.
 
 ### Changed
 
 - **Source setup uses uv** — run `uv sync --locked` to install dependencies in `.venv/`. The `ow` and `openwhisper` launchers look there first and fall back to `venv/` for existing pip setups.
+- **Meeting Mode layout** — recording controls lead while a meeting is active, and finalization actions appear together when it ends.
+- **Quick Record window sizing** — the window grows and shrinks with the wrapped transcript.
 
 ### Fixed
 
 - **Retry failed recordings from History** — if Quick Record loses its remote speech engine before transcription, the recording overlay shows up to three reconnect attempts within 12 seconds. A failed transcription keeps its audio in History with **Retry transcription**. A successful retry fills in the same entry, ready to copy.
+- **Remote meeting engine recovery** — Meeting Mode can resume transcription after the paired speech engine reloads.
+- **Meeting platform notice** — the notice stays inside the Meeting Mode tab during startup.
 
 ## [2.8.4] - 2026-11-05
 
