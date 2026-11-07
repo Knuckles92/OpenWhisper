@@ -30,7 +30,7 @@ from PyQt6.QtGui import QCursor, QGuiApplication, QImage, QScreen
 from PyQt6.QtWidgets import QWidget
 
 from services.settings import SettingsKey, resolve_snap_to_edges, settings_manager
-from ui_qt.snap import capture, export, macos, pointed
+from ui_qt.snap import capture, export, macos, macos_capture, pointed
 from ui_qt.snap.overlay import SnapOverlay
 from ui_qt.snap.support import snap_support
 
@@ -99,6 +99,7 @@ class SnapSession(QObject):
         # The window to keep, in the pointer's screen's logical pixels.
         self._crop: QRect | None = None
         self._failure = ""
+        self._native_capture: macos_capture.Capture | None = None
         # Owned timers: they die with the session, never firing at a dead one.
         self._settle = QTimer(self)
         self._settle.setSingleShot(True)
@@ -148,6 +149,8 @@ class SnapSession(QObject):
             self._overlay.drop()
             return
         self._settle.stop()
+        if self._native_capture is not None:
+            self._native_capture.cancel()
         self._restore_windows()
         self._finish(self.dropped.emit)
 
@@ -185,6 +188,11 @@ class SnapSession(QObject):
         # Opening the overlay makes OpenWhisper active on macOS; whoever
         # had the focus gets it back at the end (``_finish``).
         macos.remember_focus()
+        if take == SCREEN and (click_at is not None or screen is not None):
+            self._native_capture = macos_capture.start(screens[0], keep_out, self)
+            if self._native_capture is not None:
+                self._native_capture.finished.connect(self._on_native_capture)
+                return
         self._hidden.extend(capture.hide_windows(keep_out))
         if not self._hidden and not self._keep_when_captured:
             self._capture()
@@ -206,6 +214,13 @@ class SnapSession(QObject):
             images = [capture.grab(screen) for screen in self._screens]
         finally:
             self._restore_windows()
+        self._captured(images)
+
+    def _on_native_capture(self, image: QImage | None) -> None:
+        if not self._decided:
+            self._captured([image])
+
+    def _captured(self, images: list[QImage | None]) -> None:
         if images[0] is None:
             self._fail_soon(CAPTURE_FAILED)
         elif self._keep_when_captured:
@@ -311,8 +326,9 @@ def start_snap(
 
     Args:
         keep_out: Our windows that must not appear in the shot. Those kept
-            out with ``keep_out_of_screenshots`` stay on screen; the rest are
-            hidden for a couple of frames around the grab, then shown again.
+            out with ``keep_out_of_screenshots`` stay on screen. Automatic
+            captures on macOS 14+ filter them out natively; other captures
+            hide them around the grab, then show them again.
         hint: Shown in the pill at the top, before "Enter to keep · Esc to cancel".
         float_above: Windows that stay in sight while the overlay is open,
             parked in a corner above it and put back once the snap ends.

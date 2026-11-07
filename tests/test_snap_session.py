@@ -103,6 +103,66 @@ def window():
 
 
 class TestOutcomes:
+    @pytest.mark.parametrize("location", ["click", "drawing"])
+    def test_filtered_auto_capture_never_hides_controls(self, window, monkeypatch, grabs, location):
+        from PyQt6.QtCore import pyqtSignal
+
+        class NativeCapture(QObject):
+            finished = pyqtSignal(object)
+
+            def cancel(self):
+                pass
+
+        request = NativeCapture()
+        screen = QGuiApplication.primaryScreen()
+        calls = []
+
+        def start(target, keep_out, parent):
+            calls.append((target, keep_out))
+            return request
+
+        monkeypatch.setattr(session.macos_capture, "start", start)
+        monkeypatch.setattr(capture, "screen_at_click", lambda _: screen)
+        hidden = []
+        monkeypatch.setattr(capture, "hide_windows", lambda windows: hidden.extend(windows) or [])
+        where = {"click_at": (-500, 100)} if location == "click" else {"screen": screen}
+        snap = start_snap(take=SCREEN, keep_out=(window,), **where)
+        kept = Spy(snap.kept)
+        assert not kept.calls
+        assert calls == [(screen, (window,))]
+        request.finished.emit(_screen_image(screen))
+        assert len(kept) == 1
+        assert window.isVisible()
+        assert hidden == grabs == []
+        assert snap._overlay is None
+
+    @pytest.mark.parametrize("outcome", ["drop", "failure"])
+    def test_filtered_capture_late_result_cannot_save_a_shot(self, window, monkeypatch, outcome):
+        from PyQt6.QtCore import pyqtSignal
+
+        class NativeCapture(QObject):
+            finished = pyqtSignal(object)
+            cancelled = False
+
+            def cancel(self):
+                self.cancelled = True
+
+        request = NativeCapture()
+        monkeypatch.setattr(session.macos_capture, "start", lambda *_: request)
+        screen = QGuiApplication.primaryScreen()
+        snap = start_snap(take=SCREEN, screen=screen, keep_out=(window,))
+        kept, failed, dropped = Spy(snap.kept), Spy(snap.failed), Spy(snap.dropped)
+        if outcome == "drop":
+            snap.drop()
+            assert request.cancelled
+            assert len(dropped) == 1
+        else:
+            request.finished.emit(None)
+            assert _pump_until(lambda: len(failed) == 1)
+        request.finished.emit(_screen_image(screen))
+        assert not kept.calls
+        assert window.isVisible()
+
     def test_a_failed_capture_is_reported_after_start_snap_returns(self, monkeypatch):
         monkeypatch.setattr(capture, "_grab_screen", lambda screen: None)
 

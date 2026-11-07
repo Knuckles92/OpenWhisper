@@ -18,6 +18,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ### Fixed
 
+- **Walkthrough toolbar flashing on macOS** — automatic screenshots on macOS 14 and later exclude the drawing toolbar, live canvas, and recording controls without briefly hiding them after each click.
 - **Walkthrough drawing cursor on macOS** — the crosshair and text cursor stay visible after repeated Auto Mode screenshots while the drawing tool remains selected.
 
 ## [2.8.5] - 2026-11-06

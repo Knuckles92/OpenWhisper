@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt
+from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, Qt
 from PyQt6.QtGui import QColor, QMouseEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
@@ -29,6 +29,7 @@ from ui_qt.snap.session import start_snap
 
 def _check_mac_auto_capture(app, card, keep_out):
     import AppKit
+    import ScreenCaptureKit as sck
 
     from services._mouse_monitor_mac import MouseClickMonitor
     from ui_qt.snap import export, macos
@@ -38,6 +39,15 @@ def _check_mac_auto_capture(app, card, keep_out):
     monitor = MouseClickMonitor(lambda *_: None)
     drawing = None
     snap = None
+    class HideWatcher(QObject):
+        hidden = False
+
+        def eventFilter(self, watched, event):
+            if event.type() == QEvent.Type.Hide:
+                self.hidden = True
+            return False
+
+    watcher = HideWatcher()
     try:
         monitor.start()
         assert monitor.wait_until_installed(), "Native mouse monitors did not install"
@@ -62,25 +72,35 @@ def _check_mac_auto_capture(app, card, keep_out):
         assert drawing.tool is Tool.PEN, "Drawing did not keep the selected tool"
         QTest.keyClick(canvas, Qt.Key.Key_Escape)
         assert not drawing.armed, "Esc did not return desktop input"
-        snap = start_snap(keep_out=(*keep_out, *drawing.windows()), take="screen", click_at=at)
-        kept, failed = [], []
-        snap.kept.connect(kept.append)
-        snap.failed.connect(failed.append)
-        for _ in range(100):
-            QTest.qWait(30)
-            if kept or failed:
-                break
-        assert not failed, failed
-        assert kept, "Automatic capture did not complete"
+        toolbar.installEventFilter(watcher)
+        for _ in range(3):
+            snap = start_snap(keep_out=(*keep_out, *drawing.windows()), take="screen", click_at=at)
+            kept, failed = [], []
+            snap.kept.connect(kept.append)
+            snap.failed.connect(failed.append)
+            for _ in range(200):
+                QTest.qWait(30)
+                if kept or failed:
+                    break
+            assert not failed, failed
+            assert kept, "Automatic capture did not complete"
+            if hasattr(sck, "SCScreenshotManager"):
+                assert snap._native_capture is not None, "Native capture fell back to hiding controls"
+                assert not watcher.hidden, "Drawing toolbar flashed during automatic capture"
+            snap.deleteLater()
         raw = kept[0]
         dpr = raw.devicePixelRatio()
+        toolbar_point = toolbar.mapToGlobal(QPoint(20, 20)) - area.topLeft()
+        assert raw.pixelColor(round(toolbar_point.x() * dpr),
+                              round(toolbar_point.y() * dpr)).name() == "#194754", (
+            "The drawing toolbar entered the capture")
         assert raw.pixelColor(round(150 * dpr), round(130 * dpr)).name() == "#194754", (
             "The live canvas entered the capture")
         annotated = export.render(raw, export.logical_rect(raw), marks)
         assert annotated.pixelColor(round(150 * dpr), round(130 * dpr)) != raw.pixelColor(
             round(150 * dpr), round(130 * dpr)), "The saved image lost its pinned mark"
         assert all(window.isVisible() for window in drawing.windows()), "Live windows were not restored"
-        return "passed (physical click delivery and Spaces need manual checks)"
+        return "passed (3 captures; toolbar exclusion and visibility checked; physical clicks and Spaces need manual checks)"
     finally:
         monitor.stop()
         if snap is not None and snap.active:

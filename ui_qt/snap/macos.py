@@ -5,8 +5,9 @@ Qt's screen grab works on macOS, but without the Screen Recording grant it
 returns only the wallpaper and menu bar (and our own windows): other apps'
 windows are left out, so Snap asks for the grant before it captures.
 
-Snap briefly hides its own windows before capture: the legacy
+Manual Snap briefly hides its own windows before capture: the legacy
 ``NSWindowSharingNone`` flag does not reliably exclude them on macOS.
+Automatic captures use ScreenCaptureKit filtering when available.
 The window functions do nothing (returning False or None) unless
 Qt runs on Cocoa, or when AppKit can't be reached.
 """

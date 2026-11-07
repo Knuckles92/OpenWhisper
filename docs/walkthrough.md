@@ -165,6 +165,9 @@ Input Monitoring grant. The toolbar stays visible while you work in another
 app, including full-screen Spaces. Leaving drawing returns focus to that
 app. Retina and external displays use the monitor where the click or
 drawing happened, even if you move the pointer before capture.
+On macOS 14 and later, automatic screenshots filter out the toolbar, live
+canvas, and recording controls while keeping them visible on your desktop.
+Older macOS versions briefly hide these windows to leave them out of captures.
 
 The drawing toolbar opens at the top center of the screen where you start.
 Choose a tool there, or click **Draw** in the column to pick the pen. Draw on
@@ -432,7 +435,7 @@ and the status say **Write-up copied**.
 - **macOS:** yes, once OpenWhisper has Screen Recording permission. The
   first snap asks for it; allow OpenWhisper in **System Settings → Privacy &
   Security → Screen & System Audio Recording**, then reopen OpenWhisper.
-  Later snaps without it open that page. Snap briefly hides the recording
+  Later snaps without it open that page. Manual Snap briefly hides the recording
   overlay and walkthrough column while capturing, then restores them while
   you draw. Other apps' screen recordings and shares can include these
   overlays. Snap and Done take clicks without taking the focus from the app

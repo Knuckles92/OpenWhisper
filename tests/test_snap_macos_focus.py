@@ -143,6 +143,7 @@ def test_mac_live_cursor_survives_repeated_captures(tool, monkeypatch):
     image = QImage(100, 100, QImage.Format.Format_RGB32)
     image.fill(Qt.GlobalColor.black)
     monkeypatch.setattr(capture, "grab", lambda _: image)
+    monkeypatch.setattr(session.macos_capture, "start", lambda *_: None)
     monkeypatch.setattr(session, "snap_support", lambda: (True, ""))
     original_pos = QCursor.pos()
     owner = QWidget()

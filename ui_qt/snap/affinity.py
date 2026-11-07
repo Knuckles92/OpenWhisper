@@ -3,8 +3,9 @@
 Windows 10 2004 and later can leave a window out of every screen capture
 (``SetWindowDisplayAffinity`` with ``WDA_EXCLUDEFROMCAPTURE``): the user
 still sees it, but captured pixels show what is behind it. Other desktops
-briefly hide our windows before a snap. In particular, macOS accepts the
-legacy ``NSWindowSharingNone`` flag but Qt can still capture that window.
+briefly hide our windows before a Qt snap. Automatic macOS captures use
+ScreenCaptureKit filtering instead: the legacy ``NSWindowSharingNone``
+flag does not reliably exclude a window from Qt captures.
 """
 
 from __future__ import annotations
