@@ -522,7 +522,7 @@ class MeetingModeTab(QWidget):
         self.subtitle.setToolTip(platform_copy)
         intro_row.addWidget(self.subtitle, 1)
         intro_layout.addLayout(intro_row)
-        self.platform_hint = WrappedLabel(platform_copy)
+        self.platform_hint = WrappedLabel(platform_copy, self.intro)
         self.platform_hint.setObjectName("meetingModePlatformHint")
         self.platform_hint.setProperty("tone", meeting_audio_platform_tone())
         self.platform_hint.setAccessibleName("Meeting platform notice")

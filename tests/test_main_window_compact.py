@@ -400,16 +400,21 @@ class TestMainWindowCompactMode:
         assert sidebar.page == sidebar.HISTORY
         assert "History" in self.window.history_edge_tab.toolTip()
 
-    def test_walkthrough_tab_fits_at_minimum_size(self):
-        """At the window's floor the controls show unscrolled; the list takes what's left."""
+    def test_walkthrough_tab_fits_when_opened_at_minimum_size(self):
+        """Opening Walkthrough from the window's floor fits its controls without scrolling."""
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtTest import QTest
         from ui_qt.widgets.tabbed_content import TabbedContentWidget
 
+        self.window._available_screen_rect = lambda: QRect(0, 0, 1920, 1080)
+        self.window._max_usable_height = lambda: 1080
         self.window.resize(config.MAIN_WINDOW_MIN_WIDTH, config.MAIN_WINDOW_MIN_HEIGHT)
         self.window.show()
         self.window.tabbed_content.set_current_index(TabbedContentWidget.TAB_WALKTHROUGH)
-        self.app.processEvents()
+        QTest.qWait(800)
 
         tab = self.window.walkthrough_tab
+        assert tab.scroll_area.verticalScrollBar().maximum() == 0
         assert tab.scroll_area.horizontalScrollBar().maximum() == 0
         viewport = tab.scroll_area.viewport()
         for widget in (tab.walkthrough_button, tab.copy_bar, *tab.agent_choices.values()):

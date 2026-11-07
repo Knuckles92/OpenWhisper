@@ -533,8 +533,8 @@ class WalkthroughTab(QWidget):
         self.auto_check.toggled.connect(
             lambda on: settings_manager.save_setting(SettingsKey.WALKTHROUGH_AUTO_MODE, on)
         )
-        self.auto_check.setVisible(sys.platform == "win32")
         body.addWidget(self.auto_check, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.auto_check.setVisible(sys.platform == "win32")
 
         # Leads the shortcut row rather than sitting on the Start button, so
         # the button matches the other tabs' Start buttons.

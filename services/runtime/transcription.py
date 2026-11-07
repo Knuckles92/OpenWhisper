@@ -2851,7 +2851,7 @@ class TranscriptionRuntime:
             try:
                 save = self._preserve_failed_audio
                 if (category == event_catalog.FAILURE_FAILED
-                        and (job is None or job.mode != JobMode.WALKTHROUGH)):
+                        and (job is None or job.mode == JobMode.DICTATION)):
                     save = self._save_failed_recording
                 self.controller.persistence_executor.submit(save, pending_audio, status)
                 return

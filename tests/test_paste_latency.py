@@ -167,6 +167,7 @@ def _harness(monkeypatch, ui_factory=FakeUI):
     controller = SimpleNamespace(
         ui_controller=ui,
         recorder=FakeRecorder(events),
+        current_backend=None,
         streaming_runtime=Mock(),
         is_meeting_active=lambda: False,
         overlay_state_update=overlay,
@@ -272,7 +273,7 @@ def test_upload_displays_ready_then_saves_history_and_never_pastes(h):
     h.runtime.on_transcription_complete("uploaded words")
 
     delivery = [e for e in h.events if not (isinstance(e, tuple) and e[0] == "overlay")]
-    assert delivery == [("status", "Ready"), "history", "refresh_history"]
+    assert delivery == [("status", "Transcript ready to copy"), "history", "refresh_history"]
     assert not h.paste.called
     assert not h.runtime.has_active_job
 
