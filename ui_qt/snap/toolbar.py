@@ -11,7 +11,7 @@ margin around it swallows clicks meant for the screenshot.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFontMetrics, QPainter, QPen
@@ -33,12 +33,14 @@ LABEL_PAD = 6
 LABEL_GAP = 4
 
 _TOOLS = (
-    (Tool.ARROW, "Arrow (A)"),
-    (Tool.BOX, "Box (B)"),
+    (Tool.ARROW, "Arrow (A) · Shift to align to 45° angles"),
+    (Tool.BOX, "Box (B) · Shift for a square"),
+    (Tool.ELLIPSE, "Ellipse (O) · Shift for a circle"),
     (Tool.PEN, "Pen (P)"),
     (Tool.HIGHLIGHTER, "Highlighter (H)"),
     (Tool.TEXT, "Text (T)"),
     (Tool.STEP, "Step number (N)"),
+    (Tool.REDACT, "Redact (R) · Drag an opaque cover over private details"),
 )
 
 
@@ -53,7 +55,6 @@ class _Button:
 
 def _layout(
     live: bool, label_metrics: QFontMetrics, mark_shortcuts: dict[str, str],
-    *, wrap: bool = False,
 ) -> tuple[list[_Button], list[tuple[int, int]]]:
     """Buttons left to right, and the x of each group separator, inside the panel."""
     buttons: list[_Button] = []
@@ -75,7 +76,10 @@ def _layout(
 
     for tool, tip in _TOOLS:
         if live:
-            tip += f" · Hold {'Cmd' if sys.platform == 'darwin' else 'Ctrl'} to pin"
+            if tool is Tool.REDACT:
+                tip += " · Stays until Clear marks"
+            else:
+                tip += f" · Hold {'Cmd' if sys.platform == 'darwin' else 'Ctrl'} to pin"
         add("tool", tool.value, tip)
     separate()
     if not live:
@@ -85,10 +89,9 @@ def _layout(
     for index, swatch in enumerate(SWATCHES):
         add("color", str(index), f"{swatch.name} ({index + 1})", SWATCH)
     separate()
+    add("infill", "infill", "Fill new boxes and ellipses with a light tint; off leaves only the outline. Remembered for future screenshots.", label="Infill")
     add("snap", "snap", "Snap to corners and window edges (S)")
     if live:
-        if wrap:
-            x, top = PAD, PAD + BUTTON + 4
         add("region", "region", "Select an area for automatic screenshots; close its × to capture the whole screen", label="Region")
         separate()
         add("delay", "delay", "Screenshot delay", max(148, label_metrics.horizontalAdvance("Delay · Instant") + 61))
@@ -104,6 +107,31 @@ def _layout(
     return buttons, separators
 
 
+def _wrap(buttons: list[_Button], width: int) -> tuple[list[_Button], list[tuple[int, int]]]:
+    """Move whole control groups to another row when the screen is narrow."""
+    groups: list[list[_Button]] = [[]]
+    for button in buttons:
+        previous = groups[-1]
+        if previous and button.rect.left() - previous[-1].rect.right() - 1 >= SEPARATOR:
+            groups.append([])
+        groups[-1].append(button)
+    wrapped: list[_Button] = []
+    separators: list[tuple[int, int]] = []
+    x, top = PAD, PAD
+    for group in groups:
+        group_width = group[-1].rect.right() + 1 - group[0].rect.left()
+        gap = SEPARATOR if x > PAD else 0
+        if x > PAD and x + gap + group_width + PAD > width:
+            x, top, gap = PAD, top + BUTTON + 4, 0
+        if gap:
+            separators.append((x + SEPARATOR // 2, top))
+        x += gap
+        offset = QPoint(x - group[0].rect.left(), top - PAD)
+        wrapped.extend(replace(button, rect=button.rect.translated(offset)) for button in group)
+        x += group_width
+    return wrapped, separators
+
+
 class SnapToolbar(QWidget):
     """Tools, undo and redo, colours, then Cancel and Keep."""
 
@@ -114,6 +142,7 @@ class SnapToolbar(QWidget):
     drop_clicked = pyqtSignal()
     keep_clicked = pyqtSignal()
     snap_clicked = pyqtSignal()
+    infill_clicked = pyqtSignal()
     keep_marks_clicked = pyqtSignal()
     clear_clicked = pyqtSignal()
     region_clicked = pyqtSignal()
@@ -144,6 +173,7 @@ class SnapToolbar(QWidget):
         self._can_undo = False
         self._can_redo = False
         self._snap_enabled = False
+        self._box_infill = False
         self._keep_marks = False
         self._region_active = False
         self._hover: _Button | None = None
@@ -154,6 +184,7 @@ class SnapToolbar(QWidget):
             "drop": self.drop_clicked,
             "keep": self.keep_clicked,
             "snap": self.snap_clicked,
+            "infill": self.infill_clicked,
             "keep_marks": self.keep_marks_clicked,
             "clear": self.clear_clicked,
             "region": self.region_clicked,
@@ -163,8 +194,8 @@ class SnapToolbar(QWidget):
 
     def fit_to_width(self, width: int) -> None:
         buttons, separators = _layout(self._live, QFontMetrics(self._label_font), self._mark_shortcuts)
-        if self._live and buttons[-1].rect.right() + 1 + PAD > width:
-            buttons, separators = _layout(True, QFontMetrics(self._label_font), self._mark_shortcuts, wrap=True)
+        if buttons[-1].rect.right() + 1 + PAD > width:
+            buttons, separators = _wrap(buttons, width)
         self._buttons, self._separators = buttons, separators
         self._hover = self._pressed = None
         self.setFixedSize(max(b.rect.right() for b in buttons) + 1 + PAD,
@@ -180,6 +211,10 @@ class SnapToolbar(QWidget):
 
     def set_snap_enabled(self, enabled: bool) -> None:
         self._snap_enabled = enabled
+        self.update()
+
+    def set_box_infill(self, enabled: bool) -> None:
+        self._box_infill = enabled
         self.update()
 
     def set_keep_marks(self, enabled: bool) -> None:
@@ -198,11 +233,13 @@ class SnapToolbar(QWidget):
         return QRect()
 
     def _enabled(self, button: _Button) -> bool:
-        return {"undo": self._can_undo, "redo": self._can_redo}.get(button.kind, True)
+        return {"undo": self._can_undo, "redo": self._can_redo,
+                "infill": self._tool in (Tool.BOX, Tool.ELLIPSE),
+                "color": self._tool is not Tool.REDACT}.get(button.kind, True)
 
-    def _button_at(self, pos: QPoint) -> _Button | None:
+    def _button_at(self, pos: QPoint, *, enabled_only: bool = True) -> _Button | None:
         return next(
-            (b for b in self._buttons if b.rect.contains(pos) and self._enabled(b)),
+            (b for b in self._buttons if b.rect.contains(pos) and (not enabled_only or self._enabled(b))),
             None,
         )
 
@@ -253,11 +290,13 @@ class SnapToolbar(QWidget):
 
     def event(self, event) -> bool:
         if event.type() == QEvent.Type.ToolTip:
-            button = self._button_at(event.pos())
+            button = self._button_at(event.pos(), enabled_only=False)
             if button is None:
                 QToolTip.hideText()
             else:
-                QToolTip.showText(event.globalPos(), button.tip, self, button.rect)
+                tip = ("Redactions always use an opaque cover."
+                       if button.kind == "color" and self._tool is Tool.REDACT else button.tip)
+                QToolTip.showText(event.globalPos(), tip, self, button.rect)
             return True
         return super().event(event)
 
@@ -281,7 +320,11 @@ class SnapToolbar(QWidget):
         if button.kind == "delay":
             return  # The delay chip paints itself and owns its preset picker.
         if button.kind == "color":
+            painter.save()
+            if not self._enabled(button):
+                painter.setOpacity(0.32)
             self._paint_swatch(painter, button)
+            painter.restore()
             return
         rect = QRectF(button.rect).adjusted(2, 2, -2, -2)
         background, icon = self._button_colors(button)
@@ -303,16 +346,17 @@ class SnapToolbar(QWidget):
     def _paint_labeled_button(self, painter: QPainter, button: _Button, rect: QRectF,
                               icon: QColor) -> None:
         icon_rect = QRectF(rect.left() + LABEL_PAD, rect.center().y() - ICON / 2, ICON, ICON)
-        if button.kind == "keep_marks":
+        if button.kind in ("keep_marks", "infill"):
             painter.setPen(QPen(icon, 1.3))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRoundedRect(icon_rect.adjusted(3, 3, -3, -3), 3, 3)
-            if self._keep_marks:
+            checked = self._keep_marks if button.kind == "keep_marks" else self._box_infill
+            if checked:
                 paint_icon(painter, "keep", icon_rect, icon)
         else:
             paint_icon(painter, button.kind, icon_rect, icon)
         painter.setFont(self._label_font)
-        painter.setPen(self._palette.color("overlay-text"))
+        painter.setPen(icon if not self._enabled(button) else self._palette.color("overlay-text"))
         label_rect = QRectF(rect)
         label_rect.setLeft(icon_rect.right() + LABEL_GAP)
         painter.drawText(label_rect, Qt.AlignmentFlag.AlignVCenter, button.label)
@@ -325,19 +369,20 @@ class SnapToolbar(QWidget):
             return self._palette.color("accent-hover" if hovered else "accent"), QColor(
                 "#FFFFFF"
             )
-        if ((button.kind == "snap" and self._snap_enabled)
-                or (button.kind == "keep_marks" and self._keep_marks)
-                or (button.kind == "region" and self._region_active)):
-            return self._palette.color("overlay-rgb", 36), self._palette.color("accent")
-        if button.kind == "tool" and button.value == self._tool:
-            color = QColor(SWATCHES[self._color].color)
-            tint = QColor(color)
-            tint.setAlpha(46 if hovered else 34)
-            return tint, color
         if not self._enabled(button):
             faded = QColor(text)
             faded.setAlphaF(0.32)
             return None, faded
+        if ((button.kind == "snap" and self._snap_enabled)
+                or (button.kind == "infill" and self._box_infill)
+                or (button.kind == "keep_marks" and self._keep_marks)
+                or (button.kind == "region" and self._region_active)):
+            return self._palette.color("overlay-rgb", 36), self._palette.color("accent")
+        if button.kind == "tool" and button.value == self._tool:
+            color = text if self._tool is Tool.REDACT else QColor(SWATCHES[self._color].color)
+            tint = QColor(color)
+            tint.setAlpha(46 if hovered else 34)
+            return tint, color
         return (self._palette.color("overlay-rgb", 24) if hovered else None), text
 
     def _paint_swatch(self, painter: QPainter, button: _Button) -> None:

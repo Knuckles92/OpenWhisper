@@ -358,7 +358,7 @@ class DownloadsPage(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
         # Models and components are different jobs. The catalog has its own
         # filters and batch bar, and components used to sit under all of it,
@@ -374,7 +374,7 @@ class DownloadsPage(QWidget):
         self.models_section.setObjectName("downloadsModelsSection")
         models_layout = QVBoxLayout(self.models_section)
         models_layout.setContentsMargins(0, 0, 0, 0)
-        models_layout.setSpacing(8)
+        models_layout.setSpacing(6)
 
         header_row = QHBoxLayout()
         header_row.setSpacing(8)

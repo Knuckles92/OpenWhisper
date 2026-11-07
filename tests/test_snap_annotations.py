@@ -11,11 +11,14 @@ from ui_qt.snap.annotations import (
     AnnotationStack,
     Arrow,
     Box,
+    Ellipse,
     Label,
+    Redaction,
     Step,
     Stroke,
     Tool,
     arrow_shapes,
+    extend_draft,
     ink_for,
     new_draft,
 )
@@ -74,11 +77,39 @@ class TestStack:
 
 
 class TestDrafts:
+    @pytest.mark.parametrize("tool", [Tool.BOX, Tool.ELLIPSE])
+    @pytest.mark.parametrize("infill", [False, True])
+    def test_infill_controls_interior_without_changing_outline(self, tool, infill):
+        box = new_draft(tool, QPointF(20, 20), CORAL, box_infill=infill)
+        box.extend(QPointF(100, 80))
+        image = QImage(120, 100, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(image)
+        box.paint(painter)
+        painter.end()
+
+        assert box.infill is infill
+        assert (image.pixelColor(60, 50).alpha() > 0) is infill
+        assert image.pixelColor(60, 20).alpha() > 0
+
+    @pytest.mark.parametrize("tool", [Tool.BOX, Tool.ELLIPSE])
+    def test_shapes_have_no_infill_by_default(self, tool):
+        assert not new_draft(tool, QPointF(20, 20), CORAL).infill
+
+    def test_redactions_start_as_a_drag_and_ignore_colour_and_infill(self):
+        cover = new_draft(Tool.REDACT, QPointF(10, 20), CORAL, box_infill=False)
+        assert isinstance(cover, Redaction)
+        assert not cover.meaningful()
+        cover.extend(QPointF(50, 40))
+        assert cover.meaningful()
+        assert cover.rect() == QRectF(10, 20, 40, 20)
+
     @pytest.mark.parametrize(
         ("tool", "kind"),
         [
             (Tool.ARROW, Arrow),
             (Tool.BOX, Box),
+            (Tool.ELLIPSE, Ellipse),
             (Tool.PEN, Stroke),
             (Tool.HIGHLIGHTER, Stroke),
         ],
@@ -131,6 +162,42 @@ class TestDrafts:
     def test_an_empty_label_is_not_a_mark(self):
         assert not Label(QPointF(0, 0), "   ", CORAL).meaningful()
         assert Label(QPointF(0, 0), "Click here", CORAL).meaningful()
+
+
+@pytest.mark.parametrize("tool", [Tool.BOX, Tool.ELLIPSE])
+@pytest.mark.parametrize("end", [(160, 125), (40, 125), (160, 75), (40, 75)])
+def test_shift_drag_makes_squares_and_circles_in_every_direction(tool, end):
+    draft = new_draft(tool, QPointF(100, 100), CORAL)
+    point = QPointF(*end)
+    extend_draft(draft, point, constrained=True)
+    assert draft.rect().width() == draft.rect().height() == 60
+    # Releasing Shift restores a free-form rectangle or oval on the next move.
+    extend_draft(draft, point)
+    assert draft.rect().width() == 60 and draft.rect().height() == 25
+
+
+@pytest.mark.parametrize("tool", [Tool.BOX, Tool.ELLIPSE, Tool.ARROW])
+def test_constrained_shapes_fit_inside_the_capture_bounds(tool):
+    bounds = QRectF(0, 0, 120, 120)
+    draft = new_draft(tool, QPointF(110, 100), CORAL)
+    extend_draft(draft, QPointF(160, 150), constrained=True, bounds=bounds)
+    assert bounds.contains(draft.end)
+    assert draft.end.x() - draft.start.x() == pytest.approx(draft.end.y() - draft.start.y())
+
+
+@pytest.mark.parametrize(
+    ("end", "axis"), [((150, 110), "horizontal"), ((110, 150), "vertical"), ((150, 140), "diagonal")],
+)
+def test_shift_arrows_align_to_45_degree_bearings(end, axis):
+    draft = new_draft(Tool.ARROW, QPointF(100, 100), CORAL)
+    extend_draft(draft, QPointF(*end), constrained=True)
+    dx, dy = draft.end.x() - 100, draft.end.y() - 100
+    if axis == "horizontal":
+        assert dy == pytest.approx(0)
+    elif axis == "vertical":
+        assert dx == pytest.approx(0)
+    else:
+        assert dx == pytest.approx(dy)
 
 
 class TestArrowShape:
@@ -212,6 +279,9 @@ def _painted_rect(image: QImage) -> QRect:
         Arrow(QPointF(40, 120), QPointF(200, 60), CORAL),
         Arrow(QPointF(200, 60), QPointF(40, 140), CORAL),
         Box(QPointF(30, 30), QPointF(120, 90), CORAL),
+        Box(QPointF(30, 30), QPointF(120, 90), CORAL, infill=True),
+        Ellipse(QPointF(30, 30), QPointF(120, 90), CORAL, infill=True),
+        Redaction(QPointF(30, 30), QPointF(120, 90)),
         Stroke(
             [QPointF(30, 100), QPointF(60, 40), QPointF(90, 120), QPointF(140, 50)],
             CORAL,
@@ -220,7 +290,7 @@ def _painted_rect(image: QImage) -> QRect:
         Step(QPointF(100, 100), 7, CORAL),
         Label(QPointF(20, 20), "Click here first", CORAL),
     ],
-    ids=["arrow", "arrow-back", "box", "pen", "highlighter", "step", "label"],
+    ids=["arrow", "arrow-back", "box", "box-filled", "ellipse", "redact", "pen", "highlighter", "step", "label"],
 )
 def test_marks_paint_inside_their_bounds(item):
     # The overlay repaints only bounds() while drawing; ink outside it smears.

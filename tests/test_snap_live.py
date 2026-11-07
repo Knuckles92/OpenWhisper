@@ -2,13 +2,112 @@
 
 from unittest.mock import Mock
 
+import pytest
 from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, Qt
 from PyQt6.QtGui import QGuiApplication, QHelpEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QToolTip
 
 from ui_qt.snap import live
-from ui_qt.snap.annotations import Label, Stroke, Tool
+from ui_qt.snap.annotations import Label, Redaction, Stroke, Tool
+
+
+@pytest.mark.parametrize("tool", [Tool.BOX, Tool.ELLIPSE])
+@pytest.mark.parametrize("infill", [False, True])
+def test_rectangle_infill_persists_for_live_drawing(monkeypatch, infill, tool):
+    from services.settings import SettingsKey, settings_manager
+
+    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
+    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+    settings_manager.save_setting(SettingsKey.SNAP_BOX_INFILL, not infill)
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        drawing.arm(tool)
+        toolbar = drawing._toolbar
+        QTest.mouseClick(toolbar, Qt.MouseButton.LeftButton,
+                         pos=toolbar.button_rect("infill").center())
+        assert live.resolve_snap_box_infill() is infill
+        drawing.arm(Tool.PEN)
+        drawing.arm(tool)
+        canvas = drawing._canvases[live.capture.screen_under_cursor()]
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(80, 60))
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=QPoint(180, 120))
+        assert canvas.items()[-1].infill is infill
+    finally:
+        drawing.close()
+
+    reopened = live.LiveAnnotations(owner)
+    try:
+        assert reopened.box_infill is infill
+        assert reopened._toolbar._box_infill is infill
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("tool", [Tool.BOX, Tool.ELLIPSE, Tool.ARROW])
+def test_live_shift_drag_constrains_callouts(monkeypatch, tool):
+    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
+    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        assert not drawing.box_infill
+        drawing.arm(tool)
+        canvas = drawing._canvases[live.capture.screen_under_cursor()]
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(80, 60))
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton,
+                           Qt.KeyboardModifier.ShiftModifier, QPoint(180, 130))
+        mark = canvas.items()[-1]
+        assert mark.end.x() - mark.start.x() == pytest.approx(mark.end.y() - mark.start.y())
+    finally:
+        drawing.close()
+
+
+def test_live_redactions_stay_pinned_until_cleared(monkeypatch):
+    now = 100.0
+    monkeypatch.setattr(live, "monotonic", lambda: now)
+    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
+    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        drawing.arm(Tool.PEN)
+        canvas = drawing._canvases[live.capture.screen_under_cursor()]
+        QTest.keyClick(canvas, Qt.Key.Key_R)
+        assert drawing.tool is Tool.REDACT
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(80, 60))
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=QPoint(180, 120))
+        redaction, = drawing.pinned_on(canvas.screen)
+        assert isinstance(redaction, Redaction)
+        now += live.MARK_LIFETIME_S + 10
+        canvas._expire.timeout.emit()
+        assert canvas.items() == (redaction,)
+        drawing.set_capture_pending(True)
+        drawing.set_capture_pending(False, captured=True)
+        drawing.disarm()
+        drawing.set_enabled(False)
+        drawing.set_enabled(True)
+        assert drawing.pinned_on(canvas.screen) == (redaction,)
+        drawing.clear()
+        assert not drawing.pinned_on(canvas.screen)
+    finally:
+        drawing.close()
+
+
+def test_resuming_live_drawing_reads_the_infill_choice_from_screenshots():
+    from services.settings import SettingsKey, settings_manager
+
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        assert not drawing.box_infill
+        drawing.set_enabled(False)
+        settings_manager.save_setting(SettingsKey.SNAP_BOX_INFILL, True)
+        drawing.set_enabled(True)
+        assert drawing.box_infill and drawing._toolbar._box_infill
+    finally:
+        drawing.close()
 
 
 def test_auto_region_stays_click_through_until_closed_and_survives_pause(monkeypatch):
@@ -73,7 +172,8 @@ def test_tiny_region_drag_does_not_replace_region(monkeypatch):
         drawing.close()
 
 
-def test_temporary_marks_survive_a_long_capture_countdown(monkeypatch):
+@pytest.mark.parametrize("captured", [False, True])
+def test_temporary_marks_survive_countdown_then_clear_with_successful_snap(monkeypatch, captured):
     now = 100.0
     monkeypatch.setattr(live, "monotonic", lambda: now)
     monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
@@ -92,10 +192,37 @@ def test_temporary_marks_survive_a_long_capture_countdown(monkeypatch):
         assert not canvas._expire.isActive()
         # Holding a temporary mark must not turn it into a pinned one.
         assert not canvas.items(pinned_only=True)
-        drawing.set_capture_pending(False)
+        drawing.set_capture_pending(False, captured=captured)
+        assert len(canvas.items()) == (0 if captured else 1)
+        assert canvas._expire.isActive() is not captured
         now += live.MARK_LIFETIME_S
         canvas._expire.timeout.emit()
         assert not canvas.items()
+    finally:
+        drawing.close()
+
+
+@pytest.mark.parametrize("keep_marks", [False, True])
+def test_delayed_snap_preserves_kept_and_individually_pinned_marks(monkeypatch, keep_marks):
+    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
+    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+    monkeypatch.setattr(live, "resolve_walkthrough_keep_marks", lambda: keep_marks)
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        drawing.arm(Tool.PEN)
+        canvas = drawing._canvases[live.capture.screen_under_cursor()]
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(50, 80))
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=QPoint(90, 110))
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(70, 80))
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton,
+                           Qt.KeyboardModifier.ControlModifier, QPoint(110, 110))
+        pinned = canvas.items(pinned_only=True)
+        assert len(pinned) == (2 if keep_marks else 1)
+        drawing.set_capture_pending(True)
+        drawing.set_capture_pending(False, captured=True)
+        assert canvas.items() == pinned
+        assert not canvas._expire.isActive()
     finally:
         drawing.close()
 
@@ -343,7 +470,10 @@ def test_mac_live_toolbar_explains_command_to_pin(monkeypatch):
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
     try:
-        tooltips = [button.tip for button in drawing._toolbar._buttons if button.kind == "tool"]
+        tooltips = [button.tip for button in drawing._toolbar._buttons
+                    if button.kind == "tool" and button.value != Tool.REDACT]
         assert tooltips and all("Hold Cmd to pin" in tip for tip in tooltips)
+        redact_tip = next(button.tip for button in drawing._toolbar._buttons if button.value == Tool.REDACT)
+        assert "Stays until Clear marks" in redact_tip
     finally:
         drawing.close()

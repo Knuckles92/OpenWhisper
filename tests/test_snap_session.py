@@ -482,6 +482,22 @@ class TestEveryScreen:
         assert len(snap._overlays) == 2
         assert all(overlay.isVisible() for overlay in snap._overlays)
 
+    def test_infill_choice_follows_the_user_to_another_screen(self, two_screens):
+        snap = start_snap()
+        first, second = snap._overlays
+        first.start_drawing()
+        first.set_tool(Tool.BOX)
+        QTest.mouseClick(first.toolbar, Qt.MouseButton.LeftButton,
+                         pos=first.toolbar.button_rect("infill").center())
+        assert second.toolbar._box_infill
+        second.start_drawing()
+        second.set_tool(Tool.BOX)
+        _drag_on(second, QPoint(80, 60), QPoint(180, 120))
+        assert second.annotations.items[-1].infill
+        QTest.mouseClick(second.toolbar, Qt.MouseButton.LeftButton,
+                         pos=second.toolbar.button_rect("infill").center())
+        assert not first.toolbar._box_infill
+
     def test_selecting_on_another_screen_moves_the_selection_there(self, two_screens):
         snap = start_snap()
         kept = Spy(snap.kept)

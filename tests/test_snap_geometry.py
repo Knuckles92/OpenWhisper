@@ -5,7 +5,14 @@ from PyQt6.QtCore import QPoint, QPointF, QRect, QSize
 from PyQt6.QtGui import QColor, QImage
 
 from ui_qt.snap import export
-from ui_qt.snap.annotations import SWATCHES, Box, Stroke
+from ui_qt.snap.annotations import (
+    REDACTION_COLOR,
+    SWATCHES,
+    Box,
+    Ellipse,
+    Redaction,
+    Stroke,
+)
 from ui_qt.snap.geometry import (
     badge_rect,
     device_rect,
@@ -174,6 +181,12 @@ class TestExport:
         # Outside the box the screenshot is untouched.
         assert image.pixelColor(round(85 * dpr), round(50 * dpr)) == WHITE
 
+    def test_an_ellipse_callout_is_drawn_at_device_scale(self, dpr):
+        ellipse = Ellipse(QPointF(30, 20), QPointF(80, 50), CORAL)
+        image = export.render(_frozen(dpr), self.SELECTION, [ellipse])
+        assert _is_coral(image.pixelColor(round(10 * dpr), round(25 * dpr)))
+        assert image.pixelColor(round(35 * dpr), round(25 * dpr)) == WHITE
+
     def test_a_pen_line_is_drawn_at_device_scale(self, dpr):
         line = Stroke([QPointF(30, 40), QPointF(70, 40), QPointF(110, 40)], CORAL)
 
@@ -198,3 +211,20 @@ class TestExport:
 
 def test_the_whole_screen_is_the_image_at_its_logical_size():
     assert export.logical_rect(_frozen(2.0, (640, 400))) == QRect(0, 0, 640, 400)
+
+
+@pytest.mark.parametrize("dpr", [1.0, 1.25, 1.5, 2.0])
+def test_redaction_replaces_all_covered_pixels_in_kept_crops(dpr):
+    frozen = _frozen(dpr)
+    selection = QRect(20, 10, 100, 60)
+    # Fractional coordinates and an offset crop exercise boundary coverage.
+    cover = Redaction(QPointF(80.75, 50.75), QPointF(30.25, 20.25))
+    crop = device_rect(selection, dpr, frozen.rect())
+    covered = device_rect(cover.rect().toAlignedRect(), dpr, frozen.rect()).translated(-crop.topLeft())
+    image = export.render(frozen, selection, [cover])
+    for x in range(covered.left(), covered.right() + 1):
+        for y in range(covered.top(), covered.bottom() + 1):
+            assert image.pixelColor(x, y) == QColor(REDACTION_COLOR)
+    assert image.pixelColor(0, 0) == WHITE
+    # Rendering doesn't modify the original capture held by the open overlay.
+    assert frozen.pixelColor(round(40 * dpr), round(30 * dpr)) == WHITE

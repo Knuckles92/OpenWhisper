@@ -134,11 +134,19 @@ screenshots. Drag it aside by anything that isn't a button, and scroll it
 with the mouse wheel to reach older screenshots; the next walkthrough opens
 it at the edge again. Compositor-placed desktops (Wayland) don't show it.
 
-Drawing tools, with their keys: arrow (A), box (B), pen (P), highlighter
-(H), text (T) and numbered steps (N); colours 1–4; undo Ctrl+Z, redo
-Ctrl+Shift+Z or Ctrl+Y. Press **S** or use the snapping button to toggle
+Drawing tools, with their keys: arrow (A), box (B), ellipse (O), pen (P),
+highlighter (H), text (T), numbered steps (N) and redact (R); colours 1–4;
+undo Ctrl+Z, redo Ctrl+Shift+Z or Ctrl+Y in the frozen screenshot overlay.
+Boxes and ellipses start as outlines. With either tool selected, toggle
+**Infill** for a light tint inside; the choice is saved for future
+screenshots and walkthroughs. Hold **Shift** while dragging for a square,
+circle, or arrow aligned to a 45° angle. **Redact** draws an opaque cover
+over private details, baked into the kept screenshot. In Auto Mode,
+redactions stay until **Clear marks**, even when other marks fade.
+The toolbar wraps into rows on smaller screens.
+Press **S** or use the snapping button to toggle
 alignment to nearby screen corners and window edges when selecting a region
-or drawing an arrow or box. Window edges are available on Windows and macOS.
+or drawing an arrow, box or ellipse. Window edges are available on Windows and macOS.
 Pressing **Screenshot** again while drawing keeps
 the screenshot. The overlay never appears in its own screenshots, and on
 Windows neither does the recording overlay while a walkthrough records.
@@ -166,7 +174,9 @@ while recording, to choose **Instant**, **1s**, **2s**, **3s**, **5s** or
 into one screenshot: each completed mark restarts the countdown, giving you
 time to add several annotations. The small delay chip shows **Snap in…**
 with a shrinking ring; starting another stroke or typing a label waits until
-you finish. Temporary marks stay visible through the countdown. Click the
+you finish. Temporary marks stay visible through the countdown, then disappear
+as the screenshot is captured. **Keep marks** and individually pinned marks
+stay on the desktop. Click the
 chip to change the delay, or its **×** to cancel the pending screenshot.
 **Esc** while drawing and **Clear marks** also cancel it. **Done** keeps the
 pending drawing before finishing; pausing or cancelling discards it.

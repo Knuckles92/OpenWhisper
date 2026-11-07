@@ -181,14 +181,14 @@ def native_windows_modifiers() -> frozenset[str] | None:
 
 
 def _windows_modifiers_held() -> bool:
-    import keyboard
-
     # The hook keeps a modifier down when its key-up went to an elevated
     # window, and may miss virtual-key modifiers from accessibility tools.
     # The OS state has the last word in both directions.
     native = native_windows_modifiers()
     if native is not None:
         return bool(native)
+    import keyboard
+
     return any(keyboard.is_pressed(name) for name in _WINDOWS_MODIFIERS)
 
 

@@ -432,7 +432,7 @@ class WalkthroughRuntime(QObject):
                 self._tell(reason)
         self._finish_if_asked()
         if self._live_drawing is not None:
-            self._live_drawing.set_capture_pending(False)
+            self._live_drawing.set_capture_pending(False, captured=image is not None)
             self._live_drawing.set_busy(False)
             if next_snap is not None:
                 self.snap(next_snap)

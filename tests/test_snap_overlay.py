@@ -10,9 +10,20 @@ from PyQt6.QtWidgets import QApplication
 
 from ui_qt.snap import overlay as overlay_module
 from ui_qt.snap import support
-from ui_qt.snap.annotations import SWATCHES, Arrow, Box, Label, Step, Tool
+from ui_qt.snap.annotations import (
+    REDACTION_COLOR,
+    SWATCHES,
+    Arrow,
+    Box,
+    Ellipse,
+    Label,
+    Redaction,
+    Step,
+    Tool,
+)
 from ui_qt.snap.chrome import HintPill
 from ui_qt.snap.overlay import Phase, SnapOverlay, window_flags
+from ui_qt.snap.toolbar import SnapToolbar
 from ui_qt.utils.palette import DARK_PALETTE
 
 SIZE = (640, 400)
@@ -52,7 +63,8 @@ def make_overlay():
         overlay.deleteLater()
 
 
-def _mouse(widget, kind, x, y, buttons=Qt.MouseButton.LeftButton):
+def _mouse(widget, kind, x, y, buttons=Qt.MouseButton.LeftButton,
+           modifiers=Qt.KeyboardModifier.NoModifier):
     point = QPointF(x, y)
     button = (
         Qt.MouseButton.NoButton
@@ -65,20 +77,21 @@ def _mouse(widget, kind, x, y, buttons=Qt.MouseButton.LeftButton):
         widget.mapToGlobal(point),
         button,
         buttons,
-        Qt.KeyboardModifier.NoModifier,
+        modifiers,
     )
     QApplication.sendEvent(widget, event)
 
 
-def _drag(widget, start, end):
-    _mouse(widget, QEvent.Type.MouseButtonPress, *start)
+def _drag(widget, start, end, modifiers=Qt.KeyboardModifier.NoModifier):
+    _mouse(widget, QEvent.Type.MouseButtonPress, *start, modifiers=modifiers)
     for step in range(1, 5):
         t = step / 4
         x = start[0] + (end[0] - start[0]) * t
         y = start[1] + (end[1] - start[1]) * t
-        _mouse(widget, QEvent.Type.MouseMove, x, y)
+        _mouse(widget, QEvent.Type.MouseMove, x, y, modifiers=modifiers)
     _mouse(
-        widget, QEvent.Type.MouseButtonRelease, *end, buttons=Qt.MouseButton.NoButton
+        widget, QEvent.Type.MouseButtonRelease, *end, buttons=Qt.MouseButton.NoButton,
+        modifiers=modifiers,
     )
 
 
@@ -236,6 +249,59 @@ class TestSelecting:
 
 
 class TestToolbar:
+    @pytest.mark.parametrize("live", [False, True])
+    @pytest.mark.parametrize("width", [320, 480, 640, 800, 1280])
+    def test_wrapped_tools_stay_visible_and_clickable(self, live, width):
+        toolbar = SnapToolbar(None, DARK_PALETTE, live=live)
+        toolbar.fit_to_width(width)
+        assert toolbar.width() <= width
+        buttons = toolbar._buttons
+        for index, button in enumerate(buttons):
+            assert toolbar.rect().contains(button.rect)
+            assert all(not button.rect.intersects(other.rect) for other in buttons[index + 1:])
+        chosen = Spy(toolbar.tool_chosen)
+        _click(toolbar, *_center(toolbar.button_rect("tool", Tool.REDACT)))
+        assert chosen.calls == [(Tool.REDACT.value,)]
+        if live:
+            assert toolbar.rect().contains(toolbar.capture_delay.geometry())
+            assert toolbar.capture_delay.pos() == toolbar.button_rect("delay").topLeft()
+
+    def test_unsaved_infill_starts_off(self, make_overlay):
+        overlay = make_overlay()
+        overlay.start_drawing()
+        overlay.set_tool(Tool.BOX)
+        _drag(overlay, (80, 60), (180, 120))
+        assert not overlay.toolbar._box_infill
+        assert not overlay.annotations.items[-1].infill
+
+    @pytest.mark.parametrize("tool", [Tool.BOX, Tool.ELLIPSE])
+    @pytest.mark.parametrize("infill", [False, True])
+    def test_box_infill_is_saved_and_restored_for_new_overlays(self, make_overlay, infill, tool):
+        from services.settings import SettingsKey, SettingsManager, settings_manager
+
+        settings_manager.save_setting(SettingsKey.SNAP_BOX_INFILL, not infill)
+        overlay = make_overlay()
+        overlay.start_drawing()
+        toolbar = overlay.toolbar
+        # Infill applies only to rectangles, and switching tools preserves it.
+        _click(toolbar, *_center(toolbar.button_rect("infill")))
+        assert toolbar._box_infill is not infill
+        overlay.set_tool(tool)
+        _click(toolbar, *_center(toolbar.button_rect("infill")))
+        overlay.set_tool(Tool.PEN)
+        overlay.set_tool(tool)
+        _drag(overlay, (80, 60), (180, 120))
+        assert overlay.annotations.items[-1].infill is infill
+        saved = SettingsManager(settings_manager.settings_file).load_all_settings()
+        assert saved[SettingsKey.SNAP_BOX_INFILL] is infill
+
+        reopened = make_overlay()
+        reopened.start_drawing()
+        reopened.set_tool(tool)
+        _drag(reopened, (80, 60), (180, 120))
+        assert reopened.toolbar._box_infill is infill
+        assert reopened.annotations.items[-1].infill is infill
+
     def _panel(self, overlay):
         return overlay.toolbar.geometry()
 
@@ -294,6 +360,8 @@ class TestShortcuts:
         ("key", "tool"),
         [
             (Qt.Key.Key_B, Tool.BOX),
+            (Qt.Key.Key_O, Tool.ELLIPSE),
+            (Qt.Key.Key_R, Tool.REDACT),
             (Qt.Key.Key_P, Tool.PEN),
             (Qt.Key.Key_H, Tool.HIGHLIGHTER),
             (Qt.Key.Key_T, Tool.TEXT),
@@ -350,6 +418,43 @@ class TestShortcuts:
 
 
 class TestMarks:
+    @pytest.mark.parametrize("tool", [Tool.BOX, Tool.ELLIPSE, Tool.ARROW])
+    def test_shift_drag_constrains_callouts(self, make_overlay, tool):
+        overlay = make_overlay()
+        overlay.start_drawing()
+        overlay.set_tool(tool)
+        _drag(overlay, (80, 60), (180, 130), Qt.KeyboardModifier.ShiftModifier)
+        mark = overlay.annotations.items[-1]
+        assert mark.end.x() - mark.start.x() == pytest.approx(mark.end.y() - mark.start.y())
+
+    def test_ellipse_toolbar_button_draws_an_oval(self, make_overlay):
+        overlay = make_overlay()
+        overlay.start_drawing()
+        _click(overlay.toolbar, *_center(overlay.toolbar.button_rect("tool", Tool.ELLIPSE)))
+        _drag(overlay, (80, 60), (180, 120))
+        ellipse, = overlay.annotations.items
+        assert isinstance(ellipse, Ellipse)
+        assert ellipse.rect() == QRectF(80, 60, 100, 60)
+
+    def test_redact_tool_exports_an_opaque_cover_and_supports_undo(self, make_overlay):
+        overlay = make_overlay(dpr=2.0)
+        overlay.start_drawing()
+        overlay.set_color(2)
+        toolbar = overlay.toolbar
+        _click(toolbar, *_center(toolbar.button_rect("tool", Tool.REDACT)))
+        _click(toolbar, *_center(toolbar.button_rect("color", "1")))
+        assert overlay.color_index == 2  # Swatches don't recolour a redaction.
+        _drag(overlay, (80, 60), (180, 120))
+        assert isinstance(overlay.annotations.items[-1], Redaction)
+        overlay.undo()
+        assert not overlay.annotations.items
+        overlay.redo()
+        assert len(overlay.annotations.items) == 1
+        kept = Spy(overlay.kept)
+        overlay.keep()
+        image = kept.calls[0][0]
+        assert image.pixelColor(200, 160) == QColor(REDACTION_COLOR)
+
     def test_steps_number_themselves_even_on_quick_clicks(self, make_overlay):
         overlay = make_overlay()
         _drag(overlay, (100, 50), (500, 300))

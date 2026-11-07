@@ -29,6 +29,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QLineEdit, QWidget
 
+from services.settings import SettingsKey, resolve_snap_box_infill, settings_manager
 from ui_qt.snap import affinity, chrome, export, macos, support
 from ui_qt.snap import toolbar as toolbar_module
 from ui_qt.snap.annotations import (
@@ -40,10 +41,12 @@ from ui_qt.snap.annotations import (
     Label,
     Step,
     Tool,
+    extend_draft,
     ink_for,
     new_draft,
 )
 from ui_qt.snap.geometry import (
+    EDGE_MARGIN,
     Grab,
     badge_rect,
     device_rect,
@@ -75,10 +78,12 @@ _CTRL_SHIFT = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftMod
 _TOOL_KEYS = {
     Qt.Key.Key_A: Tool.ARROW,
     Qt.Key.Key_B: Tool.BOX,
+    Qt.Key.Key_O: Tool.ELLIPSE,
     Qt.Key.Key_P: Tool.PEN,
     Qt.Key.Key_H: Tool.HIGHLIGHTER,
     Qt.Key.Key_T: Tool.TEXT,
     Qt.Key.Key_N: Tool.STEP,
+    Qt.Key.Key_R: Tool.REDACT,
 }
 _COLOR_KEYS = {Qt.Key.Key_1: 0, Qt.Key.Key_2: 1, Qt.Key.Key_3: 2, Qt.Key.Key_4: 3}
 _KEEP_KEYS = (Qt.Key.Key_Return, Qt.Key.Key_Enter)
@@ -225,6 +230,7 @@ class SnapOverlay(QWidget):
     #: only the newest one (see ``clear_selection``).
     selecting = pyqtSignal()
     snap_toggled = pyqtSignal(bool)
+    box_infill_toggled = pyqtSignal(bool)
 
     def __init__(
         self, frozen: QImage, screen: QScreen | None = None, *, hint: str = "",
@@ -253,6 +259,7 @@ class SnapOverlay(QWidget):
         self._draft: Annotation | None = None
         self._tool = Tool.ARROW
         self._color = 0
+        self._box_infill = resolve_snap_box_infill()
         self._editor: LabelEditor | None = None
         self._done = False
         self._configure()
@@ -276,6 +283,7 @@ class SnapOverlay(QWidget):
 
     def _build_toolbar(self) -> SnapToolbar:
         toolbar = SnapToolbar(self, self._palette)
+        toolbar.fit_to_width(self._canvas.width() - 2 * EDGE_MARGIN)
         toolbar.hide()
         toolbar.tool_chosen.connect(self.set_tool)
         toolbar.color_chosen.connect(self.set_color)
@@ -285,7 +293,19 @@ class SnapOverlay(QWidget):
         toolbar.keep_clicked.connect(self.keep)
         toolbar.snap_clicked.connect(self._toggle_snap)
         toolbar.set_snap_enabled(self._snap_enabled)
+        toolbar.infill_clicked.connect(self._toggle_box_infill)
+        toolbar.set_box_infill(self._box_infill)
         return toolbar
+
+    def _toggle_box_infill(self) -> None:
+        enabled = not self._box_infill
+        settings_manager.save_setting(SettingsKey.SNAP_BOX_INFILL, enabled)
+        self.set_box_infill(enabled)
+        self.box_infill_toggled.emit(enabled)
+
+    def set_box_infill(self, enabled: bool) -> None:
+        self._box_infill = enabled
+        self._toolbar.set_box_infill(enabled)
 
     def set_snap_enabled(self, enabled: bool) -> None:
         self._snap_enabled = enabled
@@ -487,7 +507,7 @@ class SnapOverlay(QWidget):
         elif self._grab is not None:
             self._drag_resize(point.toPoint())
         elif self._draft is not None:
-            self._extend_draft(point)
+            self._extend_draft(point, event.modifiers())
         else:
             self._update_cursor(point.toPoint())
 
@@ -501,7 +521,7 @@ class SnapOverlay(QWidget):
             self._drag_resize(event.position().toPoint())
             self._finish_resize()
         elif self._draft is not None:
-            self._extend_draft(event.position())
+            self._extend_draft(event.position(), event.modifiers())
             self._finish_draft()
 
     def mouseDoubleClickEvent(self, event) -> None:
@@ -645,17 +665,23 @@ class SnapOverlay(QWidget):
             self._add(step)
         else:
             self._draft = new_draft(self._tool, self._annotation_point(point),
-                                    self.current_color())
+                                    self.current_color(), box_infill=self._box_infill)
             self._update_marks(self._draft.bounds())
 
-    def _extend_draft(self, point: QPointF) -> None:
+    def _extend_draft(
+        self, point: QPointF, modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier,
+    ) -> None:
         before = self._draft.bounds()
-        self._draft.extend(self._annotation_point(point))
+        extend_draft(self._draft, self._annotation_point(point),
+                     constrained=bool(modifiers & Qt.KeyboardModifier.ShiftModifier),
+                     bounds=QRectF(self._selection))
         self._update_marks(before.united(self._draft.bounds()))
 
     def _annotation_point(self, point: QPointF) -> QPointF:
-        if self._snap_enabled and self._tool in (Tool.BOX, Tool.ARROW):
+        if self._snap_enabled and self._tool in (Tool.BOX, Tool.ELLIPSE, Tool.ARROW):
             return self._inside(snap_point(point, (self._selection, *self._targets)))
+        if self._tool is Tool.REDACT:
+            return self._inside(point)
         return point
 
     def _finish_draft(self) -> None:

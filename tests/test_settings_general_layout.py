@@ -344,7 +344,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             ]
             # One per standard shortcut; rows for profiles, transforms and
             # actions come with the settings, which this test doesn't load.
-            self.assertEqual(len(shortcut_cards), 12)
+            self.assertEqual(len(shortcut_cards), 13)
             self.assertEqual(
                 set(dialog.hotkey_inputs),
                 {
@@ -356,6 +356,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     "scratchpad_toggle",
                     "cycle_language",
                     "paste_last_original",
+                    "paste_walkthrough",
                     "walkthrough",
                     "screenshot",
                     "enable_disable",
@@ -371,6 +372,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                     "scratchpad_toggle",
                     "cycle_language",
                     "paste_last_original",
+                    "paste_walkthrough",
                     "walkthrough",
                     "screenshot",
                 },

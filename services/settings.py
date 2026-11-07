@@ -361,6 +361,7 @@ class SettingsKey:
     WALKTHROUGH_CAPTURE_DELAY: Final[str] = "walkthrough_capture_delay"
     WALKTHROUGH_KEEP_MARKS: Final[str] = "walkthrough_keep_marks"
     SNAP_TO_EDGES: Final[str] = "snap_to_edges"
+    SNAP_BOX_INFILL: Final[str] = "snap_box_infill"
     # The capture folder name of the walkthrough last closed on the Walkthrough
     # tab: while it is still the newest, the tab opens without one.
     WALKTHROUGH_CLOSED: Final[str] = "walkthrough_closed"
@@ -891,6 +892,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.WALKTHROUGH_CAPTURE_DELAY: 0,
     SettingsKey.WALKTHROUGH_KEEP_MARKS: False,
     SettingsKey.SNAP_TO_EDGES: True,
+    SettingsKey.SNAP_BOX_INFILL: False,
     SettingsKey.WALKTHROUGH_CLOSED: "",
 })
 
@@ -1435,6 +1437,7 @@ resolve_walkthrough_snap_mode = _choice_resolver(
 resolve_walkthrough_auto_mode = _bool_resolver(SettingsKey.WALKTHROUGH_AUTO_MODE)
 resolve_walkthrough_keep_marks = _bool_resolver(SettingsKey.WALKTHROUGH_KEEP_MARKS)
 resolve_snap_to_edges = _bool_resolver(SettingsKey.SNAP_TO_EDGES)
+resolve_snap_box_infill = _bool_resolver(SettingsKey.SNAP_BOX_INFILL)
 
 
 WALKTHROUGH_CAPTURE_DELAYS = (0, 1, 2, 3, 5, 10)

@@ -564,11 +564,11 @@ def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch
         # Below the classic minimum width only the Advanced rail is too wide;
         # the cards themselves must still hold their controls.
         cards = [card for card in page.findChildren(ReflowCard) if card.isVisible()]
-        # Twelve standard shortcuts and the record mode, then the starter
+        # Thirteen standard shortcuts and the record mode, then the starter
         # profiles and transforms.
         starters = sum(len(items) for items in bindings(store.load_all_settings()).values())
         assert starters
-        assert len(cards) == 13 + starters
+        assert len(cards) == 14 + starters
         for card in cards:
             controls = card.findChildren(QAbstractButton) + card.findChildren(QLineEdit)
             rects = sorted(

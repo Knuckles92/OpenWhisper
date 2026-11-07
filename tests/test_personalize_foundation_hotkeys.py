@@ -32,7 +32,7 @@ def test_new_actions_have_no_default_shortcut():
 
 def test_free_and_empty_shortcuts_conflict_with_nothing(settings):
     assert hotkey_conflict("", settings) == ""
-    assert hotkey_conflict("ctrl+shift+f12", settings) == ""
+    assert hotkey_conflict("ctrl+shift+f11", settings) == ""
 
 
 def test_standard_actions_conflict_by_their_saved_or_default_shortcut(settings):

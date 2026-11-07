@@ -1,4 +1,4 @@
-"""What Snap draws: arrows, boxes, pen and highlighter strokes, labels, steps.
+"""What Snap draws: callouts, strokes, labels, steps and opaque redactions.
 
 Annotations are small vector objects in logical pixels relative to the
 selection's top-left corner. The overlay paints them on screen, and the
@@ -31,10 +31,12 @@ from PyQt6.QtGui import (
 class Tool(StrEnum):
     ARROW = "arrow"
     BOX = "box"
+    ELLIPSE = "ellipse"
     PEN = "pen"
     HIGHLIGHTER = "highlighter"
     TEXT = "text"
     STEP = "step"
+    REDACT = "redact"
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,7 @@ HIGHLIGHTER_WIDTH = 18.0
 HIGHLIGHTER_ALPHA = 120
 BOX_FILL_ALPHA = 24
 BOX_RADIUS = 6.0
+REDACTION_COLOR = "#181A20"
 STEP_RADIUS = 13.0
 STEP_RING = 2.0
 LABEL_PAD_X = 8.0
@@ -252,6 +255,7 @@ class Box:
     end: QPointF
     color: QColor
     width: float = BOX_WIDTH
+    infill: bool = False
 
     def rect(self) -> QRectF:
         return QRectF(self.start, self.end).normalized()
@@ -271,20 +275,62 @@ class Box:
         grow = self.width + 3
         return self.rect().adjusted(-grow, -grow, grow, grow + 1)
 
-    def paint(self, painter: QPainter) -> None:
+    def _outline(self) -> QPainterPath:
         rect = self.rect()
         radius = min(BOX_RADIUS, rect.width() / 2, rect.height() / 2)
-        fill = QColor(self.color)
-        fill.setAlpha(BOX_FILL_ALPHA)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(fill)
-        painter.drawRoundedRect(rect, radius, radius)
         outline = QPainterPath()
         outline.addRoundedRect(rect, radius, radius)
+        return outline
+
+    def paint(self, painter: QPainter) -> None:
+        outline = self._outline()
+        if self.infill:
+            fill = QColor(self.color)
+            fill.setAlpha(BOX_FILL_ALPHA)
+            painter.fillPath(outline, fill)
         painter.strokePath(
             outline.translated(_SHADOW_OFFSET), _round_pen(_SHADOW, self.width)
         )
         painter.strokePath(outline, _round_pen(self.color, self.width))
+
+
+@dataclass
+class Ellipse(Box):
+    """A circle or oval callout, sharing the box's optional light fill."""
+
+    def _outline(self) -> QPainterPath:
+        outline = QPainterPath()
+        outline.addEllipse(self.rect())
+        return outline
+
+
+@dataclass
+class Redaction:
+    """An opaque cover baked into kept screenshots, independent of colour/fill."""
+
+    start: QPointF
+    end: QPointF
+
+    def rect(self) -> QRectF:
+        return QRectF(self.start, self.end).normalized()
+
+    def extend(self, point: QPointF) -> None:
+        self.end = QPointF(point)
+
+    def meaningful(self) -> bool:
+        return self.rect().width() >= MIN_DRAG / 2 and self.rect().height() >= MIN_DRAG / 2
+
+    def bounds(self) -> QRectF:
+        # Cover the boundary pixels too, including on fractional-scale screens.
+        return QRectF(self.rect().toAlignedRect().adjusted(-1, -1, 1, 1))
+
+    def paint(self, painter: QPainter) -> None:
+        painter.save()
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            painter.fillRect(self.bounds(), QColor(REDACTION_COLOR))
+        finally:
+            painter.restore()
 
 
 @dataclass
@@ -411,12 +457,14 @@ class Step:
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, str(self.number))
 
 
-Annotation = Arrow | Box | Stroke | Label | Step
+Annotation = Arrow | Box | Ellipse | Redaction | Stroke | Label | Step
 
 
 _DRAFTS: dict[Tool, Callable[[QPointF, QColor], Annotation]] = {
     Tool.ARROW: lambda point, color: Arrow(QPointF(point), QPointF(point), color),
     Tool.BOX: lambda point, color: Box(QPointF(point), QPointF(point), color),
+    Tool.ELLIPSE: lambda point, color: Ellipse(QPointF(point), QPointF(point), color),
+    Tool.REDACT: lambda point, color: Redaction(QPointF(point), QPointF(point)),
     Tool.PEN: lambda point, color: Stroke([QPointF(point)], color),
     Tool.HIGHLIGHTER: lambda point, color: Stroke(
         [QPointF(point)], color, highlighter=True
@@ -424,10 +472,42 @@ _DRAFTS: dict[Tool, Callable[[QPointF, QColor], Annotation]] = {
 }
 
 
-def new_draft(tool: Tool, point: QPointF, color: QColor) -> Annotation | None:
+def new_draft(
+    tool: Tool, point: QPointF, color: QColor, *, box_infill: bool = False,
+) -> Annotation | None:
     """The shape a ``tool`` drag starts at ``point``; None for text and steps."""
     make = _DRAFTS.get(tool)
-    return make(point, QColor(color)) if make is not None else None
+    draft = make(point, QColor(color)) if make is not None else None
+    if isinstance(draft, Box):
+        draft.infill = box_infill
+    return draft
+
+
+def extend_draft(
+    draft: Annotation, point: QPointF, *, constrained: bool = False,
+    bounds: QRectF | None = None,
+) -> None:
+    """Extend a drag; Shift makes squares/circles or 45-degree arrow bearings."""
+    if constrained and isinstance(draft, (Arrow, Box)):
+        start = draft.start
+        dx, dy = point.x() - start.x(), point.y() - start.y()
+        if isinstance(draft, Box):
+            ux, uy = math.copysign(1, dx), math.copysign(1, dy)
+            reach = max(abs(dx), abs(dy))
+        else:
+            angle = round(math.atan2(dy, dx) / (math.pi / 4)) * (math.pi / 4)
+            ux, uy = math.cos(angle), math.sin(angle)
+            reach = math.hypot(dx, dy)
+        if bounds is not None:
+            for origin, direction, low, high in (
+                (start.x(), ux, bounds.left(), bounds.right()),
+                (start.y(), uy, bounds.top(), bounds.bottom()),
+            ):
+                if abs(direction) > 1e-6:
+                    edge = high if direction > 0 else low
+                    reach = min(reach, max(0, (edge - origin) / direction))
+        point = start + QPointF(ux * reach, uy * reach)
+    draft.extend(point)
 
 
 class AnnotationStack:

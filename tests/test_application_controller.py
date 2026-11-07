@@ -515,6 +515,9 @@ class DummyUIController:
         self.batch_item_transcripts = []
         self.flow_calls = []
 
+    def paste_latest_walkthrough(self, target):
+        pass
+
     def set_batch_progress(self, position, total, source_name):
         self.batch_progress_events.append((position, total, source_name))
 

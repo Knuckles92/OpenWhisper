@@ -1090,11 +1090,16 @@ class TestBackupAgent:
         assert len(fakes.cores) == 2
         assert engine.store.with_state(lambda s: s.intelligence_online) is False
 
-    def test_backup_covers_a_core_that_is_unusable_at_start(self, make_engine, fakes):
+    def test_backup_covers_a_core_that_is_unusable_at_start(self, make_engine, fakes, monkeypatch):
         engine = make_engine(cloud_enabled=True, backup_agent_kind="codex")
-        fakes.core_healthy = False
+
+        def create_agent_core(kind, payload_dir=None):
+            core = FakeAgentCore(healthy=kind == "codex")
+            fakes.cores.append(core)
+            return core
+
+        monkeypatch.setattr("meeting.agent.base.create_agent_core", create_agent_core)
         engine.start()
-        fakes.core_healthy = True
         _wait_for_backup_switch()
 
         assert fakes.cores[-1].config.provider == "codex"

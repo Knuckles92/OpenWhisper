@@ -138,12 +138,14 @@ class FakeDrawing(QObject):
         self.interacting = False
         self.pending = False
         self.countdown = 0
+        self.captured = False
 
     def set_capture_countdown(self, remaining, total=0):
         self.countdown = remaining
 
-    def set_capture_pending(self, pending):
+    def set_capture_pending(self, pending, *, captured=False):
         self.pending = pending
+        self.captured = captured
 
     def arm(self):
         if self.enabled and not self.busy:
@@ -523,6 +525,19 @@ def test_delayed_drawings_restart_countdown_and_keep_one_combined_shot(h, auto):
     (shot,) = auto.session.saved_shots()
     assert shot.kept_at_s == 16.0  # Words close at capture, not at the first mark.
     assert not drawing.pending and not drawing.busy
+    assert drawing.captured
+
+
+def test_failed_delayed_drawing_does_not_clear_its_marks(h, auto):
+    h.settings.values[SettingsKey.WALKTHROUGH_CAPTURE_DELAY] = 3
+    drawing = h.ui.drawing
+    drawing.drawn.emit(QGuiApplication.primaryScreen(), ())
+    h.runtime._auto_timer.timeout.emit()
+    (snap,) = h.ui.snaps
+    snap.fail("Capture failed")
+    assert not drawing.pending and not drawing.busy
+    assert not drawing.captured
+    assert auto.session.shot_count == 0
 
 
 def test_capture_delay_changes_apply_to_pending_clicks_and_drawings(h, auto):

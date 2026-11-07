@@ -250,6 +250,7 @@ class SnapSession(QObject):
             overlay.dropped.connect(self._on_dropped)
             overlay.selecting.connect(partial(self._on_selecting, overlay))
             overlay.snap_toggled.connect(self._set_snap_enabled)
+            overlay.box_infill_toggled.connect(self._set_box_infill)
             # An overlay outliving its session would cover the screen for good.
             self.destroyed.connect(overlay.deleteLater)
             self._overlays.append(overlay)
@@ -267,6 +268,10 @@ class SnapSession(QObject):
         settings_manager.save_setting(SettingsKey.SNAP_TO_EDGES, enabled)
         for overlay in self._overlays:
             overlay.set_snap_enabled(enabled)
+
+    def _set_box_infill(self, enabled: bool) -> None:
+        for overlay in self._overlays:
+            overlay.set_box_infill(enabled)
 
     def _on_selecting(self, chosen: SnapOverlay) -> None:
         """The selection moved to ``chosen``'s screen: clear the rest, focus it."""

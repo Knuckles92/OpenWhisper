@@ -45,6 +45,19 @@ def _box(painter: QPainter, color: QColor) -> None:
     painter.drawRoundedRect(QRectF(3.2, 4.6, 13.6, 10.8), 2.6, 2.6)
 
 
+def _ellipse(painter: QPainter, color: QColor) -> None:
+    painter.setPen(_line_pen(color))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawEllipse(QRectF(3, 4, 14, 12))
+
+
+def _redact(painter: QPainter, color: QColor) -> None:
+    painter.setPen(_line_pen(color, 3.2))
+    painter.drawLine(QPointF(4, 6), QPointF(16, 6))
+    painter.drawLine(QPointF(4, 10), QPointF(13, 10))
+    painter.drawLine(QPointF(4, 14), QPointF(16, 14))
+
+
 def _pen(painter: QPainter, color: QColor) -> None:
     points = [
         QPointF(x, y)
@@ -132,6 +145,8 @@ def _clear(painter: QPainter, color: QColor) -> None:
 _GLYPHS: dict[str, Callable[[QPainter, QColor], None]] = {
     "arrow": _arrow,
     "box": _box,
+    "ellipse": _ellipse,
+    "redact": _redact,
     "pen": _pen,
     "highlighter": _highlighter,
     "text": _text,

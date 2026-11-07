@@ -11,12 +11,21 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 from services.settings import (
     SettingsKey,
+    resolve_snap_box_infill,
     resolve_snap_to_edges,
     resolve_walkthrough_keep_marks,
     settings_manager,
 )
 from ui_qt.snap import affinity, capture, macos, pointed
-from ui_qt.snap.annotations import SWATCHES, Annotation, Step, Tool, new_draft
+from ui_qt.snap.annotations import (
+    SWATCHES,
+    Annotation,
+    Redaction,
+    Step,
+    Tool,
+    extend_draft,
+    new_draft,
+)
 from ui_qt.snap.chrome import (
     badge_size,
     chrome_font,
@@ -72,6 +81,7 @@ class LiveAnnotations(QObject):
         self.capture_region: tuple[QScreen, QRect] | None = None
         self._region_close: _RegionClose | None = None
         self.color = 0
+        self.box_infill = resolve_snap_box_infill()
         self.snap_enabled: bool
         self._keep_marks = resolve_walkthrough_keep_marks()
         self._previous_focus = None
@@ -89,6 +99,8 @@ class LiveAnnotations(QObject):
         self._toolbar.tool_chosen.connect(self.toggle_tool)
         self._toolbar.color_chosen.connect(self.set_color)
         self._toolbar.snap_clicked.connect(self.toggle_snap)
+        self._toolbar.infill_clicked.connect(self.toggle_box_infill)
+        self._toolbar.set_box_infill(self.box_infill)
         self._toolbar.keep_marks_clicked.connect(self.toggle_keep_marks)
         self._toolbar.drop_clicked.connect(self.cancel_capture)
         self._toolbar.capture_delay.changed.connect(self.capture_delay_changed)
@@ -117,7 +129,7 @@ class LiveAnnotations(QObject):
     def set_capture_countdown(self, remaining: float, total: float = 0.0) -> None:
         self._toolbar.capture_delay.set_countdown(remaining, total)
 
-    def set_capture_pending(self, pending: bool) -> None:
+    def set_capture_pending(self, pending: bool, *, captured: bool = False) -> None:
         if self._capture_pending == pending:
             return
         self._capture_pending = pending
@@ -125,9 +137,16 @@ class LiveAnnotations(QObject):
             if pending:
                 canvas._expire.stop()
             else:
-                # Temporary marks stay visible through the entire countdown.
-                canvas._marks = [(mark, None if expires is None else monotonic() + MARK_LIFETIME_S)
-                                 for mark, expires in canvas._marks]
+                if captured:
+                    # Delayed marks leave the desktop with their screenshot;
+                    # Keep marks and individually pinned marks stay put.
+                    canvas._marks = [(mark, expires) for mark, expires in canvas._marks
+                                     if expires is None]
+                else:
+                    # A cancelled or failed snap gives temporary marks their
+                    # usual lifetime again instead of clearing them early.
+                    canvas._marks = [(mark, None if expires is None else monotonic() + MARK_LIFETIME_S)
+                                     for mark, expires in canvas._marks]
                 canvas._expire_marks()
 
     def cancel_capture(self) -> None:
@@ -141,6 +160,7 @@ class LiveAnnotations(QObject):
         if enabled:
             self.snap_enabled = resolve_snap_to_edges()
             self._toolbar.set_snap_enabled(self.snap_enabled)
+            self._sync_toolbar()
             for canvas in self._canvases.values():
                 canvas.present()
             self._show_toolbar()
@@ -254,6 +274,11 @@ class LiveAnnotations(QObject):
         self._toolbar.set_snap_enabled(self.snap_enabled)
         settings_manager.save_setting(SettingsKey.SNAP_TO_EDGES, self.snap_enabled)
 
+    def toggle_box_infill(self) -> None:
+        self.box_infill = not self.box_infill
+        settings_manager.save_setting(SettingsKey.SNAP_BOX_INFILL, self.box_infill)
+        self._toolbar.set_box_infill(self.box_infill)
+
     def toggle_keep_marks(self) -> None:
         keep_marks = not self._keep_marks
         settings_manager.save_setting(SettingsKey.WALKTHROUGH_KEEP_MARKS, keep_marks)
@@ -278,6 +303,8 @@ class LiveAnnotations(QObject):
             self.arm(self.tool)
 
     def _sync_toolbar(self) -> None:
+        self.box_infill = resolve_snap_box_infill()
+        self._toolbar.set_box_infill(self.box_infill)
         self._toolbar.set_state(self.tool, self.color, False, False)
         self._toolbar.set_region_active(self.selecting_region or self.capture_region is not None)
 
@@ -335,7 +362,8 @@ class LiveAnnotations(QObject):
             self.disarm()
 
     def complete(self, canvas: _Canvas, mark: Annotation, pinned: bool) -> None:
-        canvas.add(mark, pinned or self._keep_marks)
+        # Privacy covers must not expire between automatic screenshots.
+        canvas.add(mark, pinned or self._keep_marks or isinstance(mark, Redaction))
         self.drawn.emit(canvas.screen, canvas.items())
 
     def pinned_at(self, position: tuple[int, int]) -> tuple[Annotation, ...]:
@@ -468,7 +496,7 @@ class _Canvas(QWidget):
         self.update()
 
     def _point(self, point: QPointF) -> QPointF:
-        if self.live.snap_enabled and self.live.tool in (Tool.ARROW, Tool.BOX):
+        if self.live.snap_enabled and self.live.tool in (Tool.ARROW, Tool.BOX, Tool.ELLIPSE):
             point = snap_point(point, self.targets)
         return QPointF(min(max(point.x(), 0), self.width()),
                        min(max(point.y(), 0), self.height()))
@@ -490,7 +518,7 @@ class _Canvas(QWidget):
         elif tool is Tool.STEP:
             self._draft = Step(point, self._next_step, color)
         else:
-            self._draft = new_draft(tool, point, color)
+            self._draft = new_draft(tool, point, color, box_infill=self.live.box_infill)
         if self.live.interacting:
             self.live.interaction_changed.emit(True)
         self.update()
@@ -504,7 +532,9 @@ class _Canvas(QWidget):
             self.update()
         if self._draft is not None:
             before = self._draft.bounds()
-            self._draft.extend(self._point(event.position()))
+            extend_draft(self._draft, self._point(event.position()),
+                         constrained=bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier),
+                         bounds=QRectF(self.rect()))
             self.update(before.united(self._draft.bounds()).toAlignedRect().adjusted(-2, -2, 2, 2))
 
     def mouseReleaseEvent(self, event) -> None:
@@ -517,7 +547,9 @@ class _Canvas(QWidget):
         if event.button() != _LEFT or self._draft is None:
             return
         draft, self._draft = self._draft, None
-        draft.extend(self._point(event.position()))
+        extend_draft(draft, self._point(event.position()),
+                     constrained=bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier),
+                     bounds=QRectF(self.rect()))
         self.live.interaction_changed.emit(False)
         if draft.meaningful():
             self.live.complete(self, draft, bool(event.modifiers() & _CTRL))
