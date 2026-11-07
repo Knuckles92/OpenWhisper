@@ -67,7 +67,9 @@ def test_toolbar_wraps_delay_and_controls_on_small_screens():
     toolbar = SnapToolbar(None, current_palette(), live=True)
     toolbar.fit_to_width(780)
     assert toolbar.width() <= 780
-    assert toolbar.button_rect("delay").top() > toolbar.button_rect("tool").top()
+    # Font metrics decide which group wraps; the trailing controls must move
+    # to another row even when the delay chip still fits beside the tools.
+    assert toolbar.button_rect("drop").top() > toolbar.button_rect("tool").top()
     assert toolbar.capture_delay.geometry() == toolbar.button_rect("delay")
     toolbar.fit_to_width(1400)
     assert toolbar.button_rect("delay").top() == toolbar.button_rect("tool").top()
