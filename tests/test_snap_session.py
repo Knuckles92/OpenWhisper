@@ -709,12 +709,27 @@ class TestRequestAccess:
         )
         return calls
 
-    def test_asks_macos_once_then_opens_settings(self, mac):
+    def test_retries_do_not_reopen_settings_or_repeat_the_native_request(self, mac):
         support.request_access()
         support.request_access()
         support.request_access()
 
-        assert mac == ["request", "settings", "settings"]
+        assert mac == ["request"]
+
+    def test_permission_is_rechecked_after_a_denied_request(self, mac, monkeypatch):
+        support.request_access()
+        assert support.snap_support() == (False, support.MAC_REASON)
+
+        monkeypatch.setattr(support.macos, "capture_granted", lambda: True)
+        assert support.snap_support() == (True, "")
+        support.request_access()
+        assert mac == ["request"]
+
+        # A successful check must not permanently cache the grant either.
+        monkeypatch.setattr(support.macos, "capture_granted", lambda: False)
+        assert support.snap_support() == (False, support.MAC_REASON)
+        support.request_access()
+        assert mac == ["request"]
 
     def test_nothing_to_ask_once_granted(self, mac, monkeypatch):
         monkeypatch.setattr(support.macos, "capture_granted", lambda: True)

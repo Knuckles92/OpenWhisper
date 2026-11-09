@@ -7,6 +7,11 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Fixed
+
+- **macOS walkthrough permission retries** — repeated screenshot attempts no longer keep opening System Settings. The permission notice explains how to recover when recording access is already enabled, including after an app update.
+- **Update downloads** — if GitHub's release download returns a temporary server error, OpenWhisper automatically tries GitHub's asset API for the same installer, preserving download resume and integrity checks.
+
 ## [2.8.6] - 2026-11-07
 
 ### Added

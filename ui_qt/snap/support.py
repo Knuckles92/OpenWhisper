@@ -19,7 +19,10 @@ from ui_qt.utils.desktop import is_wayland
 
 MAC_REASON = (
     "Snap needs Screen Recording permission. Allow OpenWhisper in System Settings "
-    "› Privacy & Security › Screen & System Audio Recording, then reopen OpenWhisper."
+    "› Privacy & Security › Screen & System Audio Recording. "
+    "Already enabled? Fully quit and reopen OpenWhisper. If this started after an "
+    "update and persists, remove OpenWhisper from that list, add the updated app "
+    "from Applications, and reopen it."
 )
 WAYLAND_REASON = (
     "Snap doesn't work on this Wayland desktop yet. "
@@ -67,9 +70,10 @@ def snap_support() -> tuple[bool, str]:
 def request_access() -> None:
     """Ask for what snap_support found missing, where the system can be asked.
 
-    On macOS that is the Screen Recording grant: the first request in a run
-    asks macOS (which prompts once ever, and lists OpenWhisper in Settings);
-    later ones open System Settings at the grant.
+    Ask macOS once per run. Repeated attempts still check the current grant,
+    but must not keep pulling the user into Settings: an enabled entry can
+    belong to a previous ad-hoc signed build after an update. MAC_REASON
+    explains how to refresh that entry if restarting does not help.
     """
     global _asked
     if _platform() != "darwin" or macos.capture_granted():
@@ -77,5 +81,3 @@ def request_access() -> None:
     if not _asked:
         _asked = True
         macos.request_capture()
-    else:
-        macos.open_capture_settings()

@@ -507,7 +507,15 @@ PDF-then-instructions paste.
 - **macOS:** yes, once OpenWhisper has Screen Recording permission. The
   first snap asks for it; allow OpenWhisper in **System Settings → Privacy &
   Security → Screen & System Audio Recording**, then reopen OpenWhisper.
-  Later snaps without it open that page. Manual Snap briefly hides the recording
+  Later snaps recheck permission without reopening Settings automatically.
+  If the switch is already on, fully quit OpenWhisper and launch it again.
+  If this persists after an update, remove OpenWhisper from the permission
+  list with **−**, add the updated `/Applications/OpenWhisper.app` with **+**,
+  enable it, and reopen the app. Ad-hoc signed builds can lose their grant
+  when updated, even while the old entry remains enabled; releases signed
+  with a stable Developer ID identity avoid that particular cause of resets.
+  See [Apple's explanation of signing and capture permissions](https://developer.apple.com/forums/thread/819406).
+  Manual Snap briefly hides the recording
   overlay and walkthrough column while capturing, then restores them while
   you draw. Other apps' screen recordings and shares can include these
   overlays. Snap and Done take clicks without taking the focus from the app

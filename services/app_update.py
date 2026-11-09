@@ -56,6 +56,7 @@ from services.update_contract import (
     updates_root,
 )
 from services.verified_download import (
+    DownloadCanceled,
     DownloadError,
     describe_network_error,
     download_verified,
@@ -136,6 +137,7 @@ class ReleaseAsset:
     name: str
     size_bytes: int
     sha256: Optional[str]
+    github_asset_id: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -524,6 +526,13 @@ def _parse_named_asset(
                 name=name,
                 size_bytes=size_bytes,
                 sha256=_digest_to_sha256(item.get("digest")),
+                github_asset_id=(
+                    item["id"]
+                    if url == expected_url
+                    and type(item.get("id")) is int
+                    and item["id"] > 0
+                    else None
+                ),
             )
         )
     if len(matches) != 1:
@@ -968,6 +977,7 @@ def download_release_asset(
         destination=destination,
         progress=progress,
         cancel=cancel,
+        github_asset_id=asset.github_asset_id,
     )
     return destination
 
@@ -1128,7 +1138,11 @@ def _redirect_url_allowed(initial_url: str, candidate_url: str) -> bool:
     if candidate.port not in (None, 443):
         return False
     if initial_host == "api.github.com":
-        return host == "api.github.com"
+        return host == "api.github.com" or (
+            _is_github_asset_api_url(initial_url)
+            and host in _GITHUB_RELEASE_ASSET_HOSTS
+            and candidate.path.startswith("/github-production-release-asset/")
+        )
     if initial_host == "github.com":
         if host == "github.com":
             return True
@@ -1137,6 +1151,14 @@ def _redirect_url_allowed(initial_url: str, candidate_url: str) -> bool:
             and candidate.path.startswith("/github-production-release-asset/")
         )
     return False
+
+
+def _is_github_asset_api_url(url: str) -> bool:
+    return re.fullmatch(
+        re.escape(f"https://api.github.com/repos/{GITHUB_REPO}/releases/assets/")
+        + r"[1-9][0-9]*",
+        url,
+    ) is not None
 
 
 class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -1221,8 +1243,37 @@ def _download_verified(
     destination: str,
     progress: ProgressCallback,
     cancel: threading.Event,
+    *,
+    github_asset_id: Optional[int] = None,
 ) -> None:
     """Fetch ``url`` with bounded resume, exact-size, and SHA-256 checks."""
+    use_api = False
+    api_url = (
+        f"https://api.github.com/repos/{GITHUB_REPO}/releases/assets/{github_asset_id}"
+        if type(github_asset_id) is int and github_asset_id > 0
+        else None
+    )
+
+    def open_asset(download_url, headers=None):
+        # Switch once per transfer. A Range/416 restart must stay on the API
+        # instead of returning to the failed browser-download route.
+        nonlocal use_api
+        if not use_api:
+            try:
+                return _open(download_url, headers)
+            except urllib.error.HTTPError as exc:
+                if api_url is None or exc.code not in (500, 502, 503, 504):
+                    raise
+                exc.close()
+                use_api = True
+                logger.info(
+                    "GitHub release download returned HTTP %s; trying asset API",
+                    exc.code,
+                )
+        if cancel.is_set():
+            raise DownloadCanceled("The download was canceled.")
+        return _open(api_url, {**(headers or {}), "Accept": "application/octet-stream"})
+
     try:
         download_verified(
             url,
@@ -1231,7 +1282,7 @@ def _download_verified(
             destination,
             progress,
             cancel,
-            opener=_open,
+            opener=open_asset,
             describe_error=_describe_update_error,
             max_bytes=_MAX_ASSET_BYTES,
             messages=_DOWNLOAD_MESSAGES,
