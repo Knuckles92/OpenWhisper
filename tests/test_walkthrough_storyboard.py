@@ -544,6 +544,51 @@ def test_a_window_already_wide_enough_keeps_its_width(window):
     assert window.width() == 1100
 
 
+def _toggle_panel(window):
+    from PyQt6.QtCore import QPropertyAnimation
+
+    window.toggle_history()
+    for _ in range(300):
+        QTest.qWait(10)
+        if window.history_sidebar.animation.state() != QPropertyAnimation.State.Running:
+            break
+    _settle(window)
+
+
+def test_the_side_panel_adds_to_the_window_and_leaves_the_page_its_width(window):
+    from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+    _open_tab(window, TabbedContentWidget.TAB_WALKTHROUGH)
+    tab = window.walkthrough_tab
+    width, page = window.width(), tab.scroll_area.contentsRect().width()
+
+    _toggle_panel(window)
+    assert window.width() == width + window.history_sidebar.EXPANDED_WIDTH
+    assert tab.scroll_area.contentsRect().width() == page
+    assert not tab.split.stacked
+
+    _toggle_panel(window)
+    assert window.width() == width
+    assert tab.scroll_area.contentsRect().width() == page
+
+
+def test_closing_the_side_panel_gives_back_what_a_small_screen_took(window):
+    from PyQt6.QtCore import QRect
+
+    from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+    _open_tab(window, TabbedContentWidget.TAB_WALKTHROUGH)
+    width = window.width()
+    window._available_screen_rect = lambda: QRect(0, 0, width + 100, 1000)
+
+    _toggle_panel(window)
+    assert window.width() == width + 100
+
+    _toggle_panel(window)
+    assert window.width() == width
+    assert not window.walkthrough_tab.split.stacked
+
+
 def test_dragged_to_its_narrowest_the_storyboard_shows_whole(window):
     """Nothing runs past the right edge: Open drops below Copy, screenshots shrink."""
     from config import config
