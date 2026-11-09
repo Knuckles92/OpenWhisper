@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Changed
+
+- **A new Walkthrough tab** — the tab is now two sides that never fold or move. On the left, one column holds **Start Walkthrough**, its shortcuts and every choice in the order a walkthrough uses them: **Capture** (Auto Mode, Capture delay, Minimize to tray), **Write-up** (the AI write-up, **Written by**, **Style**, **Follow my notes**, and **Edit the prompt…**, which opens the prompt beside the column) and **Copy** (**On finish, copy**). On the right, a stage shows the storyboard, a **Recording your walkthrough** card while one records, or, with none open, how a walkthrough works and your three newest walkthroughs to open. Settings no longer fold away behind **Change** when a walkthrough is open, the separate **When it finishes** summary is gone, and the window keeps one size whatever the stage shows. A missing or signed-out agent shows in amber on **Written by**. In a narrow window the column goes above the stage.
+
 ## [2.8.7] - 2026-11-08
 
 ### Fixed

@@ -88,37 +88,34 @@ def test_showing_the_window_again_fits_it_at_once(window):
     assert window.height() == fitted
 
 
-def test_the_walkthrough_tab_follows_its_prompt_coming_and_going(window):
+def test_the_walkthrough_tab_keeps_its_size_as_its_settings_change(window):
     page = _open(window, TabbedContentWidget.TAB_WALKTHROUGH)
     page.write_up_switch.setChecked(False)
     _settle()
-    without_prompt = window.height()
+    size = window.size()
 
     page.write_up_switch.setChecked(True)
+    page.auto_switch.setChecked(True)
     _settle()
-    assert window.height() > without_prompt
+    assert window.size() == size
     assert page.scroll_area.verticalScrollBar().maximum() == 0
 
     page.write_up_switch.setChecked(False)
     _settle()
-    assert window.height() == without_prompt
+    assert window.size() == size
 
 
-def test_a_dragged_height_stays_until_the_page_changes(window):
+def test_a_dragged_walkthrough_height_stays(window):
+    """Its stage takes the height it is given, as an open transcript does."""
     page = _open(window, TabbedContentWidget.TAB_WALKTHROUGH)
-    page.write_up_switch.setChecked(False)
-    _settle()
     fitted = window.height()
 
     window.resize(window.width(), fitted + 120)
     _settle()
+    page.write_up_switch.setChecked(not page.write_up_switch.isChecked())
+    _settle()
     assert window.height() == fitted + 120
-
-    page.write_up_switch.setChecked(True)
-    _settle()
-    page.write_up_switch.setChecked(False)
-    _settle()
-    assert window.height() == fitted
+    assert page.stage.height() > 0
 
 
 def test_an_open_transcript_keeps_the_height_the_user_gives_it(window):
@@ -135,7 +132,7 @@ def test_an_open_transcript_keeps_the_height_the_user_gives_it(window):
     _settle()
     assert window.height() == 900
 
-    _open(window, TabbedContentWidget.TAB_WALKTHROUGH)
+    _open(window, TabbedContentWidget.TAB_UPLOAD_FILE)
     assert window.height() < 900
     _open(window, TabbedContentWidget.TAB_QUICK_RECORD)
     assert window.height() == 900

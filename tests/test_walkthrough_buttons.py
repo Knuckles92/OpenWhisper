@@ -63,6 +63,14 @@ def _center(overlay, key) -> QPoint:
 # --- the Walkthrough tab -------------------------------------------------
 
 
+def _pick(field, prefix):
+    """Choose the item starting with ``prefix`` from ``field``'s menu, as a click would."""
+    menu = field.build_menu()
+    action = next(a for a in menu.actions() if a.text().startswith(prefix))
+    action.trigger()
+    return menu
+
+
 def test_the_button_asks_for_a_walkthrough(tab):
     spy = QSignalSpy(tab.walkthrough_requested)
 
@@ -74,14 +82,16 @@ def test_the_button_asks_for_a_walkthrough(tab):
 
 
 def test_auto_mode_is_opt_in_and_set_before_recording(tab):
-    assert not tab.auto_check.isChecked()
+    assert not tab.auto_switch.isChecked()
     with patch.object(settings_manager, "save_setting") as save:
-        tab.auto_check.click()
+        tab.auto_switch.click()
         save.assert_called_once_with(SettingsKey.WALKTHROUGH_AUTO_MODE, True)
     tab.set_recording_state(True, True)
-    assert not tab.auto_check.isEnabled()
+    assert not tab.auto_switch.isEnabled()
+    assert not tab.capture_delay.isEnabled()
     tab.set_recording_state(False, False)
-    assert tab.auto_check.isEnabled()
+    assert tab.auto_switch.isEnabled()
+    assert tab.capture_delay.isEnabled()
 
 
 @pytest.mark.parametrize("desktop", ["classic", "omarchy"])
@@ -91,7 +101,8 @@ def test_auto_mode_is_offered_on_supported_desktops(monkeypatch, desktop, platfo
     monkeypatch.setattr(walkthrough_tab, "sys", SimpleNamespace(platform=platform))
     widget = WalkthroughTab()
     try:
-        assert widget.auto_check.isVisibleTo(widget) is visible
+        assert widget.auto_row.isVisibleTo(widget) is visible
+        assert widget.delay_row.isVisibleTo(widget) is visible
     finally:
         widget.close()
 
@@ -102,7 +113,9 @@ def test_during_a_walkthrough_the_tab_finishes_or_cancels_it(tab):
 
     assert tab.walkthrough_button.text() == "Finish Walkthrough"
     assert tab.walkthrough_button._active
+    # Cancel takes the shortcuts' place under Finish; the stage shows them now.
     assert tab.cancel_button.isVisibleTo(tab)
+    assert not tab.keys_box.isVisibleTo(tab)
     tab.cancel_button.click()
     assert len(cancel) == 1
 
@@ -110,6 +123,7 @@ def test_during_a_walkthrough_the_tab_finishes_or_cancels_it(tab):
     assert tab.walkthrough_button.text() == "Start Walkthrough"
     assert tab.walkthrough_button._active
     assert not tab.cancel_button.isVisibleTo(tab)
+    assert tab.keys_box.isVisibleTo(tab)
 
 
 def test_a_dictation_in_progress_holds_the_button(tab):
@@ -131,6 +145,21 @@ def test_the_tab_shows_both_shortcuts(tab):
     assert tab.start_key.text() == "Ctrl+Alt+W"
     assert tab.snap_key.text() == "Not set"
     assert tab.snap_key.property("unset") is True
+    # Recording, the stage says them too.
+    assert "Ctrl+Alt+W" in tab.recording_keys.text()
+    assert "Not set" in tab.recording_keys.text()
+
+
+def test_the_two_shortcuts_line_up_as_a_column(tab):
+    tab.set_hotkeys("Ctrl+Alt+Shift+W", "F9")
+    tab.resize(1100, 760)
+    tab.show()
+    QApplication.processEvents()
+
+    start, snap = tab.start_key, tab.snap_key
+    assert start.width() == snap.width()
+    assert (start.mapTo(tab, start.rect().topRight()).x()
+            == snap.mapTo(tab, snap.rect().topRight()).x())
 
 
 def test_the_button_leaves_its_explanation_to_the_badge(tab):
@@ -141,6 +170,7 @@ def test_the_button_leaves_its_explanation_to_the_badge(tab):
 
 def test_the_badge_leads_the_shortcut_row_not_the_button(tab):
     # Off the button, so Start Walkthrough matches the other tabs' Start buttons.
+    tab.resize(1100, 760)
     tab.show()
     QApplication.processEvents()
 
@@ -151,25 +181,23 @@ def test_the_badge_leads_the_shortcut_row_not_the_button(tab):
     assert not badge.is_compact()
 
 
-def test_start_walkthrough_matches_the_other_start_buttons(tab):
-    from ui_qt.widgets.buttons import START_BUTTON_WIDTH, SuccessButton
+def test_start_walkthrough_spans_the_control_column(tab):
+    from ui_qt.widgets.buttons import SuccessButton
 
-    tab.resize(930, 600)
+    tab.resize(1100, 760)
     tab.show()
     QApplication.processEvents()
 
-    assert isinstance(tab.walkthrough_button, SuccessButton)
-    assert tab.walkthrough_button.width() == START_BUTTON_WIDTH
-    # Centred in its column, beside the summary.
-    column = tab.walkthrough_button.parentWidget().parentWidget()
-    box = tab.walkthrough_button.parentWidget().geometry()
-    assert abs(box.left() - (column.width() - box.right() - 1)) <= 1
-
-    # In a narrower window it gives up width rather than pushing the summary down.
-    tab.resize(640, 600)
-    QApplication.processEvents()
-    assert not tab.split.stacked
-    assert tab.walkthrough_button.width() <= START_BUTTON_WIDTH
+    button, column = tab.walkthrough_button, tab.column
+    assert isinstance(button, SuccessButton)
+    margins = column.layout().contentsMargins()
+    # Within the button's own stylesheet margin.
+    assert abs(button.width() - (column.width() - margins.left() - margins.right())) <= 2
+    # Every value in the form ends at the same right edge.
+    edges = {field.mapTo(column, field.rect().topRight()).x()
+             for field in (tab.agent_field, tab.style_field, tab.copy_field, tab.capture_delay)
+             if field.isVisibleTo(tab)}
+    assert len(edges) == 1
 
 
 def _button_with_badge(width):
@@ -232,29 +260,38 @@ def test_the_badge_says_new_until_the_first_walkthrough(tab):
 
 def test_picking_an_agent_turns_the_write_up_on_with_it(tab):
     assert not tab.write_up_switch.isChecked()
-    assert not any(choice.isChecked() for choice in tab.agent_choices.values())
-    assert not tab.prompt_area.isVisibleTo(tab)
+    assert not any(row.isEnabled() for row in tab.write_up_rows)
 
-    tab.agent_choices[MeetingAgentCore.CODEX].click()
+    _pick(tab.agent_field, "Codex")
 
     settings = settings_manager.load_all_settings()
     assert settings[SettingsKey.WALKTHROUGH_WRITE_UP] is True
     assert settings[SettingsKey.WALKTHROUGH_WRITE_UP_AGENT] == MeetingAgentCore.CODEX
-    assert [a for a, c in tab.agent_choices.items() if c.isChecked()] == [MeetingAgentCore.CODEX]
-    assert tab.prompt_area.isVisibleTo(tab)
-    assert "Codex" in tab.write_up_text.text()
+    assert tab.agent_field.value == "Codex"
+    assert all(row.isEnabled() for row in tab.write_up_rows)
+    assert "Codex" in tab.write_up_row.name_label.toolTip()
+
+
+def test_the_agent_menu_marks_the_chosen_agent(tab):
+    _pick(tab.agent_field, "Codex")
+
+    menu = tab.agent_field.build_menu()
+
+    assert [a.text().split("\t")[0] for a in menu.actions() if a.isChecked()] == ["Codex"]
 
 
 def test_switching_the_write_up_off_keeps_the_agent_for_next_time(tab):
-    tab.agent_choices[MeetingAgentCore.CODEX].click()
+    _pick(tab.agent_field, "Codex")
 
     tab.write_up_switch.click()
 
     settings = settings_manager.load_all_settings()
     assert settings[SettingsKey.WALKTHROUGH_WRITE_UP] is False
     assert settings[SettingsKey.WALKTHROUGH_WRITE_UP_AGENT] == MeetingAgentCore.CODEX
-    assert not any(choice.isChecked() for choice in tab.agent_choices.values())
-    assert not tab.prompt_area.isVisibleTo(tab)
+    # Dimmed, not hidden: the column keeps its shape.
+    assert not any(row.isEnabled() for row in tab.write_up_rows)
+    assert all(row.isVisibleTo(tab) for row in tab.write_up_rows)
+    assert tab.agent_field.value == "Codex"
 
 
 def test_the_tab_opens_on_the_saved_choices():
@@ -268,122 +305,129 @@ def test_the_tab_opens_on_the_saved_choices():
     })
     tab = WalkthroughTab()
     try:
-        assert tab.minimize_check.isChecked()
-        assert tab.agent_choices[MeetingAgentCore.OPENCODE_CLI].isChecked()
+        assert tab.minimize_switch.isChecked()
+        assert tab.write_up_switch.isChecked()
+        assert tab.agent_field.value == "OpenCode"
         assert tab.notes_switch.isChecked()
-        assert COPY_CHOICES[tab.copy_bar.currentIndex()][0] == WalkthroughCopyFormat.BOTH
+        assert tab.copy_field.value == "PDF + Markdown"
         assert tab.prompt_edit.toPlainText() == STYLES[2].instructions
         assert tab.preset_combo.currentText() == STYLES[2].name
+        assert tab.style_field.value == STYLES[2].name
     finally:
         tab.close()
 
 
 @pytest.mark.parametrize("copy_format", WalkthroughCopyFormat.ALL)
 def test_the_copy_choice_is_saved(tab, copy_format):
-    index = next(i for i, (value, _label) in enumerate(COPY_CHOICES)
-                 if value == copy_format)
+    label = next(text for value, text in COPY_CHOICES if value == copy_format)
 
-    tab.copy_bar.buttons[index].click()
+    _pick(tab.copy_field, label)
 
     assert (settings_manager.load_all_settings()[SettingsKey.WALKTHROUGH_COPY_FORMAT]
             == copy_format)
+    assert tab.copy_field.value == label
     tab.load_settings()
-    assert COPY_CHOICES[tab.copy_bar.currentIndex()][0] == copy_format
+    assert tab.copy_field.value == label
+    checked = [a.text() for a in tab.copy_field.build_menu().actions() if a.isChecked()]
+    assert checked == [label]
 
 
-def test_minimizing_to_tray_on_start_is_off_until_ticked_and_then_saved(tab):
-    assert not tab.minimize_check.isChecked()
+def test_minimizing_to_tray_on_start_is_off_until_switched_on_and_then_saved(tab):
+    assert not tab.minimize_switch.isChecked()
 
-    tab.minimize_check.click()
+    tab.minimize_switch.click()
 
     assert settings_manager.load_all_settings()[SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY] is True
 
 
-def test_the_summary_beside_start_says_what_happens_when_it_finishes(tab):
-    assert tab.copy_summary.text() == "Copies <b>PDF</b>"
-    assert tab.write_up_summary.text() == "No AI write-up"
-    assert tab.write_up_summary.property("muted") is True
-    assert not tab.minimize_summary.isVisibleTo(tab)
+def test_a_style_picked_from_the_column_fills_the_prompt(tab):
+    _pick(tab.style_field, STYLES[2].name)
 
-    index = next(i for i, (value, _label) in enumerate(COPY_CHOICES)
-                 if value == WalkthroughCopyFormat.WORD)
-    tab.copy_bar.buttons[index].click()
-    tab.agent_choices[MeetingAgentCore.CODEX].click()
-    tab.minimize_check.click()
+    assert tab.prompt_edit.toPlainText() == STYLES[2].instructions
+    assert _saved_prompt() == STYLES[2].instructions
+    assert tab.style_field.value == STYLES[2].name
 
-    assert tab.copy_summary.text() == "Copies <b>Word</b>"
-    assert tab.write_up_summary.text() == "AI write-up by <b>Codex</b>"
-    assert tab.write_up_summary.property("muted") is False
-    assert tab.minimize_summary.isVisibleTo(tab)
+    tab.prompt_edit.setPlainText("Make it a checklist.")
+    assert tab.style_field.value == OWN_PROMPT
+    names = [a.text() for a in tab.style_field.build_menu().actions()]
+    assert OWN_PROMPT in names and walkthrough_tab.NEW_STYLE in names
 
 
-def test_the_summary_sits_beside_start_and_moves_under_it_when_narrow(tab):
-    tab.set_hotkeys("Ctrl+Alt+W", "Ctrl+Alt+S")
+def test_a_missing_agent_shows_on_its_field(tab):
+    from ui_qt.widgets import agent_picker
+
+    with patch.object(agent_picker, "cached_agents", return_value={}):
+        _pick(tab.agent_field, "Claude Code")
+        assert tab.agent_field.property("tone") == "warning"
+        assert "Not installed" in tab.agent_field.toolTip()
+        statuses = [a.text().split("\t")[1] for a in tab.agent_field.build_menu().actions()]
+    assert statuses == ["Not installed"] * len(statuses)
+
+
+def test_editing_the_prompt_opens_it_beside_the_column_and_turns_the_write_up_on(tab):
+    tab.resize(1100, 760)
     tab.show()
-    tab.resize(930, 700)
+    QApplication.processEvents()
+    assert not tab.write_up_switch.isChecked()
+
+    tab.edit_prompt()
+    QApplication.processEvents()
+    try:
+        assert tab.write_up_switch.isChecked()
+        assert tab.prompt_popover.isVisible()
+        assert tab.prompt_area.isVisible()
+        # To the column's right, unless the screen's edge holds it back.
+        popover = tab.prompt_popover
+        beside = tab.column.mapToGlobal(QPoint(tab.column.width() + 8, 0)).x()
+        screen = tab.screen().availableGeometry()
+        assert popover.x() == max(screen.left() + 8,
+                                  min(beside, screen.right() - popover.width() - 8))
+        assert screen.contains(popover.geometry())
+    finally:
+        tab.prompt_popover.hide()
+
+
+def test_closing_the_prompt_saves_what_was_typed(tab):
+    tab.edit_prompt()
+    tab.prompt_edit.setPlainText("Typed, then closed.")
+    assert tab._prompt_timer.isActive()
+
+    tab.prompt_popover.hide()
+
+    assert not tab._prompt_timer.isActive()
+    assert _saved_prompt() == "Typed, then closed."
+
+
+def test_too_narrow_for_both_the_column_goes_above_the_stage(tab):
+    tab.show()
+    tab.resize(1100, 760)
     QApplication.processEvents()
     split = tab.split
     assert not split.stacked
-    assert not tab.keys.stacked
-    assert split._summary.geometry().left() > tab.walkthrough_button.mapTo(
-        split, tab.walkthrough_button.rect().topRight()).x()
+    assert tab.stage.geometry().left() > tab.column.geometry().right()
 
-    # Turning the write-up on lengthens the summary, which wraps instead of
-    # pushing itself under Start.
-    tab.agent_choices[MeetingAgentCore.CLAUDE_CODE].click()
+    tab.resize(640, 760)
+    QApplication.processEvents()
+    assert split.stacked
+    assert tab.stage.geometry().top() > tab.column.geometry().bottom()
+    # Stacked, the column takes the page's width, and nothing runs past it.
+    assert tab.column.width() == split.width()
+    assert tab.scroll_area.horizontalScrollBar().maximum() == 0
+
+    tab.resize(1100, 760)
     QApplication.processEvents()
     assert not split.stacked
 
-    # Long shortcuts take a line each before the summary gives up its column.
-    tab.set_hotkeys("Ctrl+Alt+Shift+W", "Ctrl+Alt+Shift+S")
-    tab.resize(560, 700)
-    QApplication.processEvents()
-    assert tab.keys.stacked
-    assert not split.stacked
 
+def test_a_larger_type_size_widens_the_column(tab, monkeypatch):
+    narrow = tab.preferred_width()
+    monkeypatch.setattr(walkthrough_tab, "current_ui_font_scale", lambda: 1.3)
 
-def _column(width, height):
-    from PyQt6.QtWidgets import QVBoxLayout
+    tab._apply_sizes()
 
-    column = QWidget()
-    inside = QWidget()
-    inside.setFixedSize(width, height)
-    QVBoxLayout(column).addWidget(inside)
-    return column
-
-
-def test_too_narrow_for_both_columns_the_summary_goes_under_start():
-    # The tab's own choices hold it wider than this; a large font can't.
-    from PyQt6.QtWidgets import QVBoxLayout
-    from ui_qt.widgets.walkthrough_tab import StartSplit
-
-    start, summary = _column(200, 60), _column(180, 90)
-    split = StartSplit(start, summary)
-    host = QWidget()
-    QVBoxLayout(host).addWidget(split)
-    try:
-        host.resize(600, 300)
-        host.show()
-        QApplication.processEvents()
-        assert not split.stacked
-
-        host.resize(380, 300)
-        QApplication.processEvents()
-        assert split.stacked
-        # Stacked, each keeps its own height: nothing in the summary is cut off.
-        assert summary.geometry().top() >= start.geometry().bottom()
-        assert summary.height() >= summary.minimumSizeHint().height()
-
-        host.resize(600, 300)
-        QApplication.processEvents()
-        assert not split.stacked
-    finally:
-        host.close()
-
-
-def test_each_agent_says_whether_the_last_scan_found_it(tab):
-    tab.agent_choices[MeetingAgentCore.CLAUDE_CODE].show_found(None)
-    assert tab.agent_choices[MeetingAgentCore.CLAUDE_CODE].status_label.text() == "Not installed"
+    assert tab.split.column_width == round(walkthrough_tab.COLUMN_WIDTH * 1.3)
+    assert tab.agent_field.width() == round(walkthrough_tab.FIELD_WIDTH * 1.3)
+    assert tab.preferred_width() > narrow
 
 
 def _saved_prompt():

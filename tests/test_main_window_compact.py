@@ -417,16 +417,12 @@ class TestMainWindowCompactMode:
         assert tab.scroll_area.verticalScrollBar().maximum() == 0
         assert tab.scroll_area.horizontalScrollBar().maximum() == 0
         viewport = tab.scroll_area.viewport()
-        for widget in (tab.walkthrough_button, tab.copy_bar, *tab.agent_choices.values()):
+        # The window widens for the column beside the stage.
+        assert not tab.split.stacked
+        for widget in (tab.walkthrough_button, tab.write_up_switch, tab.agent_field,
+                       tab.style_field, tab.copy_field, tab.settings_link, tab.stage):
             box = widget.rect().translated(widget.mapTo(viewport, widget.rect().topLeft()))
             assert viewport.rect().contains(box), widget
-        # The five copy choices may wrap at this width. Each must still fit
-        # inside the bar and be selectable, including choices on a later row.
-        for index, button in enumerate(tab.copy_bar.buttons):
-            assert tab.copy_bar.rect().contains(button.geometry()), button.text()
-            assert button.width() >= button.natural_width(), button.text()
-            button.click()
-            assert tab.copy_bar.currentIndex() == index
 
     def test_clamp_keeps_footer_on_short_screen(self):
         """1280x800 available geometry must not grow the window to 840px."""

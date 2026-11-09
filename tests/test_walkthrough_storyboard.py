@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QSignalSpy, QTest
-from PyQt6.QtWidgets import QLabel
+from PyQt6.QtWidgets import QApplication, QLabel
 
 from services.walkthrough import library
 from tests.test_walkthrough_library import capture as capture_fixture
@@ -286,37 +286,41 @@ def tab(capture):
         widget.close()
 
 
-def test_the_tab_opens_on_the_newest_walkthrough_with_setup_folded(tab, capture):
+def _recent_loaded(tab):
+    for _ in range(500):
+        QApplication.processEvents()
+        if not tab.recent_loading:
+            return
+        QTest.qWait(10)
+    pytest.fail("The recent walkthroughs were never read")
+
+
+def test_the_tab_opens_on_the_newest_walkthrough_beside_its_settings(tab, capture):
     assert tab.review.folder == capture.folder
+    assert tab.stage_state == "review"
     assert tab.fills_height()
-    assert tab.setup_toggle.isVisibleTo(tab)
-    assert tab.review_rule.isVisibleTo(tab)
-    assert not tab.copy_area.isVisibleTo(tab)
-    assert not tab.write_up_card.isVisibleTo(tab)
-    assert tab.copy_summary.text() == "Copies <b>PDF</b>"
-    assert tab.setup_toggle.text().startswith("Change")
-    tab.setup_toggle.click()
-    assert tab.copy_area.isVisibleTo(tab)
-    assert tab.write_up_card.isVisibleTo(tab)
-    assert tab.setup_toggle.text().startswith("Done")
-    tab.setup_toggle.click()
-    assert not tab.copy_area.isVisibleTo(tab)
-    assert not tab.write_up_card.isVisibleTo(tab)
+    assert not tab.review.isHidden()
+    assert tab.empty_pane.isHidden() and tab.recording_pane.isHidden()
+    # Nothing folds away: the settings stay open beside the storyboard.
+    assert tab.column.isVisibleTo(tab)
+    assert tab.copy_field.isVisibleTo(tab)
+    assert tab.write_up_switch.isVisibleTo(tab)
 
 
-def test_with_no_walkthrough_the_choices_show_as_before(tmp_path):
+def test_with_no_walkthrough_the_stage_says_how_and_offers_none(tmp_path):
     from ui_qt.widgets import walkthrough_tab
 
     with patch.object(walkthrough_tab, "captures_root", return_value=tmp_path / "none"):
         tab = walkthrough_tab.WalkthroughTab()
+        _recent_loaded(tab)
     assert tab.review.isHidden()
-    assert not tab.fills_height()
-    assert not tab.setup_toggle.isVisibleTo(tab)
-    assert not tab.review_rule.isVisibleTo(tab)
-    # The summary still says what happens; there is nothing to fold for.
-    assert tab.copy_summary.isVisibleTo(tab)
-    assert tab.copy_area.isVisibleTo(tab)
-    assert tab.write_up_card.isVisibleTo(tab)
+    assert tab.stage_state == "empty"
+    assert not tab.empty_pane.isHidden()
+    assert tab.recent_rows == []
+    assert tab.recent_box.isHidden()
+    assert tab.empty_hint.text() == "Start one on the left."
+    # The same size in every state, so the window never jumps.
+    assert tab.fills_height()
     tab.close()
 
 
@@ -324,11 +328,13 @@ def test_closing_the_walkthrough_puts_the_tab_back_until_one_is_chosen(tab, capt
     from ui_qt.widgets import walkthrough_tab
 
     assert tab.review.close_button.isVisibleTo(tab)
-    tab.review.close_button.click()
+    with patch.object(walkthrough_tab, "captures_root", return_value=capture.root):
+        tab.review.close_button.click()
+        _recent_loaded(tab)
     assert tab.review.isHidden()
-    assert not tab.fills_height()
-    assert not tab.setup_toggle.isVisibleTo(tab)
-    assert tab.copy_area.isVisibleTo(tab)
+    assert tab.stage_state == "empty"
+    # It is still there to open again from the stage.
+    assert [row.folder for row in tab.recent_rows] == [capture.folder]
     # Still the newest, so the next launch opens without it too.
     with patch.object(walkthrough_tab, "captures_root", return_value=capture.root):
         relaunched = walkthrough_tab.WalkthroughTab()
@@ -336,6 +342,40 @@ def test_closing_the_walkthrough_puts_the_tab_back_until_one_is_chosen(tab, capt
     relaunched.close()
     assert tab.show_walkthrough(capture.folder)
     assert tab.review.folder == capture.folder
+
+
+def test_a_recent_walkthrough_opens_on_the_stage(tab, capture):
+    from ui_qt.widgets import walkthrough_tab
+
+    with patch.object(walkthrough_tab, "captures_root", return_value=capture.root):
+        tab.close_walkthrough()
+        _recent_loaded(tab)
+    row, = tab.recent_rows
+    assert row.title_label.text() == "first second last"
+    assert "2 screenshots" in row.accessibleName()
+
+    QTest.keyClick(row, Qt.Key.Key_Return)
+
+    assert tab.stage_state == "review"
+    assert tab.review.folder == capture.folder
+
+
+def test_a_recording_takes_the_stage_and_gives_the_storyboard_back(tab, capture):
+    tab.set_recording_state(True, True)
+    assert tab.stage_state == "recording"
+    assert not tab.recording_pane.isHidden()
+    assert tab.review.isHidden()
+
+    # Cancelled: the walkthrough that was open is there again, edits and all.
+    tab.set_recording_state(False, False)
+    assert tab.stage_state == "review"
+    assert tab.review.folder == capture.folder
+    assert not tab.review.isHidden()
+
+
+def test_a_dictation_leaves_the_stage_alone(tab):
+    tab.set_recording_state(True, False)
+    assert tab.stage_state == "review"
 
 
 def test_closing_asks_before_letting_unsaved_edits_go(tab):
@@ -452,10 +492,10 @@ def test_a_storyboard_widens_the_window_and_the_next_tab_gives_the_width_back(wi
     from config import config
     from services.settings import SettingsKey, settings_manager
     from ui_qt.widgets.tabbed_content import TabbedContentWidget
-    from ui_qt.widgets.walkthrough_tab import STORYBOARD_WIDTH
-
     _open_tab(window, TabbedContentWidget.TAB_WALKTHROUGH)
-    assert window.walkthrough_tab.scroll_area.contentsRect().width() == STORYBOARD_WIDTH
+    tab = window.walkthrough_tab
+    assert tab.scroll_area.contentsRect().width() == tab.preferred_width()
+    assert not tab.split.stacked
     # The width the window keeps for next time is the user's own.
     with patch.object(settings_manager, "save_setting") as save:
         window._save_geometry()
@@ -465,6 +505,32 @@ def test_a_storyboard_widens_the_window_and_the_next_tab_gives_the_width_back(wi
 
     _open_tab(window, TabbedContentWidget.TAB_QUICK_RECORD)
     assert window.width() == config.MAIN_WINDOW_DEFAULT_WIDTH
+
+
+def test_the_window_keeps_one_size_whatever_the_stage_shows(window):
+    from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+    _open_tab(window, TabbedContentWidget.TAB_WALKTHROUGH)
+    tab = window.walkthrough_tab
+    size = window.size()
+    column = tab.column.geometry()
+
+    tab.close_walkthrough()
+    _settle(window)
+    assert tab.stage_state == "empty"
+    assert window.size() == size
+
+    tab.set_recording_state(True, True)
+    _settle(window)
+    assert window.size() == size
+
+    tab.set_recording_state(False, False)
+    tab.show_walkthrough(tab._newest())
+    tab.write_up_switch.click()
+    _settle(window)
+    assert tab.stage_state == "review"
+    assert window.size() == size
+    assert tab.column.geometry() == column
 
 
 def test_a_window_already_wide_enough_keeps_its_width(window):
