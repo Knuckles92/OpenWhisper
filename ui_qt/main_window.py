@@ -692,9 +692,10 @@ class MainWindow(QMainWindow):
 
             widget = UploadFileTab()
         elif key == "walkthrough":
-            from ui_qt.widgets.walkthrough_tab import WalkthroughTab
+            # The shipped tab, or a prototype layout named in the environment.
+            from ui_qt.widgets.walkthrough_layouts import tab_class
 
-            widget = WalkthroughTab()
+            widget = tab_class()()
         elif key == "meeting":
             from ui_qt.widgets.meeting_mode_tab import MeetingModeTab
 
