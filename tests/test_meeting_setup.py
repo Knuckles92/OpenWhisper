@@ -202,7 +202,11 @@ def test_closing_waits_for_audio_devices_to_be_released(monkeypatch):
     dialog.finished.connect(finished)
     dialog.show()
     try:
-        QTest.qWait(150)
+        for _ in range(300):
+            if dialog.audio_button.isEnabled():
+                break
+            QTest.qWait(10)
+        assert dialog.audio_button.isEnabled()
         dialog.audio_button.click()
         assert started.wait(1)
         dialog.close()
@@ -211,7 +215,10 @@ def test_closing_waits_for_audio_devices_to_be_released(monkeypatch):
         finished.assert_not_called()
     finally:
         release.set()
-    QTest.qWait(150)
+    for _ in range(300):
+        if not dialog.isVisible():
+            break
+        QTest.qWait(10)
     assert not dialog.isVisible()
     finished.assert_called_once_with(QDialog.DialogCode.Rejected)
 

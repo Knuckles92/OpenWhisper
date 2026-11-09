@@ -7,6 +7,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.7] - 2026-11-08
+
 ### Fixed
 
 - **macOS walkthrough permission retries** — repeated screenshot attempts no longer keep opening System Settings. The permission notice explains how to recover when recording access is already enabled, including after an app update.
