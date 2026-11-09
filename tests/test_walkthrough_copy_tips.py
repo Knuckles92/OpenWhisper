@@ -1,9 +1,8 @@
 """Copy hints survive UI construction and describe each hovered action."""
 
 import pytest
-from PyQt6.QtCore import QEvent, Qt
-from PyQt6.QtGui import QHelpEvent, QTextDocument
-from PyQt6.QtWidgets import QApplication, QToolTip
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QTextDocument
 
 from services.settings import WalkthroughCopyFormat
 from ui_qt.widgets.walkthrough_ready import WalkthroughReadyCard
@@ -17,7 +16,6 @@ def _plain(tip):
 
 
 @pytest.mark.parametrize("desktop", ["classic", "omarchy"])
-@pytest.mark.parametrize("width", [380, 930])
 @pytest.mark.parametrize(
     "copy_format,expected",
     [
@@ -28,31 +26,24 @@ def _plain(tip):
         (WalkthroughCopyFormat.WORD, ".docx"),
     ],
 )
-def test_hovering_each_copy_label_shows_its_own_hint(
-    monkeypatch, desktop, width, copy_format, expected
+def test_each_copy_choice_and_the_chosen_one_explain_themselves(
+    monkeypatch, desktop, copy_format, expected
 ):
     monkeypatch.setenv("OPENWHISPER_UI", desktop)
     tab = WalkthroughTab()
-    tab.resize(width, 700)
-    tab.show()
-    QApplication.processEvents()
-    initial = tab.copy_bar.currentIndex()
-    index = next(i for i, (value, _) in enumerate(COPY_CHOICES) if value == copy_format)
-    button = tab.copy_bar.buttons[index]
-    label = button._title
-    pos = label.rect().center()
+    label = next(text for value, text in COPY_CHOICES if value == copy_format)
     try:
-        # Hovering the text must reach its button's tooltip too.
-        QApplication.sendEvent(
-            label, QHelpEvent(QEvent.Type.ToolTip, pos, label.mapToGlobal(pos))
-        )
-        shown = _plain(QToolTip.text())
-        assert QToolTip.isVisible()
-        assert expected in shown
-        assert shown.split() == button.accessibleDescription().split()
-        assert tab.copy_bar.currentIndex() == initial
+        menu = tab.copy_field.build_menu()
+        assert menu.toolTipsVisible()
+        action = next(a for a in menu.actions() if a.text() == label)
+        assert expected in _plain(action.toolTip())
+
+        # Chosen, the field explains it on hover and to screen readers.
+        action.trigger()
+        assert expected in _plain(tab.copy_field.toolTip())
+        assert (_plain(tab.copy_field.toolTip()).split()
+                == tab.copy_field.accessibleDescription().split())
     finally:
-        QToolTip.hideText()
         tab.close()
 
 
@@ -75,7 +66,9 @@ def test_manual_copy_hints_match_in_review_and_ready_card(monkeypatch, desktop):
         agent_hint = _plain(card.copy_agent_action.toolTip())
         assert "attach the PDF" in agent_hint
         assert "Auto-paste" not in agent_hint
-        finish_hint = tab.copy_bar.buttons[1].accessibleDescription()
+        agent_choice = next(a for a in tab.copy_field.build_menu().actions()
+                            if a.text() == "Agent")
+        finish_hint = _plain(agent_choice.toolTip())
         assert "Auto-paste off:" in finish_hint and "unsent" in finish_hint
     finally:
         tab.close()

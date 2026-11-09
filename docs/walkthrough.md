@@ -29,26 +29,33 @@ Walkthroughs** to set them. The tray menu has **Start Walkthrough** and
 the shortcut row (**New** until your first walkthrough, then **?**) says what it
 does.
 
-Beside the button, **When it finishes** says what happens after a walkthrough:
-what's copied, whether an agent writes it up and which one, and whether the
-window goes to the tray as one starts. In a narrow window it moves under the
-button. Below them, the tab holds the choices themselves, saved to the same
+![The Walkthrough tab: the settings column beside a storyboard](screenshots/walkthrough-tab.png)
+
+The tab has two sides that never fold or move. On the left, one column holds
+the button, the two shortcuts and every choice people change between
+walkthroughs, as a form read top to bottom. They are saved to the same
 settings as **Settings → Dictation → Walkthroughs**:
 
-- **Copy when it finishes**: **PDF**, **Agent**, **PDF + Markdown**, **Markdown** or
-  **Word** (see below). Hover a choice for a wrapped explanation. **Agent**
-  explains delivery with Auto-paste on or off; **Copy for agent** in the ready
-  card or review explains the manual copy action.
-- **AI write-up**: a switch, and one card each for Claude Code, Codex and
-  OpenCode saying whether the last scan of this computer found it. Picking an
-  agent turns the write-up on.
-- **Prompt**, under the agents while the write-up is on: the words the agent
-  is given, which you can edit in place, and **Start from**, a menu of
-  presets that fill them in: **Walkthrough** (the default), **Step-by-step
-  guide**, **Bug report**, **Design feedback** and **Task for an agent**.
-  Once you have changed the words it says **Your own**, and choosing that
-  again brings your words back after trying a preset. **Follow notes I leave
-  for the agent** sits under the prompt.
+- **Capture**: **Auto Mode** and **Capture delay** (Windows and macOS, see
+  below), and **Minimize to tray**, which sends the window to the tray as a
+  walkthrough starts. Auto Mode and the delay are set before one starts.
+- **Write-up**: the **AI write-up** switch; **Written by**, a menu of Claude
+  Code, Codex and OpenCode that says whether the last scan of this computer
+  found each (an agent that is missing or needs attention shows in amber, and
+  picking one turns the write-up on); **Style**, the write-up styles
+  (**Walkthrough** by default, **Step-by-step guide**, **Bug report**,
+  **Design feedback**, **Task for an agent** and any you saved, or **Your
+  own** once you have changed the words); and **Follow my notes**. With the
+  write-up off, these dim and keep their place.
+- **Edit the prompt…** opens the words the agent is given beside the column,
+  with **Start from**, **Save as style…** and **Delete style**. Typing is
+  saved as you go, and closing it (a click outside or Esc) saves what's left.
+  **New style…** at the end of the style menus makes one from scratch.
+- **Copy**: **On finish, copy** picks **PDF**, **Agent**, **PDF + Markdown**,
+  **Markdown** or **Word** (see below). Hover a choice, or the field, for a
+  wrapped explanation. **Agent** explains delivery with Auto-paste on or off;
+  **Copy for agent** in the ready card or review explains the manual copy
+  action.
 
 While the tab is open, the side panel on the right lists **Walkthroughs**
 instead of History, the way Meeting Mode lists Past Meetings there: one card
@@ -59,22 +66,30 @@ Clicking a card shows it in the tab's storyboard (below); **Open library**
 opens Saved Walkthroughs. The panel shows the newest 60; the library has
 them all.
 
-Below the start button, the tab shows the newest walkthrough as a
-**storyboard**: each screenshot beside the words that led to it, with
-**Copy PDF**, **Copy Markdown**, **Copy Word**, the PDF as a chip to drag into
-any app, and **Open PDF**. It is the same editor as Saved Walkthroughs (see
-[Review](#review-recovery-and-storage)). A walkthrough that finishes shows
-there unless you have unsaved edits to another. With a walkthrough to show,
-the copy choice, **Minimize to tray** and the AI write-up fold away, and
-**When it finishes** beside the button still says what's chosen. Its
-**Change** opens them in the same card and **Done** folds them away; with no
-walkthrough yet, they stay open.
+The right side of the tab is a stage that shows one thing at a time:
 
-The window widens for the storyboard (to about 930 pixels, or as far as the
-screen allows) and gives the width back when you switch to another tab; a
-window you've already made wider stays as it is. Screenshots grow with the
-room each row has, and in a narrow window **Open PDF** moves below the copy
-buttons, so nothing is cut off at the right edge.
+- the newest walkthrough as a **storyboard**: each screenshot beside the
+  words that led to it, with **Copy PDF**, **Copy Markdown**, **Copy Word**,
+  the PDF as a chip to drag into any app, and **Open PDF**. It is the same
+  editor as Saved Walkthroughs (see
+  [Review](#review-recovery-and-storage)). A walkthrough that finishes shows
+  there unless you have unsaved edits to another. The **×** beside its title
+  closes it until a newer walkthrough finishes;
+- while one records, **Recording your walkthrough** with the Finish and
+  Screenshot shortcuts (Cancel takes the shortcuts' place under Finish). A
+  cancelled walkthrough gives the stage back to the storyboard that was
+  open;
+- with none open, how a walkthrough works and the three newest walkthroughs,
+  each opening on the stage with a click, Enter or Space.
+
+The window widens for the two sides (to about 1040 pixels at the usual type
+size, or as far as the screen allows) and gives the width back when you
+switch to another tab; a window you've already made wider stays as it is. It
+keeps the same size whatever the stage shows and whatever you change in the
+column, and a height you drag it to stays. In a window too narrow for both,
+the column goes above the stage. Screenshots grow with the room each row has,
+and in a narrow window **Open PDF** moves below the copy buttons, so nothing
+is cut off at the right edge.
 
 - **Walkthrough** starts recording. Talk as you would to a colleague looking
   over your shoulder. The column's header says how long it has recorded and
@@ -162,13 +177,13 @@ the walkthrough with its **Snap** and **Done**.
 
 ### Auto Mode on Windows and macOS
 
-Turn on **Auto Mode** under **Start Walkthrough**, then start recording.
+Turn on **Auto Mode** in the Walkthrough tab's **Capture** section, then start recording.
 Keep talking as you work. After a left or right click outside OpenWhisper,
 Auto Mode waits briefly for the screen to update and saves the clicked
 monitor. Several quick clicks become one screenshot. Each saved image
 closes a section of narration and appears in the live column.
 
-Use **Delay** under Auto Mode before starting, or in the drawing toolbar
+Use **Capture delay** on the tab before starting, or in the drawing toolbar
 while recording, to choose **Instant**, **1s**, **2s**, **3s**, **5s** or
 **10s**. The choice is remembered. A delay groups successive clicks or marks
 into one screenshot: each completed mark restarts the countdown, giving you

@@ -95,13 +95,13 @@ def _title(folder: Path, document) -> str:
     return said[:TITLE_CHARS].rsplit(" ", 1)[0] + "…"
 
 
-def _thumb(path: Path, ratio: float) -> QImage | None:
-    """The screenshot filling the strip, cropped from its top, corners rounded."""
+def _thumb(path: Path, ratio: float, box: QSize = THUMB_SIZE, radius: float = 8) -> QImage | None:
+    """The screenshot filling ``box``, cropped from its top, corners rounded."""
     reader = QImageReader(str(path))
     size = reader.size()
     if not size.isValid():
         return None
-    target = THUMB_SIZE * ratio
+    target = box * ratio
     cover = size.scaled(target, Qt.AspectRatioMode.KeepAspectRatioByExpanding)
     reader.setScaledSize(cover)
     image = reader.read()
@@ -115,7 +115,7 @@ def _thumb(path: Path, ratio: float) -> QImage | None:
     painter = QPainter(rounded)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     clip = QPainterPath()
-    clip.addRoundedRect(QRectF(rounded.rect()), 8 * ratio, 8 * ratio)
+    clip.addRoundedRect(QRectF(rounded.rect()), radius * ratio, radius * ratio)
     painter.setClipPath(clip)
     painter.drawImage(0, 0, image)
     painter.end()
@@ -123,8 +123,13 @@ def _thumb(path: Path, ratio: float) -> QImage | None:
     return rounded
 
 
-def summarize(folder: Path, today: date, ratio: float = 1.0) -> Summary:
-    """Read one capture folder for its card; any thread."""
+def summarize(folder: Path, today: date, ratio: float = 1.0, *,
+              thumb_size: QSize = THUMB_SIZE, thumb_radius: float = 8) -> Summary:
+    """Read one capture folder for its card; any thread.
+
+    ``thumb_size`` and ``thumb_radius`` shape its first screenshot, for a
+    list other than this panel's (the Walkthrough tab's recent walkthroughs).
+    """
     draft = (folder / library.DRAFT_NAME).exists()
     try:
         document = library.load_document(folder)
@@ -143,7 +148,7 @@ def summarize(folder: Path, today: date, ratio: float = 1.0) -> Summary:
     thumb = None
     if shots:
         try:
-            thumb = _thumb(shots[0], ratio)
+            thumb = _thumb(shots[0], ratio, thumb_size, thumb_radius)
         except Exception:
             logger.debug("No thumbnail for %s", folder, exc_info=True)
     title = _title(folder, document)
