@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Callable, Optional
 from urllib.parse import urlsplit
 
-from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
     QBoxLayout,
@@ -28,7 +28,6 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLayout,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
@@ -48,6 +47,7 @@ from ui_qt.widgets.buttons import Button, compact_primary_button, neutral_button
 from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets.engine_field import EngineStatus, StatusDot
+from ui_qt.widgets.flow_layout import FlowLayout
 from ui_qt.widgets.no_wheel import NoWheelSpinBox
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.settings_switch import SettingsSwitch
@@ -233,65 +233,6 @@ class _Requests:
 
 # ---- small pieces -------------------------------------------------------------
 
-class _FlowLayout(QLayout):
-    """Lays children out left to right and wraps them, each at its own width."""
-
-    def __init__(self, parent=None, *, spacing: int = 6):
-        super().__init__(parent)
-        self._items = []
-        self._gap = spacing
-        self.setContentsMargins(0, 0, 0, 0)
-
-    def addItem(self, item):
-        self._items.append(item)
-
-    def count(self):
-        return len(self._items)
-
-    def itemAt(self, index):
-        return self._items[index] if 0 <= index < len(self._items) else None
-
-    def takeAt(self, index):
-        return self._items.pop(index) if 0 <= index < len(self._items) else None
-
-    def expandingDirections(self):
-        return Qt.Orientation(0)
-
-    def hasHeightForWidth(self):
-        return True
-
-    def heightForWidth(self, width):
-        return self._arrange(QRect(0, 0, width, 0), move=False)
-
-    def setGeometry(self, rect):
-        super().setGeometry(rect)
-        self._arrange(rect, move=True)
-
-    def sizeHint(self):
-        return self.minimumSize()
-
-    def minimumSize(self):
-        size = QSize()
-        for item in self._items:
-            if not item.isEmpty():
-                size = size.expandedTo(item.minimumSize())
-        return size
-
-    def _arrange(self, rect: QRect, *, move: bool) -> int:
-        x, y, line = rect.x(), rect.y(), 0
-        for item in self._items:
-            if item.isEmpty():
-                continue
-            hint = item.sizeHint()
-            if x > rect.x() and x + hint.width() > rect.right() + 1:
-                x, y, line = rect.x(), y + line + self._gap, 0
-            if move:
-                item.setGeometry(QRect(x, y, min(hint.width(), rect.width()), hint.height()))
-            x += hint.width() + self._gap
-            line = max(line, hint.height())
-        return y + line - rect.y()
-
-
 class EventChooser(QWidget):
     """The events an item sends, as toggle chips that wrap like tags."""
 
@@ -301,7 +242,7 @@ class EventChooser(QWidget):
         super().__init__(parent)
         self.setObjectName("hooksEventChooser")
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        layout = _FlowLayout(self, spacing=6)
+        layout = FlowLayout(self, spacing=6)
         self.chips: dict[str, QPushButton] = {}
         for event_type in event_types():
             chip = QPushButton(event_label(event_type))

@@ -566,6 +566,34 @@ def test_dragged_to_its_narrowest_the_storyboard_shows_whole(window):
         assert row.width() <= review.board.width()
 
 
+def test_rows_fit_the_stage_at_its_narrowest(tmp_path):
+    """Beside the side panel the stage can be this narrow: the switch drops under the step."""
+    from ui_qt.widgets.walkthrough_tab import STAGE_MIN
+
+    widget = WalkthroughReview()
+    widget.show_folder(_large_capture(tmp_path).folder)
+    widget.show()
+    stacked = []
+    for width in (STAGE_MIN.width(), 900):
+        widget.resize(width, 700)
+        for _ in range(3):
+            QApplication.processEvents()
+        assert widget.board.width() == widget.scroll.viewport().width()
+        for row in widget.rows:
+            assert row.geometry().right() < widget.board.width()
+            if row.check.isVisible():
+                edge = row.check.mapTo(row, row.check.rect().topRight()).x()
+                assert edge < row.width()
+        stacked.append(widget.rows[0].top.stacked)
+        # The copy buttons wrap rather than squash into each other.
+        for button in (widget.pdf_button, widget.markdown_button, widget.copy_word_button,
+                       widget.chip):
+            assert button.width() >= button.sizeHint().width()
+            assert button.mapTo(widget, button.rect().topRight()).x() < widget.width()
+    assert stacked == [True, False]
+    widget.close()
+
+
 def test_a_screenshot_grows_with_its_row_and_keeps_its_shape(tmp_path):
     from PyQt6.QtWidgets import QApplication
 
