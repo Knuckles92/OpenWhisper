@@ -340,7 +340,11 @@ class Popover(QFrame):
 
     def open_under(self, anchor: QWidget, *, align_right: bool = False) -> None:
         self.setFixedWidth(self._width)
-        self.adjustSize()
+        # Content shown or hidden while this was closed is only measured on
+        # the second pass, once the first has let it lay out.
+        for _ in range(2):
+            self.body.activate()
+            self.adjustSize()
         at = anchor.mapToGlobal(QPoint(0, anchor.height() + 6))
         if align_right:
             at.setX(at.x() + anchor.width() - self._width)
