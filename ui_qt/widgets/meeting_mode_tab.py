@@ -566,6 +566,8 @@ class MeetingModeTab(QWidget):
         self._developer_mode = False
         self._built = False
         self._stage_state: Optional[str] = None
+        #: What the finalization step rows were last built from.
+        self._steps_shown: Optional[tuple] = None
         self._recent_token = 0
         _relay().loaded.connect(self._on_recent_loaded)
 
@@ -2043,6 +2045,21 @@ class MeetingModeTab(QWidget):
             current_step: 1-based index of current step.
             allow_actions: When False, hide per-row Retry / Run again.
         """
+        # Every state update lands here. Rebuilding rows that would come out
+        # the same takes keyboard focus off a Retry button for nothing.
+        shown = (
+            tuple(
+                (str(s.get("id") or ""), str(s.get("status", "pending")),
+                 str(s.get("name") or ""), str(s.get("detail") or ""))
+                for s in steps
+            ),
+            allow_actions,
+            self._speaker_rerun_allowed(),
+            self._speaker_rerun_tip(),
+        )
+        if shown == self._steps_shown:
+            return
+        self._steps_shown = shown
         while self.finalization_steps_layout.count():
             item = self.finalization_steps_layout.takeAt(0)
             widget = item.widget()
