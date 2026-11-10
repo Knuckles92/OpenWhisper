@@ -114,6 +114,7 @@ dictation in progress and never reloads the engine.
   day streak. Below that, **Across OpenWhisper** has a row for each other
   feature you have used: meetings, audio files, walkthroughs, actions,
   commands, snippets and dictionary corrections, each with a small trend.
+  Click a row to open that feature's past items or its Settings page.
   The rest shows when you dictate by weekday and hour, your top apps, and how
   your words split by kind of app, AI cleanup level and language. Only words
   you dictate count toward the streak and the milestone. Stats stay on this
