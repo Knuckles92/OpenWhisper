@@ -61,7 +61,7 @@ Downloads include `SHA256SUMS.txt` for verification. Compare your file's hash us
 
 ### macOS permissions
 
-In **System Settings → Privacy & Security**, allow **Microphone** for recording, **Screen & System Audio Recording** for meeting audio, and **Accessibility** for auto-paste. You can copy transcripts without Accessibility.
+In **System Settings → Privacy & Security**, allow **Microphone** for recording, **Screen & System Audio Recording** for meeting audio and walkthrough screenshots, and **Accessibility** for auto-paste. You can copy transcripts without Accessibility.
 
 **Settings → App → General → Set up auto-paste…** shows which app to allow. If permission breaks after an update, remove its old entry, add the app again, and restart.
 
@@ -149,6 +149,7 @@ Change shortcuts and choose **Toggle** or **Push and hold** in **Settings → Ap
 | Cancel | Numpad `-` | `Control+Option+Escape` |
 | Enable/disable program | `Ctrl+Alt+Numpad *` | `Control+Option+Shift+R` |
 | Minimize to tray | `Ctrl+Alt+M` | `Control+Option+M` |
+| Paste latest walkthrough | `Ctrl+Shift+F12` | `Control+Shift+F12` |
 
 In push-and-hold mode, double-tap the record shortcut to keep recording hands-free, then press it again to stop. Command Mode, the Scratchpad, switching dictation language, and pasting the original of your last dictation have optional shortcuts with no default. On Windows and X11, mouse side buttons (Mouse 4 and Mouse 5) can be shortcuts too.
 
