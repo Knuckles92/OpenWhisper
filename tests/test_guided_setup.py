@@ -524,6 +524,168 @@ def test_closing_a_finished_setup_keeps_it_completed(make_setup):
     assert store.get(SettingsKey.GUIDED_SETUP_STATE) == guided_setup.COMPLETED
 
 
+def test_ready_page_names_what_is_still_missing(make_setup, monkeypatch):
+    monkeypatch.setattr(setup_ui, "resolve_credential", lambda env: "")
+    setup, _, _ = make_setup({
+        SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True,
+        SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openrouter",
+    })
+    setup.speech["ready"] = False
+    setup.show_page(setup_ui.READY)
+    assert setup.ready_title.text() == "Almost ready"
+    assert not setup.ready_speech.isHidden()
+    assert not setup.ready_cleanup.isHidden()
+    assert "without cleanup" in setup.ready_cleanup_note.text()
+    setup.speech["ready"] = True
+    setup.show_page(setup_ui.CLEAN_UP)
+    setup.cleanup_switch.click()
+    setup.show_page(setup_ui.READY)
+    assert setup.ready_title.text() == "You're ready"
+    assert setup.ready_speech.isHidden() and setup.ready_cleanup.isHidden()
+
+
+@pytest.mark.parametrize("pasted", [True, False])
+def test_ready_page_confirms_a_dictation_and_shows_text_that_was_not_pasted(make_setup, pasted):
+    setup, _, _ = make_setup({SettingsKey.AUTO_PASTE: False})
+    setup.show()
+    setup.show_page(setup_ui.READY)
+    setup.dictation_received("Hello there.")
+    if pasted:
+        setup.try_box.setPlainText("Hello there.")
+    setup._try_fill_timer.timeout.emit()
+    QTest.qWait(10)
+    assert setup.try_box.toPlainText() == "Hello there."
+    assert "That worked" in setup.try_note.text()
+    assert ("clipboard too" in setup.try_note.text()) is not pasted
+    assert setup.try_note.property("tone") == "ready"
+    setup.dictation_failed("No speech detected")
+    QTest.qWait(10)
+    assert "No speech detected" in setup.try_note.text()
+    assert setup.try_note.property("tone") == "attention"
+    setup.begin(welcome=False)
+    setup.show_page(setup_ui.READY)
+    assert "That worked" not in setup.try_note.text()
+    assert setup.try_box.toPlainText() == ""
+
+
+def test_dictation_elsewhere_does_not_touch_the_try_box(make_setup):
+    setup, _, _ = make_setup()
+    setup.show()
+    setup.show_page(setup_ui.OUTPUT)
+    setup.dictation_received("Hello there.")
+    setup.show_page(setup_ui.READY)
+    assert not setup._try_fill_timer.isActive()
+    assert setup.try_box.toPlainText() == ""
+    assert "That worked" not in setup.try_note.text()
+
+
+# ---- the record step ----
+
+
+class _Microphone:
+    def __init__(self, starts=True):
+        self.starts = starts
+        self.last_start_error = "" if starts else "Device unavailable"
+        self.closed = False
+
+    def set_audio_level_callback(self, callback):
+        self.heard = callback
+
+    def start_recording(self):
+        return self.starts
+
+    def cancel_recording(self):
+        self.closed = True
+
+    def cleanup(self):
+        self.closed = True
+
+
+def test_microphone_test_shows_a_level_and_closes_when_the_step_is_left(make_setup):
+    setup, _, _ = make_setup()
+    setup.show()
+    microphone = _Microphone()
+    setup.mic_check._recorder_factory = lambda: microphone
+    setup.mic_test_button.click()
+    assert setup.mic_test_button.text() == "Stop"
+    assert "Nothing is recorded" in setup.mic_check.status.text()
+    microphone.heard(0.001)
+    assert "works" not in setup.mic_check.status.text()
+    microphone.heard(0.08)
+    assert setup.mic_check.bar.value() > 30
+    assert "works" in setup.mic_check.status.text()
+    setup.show_page(setup_ui.CLEAN_UP)
+    assert microphone.closed
+    assert setup.mic_test_button.text() == "Test"
+    assert not setup.mic_check.running
+
+
+def test_microphone_test_reports_silence_and_a_microphone_that_will_not_open(make_setup):
+    setup, _, _ = make_setup()
+    setup.show()
+    quiet = _Microphone()
+    setup.mic_check._recorder_factory = lambda: quiet
+    setup.mic_test_button.click()
+    setup.mic_check._quiet_timer.timeout.emit()
+    assert "Not hearing anything" in setup.mic_check.status.text()
+    setup.mic_test_button.click()
+    assert quiet.closed and "Didn't hear anything" in setup.mic_check.status.text()
+    setup.mic_check._recorder_factory = lambda: _Microphone(starts=False)
+    setup.mic_test_button.click()
+    assert "Device unavailable" in setup.mic_check.status.text()
+    assert setup.mic_test_button.text() == "Test"
+    assert not setup.mic_check.running
+
+
+def test_press_or_hold_saves_through_settings_and_restores_a_failed_save(make_setup):
+    setup, settings, store = make_setup()
+    settings.on_recording_trigger_mode_changed = MagicMock()
+    assert setup.trigger.currentData() == "toggle"
+    with patch.object(store, "save_setting", side_effect=OSError("Disk full")):
+        setup.trigger.setCurrentIndex(1)
+    assert setup.trigger.currentData() == "toggle"
+    assert settings.record_mode_combo.currentData() == "toggle"
+    assert "Disk full" in setup.error.text()
+    setup.trigger.setCurrentIndex(1)
+    assert store.get(SettingsKey.RECORDING_TRIGGER_MODE) == "push_hold"
+    settings.on_recording_trigger_mode_changed.assert_called_once_with("push_hold")
+    assert "Hold it while you speak" in setup.shortcut_detail.text()
+    assert setup.error.isHidden()
+
+
+def test_record_step_tells_laptop_users_how_to_leave_the_number_pad(make_setup):
+    setup, _, _ = make_setup({SettingsKey.HOTKEYS: {"record_toggle": "kp *"}})
+    assert "No number pad? Choose Change." in setup.shortcut_detail.text()
+    setup.show_page(setup_ui.READY)
+    assert "Choose Change" not in setup.keycap_help.text()
+
+
+# ---- getting around ----
+
+
+def test_steps_jump_and_enter_continues(make_setup):
+    setup, _, store = make_setup()
+    setup.show()
+    QTest.qWait(20)
+    assert setup.next_button.isDefault() and setup.focusWidget() is setup.next_button
+    setup.step_buttons[2].click()
+    assert setup.page == setup_ui.OUTPUT
+    setup.step_buttons[0].click()
+    assert setup.page == setup_ui.RECORD
+    QTest.keyClick(setup, Qt.Key.Key_Return)
+    assert setup.page == setup_ui.CLEAN_UP
+    assert store.get(SettingsKey.GUIDED_SETUP_STATE) == guided_setup.STARTED
+
+
+def test_a_finished_setup_offers_close_instead_of_skip(make_setup):
+    setup, _, _ = make_setup()
+    assert setup.skip_button.text() == "Skip setup"
+    setup.show_page(setup_ui.OUTPUT)
+    setup.next_button.click()
+    setup.begin(welcome=False)
+    assert setup.skip_button.text() == "Close"
+
+
 # ---- layout ----
 
 

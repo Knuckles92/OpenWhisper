@@ -3,8 +3,9 @@
 A first-run window that takes a new user from install to a working dictation:
 a welcome page, three steps (Record → Clean up → Output), and a Ready page
 with a box to try dictating in. Code: `ui_qt/dialogs/guided_setup.py`
-(window), `services/guided_setup.py` (eligibility, state, model status),
-and `UIController.offer_guided_setup` / `open_guided_setup`.
+(window), `ui_qt/widgets/microphone_check.py` (microphone test),
+`services/guided_setup.py` (eligibility, state, model status), and
+`UIController.offer_guided_setup` / `open_guided_setup`.
 
 ## When it appears
 
@@ -23,6 +24,13 @@ and `UIController.offer_guided_setup` / `open_guided_setup`.
   page saves `completed`. Reopening a completed setup never downgrades it.
   A failed save shows an error and leaves the window open to retry.
 - File → Guided setup… reopens it at any time, straight to the first step.
+  After a finished setup the footer link reads "Close" instead of "Skip setup".
+
+## Getting around
+
+- The three step tabs are buttons: any step can be opened in any order.
+- Enter presses Continue (or the focused button). Each page opens with
+  focus on Continue, never on the header's "All settings" link.
 
 ## What each page does
 
@@ -30,9 +38,16 @@ and `UIController.offer_guided_setup` / `open_guided_setup`.
   Settings window is not built until "Get started", so the offer costs
   nothing at startup.
 - **Record:**
-  - Microphone: the Settings inventory; saved backups are kept.
+  - Microphone: the Settings inventory; saved backups are kept. "Test"
+    opens the chosen microphone (`ui_qt/widgets/microphone_check.py`) and
+    shows a level bar with a verdict: hearing you, nothing heard, or why it
+    could not open. Nothing is kept, and the microphone closes on Stop, after
+    15 seconds, or on leaving the step.
   - Shortcut: capture uses Settings' conflict checks. The help text follows
-    the trigger mode and names the number pad for keypad keys.
+    the trigger mode and names the number pad for keypad keys, with a
+    pointer to Change for keyboards without one.
+  - Press or hold: the Hotkeys page's trigger mode (press to start and stop,
+    or hold to talk).
   - Speech engine: says plainly whether the local model (and its runtime)
     is downloaded. "Get it now" opens the model page.
 - **Clean up:**
@@ -48,8 +63,15 @@ and `UIController.offer_guided_setup` / `open_guided_setup`.
 - **Ready:** the shortcut as a keycap, a try-it box, and a line on where
   the text will land given the output choices. The window is marked as
   OpenWhisper's own (`openwhisperHotkeyWindow`), so the in-app shortcut
-  fallback works there on macOS and Linux. A missing model is called out
-  with "Get it now".
+  fallback works there on macOS and Linux.
+  - What is still missing is listed above the box: a speech model that is
+    not downloaded ("Get it now"; the page is then titled "Almost ready"),
+    and cleanup that is on without its API key ("Add key").
+  - The controller forwards `transcription_received` and
+    `transcription_error_received`. A dictation made on this page turns the
+    line under the box into "That worked" or the failure reason. If nothing
+    was pasted into the box (auto-paste off, or blocked), the text is put
+    there after a short wait.
 
 Every control is a projection: changes go through the Settings window's
 own save handlers, confirmations and runtime callbacks, and a failed save
@@ -61,6 +83,8 @@ provider, sends sample text, downloads a model, or resets preferences.
 `tests/test_guided_setup.py` covers:
 - eligibility, and the welcome page (dismissal, retry, lazy Settings);
 - every step's save path and failure restore;
-- privacy and key copy, model status, the Ready page and staying completed;
+- the microphone test, press or hold, step tabs and Enter;
+- privacy and key copy, model status, the Ready page (what is missing,
+  dictation feedback) and staying completed;
 - layouts at 540 px / 130%;
 - the controller's offer timing.

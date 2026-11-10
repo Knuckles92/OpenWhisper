@@ -1445,6 +1445,13 @@ class UIController(QObject):
                 open_destination=self.open_settings_destination,
                 open_all_settings=self.open_settings_dialog,
             )
+            # The last page answers the user's first dictation.
+            self.transcription_received.connect(
+                lambda text, _raw=None: self._guided_setup_dialog.dictation_received(text)
+            )
+            self.transcription_error_received.connect(
+                self._guided_setup_dialog.dictation_failed
+            )
         dialog = self._guided_setup_dialog
         if not dialog.isVisible():
             dialog.begin(welcome=welcome)
