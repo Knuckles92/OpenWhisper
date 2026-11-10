@@ -721,14 +721,18 @@ def test_canceled_job_does_not_restart_speech_worker(monkeypatch):
 
 
 @pytest.mark.parametrize("backend", ["Local Whisper", "Parakeet", "Qwen3-ASR", "Nemotron Streaming", "Moonshine"])
-def test_main_window_keeps_local_controls_visible(backend):
+def test_a_tab_keeps_local_controls_visible(backend):
     from config import config
-    from ui_qt.main_window import MainWindow
-    window = SimpleNamespace(transcription_tabs=[Mock(), Mock()])
+    from ui_qt.widgets.quick_record_tab import QuickRecordTab
+
     assert backend in config.MODEL_VALUE_MAP
-    MainWindow._apply_local_engine_visibility(window, backend)
-    for tab in window.transcription_tabs:
-        tab.set_local_engine_visible.assert_called_once_with(True)
+    tab = QuickRecordTab()
+    try:
+        tab.set_backend(backend)
+        assert not tab.local_engine.isHidden()
+        assert tab.api_server.isHidden()
+    finally:
+        tab.close()
 
 
 def test_cancel_during_runtime_check_does_not_start_worker(monkeypatch):

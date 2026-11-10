@@ -101,6 +101,7 @@ from ui_qt.dialogs.settings_fields import (
     settings_caption,
     settings_field,
 )
+from ui_qt.utils.engine_selection import engine_selection_relay
 from ui_qt.utils.icons import design_icon as _design_icon
 from ui_qt.widgets import Button, ElidingComboBox, InfoTile
 from ui_qt.widgets.buttons import neutral_button
@@ -318,6 +319,12 @@ class ModelAssignments(QObject):
         relay.meeting_remote_checked.connect(self._on_meeting_remote_checked)
         relay.local_servers_detected.connect(self._on_local_servers_detected)
         relay.speaker_model_downloaded.connect(self._on_speaker_model_downloaded)
+        engine_selection_relay().changed.connect(self._on_engine_selection_saved)
+
+    def _on_engine_selection_saved(self) -> None:
+        """The engine was saved, here or from the main window: show it."""
+        self._load_engine_and_runtime()
+        self._refresh_cached_model_state(self._cached)
 
     def __getattr__(self, name):
         destination = MODEL_CONTROL_DESTINATIONS.get(name)

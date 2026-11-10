@@ -1408,7 +1408,6 @@ def test_the_host_switches_as_if_the_model_were_picked_there():
     controller._switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
     assert settings_manager.load_all_settings()[SettingsKey.LOCAL_ASR_MODELS]["nemotron"] == "nemotron-3.5"
     controller.ui_controller.select_transcription_backend.assert_called_once_with("Nemotron Streaming")
-    controller.ui_controller.refresh_local_engine_controls.assert_called_once()
     controller.reload_whisper_model.assert_called_once()
     assert controller._reload_note == "Switching to Nemotron 3.5 ASR 0.6B for laptop..."
 

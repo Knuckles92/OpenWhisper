@@ -218,16 +218,20 @@ class TestOneLanguageControl:
             finally:
                 tab.close()
 
-    def test_a_languages_change_refreshes_the_main_window_fields(self):
-        from ui_qt.ui_controller import UIController
+    def test_a_languages_change_reaches_the_main_window_fields(self):
+        from ui_qt.widgets.quick_record_tab import QuickRecordTab
 
-        controller = UIController()
+        settings_manager.update_settings({SettingsKey.SELECTED_MODEL: "parakeet"})
+        tab = QuickRecordTab()
         try:
-            controller.refresh_local_engine_controls = MagicMock()
-            controller._on_settings_page_changed("languages")
-            controller.refresh_local_engine_controls.assert_called_once_with()
+            tab.sync_engine_selection()
+            assert not tab.local_engine.language_field.isHidden()
+            # Saving the languages is all Settings does; the tab hears it.
+            settings_manager.mutate_settings(
+                lambda settings: dictation_language.set_chosen(settings, ["en", "es"]))
+            assert tab.local_engine.language_field.isHidden()
         finally:
-            controller.cleanup()
+            tab.close()
 
 
 class TestTrayShowsWhatIsInEffect:

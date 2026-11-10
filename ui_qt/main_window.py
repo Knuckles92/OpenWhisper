@@ -430,7 +430,6 @@ class MainWindow(QMainWindow):
         self.is_recording = False
         # The recording in progress is a walkthrough, which its own tab finishes.
         self.walkthrough_active = False
-        self.current_model = config.MODEL_CHOICES[0]
         self._force_quit = False
         # Updated by UIController after QSystemTrayIcon probes the desktop.
         # Defaulting to True preserves construction behavior in lightweight
@@ -727,8 +726,7 @@ class MainWindow(QMainWindow):
                 widget.upload_files_requested.connect(self.upload_files_requested.emit)
                 widget.cancel_requested.connect(self.upload_cancel_requested.emit)
                 widget.copy_requested.connect(self.upload_copy_requested.emit)
-                widget.set_model_selection(settings_manager.load_model_selection())
-                self._apply_local_engine_visibility(self.current_model)
+                widget.sync_engine_selection()
                 for method, (args, kwargs) in self._shared_tab_updates.items():
                     getattr(widget, method)(*args, **kwargs)
             elif key == "walkthrough":
@@ -1005,8 +1003,6 @@ class MainWindow(QMainWindow):
             saved_model = settings_manager.load_model_selection()
             for tab in MainWindow.existing_transcription_tabs(self):
                 tab.set_model_selection(saved_model)
-            self.current_model = self.quick_record_tab.current_model
-            self._apply_local_engine_visibility(self.current_model)
             logger.info(f"Loaded saved model selection: {saved_model}")
         except Exception as e:
             logger.error(f"Failed to load saved settings: {e}")
@@ -1102,36 +1098,11 @@ class MainWindow(QMainWindow):
         self.record_canceled.emit()
 
     def _on_model_changed(self, model_name: str):
-        self.current_model = model_name
-
-        # Sync the other tabs without re-emitting the signal
-        for tab in MainWindow.existing_transcription_tabs(self):
-            tab.set_backend(model_name)
-
-        self._apply_local_engine_visibility(model_name)
-
+        """A tab chose a backend. Saving it is what brings the other tabs along."""
         self.model_changed.emit(model_name)
 
-    def _apply_local_engine_visibility(self, model_name: str):
-        from services.local_asr.catalog import BACKENDS
-        backend = config.MODEL_VALUE_MAP.get(model_name)
-        is_local = backend == "local_whisper" or backend in BACKENDS
-        tabs = (MainWindow.existing_transcription_tabs(self) if hasattr(self, "existing_transcription_tabs")
-                else self.transcription_tabs)
-        for tab in tabs:
-            tab.set_local_engine_visible(is_local)
-
     def _on_engine_settings_changed(self):
-        """Keep both tabs' engine panels in sync, then notify listeners.
-
-        The emitting widget has already persisted the three keys to settings, so
-        both panels reload from that canonical source (signals blocked inside
-        ``load_from_settings``). This avoids depending on ``sender()`` identity
-        and guarantees the two tabs always agree. ``whisper_engine_changed`` then
-        triggers the controller's background reload.
-        """
-        for tab in MainWindow.existing_transcription_tabs(self):
-            tab.local_engine.load_from_settings()
+        """A tab saved its model, device or quant; the controller reloads the engine."""
         self.whisper_engine_changed.emit()
 
     def _on_live_preview_changed(self):

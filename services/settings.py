@@ -906,6 +906,10 @@ _HF_HUB_OFFLINE_ENV: Final[str] = "HF_HUB_OFFLINE"
 _HF_HUB_OFFLINE_TRUTHY: Final[Tuple[str, ...]] = ("1", "on", "true", "yes")
 
 
+#: Stands for a key that is not saved, which is not the same as saved None.
+_UNSET: Final[Any] = object()
+
+
 class SettingsManager:
     """Handles loading and saving application settings."""
 
@@ -917,6 +921,8 @@ class SettingsManager:
         self._lock = threading.RLock()
         self._cached_signature = None
         self._cached_settings = None
+        # (keys, callback) pairs told when a save changes one of their keys.
+        self._watchers: List[Tuple[frozenset, Callable[[frozenset], None]]] = []
         # The module singleton is built when settings are first imported,
         # after any pending backup restore and before anything this launch
         # can write the file, so this tells a brand-new install apart.
@@ -1020,11 +1026,57 @@ class SettingsManager:
                 self._cached_settings = None
             return settings
 
+    def watch(
+        self, keys, callback: Callable[[frozenset], None],
+    ) -> Callable[[], None]:
+        """Call ``callback(changed_keys)`` after a save changes any of ``keys``.
+
+        Whoever writes a setting need not know who shows it. The callback
+        runs on the thread that saved, after the file is replaced; a save
+        through this manager is the only change it hears of. Returns a
+        function that stops the watch.
+        """
+        entry = (frozenset(keys), callback)
+        with self._lock:
+            self._watchers.append(entry)
+
+        def stop() -> None:
+            with self._lock:
+                if entry in self._watchers:
+                    self._watchers.remove(entry)
+
+        return stop
+
+    def _watched_values(self, settings: Mapping[str, Any]) -> Dict[str, Any]:
+        """Copies of the watched keys' values, taken before a save changes them."""
+        return {
+            key: deepcopy(settings[key]) if key in settings else _UNSET
+            for keys, _callback in self._watchers for key in keys
+        }
+
+    def _tell_watchers(self, before: Dict[str, Any], settings: Mapping[str, Any]) -> None:
+        changed = frozenset(
+            key for key, value in before.items() if settings.get(key, _UNSET) != value
+        )
+        if not changed:
+            return
+        with self._lock:
+            watchers = list(self._watchers)
+        for keys, callback in watchers:
+            if keys & changed:
+                try:
+                    callback(keys & changed)
+                except Exception:
+                    logger.exception("A settings watcher failed")
+
     def save_all_settings(self, settings: Dict[str, Any]) -> None:
         """Persist the complete settings mapping."""
         try:
             with self._lock:
+                before = (self._watched_values(self._load_all_settings_unlocked())
+                          if self._watchers else {})
                 self._save_all_settings_unlocked(settings)
+            self._tell_watchers(before, settings)
             logger.info("All settings saved successfully")
         except Exception as e:
             logger.error(f"Failed to save all settings: {e}")
@@ -1069,9 +1121,11 @@ class SettingsManager:
             raise TypeError("mutator must be callable")
         with self._lock:
             settings = self._load_all_settings_unlocked(strict=True)
+            before = self._watched_values(settings)
             result = mutator(settings)
             self._save_all_settings_unlocked(settings)
-            return result
+        self._tell_watchers(before, settings)
+        return result
 
     def save_setting(self, key: str, value: Any) -> None:
         try:
