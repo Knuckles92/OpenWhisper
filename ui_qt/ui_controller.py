@@ -1341,6 +1341,26 @@ class UIController(QObject):
 
         show_stats(self)
 
+    def open_stats_feature(self, key: str) -> None:
+        """Open where a Stats row's feature lives: its past items, or its Settings page."""
+        from ui_qt.dialogs import settings_destinations as destinations
+
+        tabs = {
+            "meetings": TabbedContentWidget.TAB_MEETING_MODE,
+            "files": TabbedContentWidget.TAB_UPLOAD_FILE,
+            "walkthroughs": TabbedContentWidget.TAB_WALKTHROUGH,
+        }
+        pages = {
+            "actions": destinations.ACTIONS,
+            "commands": destinations.COMMANDS,
+            "snippets": destinations.SNIPPETS,
+            "dictionary": destinations.DICTIONARY,
+        }
+        if key in tabs:
+            self.main_window.show_past_items(tabs[key])
+        elif key in pages:
+            self.open_settings_destination(pages[key])
+
     def populate_language_menu(self, menu) -> None:
         from ui_qt.widgets import language_menu
 

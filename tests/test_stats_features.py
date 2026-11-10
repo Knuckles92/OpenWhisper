@@ -343,3 +343,77 @@ def test_a_feature_trend_words_its_columns_by_what_it_counts(_session_qt_applica
     trend = BarChart(22, value_text=lambda count: f"{count} sent")
     trend.set_bars([Bar("Mon", 2), Bar("Today", 1)], "Actions over this span")
     assert trend.accessibleDescription() == "Mon: 2 sent; Today: 1 sent"
+
+
+def test_a_feature_row_opens_its_feature_by_click_or_key(synchronous):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtWidgets import QApplication
+
+    _seed_window()
+    dialog = synchronous.StatsDialog()
+    asked = []
+    dialog.feature_requested.connect(asked.append)
+    dialog.show()
+    rows = {row.key: row for row in dialog.findChildren(synchronous.FeatureRow) if row.isVisible()}
+    assert list(rows) == ["files", "walkthroughs", "actions", "snippets"]
+    assert rows["files"].toolTip() == "Open History on the Upload File tab"
+    assert rows["files"].accessibleName() == "Audio files: 1 file · 10 min of audio · 2 words"
+
+    QApplication.processEvents()
+    assert rows["files"].width() > 100
+
+    QTest.mouseClick(rows["files"], Qt.MouseButton.LeftButton)
+    QTest.mouseClick(rows["actions"], Qt.MouseButton.RightButton)
+    rows["snippets"].setFocus()
+    QTest.keyClick(rows["snippets"], Qt.Key.Key_Space)
+    QTest.keyClick(rows["snippets"], Qt.Key.Key_Return)
+
+    assert asked == ["files", "snippets", "snippets"]
+    assert dialog.isVisible()
+    dialog.close()
+
+
+def test_show_stats_sends_a_row_to_the_app(synchronous, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(synchronous, "_window", None)
+    opened = []
+    synchronous.show_stats(SimpleNamespace(main_window=None, open_stats_feature=opened.append))
+    synchronous._window.feature_requested.emit("meetings")
+    assert opened == ["meetings"]
+    synchronous._window.close()
+
+
+def test_each_feature_opens_its_past_items_or_its_settings_page():
+    from types import SimpleNamespace
+
+    from ui_qt.ui_controller import UIController
+    from ui_qt.widgets import TabbedContentWidget
+
+    tabs, pages = [], []
+    app = SimpleNamespace(main_window=SimpleNamespace(show_past_items=tabs.append),
+                          open_settings_destination=pages.append)
+    for key in _stats().FEATURES + ("unknown",):
+        UIController.open_stats_feature(app, key)
+
+    assert tabs == [TabbedContentWidget.TAB_MEETING_MODE, TabbedContentWidget.TAB_UPLOAD_FILE,
+                    TabbedContentWidget.TAB_WALKTHROUGH]
+    assert pages == ["actions", "commands", "snippets", "dictionary"]
+
+
+@pytest.mark.parametrize("expanded", [False, True])
+def test_the_main_window_shows_a_tab_with_its_list_open(expanded):
+    from types import SimpleNamespace
+
+    from ui_qt.main_window import MainWindow
+
+    calls = []
+    window = SimpleNamespace(
+        restore_from_tray=lambda: calls.append("restore"),
+        tabbed_content=SimpleNamespace(set_current_index=lambda index: calls.append(index)),
+        history_sidebar=SimpleNamespace(is_expanded=expanded),
+        toggle_history=lambda: calls.append("open list"),
+    )
+    MainWindow.show_past_items(window, 2)
+    assert calls == ["restore", 2] + ([] if expanded else ["open list"])

@@ -125,6 +125,17 @@ def _feature_text(feature) -> tuple[str, str]:
     return "Dictionary", f"{_count(count, 'correction')} applied"
 
 
+#: Where clicking a feature's row leads, for its tooltip and screen readers.
+_OPENS_TEXT = {
+    "meetings": "Open Past Meetings",
+    "files": "Open History on the Upload File tab",
+    "walkthroughs": "Open your walkthroughs",
+    "actions": "Open Actions in Settings",
+    "commands": "Open Commands in Settings",
+    "snippets": "Open Snippets in Settings",
+    "dictionary": "Open the dictionary in Settings",
+}
+
 #: What one column of a feature's trend counts, for hover and screen readers.
 _TREND_TEXT = {
     "meetings": lambda n: _count(n, "meeting"),
@@ -274,6 +285,43 @@ def _section(title: str) -> tuple[QFrame, QVBoxLayout, QHBoxLayout]:
     return frame, column, heading
 
 
+class FeatureRow(QFrame):
+    """A feature's name and detail; a click, Space or Enter opens where it lives."""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, key: str, name: str, detail: str, parent=None):
+        super().__init__(parent)
+        self.key = key
+        self.setObjectName("statsFeatureRow")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(_OPENS_TEXT[key])
+        self.setAccessibleName(f"{name}: {detail}")
+        self.setAccessibleDescription(_OPENS_TEXT[key])
+        column = QVBoxLayout(self)
+        column.setContentsMargins(8, 4, 8, 4)
+        column.setSpacing(1)
+        line = WrappedLabel(detail)
+        line.setObjectName("statsMuted")
+        for label in (_label(name, "statsAppName"), line):
+            # A click on the text is a click on the row.
+            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            column.addWidget(label)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+            return
+        super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.clicked.emit()
+            return
+        super().keyPressEvent(event)
+
+
 class _Breakdown:
     """One line of the breakdown section: a caption, its shares in words, and a bar."""
 
@@ -311,6 +359,9 @@ class _Breakdown:
 
 class StatsDialog(QDialog):
     """Words dictated over a chosen span, then a row for each other thing the app did."""
+
+    #: A feature row was activated; carries its FEATURES key.
+    feature_requested = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -520,11 +571,16 @@ class StatsDialog(QDialog):
         return frame
 
     def _build_features(self) -> QFrame:
-        frame, column, _heading = _section("Across OpenWhisper")
+        frame, column, heading = _section("Across OpenWhisper")
+        # The rows pad their text by 8 for the hover wash, so the section
+        # gives up 8 on the left and the heading takes it back: text lines up.
+        margins = column.contentsMargins()
+        column.setContentsMargins(margins.left() - 8, margins.top(), margins.right(), margins.bottom())
+        heading.setContentsMargins(8, 0, 0, 0)
         self.features_grid = QGridLayout()
         self.features_grid.setContentsMargins(0, 0, 0, 0)
         self.features_grid.setHorizontalSpacing(12)
-        self.features_grid.setVerticalSpacing(10)
+        self.features_grid.setVerticalSpacing(2)
         self.features_grid.setColumnStretch(0, 1)
         column.addLayout(self.features_grid)
         return frame
@@ -732,17 +788,9 @@ class StatsDialog(QDialog):
             if not feature.count:
                 detail = "None in this span"
             row = len(self.feature_rows)
-            text = QVBoxLayout()
-            text.setSpacing(1)
-            text.addWidget(_label(name, "statsAppName"))
-            line = WrappedLabel(detail)
-            line.setObjectName("statsMuted")
-            text.addWidget(line)
-            holder = QWidget()
-            holder.setObjectName("statsContent")
-            holder.setLayout(text)
-            text.setContentsMargins(0, 0, 0, 0)
-            self.features_grid.addWidget(holder, row, 0)
+            opener = FeatureRow(key, name, detail)
+            opener.clicked.connect(lambda key=key: self.feature_requested.emit(key))
+            self.features_grid.addWidget(opener, row, 0)
             trend = BarChart(22, tone="accent", value_text=_TREND_TEXT[key])
             trend.setFixedWidth(round(72 * current_ui_font_scale()))
             trend.set_bars(
@@ -861,6 +909,9 @@ def show_stats(ui) -> None:
     dialog = _window
     if dialog is None or sip.isdeleted(dialog):
         dialog = _window = StatsDialog(ui.main_window)
+        opener = getattr(ui, "open_stats_feature", None)
+        if callable(opener):
+            dialog.feature_requested.connect(opener)
     if dialog.isVisible():
         dialog.reload()
     dialog.show()

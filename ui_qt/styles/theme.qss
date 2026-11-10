@@ -5312,6 +5312,20 @@ QWidget#statsStat {
     border: none;
 }
 
+QFrame#statsFeatureRow {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+}
+
+QFrame#statsFeatureRow:hover {
+    background-color: rgba(@slate-text-3-rgb, 0.14);
+}
+
+QFrame#statsFeatureRow:focus {
+    border-color: @accent;
+}
+
 QFrame#statsRule {
     background-color: @slate-border;
     border: none;

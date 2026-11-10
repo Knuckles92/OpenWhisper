@@ -1963,6 +1963,13 @@ class MainWindow(QMainWindow):
         self.tabbed_content.set_current_index(TabbedContentWidget.TAB_WALKTHROUGH)
         self.walkthrough_tab.show_walkthrough(folder, ask=True)
 
+    def show_past_items(self, tab_index: int) -> None:
+        """Bring the window forward on a tab, with that tab's list of past items open."""
+        self.restore_from_tray()
+        self.tabbed_content.set_current_index(tab_index)
+        if not self.history_sidebar.is_expanded:
+            self.toggle_history()
+
     def walkthrough_finished(self, folder) -> None:
         """Show a walkthrough that just finished, unless edits to another are open."""
         tab = self._screen_widgets.get("walkthrough")
