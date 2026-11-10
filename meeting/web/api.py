@@ -884,10 +884,8 @@ def _register_speakers_rerun_route(app: FastAPI, ctx: _AppContext) -> None:
                 detail="a post-meeting pass is already running for this meeting",
             )
         store = ctx.meeting_store(meeting_id)
-        if _review_running(store):
-            raise HTTPException(status_code=409, detail="Wait for insight review to finish")
-        if _report_in_flight(store):
-            raise HTTPException(status_code=409, detail="Wait for the report being written to finish")
+        # Also covers a just-ended meeting whose own end passes still run.
+        _refuse_rerun_while_busy(store)
         ctx.review_stores.pop(meeting_id, None)
         job = functools.partial(
             rerun_speakers, repository, meeting_id,
@@ -910,6 +908,8 @@ def _register_history_admin_routes(app: FastAPI, ctx: _AppContext) -> None:
         store = ctx.meeting_store(meeting_id)
         if meeting_id in ctx.insights_running or _review_running(store):
             raise HTTPException(status_code=409, detail="Wait for the meeting update to finish before deleting")
+        # A just-ended meeting's end passes, or a report, are still writing.
+        _refuse_rerun_while_busy(store)
         ctx.review_stores.pop(meeting_id, None)
         await ctx.saved_meeting(meeting_id)
         options = getattr(engine, "options", None)

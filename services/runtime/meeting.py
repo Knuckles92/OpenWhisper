@@ -1782,6 +1782,12 @@ class MeetingRuntime:
                 "Finish the current meeting first."
             )
             return
+        if self.meeting_busy(target_id):
+            # Finishing in the foreground, or its post-meeting steps re-running.
+            self.controller.meeting_status_update.emit(
+                "Wait for this meeting's post-meeting steps to finish."
+            )
+            return
         threading.Thread(
             target=self._delete_past_meeting_worker,
             args=(target_id, bool(delete_recordings)),
@@ -1843,6 +1849,13 @@ class MeetingRuntime:
                 and live_id
             ):
                 skip_ids.add(str(live_id))
+            elif live_id and self.meeting_busy(str(live_id)):
+                # Capture ended but the end passes are still writing.
+                skip_ids.add(str(live_id))
+            with self._lock:
+                retry_id = self._retry_meeting_id
+            if retry_id:
+                skip_ids.add(str(retry_id))
             repository = self._repository()
             clear_meetings(
                 repository,

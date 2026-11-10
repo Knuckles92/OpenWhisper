@@ -1404,6 +1404,21 @@ class TestEndLifecycle:
         assert "recovery" in fin["message"].lower()
         assert repo.get_meeting(engine.meeting_id)["status"] == "needs_recovery"
 
+    def test_end_needs_recovery_after_redecode_reaches_a_terminal_state(
+            self, make_engine, repo, fakes, monkeypatch):
+        engine = make_engine(cloud_enabled=True, end_redecode=True)
+        engine.start()
+        engine.repository.count_unfinished_chunks = lambda _meeting_id: 2
+        monkeypatch.setattr(engine, "_run_offline_final_pass", lambda **kwargs: True)
+        engine.end()
+        engine._end_thread.join(timeout=10.0)
+        assert fakes.schedulers[0].consolidations == 0
+        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        assert fin["status"] == "unavailable"
+        assert "recovery" in fin["message"].lower()
+        assert not [s for s in fin["steps"] if s["status"] in ("pending", "running")]
+        assert repo.get_meeting(engine.meeting_id)["status"] == "needs_recovery"
+
     def test_end_failed_consolidation_outcome(self, make_engine, repo, fakes):
         from meeting.agent.scheduler import ConsolidationOutcome
 

@@ -1221,9 +1221,6 @@ class MeetingEngine:
         end.update_step("speaker_id", *speaker_step_outcome(speaker_result))
 
     def _end_insights(self, end: _EndRun) -> None:
-        if end.run_cloud and not end.complete and not end.offline_ok:
-            end.run_cloud = False
-            self._set_finalization("unavailable", _RECOVERY_PENDING_MESSAGE)
         if end.run_cloud and end.scheduler is not None:
             self._run_end_cloud_passes(end)
         else:
@@ -1365,8 +1362,26 @@ class MeetingEngine:
             self._finish_end_after_speakers(end)
         elif not end.cloud_enabled:
             self._set_finalization("disabled", _INSIGHTS_OFF_MESSAGE)
-        elif not end.complete and not end.offline_ok:
-            self._set_finalization("unavailable", _RECOVERY_PENDING_MESSAGE)
+        elif not end.complete:
+            # Cloud passes wait for recovery even when the re-decode worked;
+            # without a terminal state here the dashboard would keep showing
+            # the re-decode as running.
+            if not end.will_offline:
+                self._set_finalization("unavailable", _RECOVERY_PENDING_MESSAGE)
+                return
+            end.update_step(
+                "finalize", "completed",
+                "Saved meeting state after re-transcription.", emit=False,
+            )
+            self._set_finalization(
+                "unavailable",
+                _RECOVERY_PENDING_MESSAGE,
+                stage="unavailable",
+                current_step=end.total_steps,
+                total_steps=end.total_steps,
+                step_details=_RECOVERY_PENDING_MESSAGE,
+                steps=end.steps,
+            )
         elif not end.want_polish and not end.want_report:
             self._set_finalization(
                 "completed",
@@ -1396,7 +1411,9 @@ class MeetingEngine:
         )
 
     def _wrap_up_end(self, end: _EndRun) -> None:
-        if end.complete or end.offline_ok:
+        # A meeting awaiting recovery takes no final highlights pass (the
+        # pass itself refuses that status), so only a complete one asks.
+        if end.complete:
             self._finalize_highlights()
         if end.scheduler is not None:
             try:
