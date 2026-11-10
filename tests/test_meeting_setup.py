@@ -21,6 +21,7 @@ def test_inspect_models_checks_selected_meeting_runtime(monkeypatch, cached):
     from services.local_asr import catalog
 
     monkeypatch.setattr(meeting_setup.settings_manager, "load_all_settings", lambda: {
+        SettingsKey.MEETING_SPEECH_SEPARATE: True,
         SettingsKey.MEETING_ASR_MODEL: "parakeet-v3",
         SettingsKey.MEETING_SPEAKER_ID_BACKEND: "off",
     })
@@ -39,6 +40,7 @@ def test_inspect_remote_does_not_require_local_speech_models(monkeypatch):
     from services import components, hf_access
 
     monkeypatch.setattr(meeting_setup.settings_manager, "load_all_settings", lambda: {
+        SettingsKey.MEETING_SPEECH_SEPARATE: True,
         SettingsKey.MEETING_ASR_SOURCE: "remote",
     })
     monkeypatch.setattr(components, "speaker_model_path", lambda: "speaker.onnx")

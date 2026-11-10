@@ -62,7 +62,6 @@ def _controller(backend, answer):
         is_transcribing=lambda: False,
         ui_controller=SimpleNamespace(
             show_use_gpu_dialog=lambda plan: (calls.append(("dialog", plan)), answer)[1],
-            refresh_local_engine_controls=lambda: calls.append(("refresh",)),
         ),
         ensure_local_model_available=lambda: calls.append(("ensure",)),
         request_component_install=lambda component: calls.append(("install", component)),

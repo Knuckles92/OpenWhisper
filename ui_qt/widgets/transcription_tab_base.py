@@ -18,6 +18,7 @@ from services.settings import (
     settings_manager,
 )
 from ui_qt.overlay_state import OverlayState
+from ui_qt.utils.engine_selection import engine_selection_relay
 from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_DURATION_MS,
     UNLIMITED_HEIGHT,
@@ -433,6 +434,7 @@ class TranscriptionTabBase(QWidget):
         """Insert tab-specific widgets before the transcription card."""
 
     def _connect_signals(self):
+        engine_selection_relay().changed.connect(self.sync_engine_selection)
         self.model_combo.currentTextChanged.connect(self._on_backend_changed)
         self.api_server.changed.connect(self._on_api_server_changed)
         self.api_server.help_requested.connect(self.help_requested)
@@ -600,6 +602,14 @@ class TranscriptionTabBase(QWidget):
         self.refresh_api_model()
         self.local_engine.set_backend(config.MODEL_VALUE_MAP.get(display_name, "local_whisper"))
         self.set_local_engine_visible(self._has_local_fields(display_name))
+
+    def sync_engine_selection(self) -> None:
+        """Show the saved engine: its backend and that backend's fields.
+
+        Runs when a save changes the engine, whoever made it, so every tab
+        and Settings agree without telling each other.
+        """
+        self.set_model_selection(settings_manager.load_model_selection())
 
     def set_backend_enabled(self, enabled: bool):
         """Lock the backend choice, e.g. while recording."""

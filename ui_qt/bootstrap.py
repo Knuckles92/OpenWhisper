@@ -307,10 +307,11 @@ def main() -> int:
 
         # Before the main window shows the engine an existing install uses.
         from services.guided_setup import initialize as initialize_guided_setup
-        from services.settings import keep_unchosen_engine
+        from services.settings import keep_separate_meeting_speech, keep_unchosen_engine
 
         initialize_guided_setup()
         keep_unchosen_engine()
+        keep_separate_meeting_speech()
         ui_controller = UIController()
         profiler.mark("ui_controller_created")
 

@@ -1358,14 +1358,16 @@ class MeetingModeTab(QWidget):
         """
         if self._active:
             return
-        from services.settings import resolve_meeting_asr_source
+        from services.settings import resolve_meeting_speech
         from services.remote_asr.settings import load_client_pairing
-        if resolve_meeting_asr_source() == "remote":
+        engine = resolve_meeting_speech()
+        if engine.source == "remote":
             pairing = load_client_pairing()
             host = pairing.host_name if pairing else "a host (not paired yet)"
             speech = f"Remote speech · microphone and system audio sent to {host}. Recordings saved here."
         else:
-            speech = "Speech recognition runs on this computer."
+            # The note says why this isn't the dictation engine.
+            speech = f"{engine.note} Speech recognition runs on this computer.".strip()
         self.speech_destination.setText(speech)
         where, privacy = ai_insights_destination()
         line = f"{where} — {privacy}."

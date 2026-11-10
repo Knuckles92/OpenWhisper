@@ -316,7 +316,8 @@ class TestRail(_DialogTestCase):
         # AI cleanup's rail value also says whether cleanup is on, so Settings
         # composes it; the assignment reports the model half.
         assert dialog.text_summary() == "OpenAI · gpt-test"
-        assert dialog.rail.value(MEETING_VOICE) == "auto · Detect automatically"
+        # Meetings follow the dictation engine until given their own.
+        assert dialog.rail.value(MEETING_VOICE) == "base · Detect automatically"
         assert dialog.rail.value(MEETING_TEXT) == (
             "OpenRouter · deepseek/test-model"
         )
@@ -762,6 +763,7 @@ class TestMeetingDestinations(_DialogTestCase):
         extra=None,
     ):
         settings = {
+            SettingsKey.MEETING_SPEECH_SEPARATE: True,
             SettingsKey.MEETING_WHISPER_MODEL: whisper,
             SettingsKey.MEETING_LLM_PROVIDER: provider,
             SettingsKey.MEETING_LLM_MODEL: model,
@@ -1266,9 +1268,68 @@ class TestSharedRuntime(_DialogTestCase):
         assert dialog.rail.value(SHARED_RUNTIME) == "CPU · int8"
 
     def test_meeting_voice_names_the_shared_runtime_destination(self):
-        dialog, _values = self._make_dialog()
+        dialog, _values = self._make_dialog(
+            extra_settings={SettingsKey.MEETING_SPEECH_SEPARATE: True})
         assert "Models & storage → Runtime" in dialog.meeting_runtime_label.text()
         assert "Auto · auto" in dialog.meeting_runtime_label.text()
+
+
+class TestMeetingFollowsDictation(_DialogTestCase):
+    """Meetings use the dictation engine until given one of their own."""
+
+    def test_following_shows_one_choice_and_names_the_engine(self):
+        dialog, _values = self._make_dialog(active_model="base")
+        assert dialog.meeting_engine_combo.currentData() is False
+        assert dialog.meeting_source_field.isHidden()
+        assert dialog.meeting_local_model_field.isHidden()
+        assert dialog.meeting_remote_controls.isHidden()
+        assert dialog.meeting_runtime_label.text() == (
+            "Meetings use Local Whisper base, the same as dictation. "
+            "Change the dictation engine on Dictation → Voice model."
+        )
+
+    def test_choosing_a_different_engine_reveals_and_saves_it(self):
+        dialog, values = self._make_dialog(
+            active_model="base", cached={TINY_REPO: _cached(TINY_REPO, 76_000_000)})
+        combo = dialog.meeting_engine_combo
+        combo.setCurrentIndex(combo.findData(True))
+
+        assert values[SettingsKey.MEETING_SPEECH_SEPARATE] is True
+        assert not dialog.meeting_source_field.isHidden()
+        assert not dialog.meeting_local_model_field.isHidden()
+        assert dialog.rail.value(MEETING_VOICE) == "auto · Detect automatically"
+
+        picker = dialog.meeting_whisper_picker.model_combo
+        picker.setCurrentIndex(picker.findData("tiny"))
+        assert dialog.rail.value(MEETING_VOICE) == "tiny · Detect automatically"
+
+        # Back to following: the saved choice stays for next time.
+        combo.setCurrentIndex(combo.findData(False))
+        assert values[SettingsKey.MEETING_SPEECH_SEPARATE] is False
+        assert values[SettingsKey.MEETING_WHISPER_MODEL] == "tiny"
+        assert dialog.meeting_local_model_field.isHidden()
+        assert dialog.rail.value(MEETING_VOICE) == "base · Detect automatically"
+
+    def test_a_following_meeting_tracks_a_change_of_dictation_engine(self):
+        dialog, _values = self._make_dialog(active_model="base")
+        dialog.engine_combo.setCurrentIndex(dialog.engine_combo.findData("moonshine"))
+        assert dialog.rail.value(MEETING_VOICE).startswith("Moonshine")
+        assert "the same as dictation" in dialog.meeting_runtime_label.text()
+
+    def test_an_engine_that_cannot_run_meetings_says_what_meetings_use(self):
+        dialog, _values = self._make_dialog(
+            extra_settings={SettingsKey.SELECTED_MODEL: "parakeet_unified"})
+        text = dialog.meeting_runtime_label.text()
+        assert text.startswith("Parakeet Unified EN 0.6B can't transcribe meetings, so meetings use ")
+
+    def test_use_for_meetings_gives_meetings_the_paired_computer(self):
+        dialog, values = self._make_dialog(active_model="base")
+        dialog.use_remote_for_meetings()
+        assert values[SettingsKey.MEETING_SPEECH_SEPARATE] is True
+        assert values[SettingsKey.MEETING_ASR_SOURCE] == "remote"
+        assert dialog.meeting_engine_combo.currentData() is True
+        assert dialog.meeting_source_combo.currentData() == "remote"
+        assert dialog.rail.value(MEETING_VOICE).startswith("Remote computer")
 
 
 class TestOnDemandEngine(_DialogTestCase):
@@ -1348,6 +1409,7 @@ class TestCleanupSettingsOwnership(_DialogTestCase):
             isolated = SettingsManager(os.path.join(temp_dir, "settings.json"))
             isolated.save_all_settings(
                 {
+                    SettingsKey.MEETING_SPEECH_SEPARATE: True,
                     SettingsKey.MEETING_WHISPER_MODEL: "tiny",
                     SettingsKey.MEETING_LLM_PROVIDER: "openai",
                     SettingsKey.MEETING_LLM_MODEL: "gpt-4o-mini",
@@ -1499,6 +1561,7 @@ class TestOptionalSpeechSummary(_DialogTestCase):
     def test_rail_reports_optional_family_and_meeting_model(self):
         dialog, _ = self._make_dialog(extra_settings={
             SettingsKey.SELECTED_MODEL: "parakeet",
+            SettingsKey.MEETING_SPEECH_SEPARATE: True,
             SettingsKey.MEETING_ASR_MODEL: "moonshine-small",
         })
         assert dialog.rail.value(ONDEMAND_VOICE) == "Parakeet TDT 0.6B v3"
@@ -1622,6 +1685,7 @@ class TestNewTextProviders(_DialogTestCase):
 
 def test_meeting_remote_source_is_independent_and_preserves_local_model():
     settings = InMemorySettings({SettingsKey.SELECTED_MODEL: "local_whisper",
+                              SettingsKey.MEETING_SPEECH_SEPARATE: True,
                               SettingsKey.MEETING_WHISPER_MODEL: "tiny"})
     with _isolated_settings(settings):
         host = _Host(lambda: "base")
@@ -1645,7 +1709,8 @@ def test_meeting_remote_source_is_independent_and_preserves_local_model():
 def test_meeting_remote_settings_link_and_unpaired_connection_check(monkeypatch):
     from ui_qt.dialogs.settings_destinations import REMOTE_ENGINE
     from tests.test_remote_engine import _wait_for
-    settings = InMemorySettings({SettingsKey.MEETING_ASR_SOURCE: "remote"})
+    settings = InMemorySettings({SettingsKey.MEETING_SPEECH_SEPARATE: True,
+                                 SettingsKey.MEETING_ASR_SOURCE: "remote"})
     with _isolated_settings(settings):
         host = _Host(lambda: None)
         selected = []
