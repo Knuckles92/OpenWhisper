@@ -206,6 +206,10 @@ class TranscriptionRuntime:
         # The same transcript before snippets expanded, set alongside: what
         # Stats count as words said.
         self._spoken_text = ""
+        # Stats-only counts for the transcript being delivered: snippets,
+        # dictionary corrections, a walkthrough's screenshots.
+        self._stats_counts: dict = {}
+        self._retranscription = False
         # The last status _apply_clipboard_and_paste showed; a rewrite that
         # was not pasted repeats it near the pointer.
         self._delivery_status = ""
@@ -396,6 +400,7 @@ class TranscriptionRuntime:
             self._active_job = None
             self._delivery_html = ""
             self._spoken_text = ""
+            self._stats_counts = {}
             self._rewrite_pending = False
             self._refused = False
             self._filter_canceled = False
@@ -406,6 +411,7 @@ class TranscriptionRuntime:
             self._job_active = False
             self._deliver_to_clipboard = True
             self._retry_entry_id = None
+            self._retranscription = False
             self._remote_retry_exhausted = False
 
     def _report_busy(self, action: str) -> str:
@@ -1053,6 +1059,7 @@ class TranscriptionRuntime:
         self._forget_recording()
 
         logger.info("Re-transcribing audio file: %s", audio_path)
+        self._retranscription = True
         self.controller._pending_audio_path = None
         self.controller._pending_source_name = os.path.basename(audio_path)
         self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
@@ -1497,6 +1504,7 @@ class TranscriptionRuntime:
         self._last_cleanup_failure = None
         self._delivery_html = ""
         self._spoken_text = ""
+        self._stats_counts = {}
         job = self._active_job
         if profile is _RECORDING_PROFILE:
             profile = self._recording_profile
@@ -1510,6 +1518,7 @@ class TranscriptionRuntime:
         # and to uploads and batches too.
         prepared = dictation_pipeline.prepare_text(raw, job, settings)
         self._spoken_text = prepared.text
+        self._stats_counts = dictation_pipeline.stats_counts(prepared)
         enabled = profile is not None or setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings)
         if not enabled or prepared.skip_cleanup:
             return self._finish_without_cleanup(prepared)
@@ -1689,6 +1698,7 @@ class TranscriptionRuntime:
         ))
         self._raise_if_canceled()
         cleaned, raws, info = self._clean_sections(texts)
+        self._stats_counts = {"shots": len(shots)}
         self._raise_if_canceled()
         if not shots and not any((text or "").strip() for text in cleaned):
             # Nothing was said and nothing was kept: no document to write.
@@ -1966,6 +1976,7 @@ class TranscriptionRuntime:
         if action.shaping == SHAPING_RAW:
             prepared = dictation_pipeline.prepare_text(text, job, settings)
             self._spoken_text = prepared.text
+            self._stats_counts = dictation_pipeline.stats_counts(prepared)
             return self._finish_without_cleanup(prepared)
         profile_id = action.profile_id()
         if profile_id:
@@ -2239,8 +2250,9 @@ class TranscriptionRuntime:
                     cleanup_provider=cleanup_info.provider if cleanup_info else None,
                     cleanup_model=cleanup_info.model if cleanup_info else None,
                     source_name=source_name,
-                    # Read by Stats only; history drops it.
+                    # Read by Stats only; history drops them.
                     spoken_text=self._spoken_text or None,
+                    stats_counts=self._entry_stats_counts(job),
         )
         # Only a recording's own WAV is dictated live; a re-transcription is
         # delivered like one but read from a file.
@@ -2489,6 +2501,21 @@ class TranscriptionRuntime:
         if callable(show):
             show(text, done=done)
 
+    def _entry_stats_counts(self, job) -> dict:
+        counts = dict(self._stats_counts)
+        if self._retranscription:
+            counts["retranscription"] = True
+        if job is not None and job.mode == JobMode.ACTION:
+            try:
+                from services.actions.model import find_action
+
+                action = find_action(settings_manager.load_all_settings(), job.action_id)
+                if action is not None:
+                    counts["target"] = action.name
+            except Exception:
+                logger.debug("Action name unavailable for Stats", exc_info=True)
+        return counts
+
     def _history_context(self, job, cleanup_info, *, live: bool) -> dict:
         """The context columns for this job's history entry; never raises."""
         try:
@@ -2515,10 +2542,10 @@ class TranscriptionRuntime:
         error = ''
         try:
             for fields in entries:
-                # spoken_text feeds Stats and job_id names the job in events;
-                # neither is a history column.
+                # spoken_text and stats_counts feed Stats and job_id names the
+                # job in events; none is a history column.
                 saved = {key: value for key, value in fields.items()
-                         if key not in ('spoken_text', 'job_id', 'retry_entry_id')}
+                         if key not in ('spoken_text', 'stats_counts', 'job_id', 'retry_entry_id')}
                 retry_entry_id = fields.get('retry_entry_id')
                 if retry_entry_id:
                     for key in ('source_audio_path', 'audio_duration', 'file_size', 'source_name'):

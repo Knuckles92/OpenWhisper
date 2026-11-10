@@ -93,13 +93,25 @@ def test_a_saved_dictation_is_counted_from_its_entry():
     assert (row.cleanup_level, row.language, row.timestamp) == ("medium", "en", entry.timestamp)
 
 
-def test_files_and_other_computers_entries_are_not_counted():
+def test_files_add_no_dictated_words_and_other_computers_entries_are_not_counted():
     stats = _stats()
-    stats.record({"text": "a talk", "entry_kind": "file", "timestamp": _at(TODAY)}, None)
+    stats.reset()
+    stats.record({"text": "a talk", "entry_kind": "file", "audio_duration": 90.0,
+                  "timestamp": _at(TODAY)}, None)
     stats.record({"text": "upload", "source_name": "talk.mp3", "timestamp": _at(TODAY)}, None)
     stats.record({"text": "theirs", "entry_kind": "dictation", "origin_device_id": "laptop",
                   "timestamp": _at(TODAY)}, None)
-    assert _rows() == []
+    stats.record({"text": "said before", "entry_kind": "file", "timestamp": _at(TODAY),
+                  "stats_counts": {"retranscription": True}}, None)
+
+    assert [(row.entry_kind, row.spoken_words, row.final_words) for row in _rows()] == [
+        ("file", 0, 2), ("file", 0, 1)]
+    summary = stats.load_summary(today=TODAY, tz=PACIFIC)
+    assert summary.words_all_time == 0 and summary.day_streak == 0
+    assert summary.entries == 2
+    files = summary.period("week").feature("files")
+    assert (files.count, files.seconds, files.words) == (2, 90.0, 3)
+    assert files.trend == (0, 0, 0, 0, 0, 0, 2)
 
 
 def test_a_rewrite_adds_its_edits_but_no_spoken_words():
@@ -234,7 +246,8 @@ def test_listeners_hear_each_counted_dictation_once():
     try:
         _record("counted", entry_id="one")
         _record("counted again", entry_id="one")
-        stats.record({"text": "a file", "entry_kind": "file", "timestamp": _at(TODAY)}, None)
+        stats.record({"text": "theirs", "entry_kind": "dictation", "origin_device_id": "laptop",
+                      "timestamp": _at(TODAY)}, None)
     finally:
         stats.remove_listener(listener)
     _record("not heard")
@@ -268,11 +281,13 @@ def test_earlier_dictations_are_counted_once_on_first_load():
 
     summary = stats.load_summary(today=TODAY, tz=PACIFIC)
 
-    assert sorted(row.entry_id for row in _rows()) == sorted(["legacy", "profile", "v17", live.id])
+    assert sorted(row.entry_id for row in _rows()) == sorted(
+        ["legacy", "profile", "v17", live.id, "upload"])
     assert summary.words_all_time == 3 + 3 + 2 + 2
     assert summary.period("all").words_cleaned_up == 1
+    assert summary.period("all").feature("files").count == 1
     stats.load_summary(today=TODAY, tz=PACIFIC)
-    assert len(_rows()) == 4
+    assert len(_rows()) == 5
 
 
 def test_reset_clears_stats_keeps_history_and_doesnt_count_it_again():

@@ -73,7 +73,7 @@ def test_it_shows_the_counts_days_and_apps(synchronous):
     dialog.show()
 
     assert dialog.pages.currentIndex() == 2
-    assert dialog.hero_caption.text() == "Last 7 days"
+    assert dialog.hero_caption.text() == "Dictated · last 7 days"
     assert dialog.hero_value.text() == "16 words"
     assert dialog.trend_chip.isHidden()
     assert dialog.saved_value.text() == "Under a minute"
@@ -83,13 +83,15 @@ def test_it_shows_the_counts_days_and_apps(synchronous):
     assert dialog.pace_card.detail_label.text() == "2.7× faster than typing"
     assert dialog.dictations_card.value_label.text() == "3"
     assert dialog.dictations_card.detail_label.text() == "5 words each"
-    assert dialog.cleanup_card.value_label.text() == "3 words"
+    assert dialog.cleanup_label.text() == "AI cleanup changed 3 words"
     assert dialog.streak_card.value_label.text() == "3 days"
     assert dialog.streak_card.detail_label.text() == "Keep it going"
     assert len(dialog.bars.bars) == 7 and dialog.bars.bars[-1].words == 7
     assert dialog.app_rows == [("Slack", 11), ("Outlook", 5)]
     assert dialog.best_label.text().endswith("7 words")
-    assert dialog.hour_label.text() == "Most active around 12 PM"
+    assert dialog.hour_label.text() == f"Most on {TODAY:%A}s around 12 PM"
+    assert dialog.rhythm.grid[TODAY.weekday()][12] == 7
+    assert dialog.feature_rows == [] and dialog.features_section.isHidden()
     assert dialog.no_apps_label.isHidden()
     assert len(dialog.activity.days) == _stats().ACTIVITY_DAYS
     assert dialog.active_days_label.text() == "3 active days this past year"
@@ -104,11 +106,11 @@ def test_the_period_switch_recounts_every_section(synchronous):
 
     dialog.period_bar.buttons[1].click()
     assert dialog.period_key == "month"
-    assert dialog.hero_caption.text() == "Last 30 days"
+    assert dialog.hero_caption.text() == "Dictated · last 30 days"
     assert len(dialog.bars.bars) == 30
 
     dialog.period_bar.buttons[2].click()
-    assert dialog.hero_caption.text() == "All time"
+    assert dialog.hero_caption.text() == "Dictated · all time"
     assert dialog.trend_chip.text().startswith("Since ")
     assert dialog.chart_title.text() == "Words per month"
     assert dialog.bars.bars[-1].axis == f"{TODAY:%b}"

@@ -143,7 +143,7 @@ class TranscriptionHistory(Base):
 
 
 class DictationStat(Base):
-    """One saved dictation's word counts for the Stats window.
+    """One counted dictation, file, walkthrough or meeting for the Stats window.
 
     Local only, and deliberately not linked to transcription_history by a
     foreign key: stats survive Clear history and moving history to a host.
@@ -164,6 +164,18 @@ class DictationStat(Base):
     words_edited: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     audio_seconds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     language: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Schema v18. The action the words were sent to; on a marker row, what
+    # the marker covers.
+    target: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    snippets: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default='0')
+    # Words the snippets wrote, beyond their triggers.
+    snippet_words: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default='0')
+    # Words the dictionary replaced in the speech engine's transcript.
+    corrections: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default='0')
+    # Screenshots kept in a walkthrough.
+    shots: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default='0')
 
     __table_args__ = (
         Index('idx_dictation_stats_timestamp', 'timestamp'),

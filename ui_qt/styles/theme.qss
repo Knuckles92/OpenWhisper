@@ -5301,11 +5301,20 @@ QLabel#statsMuted {
     font-size: 12px;
 }
 
-QFrame#statsCard,
 QFrame#statsSection {
     background-color: @slate-surface;
     border: 1px solid @slate-border;
     border-radius: 12px;
+}
+
+QWidget#statsStat {
+    background-color: transparent;
+    border: none;
+}
+
+QFrame#statsRule {
+    background-color: @slate-border;
+    border: none;
 }
 
 QLabel#statsCardIcon {
@@ -5314,19 +5323,11 @@ QLabel#statsCardIcon {
     border-radius: 8px;
 }
 
-QLabel#statsCardIcon[tone="purple"] {
-    background-color: rgba(@purple-rgb, 0.16);
-}
-
-QLabel#statsCardIcon[tone="green"] {
-    background-color: rgba(@success-rgb, 0.16);
-}
-
 QLabel#statsCardCaption {
     color: @slate-text-3;
     background-color: transparent;
     border: none;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
 }
 
@@ -5334,7 +5335,7 @@ QLabel#statsCardValue {
     color: @slate-text;
     background-color: transparent;
     border: none;
-    font-size: 22px;
+    font-size: 19px;
     font-weight: 700;
 }
 
@@ -5359,10 +5360,11 @@ QLabel#statsEmptyTitle {
 }
 
 QLabel#statsAppName {
-    color: @slate-text-2;
+    color: @slate-text;
     background-color: transparent;
     border: none;
     font-size: 12px;
+    font-weight: 600;
 }
 
 QLabel#statsAppWords {
@@ -5380,16 +5382,8 @@ QLabel#statsAppShare {
     font-size: 11px;
 }
 
-/* The hero: the span's words and time saved on a soft blue-to-violet wash. */
-QFrame#statsHero {
-    background-color: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 1,
-        stop: 0 rgba(@accent-rgb, 0.20), stop: 1 rgba(@purple-rgb, 0.14));
-    border: 1px solid rgba(@accent-rgb, 0.32);
-    border-radius: 14px;
-}
-
 QLabel#statsHeroCaption {
-    color: @slate-text-2;
+    color: @slate-text-3;
     background-color: transparent;
     border: none;
     font-size: 12px;
@@ -5402,14 +5396,6 @@ QLabel#statsHeroValue {
     border: none;
     font-size: 32px;
     font-weight: 800;
-}
-
-QLabel#statsHeroSaved {
-    color: @slate-text;
-    background-color: transparent;
-    border: none;
-    font-size: 22px;
-    font-weight: 700;
 }
 
 QLabel#statsHeroDetail {

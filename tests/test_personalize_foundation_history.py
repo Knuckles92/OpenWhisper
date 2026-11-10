@@ -62,7 +62,7 @@ def test_v16_database_gains_the_context_columns_and_stats_table(tmp_path):
 
     from services.database import SCHEMA_VERSION, DatabaseManager
 
-    assert SCHEMA_VERSION == 17
+    assert SCHEMA_VERSION == 18
     manager = DatabaseManager(db_path=db_path)
     try:
         with manager.engine.connect() as connection:
