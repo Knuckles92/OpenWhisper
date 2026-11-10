@@ -588,29 +588,6 @@ class MeetingRuntime:
             )
         self._hide_finalization_card()
 
-    def start_new_meeting(
-        self,
-        cloud_enabled: Optional[bool],
-        system_audio_policy: str = "auto",
-        intent: str = "",
-    ) -> None:
-        """Defer any leftover card, then start a new session."""
-        with self._lock:
-            finalizing = self._finalizing
-            status = str((self._finalization or {}).get("status") or "")
-        if finalizing or status == "running":
-            self.controller.meeting_status_update.emit(
-                "Final insights are still being prepared."
-            )
-            return
-        self._file_leftover_card()
-        self._begin_start(
-            cloud_enabled,
-            demo=False,
-            system_audio_policy=system_audio_policy,
-            intent=intent,
-        )
-
     @property
     def is_active(self) -> bool:
         """True while a meeting session is running (including paused)."""

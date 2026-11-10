@@ -199,6 +199,13 @@ QPushButton#successButton[inactive="true"]:pressed {
     color: rgba(@on-tint-rgb, 0.55);
 }
 
+/* Start Meeting while it has to wait (the last meeting still holds the
+   speech model, or another mode is recording): washed out, like inactive. */
+QPushButton#successButton[buttonId="meetingStart"]:disabled {
+    background-color: rgba(@success-rgb, 0.28);
+    color: rgba(@on-tint-rgb, 0.55);
+}
+
 /* Stop and Cancel while nothing is recording: a neutral outline, so only
    the action that applies now wears a colour. A tinted fill read as live. */
 QPushButton#dangerButton[inactive="true"],
@@ -3162,17 +3169,6 @@ QPushButton[meetingLink="true"]:pressed {
 QPushButton[meetingLink="true"]:disabled {
     color: @text-muted;
     background-color: transparent;
-}
-
-QPushButton#meetingFinalizationKeepLaterButton:enabled,
-QPushButton#meetingFinalizationStartNewButton:enabled {
-    color: @text-body;
-}
-
-QPushButton#meetingFinalizationKeepLaterButton:hover,
-QPushButton#meetingFinalizationStartNewButton:hover {
-    color: @text;
-    text-decoration: underline;
 }
 
 QPushButton[meetingResultAction="true"] {
