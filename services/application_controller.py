@@ -576,9 +576,6 @@ class ApplicationController(QObject):
         self.ui_controller.on_meeting_defer_insights = (
             self.meeting_runtime.defer_finalization_card
         )
-        self.ui_controller.on_meeting_start_new = (
-            self.meeting_runtime.start_new_meeting
-        )
         self.ui_controller.on_settings_changed = self.on_settings_changed
         self.ui_controller.on_try_action = self.action_runtime.test
         self.ui_controller.on_cancel_try_runs = (

@@ -594,7 +594,11 @@ class TestMeetingModeTabState(unittest.TestCase):
         })
         self.assertEqual(self.tab.stage_state, "result")
         self.assertTrue(self.tab.live_actions.isHidden())
+        # Start stays in the column and says why it is waiting.
+        self.assertFalse(self.tab.start_button.isHidden())
+        self.assertFalse(self.tab.start_button.isEnabled())
         self.assertFalse(self.tab.slot_note.isHidden())
+        self.assertIn("wrapping up", self.tab.slot_note.text())
         self.tab.set_meeting_state({"finalization": None})
         self.assertEqual(self.tab.stage_state, "empty")
         self.assertTrue(self.tab.slot_note.isHidden())
@@ -650,7 +654,7 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertIsNone(self.tab.column.findChild(QLabel, "meetingBetaBadge"))
 
     def test_ai_details_show_only_while_setting_up(self):
-        """Idle explains AI insights; otherwise only the switch remains."""
+        """A live meeting keeps only the switch; every other state explains it."""
         self.assertFalse(self.tab.ai_details.isHidden())
         self.assertFalse(self.tab.ai_settings_button.isHidden())
         self.assertTrue(self.tab.ai_compact_destination.isHidden())
@@ -669,9 +673,10 @@ class TestMeetingModeTabState(unittest.TestCase):
             "finalization": {"status": "failed", "message": "Final insights failed."},
         })
         self.app.processEvents()
-        # Start new meeting on an incomplete card reads the switch.
+        # A failed result is on the stage; the column still sets up the next.
         self.assertFalse(self.tab.ai_panel.isHidden())
-        self.assertTrue(self.tab.ai_details.isHidden())
+        self.assertFalse(self.tab.ai_details.isHidden())
+        self.assertTrue(self.tab.ai_compact_destination.isHidden())
 
         self.tab.set_meeting_state({
             "finalization": {"status": "completed", "message": "Final insights are ready."},
@@ -716,7 +721,7 @@ class TestMeetingModeTabState(unittest.TestCase):
         field.setFont(font)
         self.assertGreater(field.sizeHint().height(), before)
 
-    def test_running_finalization_hides_start_and_shows_indeterminate_bar(self):
+    def test_running_finalization_holds_start_and_shows_indeterminate_bar(self):
         """Running finalization keeps a result card with indeterminate progress."""
         self.tab.set_meeting_state({
             "active": False,
@@ -729,7 +734,9 @@ class TestMeetingModeTabState(unittest.TestCase):
         })
         self.app.processEvents()
 
-        self.assertTrue(self.tab.idle_card.isHidden())
+        self.assertFalse(self.tab.idle_card.isHidden())
+        self.assertFalse(self.tab.start_button.isHidden())
+        self.assertFalse(self.tab.start_button.isEnabled())
         self.assertTrue(self.tab.session_card.isHidden())
         self.assertFalse(self.tab.finalization_card.isHidden())
         self.assertFalse(self.tab.finalization_progress.isHidden())
@@ -808,10 +815,10 @@ class TestMeetingModeTabState(unittest.TestCase):
             "warning",
         )
         self.assertFalse(self.tab.finalization_card.isHidden())
-        self.assertTrue(self.tab.start_button.isHidden())
-        self.assertTrue(self.tab.idle_card.isHidden())
+        self.assertFalse(self.tab.start_button.isHidden())
+        self.assertTrue(self.tab.start_button.isEnabled())
+        self.assertIn("Past Meetings", self.tab.slot_note.text())
         self.assertFalse(self.tab.finalization_keep_later_button.isHidden())
-        self.assertFalse(self.tab.finalization_start_new_button.isHidden())
         self.assertTrue(self.tab.finalization_done_button.isHidden())
         self.assertIn(
             "stay in Past Meetings",
@@ -833,6 +840,16 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertEqual(button.text(), "Continue in the background")
         button.click()
         self.assertEqual(clicked, [True])
+
+        # Start is usable once the wrap-up can leave the stage, and sends it
+        # to the background before asking for the new meeting.
+        order = []
+        self.tab.background_requested.connect(lambda: order.append("background"))
+        self.tab.start_requested.connect(lambda *_: order.append("start"))
+        self.assertTrue(self.tab.start_button.isEnabled())
+        self.assertIn("background", self.tab.slot_note.text())
+        self.tab.start_button.click()
+        self.assertEqual(order, ["background", "start"])
 
         self.tab.set_meeting_state({
             "finalization": None, "meeting_id": None,
@@ -1177,14 +1194,16 @@ class TestMeetingModeTabState(unittest.TestCase):
                 running_actions.extend(row.findChildren(QPushButton))
         self.assertEqual(running_actions, [])
 
-    def test_incomplete_card_emits_keep_later_and_start_new(self):
-        """Incomplete cards expose defer and start-new instead of idle Start."""
+    def test_incomplete_card_keeps_start_and_emits_keep_later(self):
+        """An incomplete card never takes Start away from the column."""
         deferred = []
         started = []
+        backgrounded = []
         self.tab.defer_insights_requested.connect(lambda: deferred.append(True))
-        self.tab.start_new_meeting_requested.connect(
+        self.tab.start_requested.connect(
             lambda cloud, _brief: started.append(cloud)
         )
+        self.tab.background_requested.connect(lambda: backgrounded.append(True))
         self.tab.cloud_checkbox.setChecked(True)
         self.tab.set_meeting_state({
             "active": False,
@@ -1196,13 +1215,23 @@ class TestMeetingModeTabState(unittest.TestCase):
         })
         self.app.processEvents()
 
-        self.assertTrue(self.tab.start_button.isHidden())
+        self.assertFalse(self.tab.start_button.isHidden())
+        self.assertTrue(self.tab.start_button.isEnabled())
+        self.assertFalse(self.tab.brief_panel.isHidden())
         self.assertFalse(self.tab.finalization_keep_later_button.isHidden())
-        self.assertFalse(self.tab.finalization_start_new_button.isHidden())
         self.tab.finalization_keep_later_button.click()
-        self.tab.finalization_start_new_button.click()
+        self.tab.start_button.click()
         self.assertEqual(deferred, [True])
         self.assertEqual(started, [True])
+        self.assertEqual(backgrounded, [])
+
+    def test_recording_elsewhere_holds_start_in_every_idle_state(self):
+        self.tab.set_recording_active(True)
+        self.assertFalse(self.tab.start_button.isEnabled())
+        self.tab.set_meeting_state({"finalization": {"status": "failed"}})
+        self.assertFalse(self.tab.start_button.isEnabled())
+        self.tab.set_recording_active(False)
+        self.assertTrue(self.tab.start_button.isEnabled())
 
     def test_completed_card_keeps_idle_start_and_emits_done(self):
         """A clean completed card keeps idle Start and offers Done."""
@@ -1218,8 +1247,8 @@ class TestMeetingModeTabState(unittest.TestCase):
         })
         self.app.processEvents()
         self.assertFalse(self.tab.start_button.isHidden())
+        self.assertTrue(self.tab.slot_note.isHidden())
         self.assertTrue(self.tab.finalization_keep_later_button.isHidden())
-        self.assertTrue(self.tab.finalization_start_new_button.isHidden())
         self.assertFalse(self.tab.finalization_done_button.isHidden())
         self.tab.finalization_done_button.click()
         self.assertEqual(deferred, [True])

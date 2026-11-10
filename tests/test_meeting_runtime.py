@@ -1101,34 +1101,6 @@ def test_open_past_meeting_reveals_without_persisting_deferral(runtime):
     assert persisted == []
 
 
-def test_start_new_meeting_defers_then_starts(runtime, monkeypatch):
-    rt, controller = runtime
-    meeting = _ended_meeting("m_card")
-    fake_repo = MagicMock()
-    fake_repo.get_meeting.return_value = meeting
-    persisted = []
-    fake_repo.persist_state.side_effect = lambda meeting_id, data: persisted.append(
-        (meeting_id, data)
-    )
-    rt._repo = fake_repo
-    rt._card_meeting_id = "m_card"
-    rt._finalization = {"status": "failed", "message": "boom"}
-    started = []
-    monkeypatch.setattr(
-        rt,
-        "_begin_start",
-        lambda cloud, demo=False, system_audio_policy="auto", intent="": (
-            started.append((cloud, demo, system_audio_policy, intent))
-        ),
-    )
-
-    rt.start_new_meeting(True, intent="Capture the budget numbers.")
-
-    assert persisted[0][1]["finalization"]["card_deferred"] is True
-    assert started == [(True, False, "auto", "Capture the budget numbers.")]
-    assert rt._card_meeting_id is None
-
-
 def test_cloud_start_without_consent_emits_and_does_not_launch(runtime, monkeypatch):
     rt, controller = runtime
     launched = _record_launch(rt, monkeypatch)

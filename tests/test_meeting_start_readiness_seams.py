@@ -29,7 +29,6 @@ def _controller():
         ),
         on_meeting_start=MagicMock(),
         on_meeting_start_demo=MagicMock(),
-        on_meeting_start_new=MagicMock(),
         on_meeting_end=None,
         _meeting_active=False,
         ensure_meeting_platform_ack=MagicMock(return_value=True),
@@ -41,9 +40,6 @@ def _controller():
     )
     ctrl._on_meeting_demo_requested = mod.UIController._on_meeting_demo_requested.__get__(
         ctrl, type(ctrl)
-    )
-    ctrl._on_meeting_start_new_requested = (
-        mod.UIController._on_meeting_start_new_requested.__get__(ctrl, type(ctrl))
     )
     ctrl._on_tray_meeting_toggle = mod.UIController._on_tray_meeting_toggle.__get__(
         ctrl, type(ctrl)
@@ -58,7 +54,6 @@ def _controller():
     "method_name,args,target_attr",
     [
         ("_on_meeting_start_requested", (True,), "on_meeting_start"),
-        ("_on_meeting_start_new_requested", (True,), "on_meeting_start_new"),
         ("_on_tray_meeting_toggle", (), "on_meeting_start"),
     ],
 )
@@ -76,7 +71,6 @@ def test_start_seams_forward_ready_policy_once(qapp, method_name, args, target_a
     "method_name,args,target_attr",
     [
         ("_on_meeting_start_requested", (True,), "on_meeting_start"),
-        ("_on_meeting_start_new_requested", (True,), "on_meeting_start_new"),
         ("_on_tray_meeting_toggle", (), "on_meeting_start"),
     ],
 )

@@ -366,7 +366,6 @@ class UIController(QObject):
         self.on_meeting_retry_step: Optional[Callable] = None  # (step_id: str)
         self.on_meeting_background: Optional[Callable] = None
         self.on_meeting_defer_insights: Optional[Callable] = None
-        self.on_meeting_start_new: Optional[Callable] = None  # (cloud: Optional[bool])
         self.get_meeting_active: Optional[Callable] = None  # Provider: meeting running?
         self._meeting_active = False
         self._meeting_urls: dict = {}
@@ -552,9 +551,6 @@ class UIController(QObject):
         )
         meeting_tab.defer_insights_requested.connect(
             self._on_meeting_defer_insights
-        )
-        meeting_tab.start_new_meeting_requested.connect(
-            self._on_meeting_start_new_requested
         )
 
     def _update_screen(self, key, method, *args, **kwargs):
@@ -2013,15 +2009,6 @@ class UIController(QObject):
     def _on_meeting_defer_insights(self):
         if self.on_meeting_defer_insights:
             self.on_meeting_defer_insights()
-
-    def _on_meeting_start_new_requested(self, cloud_enabled: bool,
-                                        intent: str = ""):
-        policy = self.ensure_meeting_start_readiness()
-        if policy is None:
-            return
-        if self.on_meeting_start_new:
-            self.on_meeting_start_new(cloud_enabled, system_audio_policy=policy,
-                                      intent=intent)
 
     def _on_past_meeting_requested(self, meeting_id: str) -> None:
         if self.on_meeting_open_past:

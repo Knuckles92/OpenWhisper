@@ -536,8 +536,6 @@ class MeetingModeTab(QWidget):
     retry_step_requested = pyqtSignal(str)
     background_requested = pyqtSignal()
     defer_insights_requested = pyqtSignal()
-    # cloud_enabled, meeting brief
-    start_new_meeting_requested = pyqtSignal(bool, str)
     #: A recent meeting on the empty stage was opened: its id.
     past_meeting_requested = pyqtSignal(str)
 
@@ -552,6 +550,8 @@ class MeetingModeTab(QWidget):
         self._active = False
         self._background_available = False
         self._starting = False
+        # Quick Record or a walkthrough holds the microphone.
+        self._recording_active = False
         self._paused = False
         self._elapsed_base_s = 0.0
         self._running_since: Optional[float] = None
@@ -708,7 +708,12 @@ class MeetingModeTab(QWidget):
     # ---- the control column ----
 
     def _build_column(self) -> QFrame:
-        """Start, then what the next meeting will do, read top to bottom."""
+        """The next meeting: Start, then what it will do, read top to bottom.
+
+        The column is the same in every state but a live meeting, so Start
+        is always found in one place. The stage beside it holds the meeting
+        that is running or just ended.
+        """
         column = self.column = QFrame()
         column.setObjectName("meetingColumn")
         body = QVBoxLayout(column)
@@ -800,7 +805,8 @@ class MeetingModeTab(QWidget):
             live_layout.addWidget(button, 1)
         slot.addWidget(self.live_actions)
 
-        # Shown in Start's place while the last meeting still needs a decision.
+        # Under Start while the last meeting is still on the stage: what
+        # starting the next one does to it.
         self.slot_note = WrappedLabel("")
         self.slot_note.setObjectName("meetingColumnNote")
         slot.addWidget(self.slot_note)
@@ -1294,7 +1300,7 @@ class MeetingModeTab(QWidget):
         )
         actions_layout.addWidget(self.finalization_background_button)
 
-        self.finalization_keep_later_button = self._link_button(
+        self.finalization_keep_later_button = self._decision_button(
             "Keep for later",
             "meetingFinalizationKeepLaterButton",
             "Hide this card and return to idle. The meeting stays in Past "
@@ -1304,16 +1310,6 @@ class MeetingModeTab(QWidget):
             self.defer_insights_requested.emit
         )
         actions_layout.addWidget(self.finalization_keep_later_button)
-
-        self.finalization_start_new_button = self._link_button(
-            "Start new meeting",
-            "meetingFinalizationStartNewButton",
-            "Save this meeting in Past Meetings, then start a fresh session.",
-        )
-        self.finalization_start_new_button.clicked.connect(
-            self._on_start_new_clicked
-        )
-        actions_layout.addWidget(self.finalization_start_new_button)
 
         self.finalization_done_button = self._decision_button(
             "Done",
@@ -1348,13 +1344,16 @@ class MeetingModeTab(QWidget):
         )
 
     def _setting_up(self) -> bool:
-        """True while the column is setting up the next meeting."""
-        finalization = self._finalization
-        waiting = (
-            (finalization or {}).get("status") == "running"
-            or self._is_incomplete_finalization(finalization)
-        )
-        return not (self._active or self._starting) and not waiting
+        """True while the column is setting up the next meeting.
+
+        That is every state but a starting or live meeting: a result on the
+        stage never takes the next meeting's controls away.
+        """
+        return not (self._active or self._starting)
+
+    def _wrapping_up(self) -> bool:
+        """True while the last meeting's post-meeting steps are running."""
+        return (self._finalization or {}).get("status") == "running"
 
     def refresh_ai_destination(self) -> None:
         """Re-read which model AI insights will use for the next meeting.
@@ -1414,14 +1413,15 @@ class MeetingModeTab(QWidget):
         return self.brief_input.toPlainText().strip()[:MAX_INTENT_LEN]
 
     def _on_start_clicked(self):
-        """Emit the start request with the current cloud choice and brief."""
-        self.start_requested.emit(
-            self.cloud_checkbox.isChecked(), self.meeting_brief()
-        )
+        """Emit the start request with the current cloud choice and brief.
 
-    def _on_start_new_clicked(self):
-        """Start a new meeting after saving the incomplete card for later."""
-        self.start_new_meeting_requested.emit(
+        A last meeting that is still wrapping up is sent to the background
+        first. A finished or incomplete one needs nothing here: the runtime
+        files it in Past Meetings as part of starting.
+        """
+        if self._wrapping_up() and self._background_available:
+            self.background_requested.emit()
+        self.start_requested.emit(
             self.cloud_checkbox.isChecked(), self.meeting_brief()
         )
 
@@ -1552,9 +1552,8 @@ class MeetingModeTab(QWidget):
 
     def set_recording_active(self, active: bool) -> None:
         """Keep past meetings available while another mode is recording."""
-        self.start_button.setEnabled(not active)
-        self.demo_button.setEnabled(not active)
-        self.finalization_start_new_button.setEnabled(not active)
+        self._recording_active = bool(active)
+        self._apply_layout_state()
 
     def set_status_text(self, text: str) -> None:
         """Update the status pill label.
@@ -1583,7 +1582,7 @@ class MeetingModeTab(QWidget):
             finalization: Current finalization payload, or None.
 
         Returns:
-            True when Keep for later / Start new meeting should replace idle Start.
+            True when the card offers Retry and Keep for later, not Done.
         """
         if not finalization:
             return False
@@ -1595,14 +1594,13 @@ class MeetingModeTab(QWidget):
         return bool(failed_steps) or status in {"failed", "unavailable"}
 
     def _set_incomplete_actions_visible(self, visible: bool) -> None:
-        """Show or hide Keep for later and Start new meeting.
+        """Show or hide Keep for later and its hint.
 
         Args:
             visible: True on incomplete insight cards only.
         """
         self.finalization_keep_hint.setVisible(visible)
         self.finalization_keep_later_button.setVisible(visible)
-        self.finalization_start_new_button.setVisible(visible)
 
     def _set_done_visible(self, visible: bool) -> None:
         """Show or hide Done on a completed or disabled leftover card.
@@ -1695,27 +1693,42 @@ class MeetingModeTab(QWidget):
 
         self.intro.setVisible(not show_finalization)
         self.session_card.setVisible(showing_session)
-        # Hide the idle Start control while finalization is running or an
-        # incomplete card is asking the user to retry, defer, or start new.
-        incomplete = self._is_incomplete_finalization(finalization)
-        hide_idle_start = running_finalization or incomplete
         setting_up = self._setting_up()
         self.idle_card.setVisible(setting_up)
         self.live_actions.setVisible(showing_session)
-        self.slot_note.setVisible(not showing_session and hide_idle_start)
-        self.slot_note.setText(
-            "Wrapping up your last meeting. Start is back when it finishes."
-            if running_finalization
-            else "Choose what to do with your last meeting on the right."
+        # Start never leaves the column. It only waits while the last
+        # meeting still holds the speech model; after that the wrap-up can
+        # finish in the background.
+        start_blocked = running_finalization and not self._background_available
+        self.start_button.setEnabled(
+            not self._recording_active and not start_blocked
         )
+        self.demo_button.setEnabled(not self._recording_active)
+        if start_blocked:
+            note = (
+                "Your last meeting is still wrapping up. Start unlocks in "
+                "a moment."
+            )
+        elif running_finalization:
+            note = "Your last meeting finishes wrapping up in the background."
+        elif self._is_incomplete_finalization(finalization):
+            note = (
+                "Your last meeting stays in Past Meetings, where you can "
+                "pick it up later."
+            )
+        else:
+            note = ""
+        self.slot_note.setText(note)
+        self.slot_note.setVisible(setting_up and bool(note))
+        self.start_button.setToolTip(note if start_blocked else "")
         self._sync_brief_availability()
         self._show_stage(
             "live" if showing_session else "result" if show_finalization else "empty"
         )
         self._sync_live_tone()
-        # The switch always stays (it acts on a live meeting, and "Start new
-        # meeting" reads it), but what it does and "Change…" only matter
-        # while the next meeting is being set up.
+        # The switch always stays (it acts on a live meeting), but what it
+        # does and "Change…" only matter while the next meeting is being
+        # set up.
         self.ai_details.setVisible(setting_up)
         self.ai_settings_button.setVisible(setting_up)
         self.ai_compact_destination.setVisible(not setting_up)
@@ -1723,11 +1736,10 @@ class MeetingModeTab(QWidget):
         self.cloud_checkbox.setText(ai_name)
         self.cloud_checkbox.setAccessibleName(ai_name)
         self.ai_label.setText(ai_name)
-        self.start_button.setVisible(not hide_idle_start)
         show_demo = (
             self._developer_mode
             and not self._active
-            and not hide_idle_start
+            and not running_finalization
         )
         self.demo_button.setVisible(show_demo)
         self.demo_hint.setVisible(show_demo)
