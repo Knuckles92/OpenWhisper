@@ -8,6 +8,7 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
+from meeting.state.review import REVIEW_CONSENT
 from meeting.state.schema import new_id, now_iso
 from services.settings import resolve_typesafe_enabled
 from services.typesafe import judge_from_settings, route_from_settings
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 #: Saved with the opt-in since the review first shipped on TypeSafe; it now
 #: covers whichever Fast judgments route the opt-in dialog named.
-CONSENT = "typesafe-text-v1"
+CONSENT = REVIEW_CONSENT
 MAX_ITEMS = 40
 MAX_CONTEXT_CHARS = 16000
 #: A review is a one-off after the meeting, so it may wait longer than a live judgment.

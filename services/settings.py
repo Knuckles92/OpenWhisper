@@ -1937,20 +1937,20 @@ def compose_transcript_cleanup_prompt(base_prompt: str, rules: List[str]) -> str
 
 
 #: The consent text version a meeting insight review was agreed under
-#: (``meeting.insight_review.CONSENT``).
-_INSIGHT_REVIEW_CONSENT: Final[str] = "typesafe-text-v1"
+#: (``meeting.state.review.REVIEW_CONSENT``; a test keeps the two equal).
+INSIGHT_REVIEW_CONSENT: Final[str] = "typesafe-text-v1"
 
 
 def resolve_meeting_insight_review(settings=None):
     if settings is None:
         settings = settings_manager.load_all_settings()
     enabled = resolve_bool_setting(SettingsKey.MEETING_INSIGHT_REVIEW, settings)
-    consent = settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == _INSIGHT_REVIEW_CONSENT
+    consent = settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == INSIGHT_REVIEW_CONSENT
     sensitivity = resolve_choice_setting(
         SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY, ("normal", "thorough"), settings,
     )
     return {
         "enabled": enabled and consent and resolve_typesafe_enabled(settings),
-        "consent": _INSIGHT_REVIEW_CONSENT if consent else "",
+        "consent": INSIGHT_REVIEW_CONSENT if consent else "",
         "sensitivity": sensitivity,
     }

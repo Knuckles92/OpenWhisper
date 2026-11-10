@@ -62,6 +62,7 @@ from services.history_manager import history_manager
 from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display, parse_hotkey
 from services.recorder import AudioRecorder
 from services.settings import (
+    INSIGHT_REVIEW_CONSENT,
     LEGACY_STREAMING_KEYS,
     HuggingFaceAccessPolicy,
     MeetingServerBind,
@@ -254,7 +255,6 @@ logger = logging.getLogger(__name__)
 _RULE_DICTATION_CAP_MS = 60_000
 
 #: The consent version saved when the meeting insight review is turned on.
-_INSIGHT_REVIEW_CONSENT = "typesafe-text-v1"
 
 
 def is_native_wayland_session(
@@ -4491,9 +4491,12 @@ class SettingsDialog(QDialog):
                 self.meeting_review_check.setChecked(False)
                 self.meeting_review_check.blockSignals(False)
                 return
-        self._persist(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT,
-                      _INSIGHT_REVIEW_CONSENT if checked else "")
-        self._persist(SettingsKey.MEETING_INSIGHT_REVIEW, bool(checked))
+        # One write, so the consent and the switch never disagree on disk.
+        self._persist_many({
+            SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT:
+                INSIGHT_REVIEW_CONSENT if checked else "",
+            SettingsKey.MEETING_INSIGHT_REVIEW: bool(checked),
+        })
 
     def _on_end_report_toggled(self, checked: bool) -> None:
         self._update_report_views_enabled()
@@ -5253,7 +5256,7 @@ class SettingsDialog(QDialog):
         if self._page_is_loading(MEETING_AFTER):
             review_on = (
                 settings.get(SettingsKey.MEETING_INSIGHT_REVIEW) is True
-                and settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == _INSIGHT_REVIEW_CONSENT
+                and settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == INSIGHT_REVIEW_CONSENT
             )
             self.meeting_review_check.setChecked(review_on)
             self.meeting_end_report_check.setChecked(resolve_meeting_end_report(settings))

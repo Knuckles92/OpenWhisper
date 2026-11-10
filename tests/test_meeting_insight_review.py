@@ -515,3 +515,10 @@ def test_review_without_the_chosen_routes_key_names_that_key(monkeypatch):
     assert review["status"] == "unavailable"
     assert "an OpenRouter API key" in review["message"] and "OPENROUTER_API_KEY" in review["message"]
     post.assert_not_called()
+
+
+def test_settings_and_meeting_state_agree_on_the_consent_version():
+    from meeting.state.review import REVIEW_CONSENT
+    from services.settings import INSIGHT_REVIEW_CONSENT
+
+    assert INSIGHT_REVIEW_CONSENT == REVIEW_CONSENT == CONSENT
