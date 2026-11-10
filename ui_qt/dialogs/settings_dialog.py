@@ -4028,7 +4028,18 @@ class SettingsDialog(QDialog):
         if self._rail_batch_depth:
             self._rail_refresh_pending = True
             return
-        settings = self._settings_snapshot()
+        if self._refresh_snapshot is not None:
+            self._render_rail_values(self._refresh_snapshot)
+            return
+        # Every save lands here, and the values below read the settings many
+        # times over; one copy serves them all.
+        self._refresh_snapshot = self._settings_snapshot()
+        try:
+            self._render_rail_values(self._refresh_snapshot)
+        finally:
+            self._refresh_snapshot = None
+
+    def _render_rail_values(self, settings: dict) -> None:
         profile_count = len(load_cleanup_profiles(settings))
         self.rail.set_value(CLEANUP_PROFILES, f"{profile_count} profile{'' if profile_count == 1 else 's'}")
         self.rail.set_value(GENERAL, _general_rail_value(settings))

@@ -1005,6 +1005,15 @@ class SettingsManager:
                 except FileNotFoundError:
                     pass
 
+    def file_signature(self):
+        """A cheap token that changes when the settings file does, or None.
+
+        For a caller that polls: compare it before paying for
+        ``load_all_settings``, which copies every setting.
+        """
+        with self._lock:
+            return self._file_signature()
+
     def load_all_settings(self) -> Dict[str, Any]:
         """Load settings, returning an empty dict on failure."""
         with self._lock:
