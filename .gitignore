@@ -118,7 +118,7 @@ specs/local-asr-backends-plan.md
 # Anything made for one-off use goes in artifacts/<name>/, never the repo root.
 /artifacts/
 # Stray renders and screenshots dropped at the repo root. Media the repo ships
-# lives in demo/, docs/ or ui_qt/assets/ and is added deliberately.
+# lives in docs/ or ui_qt/assets/ and is added deliberately.
 /*.png
 /*.jpg
 /*.jpeg

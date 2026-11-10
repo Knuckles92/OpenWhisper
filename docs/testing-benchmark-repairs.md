@@ -61,7 +61,7 @@ OpenCode SDK protocol tests also pass.
   bundle is byte-for-byte unchanged.
 - All **11 benchmark CLI --help smoke checks** returned zero.
 - Ruff undefined-name/unused-import checks passed for the repository excluding the
-  pre-existing demo/ directory; that directory has an unrelated unused import.
+  demo/ directory (since removed), which had an unrelated unused import.
 - git diff --check passed.
 - Coverage improved in the paths targeted by the audit:
 
