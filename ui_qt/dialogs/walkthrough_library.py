@@ -295,10 +295,6 @@ class WalkthroughLibraryDialog(QDialog):
         self.count_label.setText(f"{len(folders)} saved" if folders else "None yet")
         self._selected(self.list.currentItem(), None)
 
-    def select_folder(self, folder):
-        if self.review.discard_changes():
-            self.refresh(folder)
-
     def _refresh_requested(self):
         if self.review.discard_changes():
             self.refresh(self.review.folder)

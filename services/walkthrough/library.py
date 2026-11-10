@@ -179,11 +179,6 @@ def earlier_write_ups(folder: Path) -> list[int]:
     return sorted(found)
 
 
-def word_document(folder: Path) -> Path:
-    """The Word document ``load_result`` would give for ``folder``."""
-    return folder / ("write-up.docx" if written_up(folder) else DOCX_NAME)
-
-
 def load_result(folder: Path, *, spoken: bool = False,
                 version: int | None = None) -> WalkthroughResult:
     """``folder``'s walkthrough: its latest write-up, an earlier ``version``, or as spoken."""
