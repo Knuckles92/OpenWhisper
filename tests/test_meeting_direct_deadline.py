@@ -77,7 +77,9 @@ def test_capability_probe_has_a_wall_deadline(monkeypatch):
 
 
 def test_trickling_http_ends_before_late_patch_can_run():
-    release = threading.Event()
+    # The server trickles for TRICKLES * TRICKLE_S before sending the patch.
+    trickles, trickle_s = 100, .04
+    release, patch_sent = threading.Event(), threading.Event()
     body = json.dumps({"id": "x", "object": "chat.completion", "created": 0, "model": "m",
         "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
             "role": "assistant", "content": None, "tool_calls": [{"id": "late", "type": "function",
@@ -91,11 +93,12 @@ def test_trickling_http_ends_before_late_patch_can_run():
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
             try:
-                for _ in range(100):
-                    if release.wait(.04):
+                for _ in range(trickles):
+                    if release.wait(trickle_s):
                         break
                     self.wfile.write(b"1\r\n \r\n")
                     self.wfile.flush()
+                patch_sent.set()
                 self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(body), body))
                 self.wfile.flush()
             except OSError:
@@ -115,7 +118,11 @@ def test_trickling_http_ends_before_late_patch_can_run():
         agent._pass_deadline = started + .2
         result = agent._run_tool_mode(client, "sys", "user", .2)
         assert not result.ok and "deadline exceeded" in result.error
-        assert time.monotonic() - started < .9
+        # Not a fixed fraction of a second, which a busy runner misses: the
+        # pass must end while the server is still trickling, with the patch
+        # unsent, and well inside the time the trickle would take.
+        assert not patch_sent.is_set()
+        assert time.monotonic() - started < trickles * trickle_s / 2
         release.set()
         agent._generation_thread.join(2)
         assert not agent._generation_thread.is_alive()

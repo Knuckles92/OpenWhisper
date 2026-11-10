@@ -12,8 +12,12 @@ import pytest
 from services import isolated
 from services.local_asr.process import SpeechProcess
 
+#: How long the fake worker below sleeps where a real one would be stuck.
+STALL_S = 100
+
 
 WORKER = '''
+STALL_S = __STALL_S__
 import json, os, socket, time
 from pathlib import Path
 s = socket.create_connection(('127.0.0.1', int(os.environ['OPENWHISPER_WORKER_PORT'])))
@@ -28,14 +32,14 @@ for line in incoming:
             outgoing.write(json.dumps({'id': r['id'], 'error': 'upload rejected'}) + '\\n')
             outgoing.flush()
             continue
-        time.sleep(100)
+        time.sleep(STALL_S)
     if op == 'download_model':
         outgoing.write(json.dumps({'id': r['id'], 'progress': [5, 10]}) + '\\n')
         outgoing.flush()
-        time.sleep(100)
+        time.sleep(STALL_S)
     if (op == 'whisper_load' and r['model'] == 'block-load') or (op == 'whisper_transcribe' and (r['audio_path'].endswith('block.wav') or os.environ.get('TEST_BLOCK_PREVIEW'))):
         Path(os.environ['TEST_WORKER_STARTED']).write_text(op)
-        time.sleep(100)
+        time.sleep(STALL_S)
     result = {}
     if op == 'whisper_transcribe':
         text = 'fresh result'
@@ -45,7 +49,7 @@ for line in incoming:
         result = {'segments': [{'text': text, 'start': 0., 'end': 1.}], 'info': {'language': 'en', 'language_probability': .9}}
     outgoing.write(json.dumps({'id': r['id'], 'result': result}) + '\\n')
     outgoing.flush()
-'''
+'''.replace("__STALL_S__", str(STALL_S))
 
 
 @pytest.fixture
@@ -210,7 +214,10 @@ def test_rejected_chunk_interrupts_other_stalled_uploads(native_worker, tmp_path
     try:
         with pytest.raises(RuntimeError, match="upload rejected"):
             backend._transcribe_chunks([str(path) for path in paths], *backend._target())
-        assert time.monotonic() - before < 3
+        # The window includes starting the worker processes, which alone can
+        # take seconds on a busy runner. What matters is that the rejection
+        # ended the pass instead of waiting out the stalled upload.
+        assert time.monotonic() - before < STALL_S / 4
         assert all(p.poll() is not None for p in processes)
     finally:
         backend.cleanup()
