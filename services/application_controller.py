@@ -284,6 +284,8 @@ class ApplicationController(QObject):
     hands_free_changed = pyqtSignal(bool)
     # (old, new) microphone names after a recording moved to the next one.
     recording_device_switched = pyqtSignal(str, str)
+    # (preferred, in use) when a recording started without the preferred microphone.
+    recording_device_fallback = pyqtSignal(str, str)
     # A correction the user made after a paste became a dictionary term.
     dictionary_term_learned = pyqtSignal(str)
 
@@ -2760,6 +2762,9 @@ class ApplicationController(QObject):
         )
         self.recording_device_switched.connect(
             lambda old, new: self.ui_controller.on_recording_device_switched(old, new)
+        )
+        self.recording_device_fallback.connect(
+            lambda preferred, used: self.ui_controller.on_recording_device_fallback(preferred, used)
         )
         self.dictionary_term_learned.connect(
             lambda term: self.ui_controller.on_dictionary_term_learned(term)

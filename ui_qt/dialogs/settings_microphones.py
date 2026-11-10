@@ -237,9 +237,10 @@ class MicrophoneSection:
         drops = ()
         # The old index key is what an older version reads after a
         # downgrade. Keep it on the preferred microphone where that version
-        # could open it (it knows no WASAPI conversion), else the default.
+        # could open it (it knows no WASAPI conversion and no PulseAudio
+        # sources), else the default.
         device = self._match(priority[0]) if priority else None
-        if device is not None and device.default_api:
+        if device is not None and device.default_api and not device.source:
             updates[SettingsKey.AUDIO_INPUT_DEVICE] = device.index
         else:
             drops = (SettingsKey.AUDIO_INPUT_DEVICE,)

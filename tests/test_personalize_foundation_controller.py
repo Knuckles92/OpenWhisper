@@ -55,6 +55,7 @@ def test_ui_signals_reach_their_ui_methods(controller):
     controller.paste_last_original_requested.emit()
     controller.hands_free_changed.emit(True)
     controller.recording_device_switched.emit("USB mic", "Laptop mic")
+    controller.recording_device_fallback.emit("USB mic", "")
     controller.dictionary_term_learned.emit("Kubernetes")
 
     assert ui.flow_calls == [
@@ -63,6 +64,7 @@ def test_ui_signals_reach_their_ui_methods(controller):
         ("paste_last_original",),
         ("set_hands_free", True),
         ("on_recording_device_switched", "USB mic", "Laptop mic"),
+        ("on_recording_device_fallback", "USB mic", ""),
         ("on_dictionary_term_learned", "Kubernetes"),
     ]
     assert ui.overlay.hands_free is True

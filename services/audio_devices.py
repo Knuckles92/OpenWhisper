@@ -8,12 +8,16 @@ current list, never an index.
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import logging
 import operator
+import os
 import re
+import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Mapping, Optional, Sequence
 
@@ -35,6 +39,20 @@ _GENERIC_OUTER = frozenset({
     "microphone", "microphone array", "mic", "headset", "headset microphone",
     "external microphone", "internal microphone", "line", "line in",
 })
+
+# Linux: PortAudio only talks to ALSA, which has no entry for a Bluetooth
+# headset or any other microphone that exists only in PulseAudio or PipeWire.
+# Their sources are listed under this host API name and recorded through the
+# ALSA "pipewire" or "pulse" device, pointed at the source while it opens.
+SOURCE_HOSTAPI = "PulseAudio"
+# Past any PortAudio index; the source's own index is added, so a source
+# keeps its number for as long as it exists.
+_SOURCE_INDEX_BASE = 1_000_000
+_SOURCE_ROUTE_ENV = ("PULSE_SOURCE", "PIPEWIRE_NODE")
+_SOURCE_LIST_TIMEOUT_S = 1.5
+# Meeting Mode looks for its microphone every second.
+_SOURCE_CACHE_S = 2.0
+_source_cache: tuple = (0.0, [])
 
 ROLE_DEFAULT = "default"
 ROLE_MAPPER = "mapper"
@@ -60,10 +78,19 @@ class InputDevice:
     # ROLE_DEFAULT or ROLE_MAPPER when a candidate stands in for the system
     # default rather than a ranked choice.
     role: str = ""
+    # A PulseAudio or PipeWire source: ``index`` is then not a PortAudio
+    # index, and the stream opens on ``carrier`` routed to ``source``.
+    source: str = ""
+    carrier: int = -1
 
     @property
     def key(self) -> dict:
         return {"name": self.name, "hostapi": self.hostapi}
+
+    @property
+    def stream_index(self) -> int:
+        """The PortAudio index to open."""
+        return self.carrier if self.source else self.index
 
     @property
     def display(self) -> str:
@@ -182,11 +209,126 @@ def list_input_devices(sd=None) -> List[InputDevice]:
             samplerate=int(dev.get("default_samplerate") or 44100),
             default_api=api_index == default_api,
         ))
+    if sys.platform.startswith("linux"):
+        try:
+            devices = _source_devices(devices) + devices
+        except Exception:
+            logger.warning("Couldn't list PulseAudio sources", exc_info=True)
     return [
         dataclasses.replace(device, label=_untruncated(device, devices))
         if len(device.name) == MME_NAME_LIMIT else device
         for device in devices
     ]
+
+
+@dataclass(frozen=True)
+class _Source:
+    index: int
+    name: str
+    description: str
+    pipewire: bool
+
+
+def _parse_sources(listing: str) -> List[_Source]:
+    """Microphones in ``pactl list sources`` output; monitors of outputs are left out."""
+    sources = []
+    for block in re.split(r"^Source #", listing, flags=re.MULTILINE)[1:]:
+        head = block.split("\n", 1)[0].strip()
+        fields = {}
+        for line in block.splitlines()[1:]:
+            # Properties are indented twice and written "key = value".
+            if line.startswith("\t") and not line.startswith("\t\t"):
+                key, _, value = line.partition(":")
+                fields[key.strip()] = value.strip()
+        name = fields.get("Name", "")
+        monitor = fields.get("Monitor of Sink", "n/a")
+        if not head.isdigit() or not name or monitor.lower() != "n/a":
+            continue
+        sources.append(_Source(
+            index=int(head),
+            name=name,
+            description=fields.get("Description") or name,
+            pipewire=fields.get("Driver", "").lower() == "pipewire",
+        ))
+    return sources
+
+
+def _list_sources() -> List[_Source]:
+    global _source_cache
+    read_at, sources = _source_cache
+    if time.monotonic() - read_at < _SOURCE_CACHE_S:
+        return sources
+    try:
+        listing = subprocess.run(
+            ["pactl", "list", "sources"],
+            capture_output=True, text=True, timeout=_SOURCE_LIST_TIMEOUT_S,
+            # The field names are translated otherwise.
+            env={**os.environ, "LC_ALL": "C"},
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        listing = ""
+    sources = _parse_sources(listing)
+    _source_cache = (time.monotonic(), sources)
+    return sources
+
+
+def _source_devices(devices: Sequence[InputDevice]) -> List[InputDevice]:
+    """PulseAudio and PipeWire microphones, when an ALSA device can reach them."""
+    carriers = {
+        device.name: device for device in reversed(devices)
+        if device.hostapi == "ALSA" and device.name in ("pipewire", "pulse")
+    }
+    if not carriers:
+        return []
+    sources = _list_sources()
+    if not sources:
+        return []
+    # ALSA's "pipewire" device takes a PipeWire node and its "pulse" device a
+    # PulseAudio source; a PipeWire source's name is its node's name.
+    if any(source.pipewire for source in sources):
+        carrier = carriers.get("pipewire") or carriers.get("pulse")
+    else:
+        carrier = carriers.get("pulse")
+    if carrier is None:
+        return []
+    return [
+        InputDevice(
+            index=_SOURCE_INDEX_BASE + source.index,
+            name=source.description,
+            hostapi=SOURCE_HOSTAPI,
+            # The sound server mixes any source down to one channel.
+            channels=1,
+            samplerate=carrier.samplerate,
+            default_api=True,
+            source=source.name,
+            carrier=carrier.index,
+        )
+        for source in sources
+    ]
+
+
+@contextlib.contextmanager
+def source_route(device: Optional[InputDevice]):
+    """Point the ALSA carrier at ``device``'s source while its stream opens.
+
+    Both ALSA plugins read the source from the environment when the stream
+    connects, so hold ``portaudio_lock`` and keep this open through the
+    stream's start. A no-op for PortAudio's own devices.
+    """
+    source = getattr(device, "source", "")
+    if not source:
+        yield
+        return
+    saved = {name: os.environ.get(name) for name in _SOURCE_ROUTE_ENV}
+    os.environ.update(dict.fromkeys(_SOURCE_ROUTE_ENV, source))
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _untruncated(device: InputDevice, devices: Sequence[InputDevice]) -> str:
@@ -282,7 +424,7 @@ def can_open(
     try:
         with portaudio_lock:
             sd.check_input_settings(
-                device=device.index,
+                device=device.stream_index,
                 channels=channels,
                 dtype=dtype,
                 samplerate=samplerate,
@@ -446,10 +588,12 @@ def refresh_portaudio(sd=None) -> bool:
     opening a stream, which would put about 25 ms (more with Bluetooth
     devices) on the recording start path. Returns False when it was refused.
     """
+    global _source_cache
     sd = sd or _sounddevice()
     with portaudio_lock:
         if _open_streams:
             return False
+        _source_cache = (0.0, [])
         sd._terminate()
         try:
             sd._initialize()

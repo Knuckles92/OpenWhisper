@@ -12,6 +12,7 @@ watchdog.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import time
@@ -38,9 +39,13 @@ class SdCaptureSource:
     requires_audio_blocks = True
 
     def __init__(self, channel: str, device_index: int, samplerate: int,
-                 n_channels: int) -> None:
+                 n_channels: int, *, open_index: Optional[int] = None,
+                 source: str = "") -> None:
         self.channel = channel
         self._device_index = int(device_index)
+        # A PulseAudio source opens on its ALSA carrier, routed to ``source``.
+        self._open_index = self._device_index if open_index is None else int(open_index)
+        self._source = source
         self._samplerate = int(samplerate)
         self._n_channels = max(1, int(n_channels))
         self._on_block: Optional[Callable[[CaptureBlock], None]] = None
@@ -70,16 +75,27 @@ class SdCaptureSource:
         self._on_block = on_block
         try:
             import sounddevice as sd
-            self._stream = sd.InputStream(
-                device=self._device_index,
-                samplerate=self._samplerate,
-                channels=self._n_channels,
-                dtype="int16",
-                blocksize=BLOCKSIZE,
-                callback=self._callback,
-                finished_callback=self._on_finished,
+            from services import audio_devices
+
+            route = audio_devices.InputDevice(
+                index=self._device_index, name="", hostapi="", source=self._source,
             )
-            self._stream.start()
+            # The source is picked when the stream connects, so the route
+            # covers the start too.
+            with contextlib.ExitStack() as stack:
+                if self._source:
+                    stack.enter_context(audio_devices.portaudio_lock)
+                    stack.enter_context(audio_devices.source_route(route))
+                self._stream = sd.InputStream(
+                    device=self._open_index,
+                    samplerate=self._samplerate,
+                    channels=self._n_channels,
+                    dtype="int16",
+                    blocksize=BLOCKSIZE,
+                    callback=self._callback,
+                    finished_callback=self._on_finished,
+                )
+                self._stream.start()
             self._active = True
             logger.info(
                 "Capture started: channel=%s device=%d rate=%d channels=%d",

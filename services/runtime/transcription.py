@@ -614,6 +614,10 @@ class TranscriptionRuntime:
         with self._job_lock:
             self._previewing = self._job
         self._show_listening(mode, action, profile)
+        fallback = getattr(self.controller.recorder, "start_fallback", None)
+        if fallback:
+            # After the overlay is up: its caption is dropped while hidden.
+            self.controller.recording_device_fallback.emit(*fallback)
         # Auto-paste copies the user's clipboard so it can put it back.
         # Take that copy while the user speaks instead of in front of the
         # paste; it is queued to the Qt thread and never delays this start.

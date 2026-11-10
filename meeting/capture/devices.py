@@ -63,13 +63,19 @@ def _sounddevice():
 
 
 def _device_dict(device: InputDevice) -> Dict[str, Any]:
-    return {
+    chosen = {
         "index": device.index,
         "name": device.name,
         "hostapi": device.hostapi,
         "samplerate": int(device.samplerate),
         "channels": int(device.channels),
     }
+    if device.source:
+        # A PulseAudio source: "index" only identifies it; the stream opens
+        # on the ALSA carrier, routed to the source.
+        chosen["open_index"] = device.stream_index
+        chosen["source"] = device.source
+    return chosen
 
 
 def _loopback_dict(index: int, dev: Dict[str, Any]) -> Dict[str, Any]:

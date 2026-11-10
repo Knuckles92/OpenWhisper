@@ -269,6 +269,11 @@ class AudioRecorder:
         # (old device name, new device name) after a mid-recording switch to
         # the next microphone; called from the capture thread.
         self.device_switch_callback: Optional[Callable[[str, str], None]] = None
+        # (preferred name, name in use) when the latest recording started on
+        # another microphone than the preferred one and that is news: it is
+        # set once per pairing, not for every recording made without it.
+        self.start_fallback: Optional[tuple] = None
+        self._fallback_told: Optional[tuple] = None
         self.dropped_frames = 0
         self.input_overflows = 0
         # time.monotonic() of this recording's overflows inside the window.
@@ -350,8 +355,10 @@ class AudioRecorder:
                 lambda message: self._fail_capture(message) if token is self._session_token else None,
             )
 
+            self.start_fallback = None
             self.stream, self.active_device = self._open_first(generation)
             self._stream_started_at = time.monotonic()
+            self._note_start_fallback()
 
             self.is_recording = True
             self._stop_requested = False
@@ -426,6 +433,31 @@ class AudioRecorder:
             if device is None or device.index not in self._failed_indexes:
                 yield device
 
+    def _note_start_fallback(self) -> None:
+        if not self.device_priority:
+            return
+        preferred, active = self.device_priority[0], self.active_device
+        on_preferred = (
+            active is not None
+            and not active.role
+            and audio_devices.match_entry(preferred, [active]) is not None
+        )
+        if on_preferred:
+            self._fallback_told = None
+            return
+        told = (
+            audio_devices.short_name(preferred["name"]),
+            # "" reads as the system default, whatever its device is called.
+            "" if active is None or active.role else self._switch_name(active),
+        )
+        logger.warning(
+            "The preferred microphone (%s) isn't available; recording on %s",
+            told[0], self._describe(active),
+        )
+        if told != self._fallback_told:
+            self._fallback_told = told
+            self.start_fallback = told
+
     def _mark_failed(self, device: Optional[InputDevice]) -> None:
         if device is None:
             self._default_failed = True
@@ -462,9 +494,10 @@ class AudioRecorder:
             if generation == self._stream_generation:
                 lost.set()
 
-        with audio_devices.portaudio_lock:
+        routed = device is not None and bool(device.source)
+        with audio_devices.portaudio_lock, audio_devices.source_route(device):
             stream = sd.InputStream(
-                device=None if device is None else device.index,
+                device=None if device is None else device.stream_index,
                 samplerate=self.rate,
                 channels=self.channels,
                 dtype=self.dtype,
@@ -474,12 +507,19 @@ class AudioRecorder:
                 extra_settings=audio_devices.extra_settings(device, sd),
             )
             audio_devices.register_stream(stream)
+            if routed:
+                # The source is picked when the stream connects.
+                self._start_or_close(stream)
+        if not routed:
+            self._start_or_close(stream)
+        return stream
+
+    def _start_or_close(self, stream) -> None:
         try:
             stream.start()
         except Exception:
             self._close_stream(stream)
             raise
-        return stream
 
     @staticmethod
     def _close_stream(stream) -> None:

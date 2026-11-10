@@ -212,6 +212,27 @@ Add `--capture 30` to also record 30 seconds through the production capture
 path; it fails if audio stops arriving or its timeline breaks. Play something
 during the run to confirm the monitor carries what you hear.
 
+## Microphones
+
+**Settings → Recording → Preferred microphone** lists the sound server's own
+microphones (PulseAudio sources or PipeWire nodes) ahead of ALSA's devices.
+Choose from those for a Bluetooth headset, which has no ALSA device at all,
+and for a sound card PipeWire already holds, which its `hw:` entry cannot
+open. They need:
+
+- `pactl` (`libpulse` on Arch, `pulseaudio-utils` on Debian/Ubuntu and Fedora)
+- the ALSA device that reaches the sound server: `pipewire` from
+  `pipewire-alsa` on PipeWire, or `pulse` from `alsa-plugins`
+  (`pulseaudio-alsa` on Arch) on PulseAudio
+
+`python -m sounddevice` shows whether `pipewire` or `pulse` is among the ALSA
+devices. Without them only ALSA's devices are listed, and **System default**
+records from whatever ALSA's `default` device is.
+
+A Bluetooth headset has a microphone only in its headset profile (HSP/HFP).
+Current WirePlumber switches to it when a recording starts on the headset; if
+yours stays silent, switch the profile in your desktop's sound settings.
+
 ## Distro caveats
 
 - Unknown package families never receive automatic `apt`/`dnf`/`pacman` install

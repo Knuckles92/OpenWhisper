@@ -1325,6 +1325,11 @@ class UIController(QObject):
         self.set_status(f"Microphone disconnected — continuing on {name}")
         self.overlay.show_caption(f"Switched to {name}")
 
+    def on_recording_device_fallback(self, preferred: str, used: str) -> None:
+        name = used or "the system default microphone"
+        self.set_status(f"{preferred} isn't available — recording on {name}")
+        self.overlay.show_caption(f"Using {name}")
+
     def on_dictionary_term_learned(self, term: str) -> None:
         from services.dictionary import find_term
 

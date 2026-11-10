@@ -755,6 +755,9 @@ class DummyUIController:
     def on_recording_device_switched(self, old, new):
         self.flow_calls.append(("on_recording_device_switched", old, new))
 
+    def on_recording_device_fallback(self, preferred, used):
+        self.flow_calls.append(("on_recording_device_fallback", preferred, used))
+
     def on_dictionary_term_learned(self, term):
         self.flow_calls.append(("on_dictionary_term_learned", term))
 
@@ -1500,6 +1503,14 @@ class TestApplicationController:
         assert controller.ui_controller.transcription_text == "Fixed sentence."
         assert controller.ui_controller.transcription_raw == "um fixed sentence"
         assert controller.ui_controller.copied[-1] == "Fixed sentence."
+
+    def test_a_start_without_the_preferred_microphone_reaches_the_ui(self):
+        controller = self._create_controller()
+        controller.recorder.start_fallback = ("USB mic", "Laptop mic")
+
+        controller.start_recording()
+
+        assert ("on_recording_device_fallback", "USB mic", "Laptop mic") in controller.ui_controller.flow_calls
 
     def test_start_recording_failure_stays_idle(self):
         controller = self._create_controller()

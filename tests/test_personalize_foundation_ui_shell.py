@@ -149,6 +149,14 @@ class TestFeatureDelegation:
         ui.set_status.assert_called_once_with("Microphone disconnected — continuing on Laptop mic")
         ui.overlay.show_caption.assert_called_once_with("Switched to Laptop mic")
 
+    def test_a_start_without_the_preferred_microphone_says_which_one_is_used(self, ui):
+        ui.on_recording_device_fallback("USB headset", "Laptop mic")
+        ui.set_status.assert_called_once_with("USB headset isn't available — recording on Laptop mic")
+        ui.overlay.show_caption.assert_called_once_with("Using Laptop mic")
+
+        ui.on_recording_device_fallback("USB headset", "")
+        ui.overlay.show_caption.assert_called_with("Using the system default microphone")
+
     def test_learned_term_says_so_and_refreshes_the_dictionary_page(self, ui):
         ui.on_dictionary_term_learned("Kubernetes")
         ui.set_status.assert_called_once_with('Added "Kubernetes" to your dictionary')

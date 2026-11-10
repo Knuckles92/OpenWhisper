@@ -2269,6 +2269,7 @@ class MeetingEngine:
                     SdCaptureSource(
                         CHANNEL_MIC, device["index"], device["samplerate"],
                         device["channels"],
+                        **{key: device[key] for key in ("open_index", "source") if key in device},
                     ),
                     reuse_spool=reuse_spool,
                 )
