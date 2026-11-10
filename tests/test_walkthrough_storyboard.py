@@ -544,6 +544,51 @@ def test_a_window_already_wide_enough_keeps_its_width(window):
     assert window.width() == 1100
 
 
+def _toggle_panel(window):
+    from PyQt6.QtCore import QPropertyAnimation
+
+    window.toggle_history()
+    for _ in range(300):
+        QTest.qWait(10)
+        if window.history_sidebar.animation.state() != QPropertyAnimation.State.Running:
+            break
+    _settle(window)
+
+
+def test_the_side_panel_adds_to_the_window_and_leaves_the_page_its_width(window):
+    from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+    _open_tab(window, TabbedContentWidget.TAB_WALKTHROUGH)
+    tab = window.walkthrough_tab
+    width, page = window.width(), tab.scroll_area.contentsRect().width()
+
+    _toggle_panel(window)
+    assert window.width() == width + window.history_sidebar.EXPANDED_WIDTH
+    assert tab.scroll_area.contentsRect().width() == page
+    assert not tab.split.stacked
+
+    _toggle_panel(window)
+    assert window.width() == width
+    assert tab.scroll_area.contentsRect().width() == page
+
+
+def test_closing_the_side_panel_gives_back_what_a_small_screen_took(window):
+    from PyQt6.QtCore import QRect
+
+    from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+    _open_tab(window, TabbedContentWidget.TAB_WALKTHROUGH)
+    width = window.width()
+    window._available_screen_rect = lambda: QRect(0, 0, width + 100, 1000)
+
+    _toggle_panel(window)
+    assert window.width() == width + 100
+
+    _toggle_panel(window)
+    assert window.width() == width
+    assert not window.walkthrough_tab.split.stacked
+
+
 def test_dragged_to_its_narrowest_the_storyboard_shows_whole(window):
     """Nothing runs past the right edge: Open drops below Copy, screenshots shrink."""
     from config import config
@@ -564,6 +609,34 @@ def test_dragged_to_its_narrowest_the_storyboard_shows_whole(window):
     assert edge < viewport.width()
     for row in review.rows:
         assert row.width() <= review.board.width()
+
+
+def test_rows_fit_the_stage_at_its_narrowest(tmp_path):
+    """Beside the side panel the stage can be this narrow: the switch drops under the step."""
+    from ui_qt.widgets.studio import STAGE_MIN
+
+    widget = WalkthroughReview()
+    widget.show_folder(_large_capture(tmp_path).folder)
+    widget.show()
+    stacked = []
+    for width in (STAGE_MIN.width(), 900):
+        widget.resize(width, 700)
+        for _ in range(3):
+            QApplication.processEvents()
+        assert widget.board.width() == widget.scroll.viewport().width()
+        for row in widget.rows:
+            assert row.geometry().right() < widget.board.width()
+            if row.check.isVisible():
+                edge = row.check.mapTo(row, row.check.rect().topRight()).x()
+                assert edge < row.width()
+        stacked.append(widget.rows[0].top.stacked)
+        # The copy buttons wrap rather than squash into each other.
+        for button in (widget.pdf_button, widget.markdown_button, widget.copy_word_button,
+                       widget.chip):
+            assert button.width() >= button.sizeHint().width()
+            assert button.mapTo(widget, button.rect().topRight()).x() < widget.width()
+    assert stacked == [True, False]
+    widget.close()
 
 
 def test_a_screenshot_grows_with_its_row_and_keeps_its_shape(tmp_path):

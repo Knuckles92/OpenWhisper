@@ -5,10 +5,10 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import (
     QApplication,
     QLabel,
-    QPlainTextEdit,
     QPushButton,
     QToolButton,
 )
@@ -166,7 +166,7 @@ class TestMeetingModeTabRegistration(unittest.TestCase):
 
 
 class TestMeetingModeWindowHeight(unittest.TestCase):
-    """Finalization remains readable in the responsive scroll viewport."""
+    """The stage changes what it shows without moving the window."""
 
     FINALIZATION = {
         "status": "running",
@@ -228,29 +228,45 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
         self.intro.stop()
 
     def _settle(self):
-        from PyQt6.QtTest import QTest
-        QTest.qWait(350)
+        """Wait out the window's resize animations; a tab can change both axes."""
+        still = 0
+        for _ in range(40):
+            QTest.qWait(120)
+            still = 0 if self.window._resize_animation_running() else still + 1
+            if still == 3:
+                break
         self.app.processEvents()
 
     def _step_rows(self):
         layout = self.window.meeting_mode_tab.finalization_steps_layout
         return [layout.itemAt(i).widget() for i in range(layout.count())]
 
-    def test_finalization_geometry_and_clear(self):
-        """Expansion, row spacing and shrinkage share one window lifecycle."""
+    def test_stage_changes_never_resize_the_window(self):
+        """Idle, live, wrap-up and back share one window size beside the column."""
+        tab = self.window.meeting_mode_tab
+        # Fit again now that the screen is wide enough for both panes.
+        self.window._refit_page()
+        self._settle()
+        self.assertFalse(tab.split.stacked)
+        size = self.window.size()
+
+        tab.set_meeting_state({"active": True, "status": "active"})
+        self._settle()
+        self.assertEqual(tab.stage_state, "live")
+        self.assertEqual(self.window.size(), size)
+
         for dashboard in ({}, {"dashboard_available": True}):
             with self.subTest(dashboard=dashboard):
-                start_height = self.window.height()
-                self.window.meeting_mode_tab.set_meeting_state({
+                tab.set_meeting_state({
                     "active": False,
                     "status": "ended",
                     "finalization": self.FINALIZATION,
                     **dashboard,
                 })
                 self._settle()
-                expanded_height = self.window.height()
-                self.assertGreater(expanded_height, start_height)
-                steps_widget = self.window.meeting_mode_tab.finalization_steps_widget
+                self.assertEqual(tab.stage_state, "result")
+                self.assertEqual(self.window.size(), size)
+                steps_widget = tab.finalization_steps_widget
                 self.assertGreaterEqual(
                     steps_widget.height(), steps_widget.minimumSizeHint().height()
                 )
@@ -259,17 +275,25 @@ class TestMeetingModeWindowHeight(unittest.TestCase):
                     self.assertGreater(row.x(), 0)
                     self.assertLess(row.x() + row.width(), steps_widget.width())
 
-                self.window.meeting_mode_tab.set_meeting_state({
+                tab.set_meeting_state({
                     "status": "idle",
                     "active": False,
                     "finalization": None,
                 })
                 self._settle()
-                self.assertLess(self.window.height(), expanded_height)
-                self.assertEqual(
-                    self.window.meeting_mode_tab.scroll_area.verticalScrollBar().maximum(),
-                    0,
-                )
+                self.assertEqual(tab.stage_state, "empty")
+                self.assertEqual(self.window.size(), size)
+                self.assertEqual(tab.scroll_area.verticalScrollBar().maximum(), 0)
+
+    def test_narrow_window_stacks_the_column_above_the_stage(self):
+        tab = self.window.meeting_mode_tab
+        self.window.resize(640, self.window.height())
+        self._settle()
+        self.assertTrue(tab.split.stacked)
+        self.assertLess(
+            tab.start_button.mapTo(tab, QPoint()).y(),
+            tab.stage.mapTo(tab, QPoint()).y(),
+        )
 
     def test_switch_to_and_from_meeting_mode_adjusts_height(self):
         """Each tab brings back its own fitted height."""
@@ -516,17 +540,49 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertEqual(len(self.tab.meeting_brief()), MAX_INTENT_LEN)
 
     def test_meeting_brief_field_is_hidden_during_a_meeting(self):
-        """The brief is a pre-meeting control; the dashboard owns it after.
-
-        It lives inside the idle card, so it leaves with the Start button
-        rather than needing visibility handling of its own.
-        """
-        self.assertIsNotNone(
-            self.tab.idle_card.findChild(QPlainTextEdit, "meetingBriefInput")
-        )
+        """The brief is a pre-meeting control; the dashboard owns it after."""
+        self.tab.cloud_checkbox.setChecked(True)
+        self.assertFalse(self.tab.brief_panel.isHidden())
         self.tab.set_meeting_state({"active": True, "status": "active"})
         self.app.processEvents()
         self.assertTrue(self.tab.idle_card.isHidden())
+        self.assertTrue(self.tab.brief_panel.isHidden())
+        self.tab.set_meeting_state({"active": False, "status": "idle"})
+        self.assertFalse(self.tab.brief_panel.isHidden())
+
+    def test_stage_follows_the_meeting(self):
+        self.assertEqual(self.tab.stage_state, "empty")
+        self.assertTrue(self.tab.live_actions.isHidden())
+        self.tab.set_meeting_state({"active": True, "status": "active"})
+        self.assertEqual(self.tab.stage_state, "live")
+        self.assertFalse(self.tab.live_actions.isHidden())
+        self.assertEqual(self.tab.session_card.property("tone"), "live")
+        self.tab.set_meeting_state({"paused": True, "status": "paused"})
+        self.assertEqual(self.tab.session_card.property("tone"), "paused")
+        self.assertEqual(self.tab.pause_button.text(), "Resume")
+        self.tab.set_meeting_state({
+            "active": False, "status": "ended", "finalization": {"status": "running"},
+        })
+        self.assertEqual(self.tab.stage_state, "result")
+        self.assertTrue(self.tab.live_actions.isHidden())
+        self.assertFalse(self.tab.slot_note.isHidden())
+        self.tab.set_meeting_state({"finalization": None})
+        self.assertEqual(self.tab.stage_state, "empty")
+        self.assertTrue(self.tab.slot_note.isHidden())
+
+    def test_recent_meetings_open_from_the_empty_stage(self):
+        opened = []
+        self.tab.past_meeting_requested.connect(opened.append)
+        self.assertTrue(self.tab.recent_box.isHidden())
+        self.tab.set_recent_meetings([
+            {"id": f"m{n}", "title": f"Meeting {n}", "status": "ended"} for n in range(5)
+        ])
+        self.assertFalse(self.tab.recent_box.isHidden())
+        self.assertEqual([row.meeting_id for row in self.tab.recent_rows], ["m0", "m1", "m2"])
+        QTest.keyClick(self.tab.recent_rows[1], Qt.Key.Key_Return)
+        self.assertEqual(opened, ["m1"])
+        self.tab.set_recent_meetings([])
+        self.assertTrue(self.tab.recent_box.isHidden())
 
     def test_cloud_checkbox_presents_compact_tooltip(self):
         """Hover help belongs to the checkbox, without a separate icon."""
@@ -773,9 +829,9 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertLess(
             top(self.tab.finalization_message), top(self.tab.finalization_keep_later_button)
         )
-        self.assertLess(
-            top(self.tab.finalization_keep_later_button), top(self.tab.cloud_checkbox)
-        )
+        # The result is on the stage; the next meeting's switch stays in the column.
+        self.assertEqual(self.tab.stage_state, "result")
+        self.assertFalse(self.tab.cloud_checkbox.isHidden())
         self.assertEqual(self.tab.cloud_checkbox.text(), "AI insights for next meeting")
 
         self.tab.set_meeting_state({"finalization": None})

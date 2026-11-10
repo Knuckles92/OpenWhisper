@@ -2788,15 +2788,131 @@ QTextEdit#cleanupRuleEditor:focus {
 
 QWidget#meetingModeTab,
 QWidget#meetingModeContent,
-QWidget#meetingModeScrollHost,
+QWidget#meetingStudio,
+QWidget#meetingStage,
+QWidget#meetingPlain,
+QWidget#meetingIdleCard,
+QWidget#meetingResultHost,
+QScrollArea#meetingResultScroll,
 QWidget#meetingIntro {
     background-color: transparent;
+    border: none;
 }
 
-QLabel#meetingIntroText {
+/* The control column and the stage beside it, as on the Walkthrough tab. */
+QFrame#meetingColumn {
+    background-color: @surface;
+    border: 1px solid @border;
+    border-radius: 14px;
+}
+
+QFrame#meetingStagePane {
+    background-color: @surface-sunken;
+    border: 1px solid @border-subtle;
+    border-radius: 14px;
+}
+
+QFrame#meetingRule {
+    background-color: @border;
+    border: none;
+}
+
+QLabel#meetingOverline {
     color: @text-secondary;
-    background-color: transparent;
+    font-size: 11px;
+    font-weight: 700;
+    background: transparent;
+}
+
+QLabel#meetingRowName {
+    color: @text;
     font-size: 13px;
+    font-weight: 600;
+    background: transparent;
+}
+
+QLabel#meetingColumnNote,
+QLabel#meetingDemoHint,
+QLabel#meetingHint {
+    color: @text-secondary;
+    font-size: 12px;
+    background: transparent;
+}
+
+QLabel#meetingHeading {
+    color: @text-heading;
+    font-size: 18px;
+    font-weight: 700;
+    background: transparent;
+}
+
+QLabel#meetingTitle {
+    color: @text;
+    font-size: 14px;
+    font-weight: 700;
+    background: transparent;
+}
+
+QLabel#meetingStep {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.16);
+    border-radius: 11px;
+    font-size: 12px;
+    font-weight: 700;
+    min-width: 22px; max-width: 22px;
+    min-height: 22px; max-height: 22px;
+}
+
+QFrame#meetingRecent {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 10px;
+}
+
+QFrame#meetingRecent:hover, QFrame#meetingRecent:focus {
+    background-color: rgba(@overlay-rgb, 0.06);
+    border-color: @border;
+}
+
+QLabel#meetingRecentPill {
+    color: @text-secondary-strong;
+    background-color: rgba(@overlay-rgb, 0.08);
+    border-radius: 9px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLabel#meetingRecentPill[tone="success"] {
+    color: @success-text;
+    background-color: rgba(@success-rgb, 0.15);
+}
+
+QLabel#meetingRecentPill[tone="warning"] {
+    color: @warning-text;
+    background-color: rgba(@warning-rgb, 0.15);
+}
+
+/* The on-air card: neutral while starting, lit while capturing, amber
+   while paused. The tint sits on the stage, so it holds in both themes. */
+QFrame#meetingOnAir {
+    background-color: @surface;
+    border: 1px solid @border;
+    border-radius: 22px;
+}
+
+QFrame#meetingOnAir[tone="live"] {
+    border-color: rgba(@danger-rgb, 0.42);
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(@danger-rgb, 0.26), stop:0.55 rgba(@danger-rgb, 0.10),
+        stop:1 rgba(@danger-rgb, 0.04));
+}
+
+QFrame#meetingOnAir[tone="paused"] {
+    border-color: rgba(@warning-rgb, 0.42);
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(@warning-rgb, 0.20), stop:0.55 rgba(@warning-rgb, 0.08),
+        stop:1 rgba(@warning-rgb, 0.03));
 }
 
 QLabel#meetingModePlatformHint {
@@ -2815,30 +2931,66 @@ QLabel#meetingModePlatformHint[tone="warning"] {
 }
 
 QLabel#meetingStatusPill {
-    background-color: @accent;
-    color: @on-accent;
-    border-radius: 10px;
-    padding: 4px 12px;
+    background-color: transparent;
+    color: @text-secondary;
     font-size: 12px;
-    font-weight: 600;
-    min-width: 64px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+QLabel#meetingStatusPill[tone="live"] {
+    color: @danger-text-soft;
+}
+
+QLabel#meetingStatusPill[tone="paused"] {
+    color: @warning-text;
 }
 
 QLabel#meetingElapsedLabel {
-    color: @text;
-    font-size: 18px;
-    font-weight: 600;
-    font-family: "Segoe UI", "Helvetica Neue", monospace;
+    color: @text-heading;
+    font-size: 68px;
+    font-weight: 700;
     background-color: transparent;
-    padding: 0 4px;
 }
 
-QPushButton#meetingPauseButton,
+/* On the column, whose own colour is the default button fill. */
 QPushButton#meetingDashboardButton,
-QPushButton#meetingGuestLinkButton {
+QPushButton#meetingGuestLinkButton,
+QPushButton#meetingDemoButton {
+    background-color: @bg;
+    border: 1px solid @border;
+    padding: 8px 10px;
+    font-size: 13px;
+    border-radius: 10px;
+}
+
+QPushButton#meetingDashboardButton:hover,
+QPushButton#meetingGuestLinkButton:hover,
+QPushButton#meetingDemoButton:hover {
+    background-color: @surface-hover;
+}
+
+QPushButton#meetingDashboardButton:disabled,
+QPushButton#meetingGuestLinkButton:disabled {
+    color: @text-muted;
+}
+
+QPushButton#meetingPauseButton {
+    background-color: rgba(@overlay-rgb, 0.08);
+    border: 1px solid rgba(@overlay-rgb, 0.14);
+    color: @text;
     padding: 8px 16px;
     font-size: 13px;
-    border-radius: 8px;
+    font-weight: 600;
+    border-radius: 22px;
+}
+
+QPushButton#meetingPauseButton:hover {
+    background-color: rgba(@overlay-rgb, 0.14);
+}
+
+QPushButton#meetingPauseButton:disabled {
+    color: @text-muted;
 }
 
 /* End keeps the danger fill its DangerButton class implies; the meeting
@@ -2848,7 +3000,8 @@ QPushButton#meetingEndButton {
     color: @on-accent;
     padding: 8px 16px;
     font-size: 13px;
-    border-radius: 8px;
+    font-weight: 600;
+    border-radius: 22px;
 }
 
 QPushButton#meetingEndButton:hover {
@@ -2864,42 +3017,12 @@ QPushButton#meetingEndButton:disabled {
     color: @text-muted;
 }
 
-/* Idle setup: the AI insights switch and the optional brief, as panels that
-   match Quick Record's engine cards. */
-QFrame#meetingAiPanel,
-QFrame#meetingBriefPanel {
-    background-color: @surface;
-    border: 1px solid @border;
-    border-radius: 12px;
-}
-
-QWidget#meetingSetupGroup,
+/* The AI insights switch and the optional brief are rows of the column. */
+QWidget#meetingAiPanel,
+QWidget#meetingBriefPanel,
 QWidget#meetingAiDetails {
     background-color: transparent;
-}
-
-QCheckBox#meetingAiInsightsCheckbox {
-    color: @text;
-    font-size: 14px;
-    font-weight: 600;
-    spacing: 8px;
-    background-color: transparent;
-}
-
-/* Recessed like the fields around it. The ID outranks the global :checked
-   rule, so the checked state is restated here. */
-QCheckBox#meetingAiInsightsCheckbox::indicator {
-    background-color: @bg;
-}
-
-QCheckBox#meetingAiInsightsCheckbox::indicator:hover {
-    border-color: @accent;
-}
-
-QCheckBox#meetingAiInsightsCheckbox::indicator:checked {
-    background-color: @accent;
-    border-color: @accent;
-    image: url(ui_qt/assets/check.svg);
+    border: none;
 }
 
 QLabel#meetingAiDescription,
@@ -2908,13 +3031,6 @@ QLabel#meetingAiCompactDestination,
 QLabel#meetingBriefHint {
     color: @text-secondary;
     font-size: 12px;
-    background-color: transparent;
-}
-
-QLabel#meetingBriefLabel {
-    color: @text;
-    font-size: 13px;
-    font-weight: 600;
     background-color: transparent;
 }
 
@@ -2948,8 +3064,7 @@ QPlainTextEdit#meetingBriefInput:focus {
    The named variants must outrank their checked/hover indicator rules. */
 QCheckBox::indicator:focus,
 QCheckBox#engineCleanupCheck::indicator:focus,
-QCheckBox#engineLivePreviewCheck::indicator:focus,
-QCheckBox#meetingAiInsightsCheckbox::indicator:focus {
+QCheckBox#engineLivePreviewCheck::indicator:focus {
     border-color: @accent-soft;
 }
 
