@@ -7,6 +7,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.9] - 2026-11-10
+
 ### Changed
 
 - **Stats rows open their feature** — click a row under **Across OpenWhisper** in the Stats window, or focus it and press Space or Enter, to go where that feature lives: Meetings, Audio files and Walkthroughs bring the main window forward on their tab with the list of past items open, and Actions, Commands, Snippets and Dictionary open their page in Settings.
