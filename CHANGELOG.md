@@ -7,6 +7,29 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Fixed
+
+- **Adding custom Whisper models** — **Add custom models…** on the Voice model pages opens again instead of doing nothing.
+- **Remote engine on a Mac host** — installing or choosing the **Auto** (Apple GPU) runtime for Parakeet, Nemotron or Qwen from a paired computer no longer fails with an invalid request.
+- **Meetings that end with missing audio** — when re-transcription succeeds on a meeting still waiting for recovery, the post-meeting steps now finish and say insights are waiting, instead of showing "Re-transcribing…" until the app quits. Recovering a meeting later keeps its real end time and duration.
+- **Deleting or re-running a meeting too early** — a meeting whose post-meeting steps or report are still being written can no longer be deleted or have its speakers re-run until they finish.
+- **Meeting Mode's "auto" Whisper model** — a meeting set to **auto** picks its own model for this computer rather than using whichever model dictation is set to.
+- **Guided setup** — no longer offers to download a speech model that is already on the computer when Local Whisper is set to **auto**.
+- **Window position on a second monitor** — the window returns to the screen it was on instead of being moved to the main display at every launch and each time it comes back from the tray. The maximize button also shows the right state after a tray restore.
+- **Cleanup profiles** — a profile you are still typing is saved when you leave Settings, like snippets, commands and actions.
+- **Meeting dashboard** — the Handoff and Editorial report tabs are remembered after a reload; the timeline uses the same speaker colors as the transcript; words such as `snake_case_name` in a report are no longer italicized; renaming a meeting is not overwritten while you type; **Load older** activity is kept when the meeting updates.
+- **Cancelled walkthroughs** — cancelling while the walkthrough is being written no longer leaves a hidden folder holding the Word document.
+- **Deleting a speech model** — a leftover copy from an interrupted download can no longer bring the model back, and its disk space is released.
+- **Automatic backups** — a backup folder inside the walkthrough captures folder is refused for scheduled runs, as it already was in Settings.
+- **Update dialog** — the **Don't notify** and **Don't check automatically** choices are saved when changed after a failed download.
+- **Settings search** — searching no longer fails on names containing characters such as "ß".
+- **Custom meeting reports** — a report cut off at the size limit now says so.
+- **Stability** — fixes for leaked helper processes and temporary files when a meeting agent fails to start, a local-model reload race, timers left running at shutdown, and tray **Show**/**Hide** running twice.
+
+### Changed
+
+- **Faster Settings and Omarchy bar** — saving a setting and the bar's status updates no longer re-read every setting several times.
+
 ## [2.8.8] - 2026-11-09
 
 ### Changed
