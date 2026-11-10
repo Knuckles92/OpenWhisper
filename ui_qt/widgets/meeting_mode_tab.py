@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
 from meeting.platform import meeting_mode_supported, meeting_setup_available, meeting_unsupported_os_name
 from meeting.content import fallback_meeting_title, meeting_insights_pill
 from meeting.time_utils import (
+    UNKNOWN_DATE,
     format_meeting_duration,
     format_meeting_identity_meta,
     format_meeting_started_at,
@@ -1842,7 +1843,7 @@ class MeetingModeTab(QWidget):
             identity.get("display_title") or identity.get("title") or ""
         ).strip()
         meta = format_meeting_identity_meta(identity) if identity else ""
-        if meta == "Unknown date" and not identity.get("started_at"):
+        if meta == UNKNOWN_DATE and not identity.get("started_at"):
             meta = ""
         self.identity_title.setText(title or "Meeting result")
         self.identity_meta.setText(meta)
