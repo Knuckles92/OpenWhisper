@@ -739,6 +739,8 @@ class MainWindow(QMainWindow):
                 widget.cancel_requested.connect(self._on_quick_record_canceled)
                 widget.settings_requested.connect(self.settings_destination_requested)
                 widget.walkthroughs_changed.connect(self.refresh_history)
+            elif key == "meeting":
+                widget.past_meeting_requested.connect(self.past_meeting_requested)
         for method, (args, kwargs) in self._screen_updates[key].items():
             if isinstance(method, tuple):
                 method = method[0]

@@ -28,7 +28,6 @@ from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup, QFont, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
-    QBoxLayout,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -69,7 +68,6 @@ from services.walkthrough.styles import (
 )
 from services.walkthrough.write_up import AGENTS, DEFAULT_INSTRUCTIONS
 from ui_qt.dialogs.settings_destinations import WALKTHROUGHS
-from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.palette import token_color
 from ui_qt.widgets import past_walkthroughs
 from ui_qt.widgets.agent_picker import FOUND, describe_agent
@@ -80,6 +78,14 @@ from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.feature_badge import FeatureBadge
 from ui_qt.widgets.no_wheel import NoWheelComboBox
 from ui_qt.widgets.settings_switch import SettingsSwitch
+from ui_qt.widgets.studio import (
+    COLUMN_WIDTH,
+    GAP,
+    STAGE_WIDTH,
+    Stage,
+    StudioSplit,
+)
+from ui_qt.widgets.studio import scaled as _scaled
 from ui_qt.widgets.walkthrough_copy_tips import set_copy_tip
 from ui_qt.widgets.walkthrough_review import WalkthroughReview, _day, _time
 
@@ -104,19 +110,12 @@ COPY_CHOICES = (
 )
 
 # Sizes at 100% type; each grows with the font scale.
-#: The control column.
-COLUMN_WIDTH = 320
 #: The values down the column's right edge, so they line up as one form.
 FIELD_WIDTH = 164
 FIELD_HEIGHT = 34
 ROW_HEIGHT = 36
-#: Between the column and the stage.
-GAP = 16
 #: Under Start: the two shortcut rows, or Cancel while a walkthrough records.
 KEYS_SLOT_HEIGHT = 68
-#: The stage at its smallest, and the width it asks for beside the column.
-STAGE_MIN = QSize(400, 520)
-STAGE_WIDTH = 704
 #: How many walkthroughs the empty stage offers to open.
 RECENT_SHOWN = 3
 RECENT_THUMB = QSize(76, 48)
@@ -325,11 +324,6 @@ _STYLE = """
 """
 
 
-def _scaled(value: int) -> int:
-    """``value`` pixels at 100% type, at the type size in use now."""
-    return round(value * current_ui_font_scale())
-
-
 def _label(text: str, name: str, *, wrap: bool = False) -> QLabel:
     label = QLabel(text)
     label.setObjectName(name)
@@ -425,101 +419,6 @@ class Field(QPushButton):
         x, y = self.width() - 17, self.height() / 2
         painter.drawLine(int(x - 3), int(y - 2), int(x), int(y + 1))
         painter.drawLine(int(x), int(y + 1), int(x + 3), int(y - 2))
-
-
-class Stage(QWidget):
-    """The right side's one slot: whichever pane shows fills it.
-
-    It has no layout on purpose. A layout would pass each pane's size hint up
-    to the window, which would then resize as the stage went from the empty
-    state to a recording to a storyboard.
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("walkthroughStage")
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._panes: list[QWidget] = []
-        self.current: QWidget | None = None
-
-    def add(self, pane: QWidget) -> QWidget:
-        pane.setParent(self)
-        pane.hide()
-        self._panes.append(pane)
-        return pane
-
-    def show_only(self, pane: QWidget) -> None:
-        self.current = pane
-        pane.setGeometry(self.rect())
-        for each in self._panes:
-            each.setVisible(each is pane)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        for pane in self._panes:
-            pane.setGeometry(self.rect())
-
-    def sizeHint(self) -> QSize:
-        return QSize(_scaled(STAGE_WIDTH), STAGE_MIN.height())
-
-    def minimumSizeHint(self) -> QSize:
-        return QSize(_scaled(STAGE_MIN.width()), STAGE_MIN.height())
-
-
-class StudioSplit(QWidget):
-    """The control column beside the stage, or above it once both don't fit.
-
-    Its own minimum width is ignored, as ``Reflow``'s is: the width comes
-    from the page, so a narrow tiled window stacks the two instead of
-    clipping the stage at the right edge.
-    """
-
-    def __init__(self, column: QWidget, stage: Stage, parent=None):
-        super().__init__(parent)
-        self.setObjectName("walkthroughStudio")
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
-        self.column = column
-        self.stage = stage
-        self.column_width = COLUMN_WIDTH
-        self._box = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
-        self._box.setContentsMargins(0, 0, 0, 0)
-        self._box.setSpacing(GAP)
-        self._box.addWidget(column)
-        self._box.addWidget(stage, 1)
-        self._stacked: bool | None = None
-        self._place(False)
-
-    @property
-    def stacked(self) -> bool:
-        return bool(self._stacked)
-
-    def set_column_width(self, width: int) -> None:
-        self.column_width = width
-        self._stacked = None
-        self.refit()
-
-    def _place(self, stacked: bool) -> None:
-        if stacked == self._stacked:
-            return
-        self._stacked = stacked
-        self._box.setDirection(
-            QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight)
-        if stacked:
-            self.column.setMinimumWidth(0)
-            self.column.setMaximumWidth(16777215)
-            self.column.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        else:
-            self.column.setFixedWidth(self.column_width)
-            self.column.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
-        self.updateGeometry()
-
-    def refit(self) -> None:
-        needed = self.column_width + GAP + self.stage.minimumSizeHint().width()
-        self._place(0 < self.width() < needed)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.refit()
 
 
 class _RecentRelay(QObject):

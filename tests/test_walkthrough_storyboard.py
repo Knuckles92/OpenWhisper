@@ -613,7 +613,7 @@ def test_dragged_to_its_narrowest_the_storyboard_shows_whole(window):
 
 def test_rows_fit_the_stage_at_its_narrowest(tmp_path):
     """Beside the side panel the stage can be this narrow: the switch drops under the step."""
-    from ui_qt.widgets.walkthrough_tab import STAGE_MIN
+    from ui_qt.widgets.studio import STAGE_MIN
 
     widget = WalkthroughReview()
     widget.show_folder(_large_capture(tmp_path).folder)

@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Changed
+
+- **A new Meeting Mode tab** — the tab now has the Walkthrough tab's two sides. On the left, one column holds **Start Meeting**, where speech is recognised, the **AI insights** switch with the model it uses, and the optional **Meeting brief**. On the right, a stage shows what Meeting Mode does and your three newest meetings to open; an on-air card with the clock, **Pause** and **End** while a meeting runs (red while capturing, amber while paused), with **Open dashboard** and **Copy guest link** where Start was; and the wrap-up steps when it ends. The window keeps one size through all of it instead of changing height at each step. In a narrow window the column goes above the stage.
+
 ## [2.8.8] - 2026-11-09
 
 ### Changed
