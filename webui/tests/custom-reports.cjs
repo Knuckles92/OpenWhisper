@@ -201,3 +201,10 @@ test('the rendered card shows its title exactly once', () => {
   const html = render([report()]);
   assert.equal(html.split('Commitments').length - 1, 1);
 });
+
+test('underscores inside a word are not emphasis', () => {
+  assert.deepEqual(parseInline('use snake_case_name here'),
+    [{ kind: 'text', text: 'use snake_case_name here' }]);
+  assert.deepEqual(parseInline('a _b_ c').map((n) => n.kind), ['text', 'em', 'text']);
+  assert.deepEqual(parseInline('my__var__x'), [{ kind: 'text', text: 'my__var__x' }]);
+});

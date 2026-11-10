@@ -239,6 +239,8 @@ export function stripLeadingTitle(source: string, title: string): string {
 // pattern simple, and anything it does not match stays literal text.
 const INLINE = /(\*\*|__)(.+?)\1|(\*|_)(.+?)\3|`([^`]+)`|\[([^\]]*)\]\(([^()\s]*)\)/;
 
+const WORD = /[A-Za-z0-9_]/;
+
 /** Only these schemes become real links; everything else renders as text. */
 function safeHref(href: string): string | null {
   const value = href.trim();
@@ -250,10 +252,21 @@ function safeHref(href: string): string | null {
 export function parseInline(source: string): InlineNode[] {
   const nodes: InlineNode[] = [];
   let rest = source ?? '';
+  let before = '';
 
   while (rest) {
     const match = INLINE.exec(rest);
     if (!match || match.index === undefined) break;
+    const end = match.index + match[0].length;
+    const underscore = match[1] === '__' || match[3] === '_';
+    const left = match.index > 0 ? rest[match.index - 1] : before;
+    if (underscore && (WORD.test(left) || WORD.test(rest[end] ?? ''))) {
+      // snake_case_name: an underscore inside a word is not emphasis.
+      nodes.push({ kind: 'text', text: rest.slice(0, match.index + 1) });
+      before = '_';
+      rest = rest.slice(match.index + 1);
+      continue;
+    }
     if (match.index > 0) {
       nodes.push({ kind: 'text', text: rest.slice(0, match.index) });
     }
@@ -269,9 +282,16 @@ export function parseInline(source: string): InlineNode[] {
       if (href) nodes.push({ kind: 'link', text, href });
       else nodes.push({ kind: 'text', text });
     }
-    rest = rest.slice(match.index + match[0].length);
+    before = rest[end - 1];
+    rest = rest.slice(end);
   }
 
   if (rest) nodes.push({ kind: 'text', text: rest });
-  return nodes.filter((node) => node.kind !== 'text' || node.text !== '');
+  const merged: InlineNode[] = [];
+  for (const node of nodes) {
+    const last = merged[merged.length - 1];
+    if (node.kind === 'text' && last?.kind === 'text') last.text += node.text;
+    else if (node.kind !== 'text' || node.text !== '') merged.push(node);
+  }
+  return merged;
 }
