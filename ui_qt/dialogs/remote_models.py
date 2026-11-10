@@ -294,7 +294,7 @@ class RemoteModelsDialog(QDialog):
                 else "Unavailable"
             )
             self.device_combo.addItem(
-                f"{_DEVICE_LABELS[option['device']]} · {state}", option["device"]
+                f"{_DEVICE_LABELS.get(option['device'], option['device'])} · {state}", option["device"]
             )
         index = self.device_combo.findData(selected)
         if index >= 0:
@@ -570,7 +570,7 @@ class RemoteModelsDialog(QDialog):
         if not self.select_button.isEnabled() or not choice:
             return
         device = self.device_combo.currentData()
-        where = f" using {_DEVICE_LABELS[device]}" if device else ""
+        where = f" using {_DEVICE_LABELS.get(device, device)}" if device else ""
         if self._confirm(
             "Change the host's engine?",
             f"Use {choice['label']} on {self._host_name}{where}? "

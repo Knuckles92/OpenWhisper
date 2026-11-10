@@ -118,13 +118,16 @@ def _snippet(text: str, tokens: Sequence[str], width: int = 110) -> str:
 
 def highlight(text: str, tokens: Sequence[str], color: str) -> str:
     """HTML for ``text`` with every query word tinted."""
-    folded = text.casefold()
+    # Folding can lengthen a character ("ß" -> "ss"), so each folded
+    # position remembers the character it came from.
+    origin = [index for index, char in enumerate(text) for _ in char.casefold()]
+    folded = "".join(char.casefold() for char in text)
     marks = [False] * len(text)
     for token in tokens:
         start = folded.find(token)
         while start >= 0 and token:
             for index in range(start, start + len(token)):
-                marks[index] = True
+                marks[origin[index]] = True
             start = folded.find(token, start + len(token))
     out, run, marked = [], "", False
     for char, flag in zip(text, marks):
