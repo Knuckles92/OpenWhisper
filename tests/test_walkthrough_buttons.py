@@ -21,7 +21,7 @@ from ui_qt.overlays import waveform_overlay
 from ui_qt.overlays.waveform_overlay import WaveformOverlay
 from ui_qt.ui_controller import UIController
 from ui_qt.widgets.walkthrough_tab import COPY_CHOICES, OWN_PROMPT, WalkthroughTab
-from ui_qt.widgets import walkthrough_tab
+from ui_qt.widgets import studio, walkthrough_tab
 
 #: The styles a new install picks from: the default, then the starters.
 STYLES = load_styles({})
@@ -421,7 +421,7 @@ def test_too_narrow_for_both_the_column_goes_above_the_stage(tab):
 
 def test_a_larger_type_size_widens_the_column(tab, monkeypatch):
     narrow = tab.preferred_width()
-    monkeypatch.setattr(walkthrough_tab, "current_ui_font_scale", lambda: 1.3)
+    monkeypatch.setattr(studio, "current_ui_font_scale", lambda: 1.3)
 
     tab._apply_sizes()
 

@@ -1362,7 +1362,6 @@ class ApplicationController(QObject):
             logger.info("Host Mode switched this computer to %s", label)
         if not _select_backend_family(self, family):
             return f"{name} couldn't switch to {label} right now."
-        self.ui_controller.refresh_local_engine_controls()
         if runtime is None and target_device is None and _whisper_already_serves(self, family, model):
             return None  # Selecting the backend was all it took.
         self._reload_note = (f"Switching to {label} for {device_name}..." if device_name
@@ -1881,7 +1880,6 @@ class ApplicationController(QObject):
             f"to '{last_loaded}' after declined download"
         )
         settings_manager.save_setting(SettingsKey.WHISPER_MODEL, last_loaded)
-        self.ui_controller.refresh_local_engine_controls()
         # Background reload picks the reverted model up from settings; it is
         # cached, so this never re-enters the consent flow.
         self.reload_whisper_model()
@@ -2040,7 +2038,6 @@ class ApplicationController(QObject):
                 "from 'cpu' back to 'auto'"
             )
             settings_manager.save_setting(SettingsKey.WHISPER_DEVICE, "auto")
-            self.ui_controller.refresh_local_engine_controls()
 
         backend = self.transcription_backends.get("local_whisper")
         if (
@@ -2074,7 +2071,6 @@ class ApplicationController(QObject):
                 f"from '{device}' to 'cpu'"
             )
             settings_manager.save_setting(SettingsKey.WHISPER_DEVICE, "cpu")
-            self.ui_controller.refresh_local_engine_controls()
 
         self.status_update.emit(self._describe_gpu_fallback(backend))
         self._offer_gpu_setup(backend)
@@ -2148,7 +2144,6 @@ class ApplicationController(QObject):
             settings_manager.save_setting(SettingsKey.WHISPER_MODEL, plan.model_setting)
         if plan.model_download_bytes:
             hf_access_coordinator.grant_once(plan.model)
-        self.ui_controller.refresh_local_engine_controls()
         if plan.install_component:
             self.status_update.emit("Installing GPU Acceleration...")
             self.request_component_install(ComponentId.GPU_ACCEL)
@@ -2807,9 +2802,6 @@ class ApplicationController(QObject):
         self.model_download_finished.connect(self._on_model_download_finished)
         self.model_deleted.connect(self.ui_controller.on_model_deleted)
         self.model_cache_changed.connect(self.ui_controller.refresh_model_views)
-        self.model_cache_changed.connect(
-            self.ui_controller.refresh_local_engine_controls
-        )
         self.component_progress.connect(self.ui_controller.on_component_progress)
         self.component_install_started.connect(
             lambda _component_id: self.ui_controller.on_component_state_changed()

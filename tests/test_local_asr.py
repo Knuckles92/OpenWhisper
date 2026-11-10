@@ -562,8 +562,10 @@ def test_crash_reports_worker_error(monkeypatch, caplog):
 
 def test_meeting_model_selection_preserves_whisper_fallback():
     from services.settings import resolve_meeting_whisper_model
-    assert resolve_meeting_whisper_model({"meeting_asr_model":"nemotron-3.5"}) == "nemotron-3.5"
-    assert resolve_meeting_whisper_model({"meeting_asr_model":"qwen-1.7b","meeting_whisper_model":"small"}) == "small"
+    own = {"meeting_speech_separate": True}
+    assert resolve_meeting_whisper_model({**own, "meeting_asr_model":"nemotron-3.5"}) == "nemotron-3.5"
+    assert resolve_meeting_whisper_model(
+        {**own, "meeting_asr_model":"qwen-1.7b","meeting_whisper_model":"small"}) == "small"
 
 
 def test_moonshine_sessions_finalize_and_close(monkeypatch):
@@ -719,14 +721,18 @@ def test_canceled_job_does_not_restart_speech_worker(monkeypatch):
 
 
 @pytest.mark.parametrize("backend", ["Local Whisper", "Parakeet", "Qwen3-ASR", "Nemotron Streaming", "Moonshine"])
-def test_main_window_keeps_local_controls_visible(backend):
+def test_a_tab_keeps_local_controls_visible(backend):
     from config import config
-    from ui_qt.main_window import MainWindow
-    window = SimpleNamespace(transcription_tabs=[Mock(), Mock()])
+    from ui_qt.widgets.quick_record_tab import QuickRecordTab
+
     assert backend in config.MODEL_VALUE_MAP
-    MainWindow._apply_local_engine_visibility(window, backend)
-    for tab in window.transcription_tabs:
-        tab.set_local_engine_visible.assert_called_once_with(True)
+    tab = QuickRecordTab()
+    try:
+        tab.set_backend(backend)
+        assert not tab.local_engine.isHidden()
+        assert tab.api_server.isHidden()
+    finally:
+        tab.close()
 
 
 def test_cancel_during_runtime_check_does_not_start_worker(monkeypatch):

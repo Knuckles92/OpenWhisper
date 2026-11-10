@@ -7,13 +7,21 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Changed
+
+- **An up-to-date "New in OpenWhisper" note** — the note on **Settings → Home** now describes this release line: Walkthrough Auto Mode, drawing on the desktop, pasting a walkthrough into your agent, and the new Walkthrough and Meeting Mode tabs. It shows once more even if you dismissed the old one, and again whenever it is rewritten.
+- **A new Meeting Mode tab** — the tab now has the Walkthrough tab's two sides. On the left, one column holds **Start Meeting**, where speech is recognised, the **AI insights** switch with the model it uses, and the optional **Meeting brief**. On the right, a stage shows what Meeting Mode does and your three newest meetings to open; an on-air card with the clock, **Pause** and **End** while a meeting runs (red while capturing, amber while paused), with **Open dashboard** and **Copy guest link** where Start was; and the wrap-up steps when it ends. The window keeps one size through all of it instead of changing height at each step. In a narrow window the column goes above the stage.
+- **Meetings use your dictation engine** — a meeting now transcribes with the engine and model chosen for dictation, so there is one speech engine to set up. To give meetings their own, choose **A different engine** under **Settings → Meeting Mode → Voice & speakers**; the **Runs on** and **Meeting speech model** fields appear only then. An install whose meetings already used a different engine or the paired computer keeps that choice. When the dictation engine can't transcribe meetings (the API engine, Qwen3-ASR, Parakeet Unified), meetings use the default meeting model, and Settings and the Meeting tab say so.
+- **Faster Settings and Omarchy bar** — saving a setting and the bar's status updates no longer re-read every setting several times.
+
 ### Fixed
 
+- **Settings follows the main window's engine** — changing the model, device or quantization on Quick Record or Upload File now shows in an open Settings window straight away, as a backend change already did.
 - **Adding custom Whisper models** — **Add custom models…** on the Voice model pages opens again instead of doing nothing.
 - **Remote engine on a Mac host** — installing or choosing the **Auto** (Apple GPU) runtime for Parakeet, Nemotron or Qwen from a paired computer no longer fails with an invalid request.
 - **Meetings that end with missing audio** — when re-transcription succeeds on a meeting still waiting for recovery, the post-meeting steps now finish and say insights are waiting, instead of showing "Re-transcribing…" until the app quits. Recovering a meeting later keeps its real end time and duration.
 - **Deleting or re-running a meeting too early** — a meeting whose post-meeting steps or report are still being written can no longer be deleted or have its speakers re-run until they finish.
-- **Meeting Mode's "auto" Whisper model** — a meeting set to **auto** picks its own model for this computer rather than using whichever model dictation is set to.
+- **A meeting's own "auto" Whisper model** — a meeting given its own Whisper model set to **auto** picks the model that fits this computer, rather than whichever model dictation is set to.
 - **Guided setup** — no longer offers to download a speech model that is already on the computer when Local Whisper is set to **auto**.
 - **Window position on a second monitor** — the window returns to the screen it was on instead of being moved to the main display at every launch and each time it comes back from the tray. The maximize button also shows the right state after a tray restore.
 - **Cleanup profiles** — a profile you are still typing is saved when you leave Settings, like snippets, commands and actions.
@@ -25,10 +33,6 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 - **Settings search** — searching no longer fails on names containing characters such as "ß".
 - **Custom meeting reports** — a report cut off at the size limit now says so.
 - **Stability** — fixes for leaked helper processes and temporary files when a meeting agent fails to start, a local-model reload race, timers left running at shutdown, and tray **Show**/**Hide** running twice.
-
-### Changed
-
-- **Faster Settings and Omarchy bar** — saving a setting and the bar's status updates no longer re-read every setting several times.
 
 ## [2.8.8] - 2026-11-09
 

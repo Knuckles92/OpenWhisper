@@ -443,7 +443,6 @@ class MainWindow(QMainWindow):
         self.is_recording = False
         # The recording in progress is a walkthrough, which its own tab finishes.
         self.walkthrough_active = False
-        self.current_model = config.MODEL_CHOICES[0]
         self._force_quit = False
         # Updated by UIController after QSystemTrayIcon probes the desktop.
         # Defaulting to True preserves construction behavior in lightweight
@@ -461,6 +460,9 @@ class MainWindow(QMainWindow):
         self._pre_host_geometry = None
 
         self._sidebar_width = config.MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH
+        # What the screen's edge took from the page as the side panel opened;
+        # closing the panel gives it back.
+        self._sidebar_squeeze = 0
         self._geometry_format = "collapsed_content_v1"
 
         self._current_tab_index = TabbedContentWidget.TAB_QUICK_RECORD
@@ -740,8 +742,7 @@ class MainWindow(QMainWindow):
                 widget.upload_files_requested.connect(self.upload_files_requested.emit)
                 widget.cancel_requested.connect(self.upload_cancel_requested.emit)
                 widget.copy_requested.connect(self.upload_copy_requested.emit)
-                widget.set_model_selection(settings_manager.load_model_selection())
-                self._apply_local_engine_visibility(self.current_model)
+                widget.sync_engine_selection()
                 for method, (args, kwargs) in self._shared_tab_updates.items():
                     getattr(widget, method)(*args, **kwargs)
             elif key == "walkthrough":
@@ -749,6 +750,8 @@ class MainWindow(QMainWindow):
                 widget.cancel_requested.connect(self._on_quick_record_canceled)
                 widget.settings_requested.connect(self.settings_destination_requested)
                 widget.walkthroughs_changed.connect(self.refresh_history)
+            elif key == "meeting":
+                widget.past_meeting_requested.connect(self.past_meeting_requested)
         for method, (args, kwargs) in self._screen_updates[key].items():
             if isinstance(method, tuple):
                 method = method[0]
@@ -1018,8 +1021,6 @@ class MainWindow(QMainWindow):
             saved_model = settings_manager.load_model_selection()
             for tab in MainWindow.existing_transcription_tabs(self):
                 tab.set_model_selection(saved_model)
-            self.current_model = self.quick_record_tab.current_model
-            self._apply_local_engine_visibility(self.current_model)
             logger.info(f"Loaded saved model selection: {saved_model}")
         except Exception as e:
             logger.error(f"Failed to load saved settings: {e}")
@@ -1115,36 +1116,11 @@ class MainWindow(QMainWindow):
         self.record_canceled.emit()
 
     def _on_model_changed(self, model_name: str):
-        self.current_model = model_name
-
-        # Sync the other tabs without re-emitting the signal
-        for tab in MainWindow.existing_transcription_tabs(self):
-            tab.set_backend(model_name)
-
-        self._apply_local_engine_visibility(model_name)
-
+        """A tab chose a backend. Saving it is what brings the other tabs along."""
         self.model_changed.emit(model_name)
 
-    def _apply_local_engine_visibility(self, model_name: str):
-        from services.local_asr.catalog import BACKENDS
-        backend = config.MODEL_VALUE_MAP.get(model_name)
-        is_local = backend == "local_whisper" or backend in BACKENDS
-        tabs = (MainWindow.existing_transcription_tabs(self) if hasattr(self, "existing_transcription_tabs")
-                else self.transcription_tabs)
-        for tab in tabs:
-            tab.set_local_engine_visible(is_local)
-
     def _on_engine_settings_changed(self):
-        """Keep both tabs' engine panels in sync, then notify listeners.
-
-        The emitting widget has already persisted the three keys to settings, so
-        both panels reload from that canonical source (signals blocked inside
-        ``load_from_settings``). This avoids depending on ``sender()`` identity
-        and guarantees the two tabs always agree. ``whisper_engine_changed`` then
-        triggers the controller's background reload.
-        """
-        for tab in MainWindow.existing_transcription_tabs(self):
-            tab.local_engine.load_from_settings()
+        """A tab saved its model, device or quant; the controller reloads the engine."""
         self.whisper_engine_changed.emit()
 
     def _on_live_preview_changed(self):
@@ -1569,7 +1545,9 @@ class MainWindow(QMainWindow):
 
         if not self._compositor_managed:
             self.setMinimumSize(config.MAIN_WINDOW_MIN_WIDTH, self._page_floor)
-            self.setMaximumSize(config.MAIN_WINDOW_MAX_WIDTH, UNLIMITED_HEIGHT)
+            self.setMaximumSize(
+                config.MAIN_WINDOW_MAX_WIDTH + self.history_sidebar.width(), UNLIMITED_HEIGHT
+            )
         self.compact_controller.hide()
         self.tabbed_content.show()
         self.stats_button.show()
@@ -1828,7 +1806,9 @@ class MainWindow(QMainWindow):
         # Capture the width of everything except the sidebar so each animation
         # frame can hold the main content area at a constant width. Works
         # mid-animation too: the sidebar's current width is subtracted out.
-        self._sidebar_base_width = self.width() - self.history_sidebar.width()
+        self._sidebar_base_width = (
+            self.width() - self.history_sidebar.width() + self._sidebar_squeeze
+        )
 
         # The sidebar's single animation drives the window width via
         # width_animated -> _on_sidebar_width_animated.
@@ -1846,11 +1826,17 @@ class MainWindow(QMainWindow):
         if base is None:
             return
 
-        target_width = min(self.maximumWidth(), base + sidebar_width)
+        # The width cap is the page's: the side panel adds its own on top, so
+        # opening it never squeezes the page while the screen has the room.
+        limit = config.MAIN_WINDOW_MAX_WIDTH + sidebar_width
+        if limit > self.maximumWidth():
+            self.setMaximumWidth(limit)
+        wanted = min(limit, base + sidebar_width)
         geo = self.geometry()
-        self.setGeometry(
-            self._clamp_geometry(geo.x(), geo.y(), target_width, geo.height())
-        )
+        clamped = self._clamp_geometry(geo.x(), geo.y(), wanted, geo.height())
+        self.setGeometry(clamped)
+        self.setMaximumWidth(limit)
+        self._sidebar_squeeze = max(0, wanted - clamped.width())
 
     def _available_screen_rect(self) -> QRect:
         """Return the available geometry of the screen that contains this window."""
@@ -2196,6 +2182,8 @@ class MainWindow(QMainWindow):
         if not self._resizing:
             return
         self._resizing = False
+        # A width the user drags is their own: nothing is owed back to it.
+        self._sidebar_squeeze = 0
         if (
             not self._compact_mode and not self._host_mode
             and self._current_page() is self.quick_record_tab

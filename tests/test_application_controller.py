@@ -482,7 +482,6 @@ class DummyUIController:
         self.streaming_overlay_hidden = 0
         self.consent_requests = []
         self.consent_result = "cancel"
-        self.engine_controls_refreshes = 0
         self.settings_dialog_opened_with = None
         self.model_manager_refreshes = 0
         self.download_started = []
@@ -594,9 +593,6 @@ class DummyUIController:
 
     def on_update_download_finished(self, path, error):
         self.update_download_results.append((path, error))
-
-    def refresh_local_engine_controls(self):
-        self.engine_controls_refreshes += 1
 
     def refresh_model_views(self):
         self.model_manager_refreshes += 1
@@ -1127,7 +1123,6 @@ class TestApplicationController:
         assert controller._current_model_name == "nemotron"
         assert self.settings.saved_model_selection == "nemotron"
         assert self.settings.all_settings["local_asr_models"] == {"nemotron": "nemotron-3.5"}
-        assert controller.ui_controller.engine_controls_refreshes >= 1
         # The reload is queued, so the host keeps its client waiting.
         assert not controller._engine_settled()
         controller._reload_timer.timeout.emit()
@@ -1173,7 +1168,6 @@ class TestApplicationController:
 
         # Selection and inline combos roll back to the model that is cached
         assert self.settings.all_settings["whisper_model"] == "turbo"
-        assert controller.ui_controller.engine_controls_refreshes == 1
         assert "Model 'small' is unavailable — download declined" in controller.ui_controller.statuses
 
         # The scheduled background reload brings the reverted model back
@@ -1195,7 +1189,6 @@ class TestApplicationController:
         controller._on_hf_consent_requested("small", False, True)
 
         assert self.settings.all_settings["whisper_model"] == "small"
-        assert controller.ui_controller.engine_controls_refreshes == 0
 
     def test_reload_whisper_model_refused_while_recording(self):
         controller = self._create_controller()
@@ -2870,7 +2863,6 @@ class TestApplicationController:
 
         assert controller.ui_controller.consent_requests[-1][0] == "tiny"
         assert self.settings.all_settings["whisper_model"] == "base"
-        assert controller.ui_controller.engine_controls_refreshes == 0
         assert len(controller.executor.submissions) == 0
 
     def test_manager_download_already_cached_short_circuits(self):
@@ -3047,7 +3039,6 @@ class TestApplicationController:
         # The persisted CPU device (fallback residue) moves back to auto so the
         # follow-up reload can adopt the GPU.
         assert self.settings.all_settings["whisper_device"] == "auto"
-        assert controller.ui_controller.engine_controls_refreshes == 1
         assert reload_requests == [True]
 
     def test_component_activation_failure_keeps_the_restart_message(self):
@@ -3173,7 +3164,6 @@ class TestApplicationController:
             controller.gpu_fallback_detected.emit()
 
         assert self.settings.all_settings["whisper_device"] == "cpu"
-        assert controller.ui_controller.engine_controls_refreshes == 1
         assert "Downloads" in controller.ui_controller.statuses[-1]
 
     def test_gpu_fallback_out_of_memory_does_not_advertise_the_component(self):

@@ -55,6 +55,7 @@ from ui_qt.utils.file_reveal import reveal_in_file_manager
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.palette import token_color
 from ui_qt.widgets.context_menu import context_menu
+from ui_qt.widgets.flow_layout import FlowLayout
 from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.settings_switch import SettingsSwitch
@@ -65,8 +66,9 @@ from ui_qt.widgets.walkthrough_ready import FileChip
 #: The largest a screenshot shows beside its words, in logical pixels; it
 #: grows toward this with the room its row has.
 PREVIEW_SIZE = QSize(360, 225)
-#: The narrowest a screenshot gets, so a narrow window keeps it beside its words.
-PREVIEW_MIN_WIDTH = 180
+#: The narrowest a screenshot gets, so a narrow window keeps it beside its words:
+#: at the stage's narrowest, the words still have room for the Include switch.
+PREVIEW_MIN_WIDTH = 140
 #: How a row's width splits between its screenshot and its words.
 PREVIEW_STRETCH, WORDS_STRETCH = 3, 4
 SPOKEN_HINT = ("Fix any words, drag a row to move a screenshot and its words, or switch a "
@@ -217,7 +219,7 @@ _STYLE = """
         border-radius: 1px;
     }
     QLabel#wlStamp, QLabel#wlInclude, QWidget#wlPreview, QLabel#wlNoShot,
-    QWidget#wlActionGroup {
+    QWidget#wlActionGroup, QWidget#wlRowLine {
         background: transparent;
     }
     QLabel#wlStep {
@@ -564,30 +566,31 @@ class _Row(QFrame):
         row.addWidget(self._picture(image, included), PREVIEW_STRETCH, Qt.AlignmentFlag.AlignTop)
         column = QVBoxLayout()
         column.setSpacing(8)
-        top = QHBoxLayout()
-        top.setSpacing(8)
         self.step = QLabel(str(number))
         self.step.setObjectName("wlStep")
         self.step.setFixedSize(22, 22)
         self.step.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        top.addWidget(self.step)
+        lead = [self.step]
         if stamp:
             label = QLabel(stamp)
             label.setObjectName("wlStamp")
-            top.addWidget(label)
-        top.addStretch(1)
+            lead.append(label)
         self.check = SettingsSwitch()
         self.check.setChecked(included)
         self.check.setAccessibleName(f"Include {image.name}" if image else "No screenshot")
         if image and can_omit:
             include = QLabel("Include screenshot")
             include.setObjectName("wlInclude")
-            top.addWidget(include)
-            top.addWidget(self.check)
+            # The switch drops under the step once the words are too narrow for
+            # both, so a narrow storyboard never runs past its right edge.
+            self.top: QWidget = Reflow(self._line(*lead, stretch=True),
+                                       self._line(include, self.check),
+                                       stacked_alignment=Qt.AlignmentFlag.AlignLeft)
         else:
             self.check.setEnabled(False)
             self.check.hide()
-        column.addLayout(top)
+            self.top = self._line(*lead, stretch=True)
+        column.addWidget(self.top)
         self.editor = _Editor(text, number)
         column.addWidget(self.editor)
         for note in notes:
@@ -599,6 +602,19 @@ class _Row(QFrame):
             column.addWidget(label)
         column.addStretch(1)
         row.addLayout(column, WORDS_STRETCH)
+
+    @staticmethod
+    def _line(*widgets: QWidget, stretch: bool = False) -> QWidget:
+        line = QWidget()
+        line.setObjectName("wlRowLine")
+        row = QHBoxLayout(line)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        for widget in widgets:
+            row.addWidget(widget)
+        if stretch:
+            row.addStretch(1)
+        return line
 
     def _picture(self, image: Path | None, included: bool) -> QWidget:
         shown = _preview(image, self.devicePixelRatioF()) if image else None
@@ -686,6 +702,22 @@ class _Board(QWidget):
         end = slot - 1 if slot > start else slot
         if end != start:
             self.moved.emit(start, end)
+
+
+class _CopyGroup(QWidget):
+    """The copy buttons and the file: one line while they fit, wrapping once they don't."""
+
+    def __init__(self, *widgets: QWidget):
+        super().__init__()
+        self.setObjectName("wlActionGroup")
+        self._flow = FlowLayout(self, spacing=8)
+        for widget in widgets:
+            self._flow.addWidget(widget)
+
+    def sizeHint(self) -> QSize:
+        # One line's worth, so Open drops below before the copy buttons wrap.
+        width = self._flow.line_width()
+        return QSize(width, self._flow.heightForWidth(width))
 
 
 class WalkthroughReview(QWidget):
@@ -853,7 +885,7 @@ class WalkthroughReview(QWidget):
         self.menu.addSeparator()
         self.delete_button = self._menu_action("Delete…", self._delete)
         self.more_button.setMenu(self.menu)
-        self.copy_group = self._group(
+        self.copy_group = _CopyGroup(
             self.pdf_button, self.markdown_button, self.copy_word_button, self.chip)
         self.action_row = Reflow(self.copy_group, self._group(self.open_button, self.more_button))
         return self.action_row
@@ -890,8 +922,8 @@ class WalkthroughReview(QWidget):
         return self.save_bar
 
     def minimumSizeHint(self) -> QSize:
-        # The row of actions ignores its own width so Open can drop below Copy,
-        # but the copy buttons themselves never squash.
+        # The row of actions ignores its own width so Open can drop below Copy
+        # and the copy buttons can wrap, but no one of them ever squashes.
         return super().minimumSizeHint().expandedTo(
             QSize(self.copy_group.minimumSizeHint().width(), 0))
 

@@ -48,11 +48,12 @@ def chunk(repo, tmp_path, channel="mic", start=0):
     return SpooledChunk(chunk_id=chunk_id, **fields)
 
 
-def test_speech_source_defaults_local_and_does_not_follow_dictation():
-    assert resolve_meeting_asr_source({}) == "local"
-    assert resolve_meeting_asr_source({SettingsKey.SELECTED_MODEL: "remote"}) == "local"
-    assert resolve_meeting_asr_source({SettingsKey.MEETING_ASR_SOURCE: "bad"}) == "local"
-    assert resolve_meeting_asr_source({SettingsKey.MEETING_ASR_SOURCE: "remote"}) == "remote"
+def test_a_separate_speech_source_defaults_local_and_does_not_follow_dictation():
+    own = {SettingsKey.MEETING_SPEECH_SEPARATE: True}
+    assert resolve_meeting_asr_source({SettingsKey.SELECTED_MODEL: "parakeet"}) == "local"
+    assert resolve_meeting_asr_source({**own, SettingsKey.SELECTED_MODEL: "remote"}) == "local"
+    assert resolve_meeting_asr_source({**own, SettingsKey.MEETING_ASR_SOURCE: "bad"}) == "local"
+    assert resolve_meeting_asr_source({**own, SettingsKey.MEETING_ASR_SOURCE: "remote"}) == "remote"
 
 
 def test_unpaired_remote_has_actionable_error():

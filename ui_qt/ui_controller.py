@@ -616,8 +616,6 @@ class UIController(QObject):
         logger.info(f"Model changed to: {model_name}")
         if self.on_model_changed:
             self.on_model_changed(model_name)
-        if self._settings_dialog is not None:
-            self._settings_dialog.models.refresh_engine_selection()
 
     def _on_whisper_engine_changed(self):
         """Handle a local-engine (model/device/quant) change from the main GUI.
@@ -1353,10 +1351,6 @@ class UIController(QObject):
         language_menu.populate(menu, self)
 
     def _on_settings_page_changed(self, kind: str) -> None:
-        if kind == "languages":
-            # Quick Record's Language field shows only while no dictation
-            # language is in charge.
-            self.refresh_local_engine_controls()
         if kind == "updates":
             self._refresh_update_notice()
         # Read at call time: the application controller assigns its handler
@@ -1602,17 +1596,6 @@ class UIController(QObject):
         """The model the engine has loaded, read when Settings asks."""
         return self.get_loaded_local_model() if self.get_loaded_local_model else None
 
-    def refresh_local_engine_controls(self):
-        """Re-sync the inline local-engine combos with the persisted settings.
-
-        Signal-safe: the combos are updated with signals blocked, so this never
-        triggers another engine reload.
-        """
-        self.main_window.quick_record_tab.local_engine.load_from_settings()
-        upload = getattr(self.main_window, "_screen_widgets", {}).get("upload")
-        if upload is not None:
-            upload.local_engine.load_from_settings()
-
     def refresh_cleanup_controls(self):
         self.main_window.quick_record_tab.load_cleanup_setting()
         self._update_screen("upload", "load_cleanup_setting")
@@ -1743,7 +1726,6 @@ class UIController(QObject):
         tabs[0].choose_backend(display_name)
 
     def _on_manager_runtime_changed(self) -> None:
-        self.refresh_local_engine_controls()
         if self.on_whisper_settings_changed:
             self.on_whisper_settings_changed()
 
@@ -1751,13 +1733,12 @@ class UIController(QObject):
         """Persist a dictation Whisper assignment and reload the engine.
 
         Identical contract to ``LocalEngineControls._on_changed``: write the
-        setting, re-sync the inline combos (signal-safe), then fire the same
-        debounced background reload the combos use.
+        setting, then fire the same debounced background reload the combos
+        use. The save is what the engine fields hear.
         """
         from services.settings import settings_manager
 
         settings_manager.save_setting(SettingsKey.WHISPER_MODEL, model_name)
-        self.refresh_local_engine_controls()
         if self.on_whisper_settings_changed:
             self.on_whisper_settings_changed()
 

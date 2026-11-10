@@ -1,6 +1,7 @@
 """Persistent application settings and validated resolvers."""
 import json
 from copy import deepcopy
+from dataclasses import dataclass
 import os
 import logging
 import sys
@@ -138,6 +139,9 @@ class SettingsKey:
     LOCAL_ASR_LANGUAGE: Final[str] = "local_asr_language"
     MEETING_ASR_MODEL: Final[str] = "meeting_asr_model"
     MEETING_ASR_SOURCE: Final[str] = "meeting_asr_source"  # local | remote
+    # False: meetings use the dictation engine. True: the two keys above and
+    # MEETING_WHISPER_MODEL choose a separate one.
+    MEETING_SPEECH_SEPARATE: Final[str] = "meeting_speech_separate"
     WHISPER_MODEL: Final[str] = "whisper_model"
     CUSTOM_WHISPER_MODELS: Final[str] = "custom_whisper_models"
     WHISPER_DEVICE: Final[str] = "whisper_device"
@@ -301,8 +305,9 @@ class SettingsKey:
     SCRATCHPAD_ALWAYS_ON_TOP: Final[str] = "scratchpad_always_on_top"
     # {x, y, width, height} of the Scratchpad window; no default.
     SCRATCHPAD_GEOMETRY: Final[str] = "scratchpad_geometry"
-    # The dismissible "New in OpenWhisper" tile.
-    FLOW_FEATURES_INTRO_SEEN: Final[str] = "flow_features_intro_seen"
+    # The ``updated`` date of the "New in OpenWhisper" note last dismissed
+    # (ui_qt/whats_new.py); "" = none yet.
+    WHATS_NEW_SEEN: Final[str] = "whats_new_seen"
     # Automation (docs/design/automation/design.md). Saved actions: what a
     # hotkey, a spoken name or the local API does with the words.
     ACTIONS: Final[str] = "actions"
@@ -801,6 +806,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE: True,
     SettingsKey.CONFIRM_MEETING_DELETE: True,
     # Meeting Mode
+    SettingsKey.MEETING_SPEECH_SEPARATE: False,
     SettingsKey.MEETING_ASR_MODEL: config.MEETING_ASR_MODEL,
     SettingsKey.MEETING_WHISPER_MODEL: config.MEETING_WHISPER_MODEL,
     SettingsKey.MEETING_LANGUAGE: config.MEETING_LANGUAGE,
@@ -866,7 +872,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.DICTATION_LANGUAGES: [],
     SettingsKey.DICTATION_ACTIVE_LANGUAGE: "",
     SettingsKey.SCRATCHPAD_ALWAYS_ON_TOP: True,
-    SettingsKey.FLOW_FEATURES_INTRO_SEEN: False,
+    SettingsKey.WHATS_NEW_SEEN: "",
     # Automation: nothing runs until the user sets it up.
     SettingsKey.ACTIONS: [],
     SettingsKey.VOICE_ROUTING_ENABLED: False,
@@ -907,6 +913,10 @@ _HF_HUB_OFFLINE_ENV: Final[str] = "HF_HUB_OFFLINE"
 _HF_HUB_OFFLINE_TRUTHY: Final[Tuple[str, ...]] = ("1", "on", "true", "yes")
 
 
+#: Stands for a key that is not saved, which is not the same as saved None.
+_UNSET: Final[Any] = object()
+
+
 class SettingsManager:
     """Handles loading and saving application settings."""
 
@@ -918,6 +928,8 @@ class SettingsManager:
         self._lock = threading.RLock()
         self._cached_signature = None
         self._cached_settings = None
+        # (keys, callback) pairs told when a save changes one of their keys.
+        self._watchers: List[Tuple[frozenset, Callable[[frozenset], None]]] = []
         # The module singleton is built when settings are first imported,
         # after any pending backup restore and before anything this launch
         # can write the file, so this tells a brand-new install apart.
@@ -1030,11 +1042,57 @@ class SettingsManager:
                 self._cached_settings = None
             return settings
 
+    def watch(
+        self, keys, callback: Callable[[frozenset], None],
+    ) -> Callable[[], None]:
+        """Call ``callback(changed_keys)`` after a save changes any of ``keys``.
+
+        Whoever writes a setting need not know who shows it. The callback
+        runs on the thread that saved, after the file is replaced; a save
+        through this manager is the only change it hears of. Returns a
+        function that stops the watch.
+        """
+        entry = (frozenset(keys), callback)
+        with self._lock:
+            self._watchers.append(entry)
+
+        def stop() -> None:
+            with self._lock:
+                if entry in self._watchers:
+                    self._watchers.remove(entry)
+
+        return stop
+
+    def _watched_values(self, settings: Mapping[str, Any]) -> Dict[str, Any]:
+        """Copies of the watched keys' values, taken before a save changes them."""
+        return {
+            key: deepcopy(settings[key]) if key in settings else _UNSET
+            for keys, _callback in self._watchers for key in keys
+        }
+
+    def _tell_watchers(self, before: Dict[str, Any], settings: Mapping[str, Any]) -> None:
+        changed = frozenset(
+            key for key, value in before.items() if settings.get(key, _UNSET) != value
+        )
+        if not changed:
+            return
+        with self._lock:
+            watchers = list(self._watchers)
+        for keys, callback in watchers:
+            if keys & changed:
+                try:
+                    callback(keys & changed)
+                except Exception:
+                    logger.exception("A settings watcher failed")
+
     def save_all_settings(self, settings: Dict[str, Any]) -> None:
         """Persist the complete settings mapping."""
         try:
             with self._lock:
+                before = (self._watched_values(self._load_all_settings_unlocked())
+                          if self._watchers else {})
                 self._save_all_settings_unlocked(settings)
+            self._tell_watchers(before, settings)
             logger.info("All settings saved successfully")
         except Exception as e:
             logger.error(f"Failed to save all settings: {e}")
@@ -1079,9 +1137,11 @@ class SettingsManager:
             raise TypeError("mutator must be callable")
         with self._lock:
             settings = self._load_all_settings_unlocked(strict=True)
+            before = self._watched_values(settings)
             result = mutator(settings)
             self._save_all_settings_unlocked(settings)
-            return result
+        self._tell_watchers(before, settings)
+        return result
 
     def save_setting(self, key: str, value: Any) -> None:
         try:
@@ -1429,7 +1489,6 @@ resolve_snippets_enabled = _bool_resolver(SettingsKey.SNIPPETS_ENABLED)
 resolve_recording_hands_free_latch = _bool_resolver(
     SettingsKey.RECORDING_HANDS_FREE_LATCH)
 resolve_scratchpad_always_on_top = _bool_resolver(SettingsKey.SCRATCHPAD_ALWAYS_ON_TOP)
-resolve_flow_features_intro_seen = _bool_resolver(SettingsKey.FLOW_FEATURES_INTRO_SEEN)
 # Automation switches.
 resolve_voice_routing_enabled = _bool_resolver(SettingsKey.VOICE_ROUTING_ENABLED)
 resolve_voice_routing_on_dictation = _bool_resolver(SettingsKey.VOICE_ROUTING_ON_DICTATION)
@@ -1663,20 +1722,131 @@ def resolve_transcript_batch_custom_instructions(
     return raw.strip()[: config.MAX_TRANSCRIPT_BATCH_INSTRUCTION_CHARS]
 
 
-def resolve_meeting_asr_source(settings: Optional[Dict[str, Any]] = None) -> str:
-    """Speech location is independent of the dictation engine and AI insights."""
+@dataclass(frozen=True)
+class MeetingSpeech:
+    """Where a meeting's speech is transcribed, and with which model."""
+
+    #: "local" or "remote" (the paired computer).
+    source: str
+    #: The local model. With a remote source the host's engine decides, and
+    #: this is only what a local run of the meeting would use.
+    model: str
+    #: The meeting has an engine of its own rather than dictation's.
+    separate: bool = False
+    #: Why a meeting that follows dictation is not on the dictation engine.
+    note: str = ""
+
+
+def meeting_model_label(model: str) -> str:
+    """How a meeting speech model reads in a sentence."""
+    from services.local_asr.catalog import MODELS
+
+    if model in MODELS:
+        return MODELS[model].label
+    return "Local Whisper" if model == "auto" else f"Local Whisper {model}"
+
+
+def resolve_meeting_speech(settings: Optional[Dict[str, Any]] = None) -> MeetingSpeech:
+    """The engine a meeting uses: dictation's, unless it was given its own.
+
+    An engine that can't transcribe meetings (the API, or a model without
+    the catalog's ``meeting`` flag) leaves a following meeting on the
+    platform's default meeting model, with ``note`` saying why.
+    """
     if settings is None:
         settings = settings_manager.load_all_settings()
-    return "remote" if settings.get(SettingsKey.MEETING_ASR_SOURCE) == "remote" else "local"
+    own = _own_meeting_model(settings)
+    if settings.get(SettingsKey.MEETING_SPEECH_SEPARATE) is True:
+        remote = settings.get(SettingsKey.MEETING_ASR_SOURCE) == "remote"
+        return MeetingSpeech("remote" if remote else "local", own, separate=True)
+
+    from services.local_asr.catalog import BACKENDS, MODELS, selected_model
+
+    engine = settings.get(SettingsKey.SELECTED_MODEL)
+    if engine in LEGACY_API_MODELS:
+        engine = "api"
+    if engine not in config.MODEL_VALUE_MAP.values():
+        engine = SETTING_DEFAULTS[SettingsKey.SELECTED_MODEL]
+    if engine == "remote":
+        return MeetingSpeech("remote", own)
+    if engine == "local_whisper":
+        from services.whisper_sources import custom_models
+
+        model = settings.get(SettingsKey.WHISPER_MODEL)
+        if model not in [*config.WHISPER_MODEL_CHOICES, *custom_models(settings)]:
+            model = SETTING_DEFAULTS[SettingsKey.WHISPER_MODEL]
+        return MeetingSpeech("local", model)
+    if engine in BACKENDS:
+        model = selected_model(engine, settings)
+        if MODELS[model].meeting:
+            return MeetingSpeech("local", model)
+        name = MODELS[model].label
+    else:
+        name = "The API engine"
+    fallback = (SETTING_DEFAULTS[SettingsKey.MEETING_ASR_MODEL]
+                or SETTING_DEFAULTS[SettingsKey.MEETING_WHISPER_MODEL])
+    return MeetingSpeech(
+        "local", fallback,
+        note=f"{name} can't transcribe meetings, so meetings use {meeting_model_label(fallback)}.",
+    )
+
+
+def own_meeting_speech(settings: Optional[Dict[str, Any]] = None) -> MeetingSpeech:
+    """The engine saved for meetings alone, whether or not it is in use."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    return resolve_meeting_speech({**settings, SettingsKey.MEETING_SPEECH_SEPARATE: True})
+
+
+def keep_separate_meeting_speech(manager=None) -> bool:
+    """Save whether an install's meetings have their own engine; True when written.
+
+    Meetings used to have their own model and source always. An existing
+    install whose saved choice differs from its dictation engine keeps it
+    as a separate engine; every other install follows dictation. Decided
+    once, so a later change of dictation engine can't turn a follower into
+    a separate engine. Run after ``keep_unchosen_engine``.
+    """
+    manager = settings_manager if manager is None else manager
+    is_new = getattr(manager, "is_new_install", None)
+    if not callable(is_new):
+        return False
+    new = is_new()
+    if SettingsKey.MEETING_SPEECH_SEPARATE in manager.load_all_settings():
+        return False
+
+    def keep(settings: Dict[str, Any]) -> bool:
+        if SettingsKey.MEETING_SPEECH_SEPARATE in settings:
+            return False
+        own = own_meeting_speech(settings)
+        follows = resolve_meeting_speech(settings)
+        same = own.source == follows.source and (
+            own.source == "remote" or own.model == follows.model
+        )
+        settings[SettingsKey.MEETING_SPEECH_SEPARATE] = not (new or same)
+        return True
+
+    try:
+        return bool(manager.mutate_settings(keep))
+    except Exception as exc:
+        logger.warning("Could not save the install's meeting engine: %s", exc)
+        return False
+
+
+def resolve_meeting_asr_source(settings: Optional[Dict[str, Any]] = None) -> str:
+    """Whether a meeting's speech runs here or on the paired computer."""
+    return resolve_meeting_speech(settings).source
 
 
 def resolve_meeting_whisper_model(
     settings: Optional[Dict[str, Any]] = None,
 ) -> str:
-    """Prefer the saved meeting model, then a compatible Parakeet default."""
-    if settings is None:
-        settings = settings_manager.load_all_settings()
+    """The local speech model a meeting uses."""
+    return resolve_meeting_speech(settings).model
 
+
+def _own_meeting_model(settings: Dict[str, Any]) -> str:
+    """The model saved for meetings alone, then a compatible Parakeet default."""
     from services.local_asr.catalog import MODELS, selected_model
     extra = settings.get(SettingsKey.MEETING_ASR_MODEL)
     if isinstance(extra, str) and extra in MODELS and MODELS[extra].meeting:
