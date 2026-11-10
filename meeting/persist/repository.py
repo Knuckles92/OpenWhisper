@@ -797,6 +797,14 @@ class SqlMeetingRepository:
         does not fire the FTS sync triggers for cascade deletes, which would
         orphan transcript text in the search index.
         """
+        try:
+            # Stats keep counting a meeting after it is deleted, so it needs
+            # its row before its transcript goes.
+            from services.dictation_stats import count_features
+
+            count_features()
+        except Exception:
+            logger.debug("Could not count meetings for Stats", exc_info=True)
         with self._db.get_session() as session:
             for model in (MeetingEvent, MeetingQuestion, MeetingStateItem,
                           MeetingParticipant, MeetingSegment, MeetingAudioChunk):

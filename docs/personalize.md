@@ -109,7 +109,15 @@ dictation in progress and never reloads the engine.
 - **Scratchpad** (View menu, tray, an optional shortcut, or the Omarchy bar)
   is a floating notepad. Dictation goes straight into it while it's focused;
   notes save automatically and are included in backups.
-- **Stats** (View → Stats or the tray) shows words this week and all time,
-  words per minute, words AI cleanup changed, your day streak, top apps and
-  the last 14 days. Stats stay on this computer and survive Clear history;
-  **Reset stats** starts over.
+- **Stats** (View → Stats or the tray) shows the words you dictated over the
+  last 7 days, 30 days or all time, with time saved, speaking pace and your
+  day streak. Below that, **Across OpenWhisper** has a row for each other
+  feature you have used: meetings, audio files, walkthroughs, actions,
+  commands, snippets and dictionary corrections, each with a small trend.
+  The rest shows when you dictate by weekday and hour, your top apps, and how
+  your words split by kind of app, AI cleanup level and language. Only words
+  you dictate count toward the streak and the milestone. Stats stay on this
+  computer and survive Clear history and deleting a meeting; **Reset stats**
+  starts every count over. Snippet, dictionary, action-name and screenshot
+  counts start with the version that added them; meetings, files and
+  walkthroughs already saved are counted the first time Stats opens.

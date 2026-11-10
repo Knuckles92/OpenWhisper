@@ -17,7 +17,7 @@ from services.models import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 
 def _table_exists(conn, table: str) -> bool:
@@ -157,6 +157,20 @@ def _migrate_to_v17(conn) -> None:
     _add_text_columns_if_columns_found(conn, "transcription_history", HISTORY_CONTEXT_COLUMNS)
 
 
+def _migrate_to_v18(conn) -> None:
+    # What Stats count beyond dictated words: action targets, snippets,
+    # dictionary corrections and walkthrough screenshots.
+    existing = _table_columns(conn, "dictation_stats")
+    if not existing:
+        return
+    _add_text_columns(conn, "dictation_stats", ("target",), existing)
+    for column in ("snippets", "snippet_words", "corrections", "shots"):
+        if column not in existing:
+            conn.execute(text(
+                f"ALTER TABLE dictation_stats ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"
+            ))
+
+
 # (schema version a step brings the database to, step). A step runs when the
 # database is older than its version; steps run in this order. v16 needed none.
 _MIGRATIONS = (
@@ -171,6 +185,7 @@ _MIGRATIONS = (
     (14, _migrate_to_v14),
     (15, _migrate_to_v15),
     (17, _migrate_to_v17),
+    (18, _migrate_to_v18),
 )
 
 

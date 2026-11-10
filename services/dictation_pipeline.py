@@ -559,6 +559,29 @@ def history_fields(
     return {key: value for key, value in fields.items() if value not in (None, "")}
 
 
+def stats_counts(prepared: PreparedText) -> dict:
+    """What Stats count from a prepared transcript besides its words; never raises."""
+    try:
+        from services.dictation_stats import count_words, words_edited
+
+        plan = prepared.plan
+        used = [plan.whole] if plan.whole is not None else [
+            snippet for _placeholder, snippet in plan.placeholders
+        ]
+        counts = {
+            "snippets": len(used),
+            "snippet_words": sum(
+                max(0, count_words(snippet.text) - count_words(snippet.trigger))
+                for snippet in used
+            ),
+            "corrections": words_edited(prepared.original, prepared.text),
+        }
+        return {key: value for key, value in counts.items() if value}
+    except Exception:
+        logger.debug("Could not count snippets and corrections", exc_info=True)
+        return {}
+
+
 def record_stats(entry_fields: dict, row) -> None:
     """Add the saved entry to the local stats; history-save worker, never raises."""
     try:
