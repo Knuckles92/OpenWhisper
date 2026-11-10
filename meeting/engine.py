@@ -2651,22 +2651,6 @@ class MeetingEngine:
                 by_chunk.setdefault(seg.chunk_id, []).append(seg)
         return by_chunk
 
-    @staticmethod
-    def _segment_dict(seg: TranscriptSegment, created_at: str) -> Dict[str, Any]:
-        return {
-            "id": seg.segment_id,
-            "meeting_id": seg.meeting_id,
-            "chunk_id": seg.chunk_id,
-            "channel": seg.channel,
-            "start_s": seg.start_s,
-            "end_s": seg.end_s,
-            "text": seg.text,
-            "speaker_participant_id": seg.speaker_participant_id,
-            "speaker_source": seg.speaker_source,
-            "speaker_pinned": seg.speaker_pinned,
-            "created_at": created_at,
-        }
-
     def _start_diarizer(self) -> None:
         if self.options.speaker_id_backend == "off":
             self._disable_diarizer()

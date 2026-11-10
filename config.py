@@ -230,8 +230,7 @@ class AppConfig:
     # Application version (see _version.py)
     VERSION: str = __version__
 
-    # File paths. These resolve under %LOCALAPPDATA%\OpenWhisper in frozen
-    # builds and stay CWD-relative when running from source.
+    # File paths. These resolve under data_root(); see its docstring.
     SETTINGS_FILE: str = field(
         default_factory=lambda: user_data_path(SETTINGS_FILENAME)
     )

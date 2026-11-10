@@ -200,6 +200,9 @@ def _cancel(controller) -> None:
 
 def _notify(controller, text: str, title: str) -> None:
     text = " ".join(text.split())
+    if not text:
+        # The MCP tool only requires one character, which may be a space.
+        raise ControlError(REFUSED, "There's nothing to show.")
     title = " ".join(title.split())
     message = f"{title}: {text}" if title else text
     ui = controller.ui_controller

@@ -179,9 +179,7 @@ class WaveformOverlay(QWidget):
         self.overlay_width = config.WAVEFORM_OVERLAY_WIDTH
         self.overlay_height = config.WAVEFORM_OVERLAY_HEIGHT
         self._base_height = self.overlay_height
-        self._streaming_max_height = getattr(
-            config, "WAVEFORM_STREAMING_MAX_HEIGHT", 200
-        )
+        self._streaming_max_height = config.WAVEFORM_STREAMING_MAX_HEIGHT
         self.setFixedSize(self.overlay_width, self.overlay_height)
 
         self.current_state = self.STATE_IDLE
@@ -229,7 +227,6 @@ class WaveformOverlay(QWidget):
         self.timer = QTimer()
         self.timer.timeout.connect(self._update_animation)
         self.frame_rate = config.WAVEFORM_FRAME_RATE
-        self.animation_duration = 0
         self.last_frame_time = time.monotonic()
 
         self.hidden_timer = QTimer()

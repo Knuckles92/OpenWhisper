@@ -64,7 +64,6 @@ _CHECKPOINT_TIMEOUT_S = 60.0
 #: Silence limit for one live request. Thinking/tool ticks reset this clock
 #: for that request only, so a queued neighbor cannot keep it alive.
 _CHECKPOINT_STALL_S = 45.0
-_CONSOLIDATION_TIMEOUT_S = CONSOLIDATION_TIMEOUT_CAP_S
 _CONSOLIDATION_STALL_S = CONSOLIDATION_STALL_S
 _CANCEL_TIMEOUT_S = 5.0
 _RPC_DEFAULT_TIMEOUT_S = 30.0
@@ -540,7 +539,7 @@ class SidecarAgent:
         """Run the end-of-meeting full pass. Blocking."""
         return self._run_checkpoint(
             payload,
-            max(_CONSOLIDATION_TIMEOUT_S, CONSOLIDATION_TIMEOUT_CAP_S),
+            CONSOLIDATION_TIMEOUT_CAP_S,
             stall_s=_CONSOLIDATION_STALL_S,
         )
 

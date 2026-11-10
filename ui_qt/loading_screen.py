@@ -3,7 +3,7 @@ import logging
 import math
 import time
 from PyQt6.QtWidgets import QWidget, QApplication
-from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QRectF, QTimer
 from PyQt6.QtGui import (
     QPainter, QPainterPath, QColor, QFont, QBrush, QPen,
     QLinearGradient, QRadialGradient
@@ -19,8 +19,6 @@ _GLOW_RADIANS_PER_SEC = 4.5
 
 class LoadingScreen(QWidget):
     """Loading screen with an animated microphone glow."""
-
-    finished = pyqtSignal()
 
     def __init__(self):
         super().__init__()

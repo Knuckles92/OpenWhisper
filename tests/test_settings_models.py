@@ -86,7 +86,6 @@ class _Host(QWidget):
             builder(QVBoxLayout(page))
             self.pages[key] = page
         self.rail.destination_changed.connect(self.models.on_destination_shown)
-        self.models.host = self
 
 
 def _cached(repo_id, size_bytes):
@@ -371,13 +370,13 @@ class TestRail(_DialogTestCase):
         text = dialog.engine_inventory_label.text()
         assert text.startswith("1 of ")
         assert "Whisper models on this computer" in text
-        assert dialog.engine_inventory_row.isVisibleTo(dialog.host)
+        assert dialog.engine_inventory_row.isVisibleTo(dialog._host)
 
     def test_cloud_engine_hides_the_on_this_computer_row(self):
         dialog, _values = self._make_dialog(
             extra_settings={SettingsKey.SELECTED_MODEL: "api"}
         )
-        assert not dialog.engine_inventory_row.isVisibleTo(dialog.host)
+        assert not dialog.engine_inventory_row.isVisibleTo(dialog._host)
 
 
 class TestTextModelPicker(_DialogTestCase):

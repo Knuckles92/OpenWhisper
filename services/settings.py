@@ -1080,7 +1080,7 @@ class SettingsManager:
         """Load saved hotkeys or platform defaults."""
         try:
             settings = self.load_all_settings()
-            return settings.get(SettingsKey.HOTKEYS, config.DEFAULT_HOTKEYS)
+            return settings.get(SettingsKey.HOTKEYS, config.DEFAULT_HOTKEYS.copy())
         except Exception as e:
             logger.warning(f"Failed to load settings: {e}")
 

@@ -1117,7 +1117,7 @@ class SqlMeetingRepository:
             q = session.query(MeetingSegment).filter(
                 MeetingSegment.meeting_id == meeting_id,
                 MeetingSegment.start_s > after_start_s,
-            ).order_by(MeetingSegment.start_s)
+            ).order_by(MeetingSegment.start_s, MeetingSegment.id)
             if limit:
                 q = q.limit(limit)
             return [_segment_to_dict(r) for r in q.all()]
@@ -1271,7 +1271,9 @@ class SqlMeetingRepository:
         with self._db.get_session() as session:
             rows = session.query(MeetingSegment).filter(
                 MeetingSegment.meeting_id == meeting_id
-            ).order_by(MeetingSegment.start_s.desc()).limit(count).all()
+            ).order_by(
+                MeetingSegment.start_s.desc(), MeetingSegment.id.desc()
+            ).limit(count).all()
             return [_segment_to_dict(r) for r in reversed(rows)]
 
     def on_ops_applied(self, meeting_id: str, state: Dict[str, Any],

@@ -491,7 +491,8 @@ class WalkthroughSession:
         if folder is None:
             return
         names = (document.MARKDOWN_NAME, document.PDF_NAME, document.MANIFEST_NAME,
-                 write_up.MARKDOWN_NAME, write_up.PDF_NAME, "draft.json", "audio.wav",
+                 write_up.MARKDOWN_NAME, write_up.PDF_NAME, write_up.DOCX_NAME,
+                 "walkthrough.docx", "draft.json", "audio.wav",
                  "walkthrough.original.json")
         for path in [shot.path for shot in shots] + [folder / name for name in names]:
             path.unlink(missing_ok=True)

@@ -366,12 +366,6 @@ class QuickRecordTab(TranscriptionTabBase):
             self.set_live_preview_locked(False)
             self.set_status("Ready to record")
 
-    def append_transcription(self, text: str):
-        self.set_transcript(self.shown_transcript() + text)
-        cursor = self.transcript_text.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        self.transcript_text.setTextCursor(cursor)
-
     def set_partial_transcription(self, text: str, is_final: bool):
         if is_final:
             # Incremental preview emits the full accumulated preview each cycle,

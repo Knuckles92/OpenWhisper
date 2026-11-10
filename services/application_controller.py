@@ -1952,8 +1952,6 @@ class ApplicationController(QObject):
         and visibly stall the UI.
 
         """
-        import time
-
         last_emit = [0.0]
         last_percent = [-1]
 
@@ -2182,8 +2180,6 @@ class ApplicationController(QObject):
 
     def _hf_download_progress(self, model_name: str):
         """Return a throttled byte-progress callback for one model download."""
-        import time
-
         last_emit = [0.0]
         last_percent = [-1]
 
@@ -2973,7 +2969,10 @@ class ApplicationController(QObject):
             self.current_backend.cancel_transcription()
 
     def _stop_timers(self) -> None:
-        for name in ("_watchdog_timer", "_reload_timer", "_periodic_refresh_timer", "_update_check_timer"):
+        for name in (
+            "_watchdog_timer", "_reload_timer", "_periodic_refresh_timer",
+            "_update_check_timer", "_remote_watch", "_remote_retry_timer",
+        ):
             if hasattr(self, name) and getattr(self, name):
                 getattr(self, name).stop()
         if hasattr(self, "_update_cancel"):

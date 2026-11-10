@@ -2099,10 +2099,7 @@ def _uninstall_component(component_id: str) -> None:
             rollback_present = True
             target_present = False
         except OSError as exc:
-            try:
-                _rmtree(target)
-            except Exception:
-                pass
+            _rmtree(target)
             target_present = os.path.isdir(target)
             rollback_present = os.path.isdir(rollback)
             if target_present or rollback_present:

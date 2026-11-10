@@ -217,7 +217,7 @@ binaries += _qt_icu_binaries()
 # torch/torchaudio and the nvidia CUDA wheels are present in a development
 # venv (pulled in transitively) but are NOT in requirements.txt. torch is
 # reachable only from two `try: import torch` blocks in
-# transcriber/local_backend.py that degrade silently. Including it would add
+# services/local_asr/worker.py that degrade silently. Including it would add
 # ~2.5 GB. GPU support ships as a downloadable component instead.
 #
 # scipy was removed as a dependency; the exclusion keeps a stale venv from

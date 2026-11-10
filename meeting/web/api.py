@@ -38,7 +38,12 @@ from meeting.refinalize import (
 from meeting.persist.data_lifecycle import delete_meeting_data
 from meeting.state.custom_reports import MAX_REQUEST_CHARS
 from meeting.state.schema import MeetingState, parse_state_json
-from meeting.stored import compact_finalization_list_fields, load_state, open_store
+from meeting.stored import (
+    compact_finalization_list_fields,
+    load_state,
+    open_store,
+    stored_endpoint,
+)
 from meeting.time_utils import meeting_duration_s
 from meeting.web.auth import resolve_role
 from meeting.web.ws import WsHub
@@ -522,19 +527,6 @@ def _adopt_rerun_state(store: Any, result: Dict[str, Any]) -> None:
         replace_state(MeetingState.from_dict(result["state"]))
 
 
-def _parse_endpoint_json(raw_endpoint: Any) -> Optional[Dict[str, Any]]:
-    """The meeting's recorded endpoint, when it holds a JSON object."""
-    if isinstance(raw_endpoint, dict):
-        return raw_endpoint
-    if not isinstance(raw_endpoint, str) or not raw_endpoint.strip():
-        return None
-    try:
-        parsed = json.loads(raw_endpoint)
-    except Exception:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
 def _report_endpoint(engine: Any, meeting: Dict[str, Any]) -> Dict[str, Any]:
     """Provider, model, and endpoint for a report on this meeting.
 
@@ -555,7 +547,7 @@ def _report_endpoint(engine: Any, meeting: Dict[str, Any]) -> Dict[str, Any]:
     model = (meeting.get("agent_model")
              or getattr(options, "llm_model", "") or "")
     endpoint = getattr(options, "llm_endpoint", None)
-    recorded = _parse_endpoint_json(meeting.get("agent_endpoint_json"))
+    recorded = stored_endpoint(meeting)
     if recorded is not None:
         endpoint = recorded
     return {"provider": provider, "model": model, "endpoint": endpoint}
@@ -936,7 +928,7 @@ def _register_history_admin_routes(app: FastAPI, ctx: _AppContext) -> None:
             results = await asyncio.to_thread(repository.search_transcripts, q)
             return {"results": results, "mode": "keyword", "message": ""}
         from meeting.semantic_search import search_history
-        return await asyncio.to_thread(search_history, repository, q, semantic=mode == "semantic")
+        return await asyncio.to_thread(search_history, repository, q, semantic=True)
 
     @app.get("/api/events")
     async def api_events(token: str = "", before_seq: Optional[int] = None,

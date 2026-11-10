@@ -47,7 +47,7 @@ from ui_qt.widgets import (
 )
 from ui_qt.widgets.engine_field import EngineStatus, StatusDot
 from ui_qt.widgets.setting_tile import TileBase
-from ui_qt.widgets.segmented_bar import SegmentButton, SegmentedBar
+from ui_qt.widgets.segmented_bar import SegmentedBar
 
 # Stands in for the access token in the on-screen preview; copies get the real one.
 _HIDDEN_TOKEN = "•" * 12
@@ -93,9 +93,8 @@ class _ActionButton(Button):
             self._refresh_size()
 
 
-# The chooser lives in ui_qt/widgets so other pages can use it; these names
-# are kept for the MCP page and its tests.
-_ChoiceButton = SegmentButton
+# The chooser lives in ui_qt/widgets so other pages can use it; this name
+# is kept for the MCP page and its tests.
 _ChoiceBar = SegmentedBar
 
 

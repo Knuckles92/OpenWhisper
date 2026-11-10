@@ -239,9 +239,9 @@ def _spoken(value: Any) -> tuple[str, ...]:
     names: list[str] = []
     for item in value:
         if isinstance(item, str):
-            name = " ".join(item.split())
+            name = " ".join(item.split())[:SPOKEN_NAME_MAX_CHARS]
             if name and name.casefold() not in (n.casefold() for n in names):
-                names.append(name[:SPOKEN_NAME_MAX_CHARS])
+                names.append(name)
     return tuple(names[:MAX_SPOKEN_NAMES])
 
 

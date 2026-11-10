@@ -7,7 +7,6 @@ import {
   type HelloMsg,
   type MeetingInfo,
   type MeetingStateDoc,
-  type Participant,
   type PatchMsg,
   type Question,
   type Role,

@@ -106,10 +106,6 @@ class ParticleStyle:
     def update_audio_levels(self, levels: List[float]):
         self.audio_levels = levels.copy() if levels else []
 
-    def update_animation_time(self, delta_time: float):
-        """Advance animation time by ``delta_time`` seconds."""
-        self.animation_time += delta_time
-
     def advance(self, state: str, delta_time: float) -> None:
         """Advance physics once per timer tick, independently of repaint count.
 

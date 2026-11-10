@@ -155,6 +155,8 @@ class MeetingWebServer:
                 raise RuntimeError("Meeting web server failed to start")
             if time.monotonic() > deadline:
                 server.should_exit = True
+                self._server = None
+                self._thread = None
                 raise TimeoutError("Meeting web server startup timed out")
             time.sleep(0.05)
 

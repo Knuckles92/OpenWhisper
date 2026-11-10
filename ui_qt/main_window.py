@@ -1200,9 +1200,6 @@ class MainWindow(QMainWindow):
     def set_transcript(self, text: str, raw=None):
         self.quick_record_tab.set_transcript(text, raw=raw)
 
-    def append_transcription(self, text: str):
-        self.quick_record_tab.append_transcription(text)
-
     def clear_transcription(self):
         self.quick_record_tab.clear_transcription()
 

@@ -842,7 +842,6 @@ class HostDashboard(QWidget):
         self._models: Optional[list] = None
         self._models_token = 0
         self._clients: List[dict] = []
-        self._activity = empty_snapshot()
         #: (since, serial) of the activity shown; sharing again starts a new list.
         self._seen_activity: Optional[tuple] = None
         self._seen_transcriptions: Optional[int] = None
@@ -1673,7 +1672,11 @@ class HostDashboard(QWidget):
         server = self._mcp
         if server is None:
             return
-        turn_on = server.status().state in ("stopped", "error")
+        try:
+            turn_on = server.status().state in ("stopped", "error")
+        except Exception:
+            logger.debug("Could not read the MCP server's status", exc_info=True)
+            return
         try:
             # The same setting Settings → MCP saves; the server starts with
             # the app while it is on.
@@ -1696,7 +1699,6 @@ class HostDashboard(QWidget):
         clients = list(self._service.connected_clients() or [])
         activity = self._service.host_activity(ACTIVITY_ROWS) or empty_snapshot()
         self._clients = clients
-        self._activity = activity
         grouped = group_clients(clients)
         now = time.time()
         running = bool((self._state or {}).get("running"))

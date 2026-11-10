@@ -19,8 +19,6 @@ _CLICK_TO_RESTORE = sys.platform == "darwin"
 class SystemTrayManager(QSystemTrayIcon):
     """Manages system tray icon and menu."""
 
-    show_requested = pyqtSignal()
-    hide_requested = pyqtSignal()
     exit_requested = pyqtSignal()
     toggle_recording = pyqtSignal()
     meeting_toggle_requested = pyqtSignal()
@@ -144,13 +142,9 @@ class SystemTrayManager(QSystemTrayIcon):
         if self.main_window:
             self.main_window.restore_from_tray()
 
-        self.show_requested.emit()
-
     def _on_hide(self):
         if self.main_window:
             self.main_window.hide()
-
-        self.hide_requested.emit()
 
     def _on_toggle(self):
         self.toggle_recording.emit()

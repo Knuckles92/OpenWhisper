@@ -843,7 +843,7 @@ class ModelAssignments(QObject):
         self.refresh()
 
     def _add_custom_models(self):
-        added = add_custom_models(self.host, settings_manager, self._cached)
+        added = add_custom_models(self._host, settings_manager, self._cached)
         if added:
             self.refresh()
             self._say(f"Added {len(added)} custom models. Choose a model above to load it.")
@@ -1161,8 +1161,8 @@ class ModelAssignments(QObject):
         picker.delete_endpoint_requested.connect(self._delete_text_endpoint)
 
     def _refresh_picker_profiles(self) -> None:
-        profiles = list_profiles(self._settings_snapshot())
         settings = self._settings_snapshot()
+        profiles = list_profiles(settings)
         pickers = (
             (self.__dict__.get("text_model_picker"), "cleanup_model_memory", CLEANUP),
             (self.__dict__.get("meeting_model_picker"), "meeting_model_memory", MEETING_INTELLIGENCE),
@@ -1630,8 +1630,6 @@ class ModelAssignments(QObject):
         self._active_text_model = model
         if not self._page_is_loading(CLEANUP):
             return
-        self._active_text_provider = provider
-        self._active_text_model = model
         self.text_model_picker.set_sort(sort)
         self._refresh_picker_profiles()
         installed = provider in TranscriptCleanupProvider.INSTALLED
@@ -1750,9 +1748,9 @@ class ModelAssignments(QObject):
         return "" if backend in ("api", "remote") else backend
 
     def _refresh_engine_inventory(self) -> None:
+        """Say what the selected engine has on this computer."""
         if VOICE_MODEL not in self._built:
             return
-        """Say what the selected engine has on this computer."""
         backend = self.engine_combo.currentData() or WHISPER_FILTER
         if backend in ("api", "remote"):
             self.engine_inventory_label.setText("")
@@ -2050,14 +2048,6 @@ class ModelAssignments(QObject):
     def active_text_provider(self) -> str:
         return self._active_text_provider
 
-    @property
-    def active_text_model(self) -> str:
-        return self._active_text_model
-
-    @property
-    def active_meeting_provider(self) -> str:
-        return self._active_meeting_provider
-
     def voice_summary(self) -> str:
         """The dictation engine and model, as the rail shows it."""
         engine_value = self._engine_value()
@@ -2220,9 +2210,6 @@ class ModelAssignments(QObject):
         if self.meeting_agent_is_installed():
             return True
         return provider_is_remote(self._active_meeting_provider)
-
-    def meeting_model_name(self) -> str:
-        return self._active_meeting_llm_model
 
     def meeting_agent_core_label(self) -> str:
         if self.meeting_agent_is_installed():

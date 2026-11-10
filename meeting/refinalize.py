@@ -947,10 +947,7 @@ def rerun_finalization(
         raise ValueError("unknown meeting")
     if store is None:
         store = _open_store(repository, meeting_id, meeting)
-    cloud_enabled = bool(
-        store.with_state(lambda s: s.cloud_enabled)
-        if store is not None else meeting.get("cloud_enabled")
-    )
+    cloud_enabled = bool(store.with_state(lambda s: s.cloud_enabled))
     have_audio = bool(meeting.get("spool_dir"))
     steps = _steps_from_state(
         store,
