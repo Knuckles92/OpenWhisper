@@ -187,4 +187,4 @@ def notify_stt_toggle(
         on_status_update_auto_hide(status)
     elif on_status_update:
         on_status_update(status)
-        logger.info(f"STT has been {'enabled' if program_enabled else 'disabled'}")
+    logger.info(f"STT has been {'enabled' if program_enabled else 'disabled'}")

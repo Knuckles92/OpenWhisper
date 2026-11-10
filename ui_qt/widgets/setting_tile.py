@@ -98,7 +98,6 @@ class TileBase(QFrame):
         row.addWidget(badge, alignment=Qt.AlignmentFlag.AlignVCenter)
         row.addStretch(1)
         text_layout.insertLayout(index, row)
-        self.title_badge = badge
         return badge
 
     def add_trailing(self, widget: QWidget) -> None:

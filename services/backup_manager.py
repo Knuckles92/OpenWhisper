@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 PREFERENCES_FILE = "backup-preferences.json"
 _AUTO_NAME = re.compile(r"OpenWhisper-auto-\d{8}T\d{6}Z-[0-9a-f]{12}\.owbackup\Z")
 _INTERVALS = {"daily": 86400, "weekly": 7 * 86400}
+# A backup written inside one of these would be swept into the next backup.
+_DATA_FOLDERS = ("recordings", "meetings", "captures", "remote_records", ".openwhisper-restore")
 
 
 class BackupCoordinator(QObject):
@@ -161,7 +163,7 @@ class BackupCoordinator(QObject):
             folder = Path(destination).expanduser().resolve()
             if not destination or not folder.is_dir():
                 raise ValueError("Choose an existing folder for automatic backups.")
-            for name in ("recordings", "meetings", "captures", "remote_records", ".openwhisper-restore"):
+            for name in _DATA_FOLDERS:
                 if folder.is_relative_to(self.data_dir / name):
                     raise ValueError("Choose a backup folder outside OpenWhisper's recording folders.")
             destination = str(folder)
@@ -309,8 +311,7 @@ class BackupCoordinator(QObject):
             self.schedule_changed.emit()
             return
         folder = folder.resolve()
-        if any(folder.is_relative_to(self.data_dir / name) for name in
-               ("recordings", "meetings", "remote_records", ".openwhisper-restore")):
+        if any(folder.is_relative_to(self.data_dir / name) for name in _DATA_FOLDERS):
             self._last_error = "Choose a backup folder outside OpenWhisper's recording folders."
             self.schedule_changed.emit()
             return

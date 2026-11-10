@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 from meeting.state.schema import new_id, now_iso
 from services.settings import resolve_typesafe_enabled
 from services.typesafe import judge_from_settings, route_from_settings
+
+logger = logging.getLogger(__name__)
 
 #: Saved with the opt-in since the review first shipped on TypeSafe; it now
 #: covers whichever Fast judgments route the opt-in dialog named.
@@ -348,6 +351,7 @@ def run_review(store, repository, run_id, reviewer=None):
     except ReviewUnavailable as exc:
         finish.update(status="unavailable", message=str(exc))
     except Exception:
+        logger.exception("Insight review failed")
         finish.update(status="failed", message="The review could not finish. Your meeting is saved; retry later.")
     store.apply("system", "insight-review", [finish])
 

@@ -268,10 +268,6 @@ QLabel#statusLabel {
     font-size: 13px;
 }
 
-QLabel#accentLabel {
-    color: @accent;
-    font-weight: 600;
-}
 
 /* Section headings inside dialogs and panels */
 QLabel#sectionLabel {
@@ -378,13 +374,6 @@ QSplitter#settingsSplitter::handle:horizontal:hover {
     border-left: 1px solid @slate-border;
 }
 
-QLabel#modelManagerRailBrand {
-    color: @slate-text;
-    background-color: transparent;
-    border: none;
-    font-size: 14px;
-    font-weight: 700;
-}
 
 QListWidget#modelManagerRail {
     background-color: transparent;
@@ -1842,85 +1831,6 @@ QTabBar::tab:hover {
     color: @text;
 }
 
-/* Settings dialog tabs — segmented-button look so they clearly
-   read as clickable (ID selector overrides the generic tab rules) */
-#settingsTabs QTabBar::tab {
-    background-color: @surface;
-    color: @text-secondary;
-    border: 1px solid @border;
-    border-radius: 8px;
-    padding: 8px 20px;
-    margin: 12px 4px;
-    font-size: 14px;
-    font-weight: 600;
-}
-
-/* Inset the strip from the dialog edge on styles that left-align it, in equal
-   amounts so the styles that center it (macOS) stay centered. */
-#settingsTabs QTabBar::tab:first {
-    margin-left: 16px;
-}
-
-#settingsTabs QTabBar::tab:last {
-    margin-right: 16px;
-}
-
-#settingsTabs QTabBar::tab:selected {
-    background-color: @accent;
-    color: @on-accent;
-    border: 1px solid @accent;
-}
-
-#settingsTabs QTabBar::tab:hover:!selected {
-    background-color: @surface-hover;
-    color: @text;
-    border: 1px solid @border-strong;
-}
-
-/* Cleanup sub-tabs — quieter underline style nested inside the segmented
-   main settings tabs. Must come after #settingsTabs so these equal-
-   specificity descendant rules win for the nested tab bar. */
-#cleanupSubTabs QTabBar::tab {
-    background-color: transparent;
-    color: @text-secondary;
-    border: none;
-    border-radius: 0px;
-    padding: 8px 18px;
-    margin: 4px 2px 0px 2px;
-    font-size: 13px;
-    font-weight: 600;
-}
-
-#cleanupSubTabs QTabBar::tab:first {
-    margin-left: 18px;
-}
-
-#cleanupSubTabs QTabBar::tab:selected {
-    background-color: transparent;
-    color: @accent;
-    border: none;
-    border-bottom: 2px solid @accent;
-}
-
-#cleanupSubTabs QTabBar::tab:hover:!selected {
-    background-color: transparent;
-    color: @text;
-    border: none;
-}
-
-/* Settings model summaries sit in an InfoTile; the value line is the tile's
-   headline figure. */
-QLabel#cleanupModelSummary,
-QLabel#meetingModelSummary {
-    color: @slate-text;
-    font-size: 13px;
-    font-weight: 600;
-    background-color: transparent;
-    border: none;
-}
-
-QPushButton#cleanupModelManagerLink,
-QPushButton#meetingModelManagerLink,
 QPushButton#settingsPageLink {
     color: @accent;
     background-color: transparent;
@@ -1931,15 +1841,11 @@ QPushButton#settingsPageLink {
     min-height: 0;
 }
 
-QPushButton#cleanupModelManagerLink:hover,
-QPushButton#meetingModelManagerLink:hover,
 QPushButton#settingsPageLink:hover {
     color: @accent-soft;
     text-decoration: underline;
 }
 
-QPushButton#cleanupModelManagerLink:pressed,
-QPushButton#meetingModelManagerLink:pressed,
 QPushButton#settingsPageLink:pressed {
     color: @accent;
 }
@@ -5247,8 +5153,7 @@ QWidget#statsBody,
 QStackedWidget#statsPages,
 QWidget#statsContent,
 QFrame#statsEmpty,
-QWidget#statsFooter,
-QWidget#statsDailyBars {
+QWidget#statsFooter {
     background-color: transparent;
     border: none;
 }
@@ -5305,8 +5210,7 @@ QLabel#statsCardValue {
     font-weight: 700;
 }
 
-QLabel#statsCardDetail,
-QLabel#statsAxis {
+QLabel#statsCardDetail {
     color: @slate-text-4;
     background-color: transparent;
     border: none;

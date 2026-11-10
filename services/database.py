@@ -344,7 +344,6 @@ class DatabaseManager:
             current_version = row[0]
             if current_version < SCHEMA_VERSION:
                 self._run_migrations(conn, current_version)
-                conn.commit()
 
             conn.commit()
 

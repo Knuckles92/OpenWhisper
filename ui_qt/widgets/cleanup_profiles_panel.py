@@ -99,7 +99,7 @@ class CleanupProfilesPanel(QWidget):
         library_layout.addWidget(self.profile_list, 1)
         # "New profile" is the one action most visits want; the other two
         # sit side by side beneath it instead of three stacked full-width blocks.
-        actions = self._library_actions = QGridLayout()
+        actions = QGridLayout()
         actions.setHorizontalSpacing(8)
         actions.setVerticalSpacing(8)
         for text, callback, row, column, span in (

@@ -300,7 +300,6 @@ class OmarchyControls(QObject):
             hyprland.evaluate(f"hl.unbind({json.dumps(sequence)})")
             matching = []
         if not matching:
-            self._owned[action] = (hotkey, sequence, symbol, mask)
             for released in (False, True):
                 _bind_trigger(action, sequence, description, released)
             binds.extend(

@@ -215,8 +215,6 @@ export function parseMarkdown(source: string): MarkdownBlock[] {
   return blocks;
 }
 
-// Link URLs deliberately exclude parentheses and whitespace: it keeps the
-// pattern simple, and anything it does not match stays literal text.
 /**
  * Drop a document's opening `# ` line when it repeats a heading shown above
  * it. A report is rendered under its own title card, so the model's title
@@ -237,6 +235,8 @@ export function stripLeadingTitle(source: string, title: string): string {
   return source;
 }
 
+// Link URLs deliberately exclude parentheses and whitespace: it keeps the
+// pattern simple, and anything it does not match stays literal text.
 const INLINE = /(\*\*|__)(.+?)\1|(\*|_)(.+?)\3|`([^`]+)`|\[([^\]]*)\]\(([^()\s]*)\)/;
 
 /** Only these schemes become real links; everything else renders as text. */

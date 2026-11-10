@@ -112,7 +112,7 @@ def drop_overlapped_prefix(
     segments: Sequence[TranscriptSegment],
     keep_from_s: float,
 ) -> List[TranscriptSegment]:
-    """Drop segments that start before ``keep_from_s`` (overlap region).
+    """Drop segments that end at or before ``keep_from_s`` (overlap region).
 
     The later window keeps the overlapping tail; the earlier window's
     overlapping prefix is discarded by the caller before extend.
@@ -123,7 +123,7 @@ def drop_overlapped_prefix(
             authoritative.
 
     Returns:
-        Segments whose ``start_s`` is at or after ``keep_from_s``.
+        Segments that end after ``keep_from_s``; one spanning it is kept.
     """
     threshold = float(keep_from_s)
     return [seg for seg in segments if float(seg.end_s) > threshold]

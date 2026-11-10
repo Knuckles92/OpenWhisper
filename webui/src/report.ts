@@ -1,5 +1,4 @@
 import { citationLabel } from './components/CitationBadge';
-import { SPEAKER_COLORS } from './people';
 import { sortedCardItems } from './state';
 import type { CardItem, MeetingStateDoc, Participant, Segment } from './types';
 
@@ -74,8 +73,6 @@ export function resolveReportView(views: ReportViewId[]): ReportViewId {
 }
 
 const SEVERITY_RANK: Record<string, number> = { high: 0, medium: 1, low: 2 };
-/** The same warm voices as the live dashboard (see people.ts). */
-const SPEAKER_PALETTE = SPEAKER_COLORS;
 
 /**
  * The views this meeting recorded (defaulting to the three agent views), then
@@ -206,15 +203,6 @@ export function deriveListenPicks(
     }
   }
   return picks;
-}
-
-export function speakerColor(participantId: string | null): string {
-  if (!participantId) return SPEAKER_PALETTE[0];
-  let hash = 0;
-  for (let index = 0; index < participantId.length; index += 1) {
-    hash = (hash * 31 + participantId.charCodeAt(index)) >>> 0;
-  }
-  return SPEAKER_PALETTE[hash % SPEAKER_PALETTE.length];
 }
 
 export function formatMeetingWhen(

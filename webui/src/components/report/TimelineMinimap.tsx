@@ -1,5 +1,6 @@
-import { type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
-import { clock, speakerColor, speakerName } from '../../report';
+import { useMemo, type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
+import { speakerColor } from '../../people';
+import { clock, speakerName } from '../../report';
 import { useAudioClock } from '../../playback';
 import type { Participant, Segment } from '../../types';
 
@@ -61,6 +62,7 @@ export default function TimelineMinimap({
   const at = Math.min(Math.max(time, 0), duration);
   const pct = (seconds: number) => `${(seconds / duration) * 100}%`;
   const interactive = Boolean(onSeek);
+  const people = useMemo(() => Object.values(participants), [participants]);
   // Before the first play there is no position worth drawing a line through.
   const started = playing || at > 0;
 
@@ -120,7 +122,7 @@ export default function TimelineMinimap({
                   left: pct(segment.start_s),
                   width: `${Math.max(0.35, (span / duration) * 100)}%`,
                   height: `${18 + Math.min(40, span * 1.9)}px`,
-                  background: speakerColor(segment.speaker_participant_id),
+                  background: speakerColor(segment.speaker_participant_id, people),
                 }}
               />
             );
