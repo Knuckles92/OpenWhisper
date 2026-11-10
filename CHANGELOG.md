@@ -16,6 +16,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ### Fixed
 
+- **Settings chevrons in the light theme** — the sidebar chapters and the narrow-window page menu now use the same darker arrow as the rest of Settings, and follow a theme switch.
 - **Settings follows the main window's engine** — changing the model, device or quantization on Quick Record or Upload File now shows in an open Settings window straight away, as a backend change already did.
 - **Adding custom Whisper models** — **Add custom models…** on the Voice model pages opens again instead of doing nothing.
 - **Remote engine on a Mac host** — installing or choosing the **Auto** (Apple GPU) runtime for Parakeet, Nemotron or Qwen from a paired computer no longer fails with an invalid request.
