@@ -66,7 +66,7 @@ def inspect_models() -> ModelSetup:
 
     model = resolve_meeting_whisper_model(settings)
     if model == "auto":
-        model = LocalWhisperBackend(load=False).resolve_auto_model()
+        model = LocalWhisperBackend(model_name="auto", load=False).resolve_auto_model()
     entry = MODELS.get(model)
     runtime = ""
     if entry is not None:

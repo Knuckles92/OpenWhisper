@@ -274,6 +274,19 @@ class CustomTitleBar(QFrame):
                 self.maximize_btn.setAccessibleName("Restore window")
             self._is_maximized = not self._is_maximized
 
+    def sync_maximized(self, maximized: bool) -> None:
+        """Follow a maximized state that changed without this button."""
+        if maximized == self._is_maximized:
+            return
+        self._is_maximized = maximized
+        self.maximize_btn.set_glyph(
+            WindowGlyphButton.RESTORE if maximized else WindowGlyphButton.MAXIMIZE
+        )
+        self.maximize_btn.setToolTip("Restore" if maximized else "Maximize")
+        self.maximize_btn.setAccessibleName(
+            "Restore window" if maximized else "Maximize window"
+        )
+
     def _close(self):
         if self.parent_window:
             self.parent_window.close()
@@ -1770,6 +1783,11 @@ class MainWindow(QMainWindow):
             self.show()
         else:
             self.showNormal()
+            # showNormal() un-maximizes; the title bar's own flag must follow
+            # or the window stops fitting itself to its page.
+            sync = getattr(self.title_bar, "sync_maximized", None)
+            if sync is not None:
+                sync(False)
         self.raise_()
         self.activateWindow()
 
@@ -1846,19 +1864,25 @@ class MainWindow(QMainWindow):
             return QRect(0, 0, 1280, 800)
         return screen.availableGeometry()
 
-    def _clamp_geometry(self, x: int, y: int, width: int, height: int) -> QRect:
-        """Clamp a candidate window rect so it stays fully on the current screen.
+    def _clamp_geometry(
+        self, x: int, y: int, width: int, height: int,
+        avail: Optional[QRect] = None,
+    ) -> QRect:
+        """Clamp a candidate window rect so it stays fully on one screen.
 
         Args:
             x: Proposed left edge.
             y: Proposed top edge.
             width: Proposed width.
             height: Proposed height.
+            avail: The screen area to fit; the window's current screen when
+                omitted.
 
         Returns:
             A ``QRect`` that fits inside the available screen area.
         """
-        avail = self._available_screen_rect()
+        if avail is None:
+            avail = self._available_screen_rect()
         max_width = min(self.maximumWidth(), avail.width())
         max_height = avail.height()
         width = max(self.minimumWidth(), min(width, max_width))
@@ -2291,12 +2315,21 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QApplication
         from PyQt6.QtCore import QRect
 
-        screen = QApplication.primaryScreen()
-        if not screen:
-            return False
-        screen_geo = screen.availableGeometry()
         saved_rect = QRect(geo['x'], geo['y'], geo['width'], geo['height'])
-        if not screen_geo.intersects(saved_rect):
+        # Any connected screen, the primary first: a window kept on a second
+        # monitor returns there rather than being re-centred on the first.
+        primary = QApplication.primaryScreen()
+        screens = ([primary] if primary else []) + [
+            screen for screen in QApplication.screens() if screen is not primary
+        ]
+        screen_geo = next(
+            (
+                screen.availableGeometry() for screen in screens
+                if screen.availableGeometry().intersects(saved_rect)
+            ),
+            None,
+        )
+        if screen_geo is None:
             return False
         width = self._restored_width(geo)
         # Only a start: showing the window fits its height to the tab.
@@ -2311,7 +2344,7 @@ class MainWindow(QMainWindow):
                 width + self._sidebar_width,
             )
         clamped = self._clamp_geometry(
-            geo["x"], geo["y"], restore_width, height
+            geo["x"], geo["y"], restore_width, height, avail=screen_geo
         )
         self.setGeometry(clamped)
         logger.info(f"Restored window geometry: {geo}")

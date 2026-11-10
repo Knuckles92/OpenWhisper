@@ -95,6 +95,9 @@ class LocalWhisperBackend(TranscriptionBackend):
             settings = settings_manager.load_all_settings()
             model_name = setting_value(SettingsKey.WHISPER_MODEL, settings)
         self.model_name = model_name
+        # What was asked for, kept apart from ``model_name`` because loading
+        # replaces "auto" there with the model it resolved to.
+        self._requested_model = model_name
         # A faster_whisper.WhisperModel once loaded.
         self.model = None
         self._model_lock = threading.RLock()
@@ -185,7 +188,9 @@ class LocalWhisperBackend(TranscriptionBackend):
         else:
             compute_type = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings)
 
-        model = setting_value(SettingsKey.WHISPER_MODEL, settings)
+        # This backend's own request, not the dictation setting: Meeting Mode
+        # and the live preview run their own models through this class.
+        model = getattr(self, "_requested_model", None) or self.model_name
 
         if device == "auto" or compute_type == "auto" or model == "auto":
             has_cuda = self._cuda_is_available()
@@ -536,6 +541,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             from services.settings import SettingsKey, setting_value, settings_manager
             settings = settings_manager.load_all_settings()
             self.model_name = setting_value(SettingsKey.WHISPER_MODEL, settings)
+        self._requested_model = self.model_name
         self.cleanup()
         self._load_model()
 
