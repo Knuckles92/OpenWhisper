@@ -448,6 +448,9 @@ class MainWindow(QMainWindow):
         self._pre_host_geometry = None
 
         self._sidebar_width = config.MAIN_WINDOW_HISTORY_SIDEBAR_WIDTH
+        # What the screen's edge took from the page as the side panel opened;
+        # closing the panel gives it back.
+        self._sidebar_squeeze = 0
         self._geometry_format = "collapsed_content_v1"
 
         self._current_tab_index = TabbedContentWidget.TAB_QUICK_RECORD
@@ -736,6 +739,8 @@ class MainWindow(QMainWindow):
                 widget.cancel_requested.connect(self._on_quick_record_canceled)
                 widget.settings_requested.connect(self.settings_destination_requested)
                 widget.walkthroughs_changed.connect(self.refresh_history)
+            elif key == "meeting":
+                widget.past_meeting_requested.connect(self.past_meeting_requested)
         for method, (args, kwargs) in self._screen_updates[key].items():
             if isinstance(method, tuple):
                 method = method[0]
@@ -1559,7 +1564,9 @@ class MainWindow(QMainWindow):
 
         if not self._compositor_managed:
             self.setMinimumSize(config.MAIN_WINDOW_MIN_WIDTH, self._page_floor)
-            self.setMaximumSize(config.MAIN_WINDOW_MAX_WIDTH, UNLIMITED_HEIGHT)
+            self.setMaximumSize(
+                config.MAIN_WINDOW_MAX_WIDTH + self.history_sidebar.width(), UNLIMITED_HEIGHT
+            )
         self.compact_controller.hide()
         self.tabbed_content.show()
         self.stats_button.show()
@@ -1813,7 +1820,9 @@ class MainWindow(QMainWindow):
         # Capture the width of everything except the sidebar so each animation
         # frame can hold the main content area at a constant width. Works
         # mid-animation too: the sidebar's current width is subtracted out.
-        self._sidebar_base_width = self.width() - self.history_sidebar.width()
+        self._sidebar_base_width = (
+            self.width() - self.history_sidebar.width() + self._sidebar_squeeze
+        )
 
         # The sidebar's single animation drives the window width via
         # width_animated -> _on_sidebar_width_animated.
@@ -1831,11 +1840,17 @@ class MainWindow(QMainWindow):
         if base is None:
             return
 
-        target_width = min(self.maximumWidth(), base + sidebar_width)
+        # The width cap is the page's: the side panel adds its own on top, so
+        # opening it never squeezes the page while the screen has the room.
+        limit = config.MAIN_WINDOW_MAX_WIDTH + sidebar_width
+        if limit > self.maximumWidth():
+            self.setMaximumWidth(limit)
+        wanted = min(limit, base + sidebar_width)
         geo = self.geometry()
-        self.setGeometry(
-            self._clamp_geometry(geo.x(), geo.y(), target_width, geo.height())
-        )
+        clamped = self._clamp_geometry(geo.x(), geo.y(), wanted, geo.height())
+        self.setGeometry(clamped)
+        self.setMaximumWidth(limit)
+        self._sidebar_squeeze = max(0, wanted - clamped.width())
 
     def _available_screen_rect(self) -> QRect:
         """Return the available geometry of the screen that contains this window."""
@@ -2175,6 +2190,8 @@ class MainWindow(QMainWindow):
         if not self._resizing:
             return
         self._resizing = False
+        # A width the user drags is their own: nothing is owed back to it.
+        self._sidebar_squeeze = 0
         if (
             not self._compact_mode and not self._host_mode
             and self._current_page() is self.quick_record_tab
