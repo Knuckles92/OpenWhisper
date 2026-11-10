@@ -1175,6 +1175,16 @@ class SettingsDialog(QDialog):
                 continue
             self.select_destination(key)
             return False
+        # Built by this dialog, not a page module, so it is asked here.
+        if keep != CLEANUP_PROFILES and CLEANUP_PROFILES in self._built_pages:
+            try:
+                saved = self.cleanup_profiles_panel.save_draft(ask=ask)
+            except Exception:
+                logger.exception("Couldn't save the cleanup profile draft")
+                saved = True
+            if not saved:
+                self.select_destination(CLEANUP_PROFILES)
+                return False
         return True
 
     def set_standard_hotkey(self, action: str, hotkey: str) -> str:

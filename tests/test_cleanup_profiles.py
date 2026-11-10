@@ -335,3 +335,33 @@ def test_pynput_and_carbon_route_profiles_without_changing_standard_mode():
     manager.set_profile_hotkeys({}, callback)
     registered = manager._carbon_registrar.register_hotkeys.call_args.args[0]
     assert "profile:email" not in registered
+
+
+def test_leaving_settings_saves_a_valid_draft():
+    panel = CleanupProfilesPanel()
+    panel.name_edit.setText("Technical ticket")
+    assert panel.has_unsaved_changes()
+    assert panel.save_draft()
+    assert not panel.has_unsaved_changes()
+    assert (
+        load_cleanup_profiles(settings_manager.load_all_settings())[0].name
+        == "Technical ticket"
+    )
+
+
+def test_leaving_settings_asks_before_dropping_a_draft_that_cannot_save():
+    panel = CleanupProfilesPanel()
+    panel.hotkey_input.set_hotkey(config.DEFAULT_HOTKEYS["cancel"])
+    # Nobody to ask (a hidden window): the draft stays in the editor.
+    assert panel.save_draft()
+    assert panel.has_unsaved_changes()
+    with patch.object(
+        QMessageBox, "question", return_value=QMessageBox.StandardButton.Cancel
+    ):
+        assert not panel.save_draft(ask=True)
+    assert panel.has_unsaved_changes()
+    with patch.object(
+        QMessageBox, "question", return_value=QMessageBox.StandardButton.Discard
+    ):
+        assert panel.save_draft(ask=True)
+    assert not panel.has_unsaved_changes()
