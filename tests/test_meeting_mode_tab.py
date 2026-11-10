@@ -336,6 +336,35 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.app.processEvents()
         self.get_setting.stop()
 
+    def test_unchanged_finalization_steps_keep_their_rows(self):
+        def finalization(status):
+            return {"finalization": {"status": "failed", "steps": [
+                {"id": "polish", "name": "Polish", "status": status},
+                {"id": "finalize", "name": "Save", "status": "completed"},
+            ]}}
+
+        def rows():
+            layout = self.tab.finalization_steps_layout
+            return [layout.itemAt(index).widget() for index in range(layout.count())]
+
+        self.tab.set_meeting_state(finalization("failed"))
+        first = rows()
+        self.assertEqual(len(first), 2)
+        self.tab.set_meeting_state({"dashboard_available": True})
+        self.tab.set_meeting_state(finalization("failed"))
+        self.assertEqual(rows(), first)
+        self.tab.set_meeting_state(finalization("completed"))
+        self.assertNotEqual(rows(), first)
+
+    def test_an_elapsed_update_does_not_restart_a_paused_clock(self):
+        self.tab.set_meeting_state({"active": True, "paused": False, "status": "active"})
+        self.tab.set_meeting_state({"paused": True})
+        self.tab.set_meeting_state({"paused": True, "elapsed_s": 65})
+        self.assertIsNone(self.tab._running_since)
+        self.assertEqual(self.tab.elapsed_label.text(), "01:05")
+        self.tab.set_meeting_state({"paused": False})
+        self.assertIsNotNone(self.tab._running_since)
+
     def test_idle_shows_start_controls(self):
         """Idle layout exposes Start Meeting and hides session controls."""
         self.assertFalse(self.tab.idle_card.isHidden())

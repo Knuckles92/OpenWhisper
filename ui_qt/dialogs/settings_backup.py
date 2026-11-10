@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from config import config
-from services.format_utils import format_file_size
+from services.format_utils import UNKNOWN_DATE, format_file_size
 from services.walkthrough.storage import captures_root
 from ui_qt.dialogs.settings_fields import settings_caption
 from ui_qt.utils.icons import design_icon
@@ -61,7 +61,7 @@ def _local_date(value: Any) -> datetime | None:
 def _date_label(value: Any) -> str:
     date = _local_date(value)
     if date is None:
-        return str(value) if value else "Unknown date"
+        return str(value) if value else UNKNOWN_DATE
     return f"{date.strftime('%b')} {date.day}, {date.year} at {date.strftime('%I:%M %p').lstrip('0')}"
 
 

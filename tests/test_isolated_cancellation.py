@@ -12,8 +12,16 @@ import pytest
 from services import isolated
 from services.local_asr.process import SpeechProcess
 
+#: How long the fake worker and server below stay stuck, as a real one would.
+STALL_S = 100
+#: "Did not wait for the stall". A cancel takes a fraction of a second, but a
+#: busy runner can stretch any fixed few seconds, so the bound is set by what
+#: it has to rule out rather than by how fast a quiet machine is.
+PROMPT_S = STALL_S / 4
+
 
 WORKER = '''
+STALL_S = __STALL_S__
 import json, os, socket, time
 from pathlib import Path
 s = socket.create_connection(('127.0.0.1', int(os.environ['OPENWHISPER_WORKER_PORT'])))
@@ -28,14 +36,14 @@ for line in incoming:
             outgoing.write(json.dumps({'id': r['id'], 'error': 'upload rejected'}) + '\\n')
             outgoing.flush()
             continue
-        time.sleep(100)
+        time.sleep(STALL_S)
     if op == 'download_model':
         outgoing.write(json.dumps({'id': r['id'], 'progress': [5, 10]}) + '\\n')
         outgoing.flush()
-        time.sleep(100)
+        time.sleep(STALL_S)
     if (op == 'whisper_load' and r['model'] == 'block-load') or (op == 'whisper_transcribe' and (r['audio_path'].endswith('block.wav') or os.environ.get('TEST_BLOCK_PREVIEW'))):
         Path(os.environ['TEST_WORKER_STARTED']).write_text(op)
-        time.sleep(100)
+        time.sleep(STALL_S)
     result = {}
     if op == 'whisper_transcribe':
         text = 'fresh result'
@@ -45,7 +53,7 @@ for line in incoming:
         result = {'segments': [{'text': text, 'start': 0., 'end': 1.}], 'info': {'language': 'en', 'language_probability': .9}}
     outgoing.write(json.dumps({'id': r['id'], 'result': result}) + '\\n')
     outgoing.flush()
-'''
+'''.replace("__STALL_S__", str(STALL_S))
 
 
 @pytest.fixture
@@ -82,8 +90,8 @@ def test_native_cancel_reaps_stalled_worker_and_next_decode_reloads(native_worke
             before = time.monotonic()
             model.cancel()
             with pytest.raises(RuntimeError, match="canceled"):
-                pending.result(timeout=3)
-            assert time.monotonic() - before < 3
+                pending.result(timeout=PROMPT_S)
+            assert time.monotonic() - before < PROMPT_S
         assert processes[0].poll() is not None
         segments, info = model.transcribe("next.wav")
         assert [s.text for s in segments] == ["fresh result"]
@@ -117,8 +125,8 @@ def test_quit_during_native_model_construction_cannot_publish_model(native_worke
         wait_for_file(started)
         before = time.monotonic()
         backend.cleanup()
-        pending.result(timeout=3)
-        assert time.monotonic() - before < 3
+        pending.result(timeout=PROMPT_S)
+        assert time.monotonic() - before < PROMPT_S
     assert backend.model is None
     assert not backend.is_available()
     assert all(p.poll() is not None for p in processes)
@@ -137,7 +145,7 @@ def test_external_startup_cancel_interrupts_native_model_load(native_worker, mon
             pending = executor.submit(backend._load_model, cancel_event=cancel)
             wait_for_file(started)
             cancel.set()
-            pending.result(timeout=3)
+            pending.result(timeout=PROMPT_S)
         assert backend.model is None
         assert not backend.is_available()
         assert all(p.poll() is not None for p in processes)
@@ -160,7 +168,7 @@ def test_deferred_meeting_stop_reaps_loading_native_model(native_worker, monkeyp
             wait_for_file(started)
             assert engine._backend is not None
             engine.stop()
-            assert pending.result(timeout=3) is False
+            assert pending.result(timeout=PROMPT_S) is False
         assert engine._backend is None
         assert not engine.is_available
         assert engine._thread is None
@@ -180,8 +188,8 @@ def test_hub_cancel_interrupts_download_without_waiting_for_next_byte(native_wor
         before = time.monotonic()
         cancel.set()
         with pytest.raises(RuntimeError, match="canceled"):
-            pending.result(timeout=3)
-        assert time.monotonic() - before < 3
+            pending.result(timeout=PROMPT_S)
+        assert time.monotonic() - before < PROMPT_S
     assert all(p.poll() is not None for p in processes)
 
 
@@ -210,7 +218,8 @@ def test_rejected_chunk_interrupts_other_stalled_uploads(native_worker, tmp_path
     try:
         with pytest.raises(RuntimeError, match="upload rejected"):
             backend._transcribe_chunks([str(path) for path in paths], *backend._target())
-        assert time.monotonic() - before < 3
+        # This window also includes starting the worker processes.
+        assert time.monotonic() - before < PROMPT_S
         assert all(p.poll() is not None for p in processes)
     finally:
         backend.cleanup()
@@ -230,9 +239,9 @@ def test_cancel_recording_interrupts_preview_and_next_recording_works(native_wor
         wait_for_file(started)
         before = time.monotonic()
         preview.cancel_streaming()
-        preview.worker_thread.join(3)
+        preview.worker_thread.join(PROMPT_S)
         assert not preview.worker_thread.is_alive()
-        assert time.monotonic() - before < 3
+        assert time.monotonic() - before < PROMPT_S
         assert processes[0].poll() is not None
         monkeypatch.delenv("TEST_BLOCK_PREVIEW")
         segments, _ = model.transcribe("fresh.wav")
@@ -280,7 +289,7 @@ def test_cloud_cancel_interrupts_stalled_http_and_fresh_job_succeeds(monkeypatch
             self.rfile.read(int(self.headers["Content-Length"]))
             if block[0]:
                 entered.set()
-                release.wait(10)
+                release.wait(STALL_S)
                 return
             self.send_response(200)
             self.send_header("Content-Type", "text/plain")
@@ -305,8 +314,8 @@ def test_cloud_cancel_interrupts_stalled_http_and_fresh_job_succeeds(monkeypatch
             before = time.monotonic()
             backend.cancel_transcription()
             with pytest.raises(RuntimeError):
-                pending.result(timeout=3)
-            assert time.monotonic() - before < 3
+                pending.result(timeout=PROMPT_S)
+            assert time.monotonic() - before < PROMPT_S
             assert all(w.process.poll() is not None for w in workers)
         block[0] = False
         assert backend.transcribe(str(audio)) == "fresh cloud result"

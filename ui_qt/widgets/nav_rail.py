@@ -11,7 +11,7 @@ go, so a heading is never the current item.
 """
 from typing import Dict, Optional, Set
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QIcon, QTransform
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui_qt.utils.icons import tabler_pixmap
+from ui_qt.utils.palette import current_palette
 from ui_qt.utils.restyle import set_style_property
 
 _KEY_ROLE = Qt.ItemDataRole.UserRole
@@ -157,14 +158,24 @@ class _ChapterRow(QWidget):
         self.chevron.setObjectName("settingsRailChevron")
         self.chevron.setFixedSize(12, 12)
         row.addWidget(self.chevron)
+        self._open = False
         self.set_open(False)
         self.set_active(False)
 
     def set_open(self, is_open: bool) -> None:
-        chevron = tabler_pixmap("chevron-down-slate.svg", 12)
+        self._open = is_open
+        # The stylesheet's chevrons use the same per-theme drawing.
+        suffix = current_palette().css("icon-suffix")
+        chevron = tabler_pixmap(f"chevron-down-slate{suffix}.svg", 12)
         if not is_open:
             chevron = chevron.transformed(QTransform().rotate(-90))
         self.chevron.setPixmap(chevron)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.StyleChange and hasattr(self, "_open"):
+            # A theme switch restyles the row; redraw the chevron for it.
+            self.set_open(self._open)
 
     def set_active(self, active: bool) -> None:
         """Show whether the current page is one of this chapter's."""

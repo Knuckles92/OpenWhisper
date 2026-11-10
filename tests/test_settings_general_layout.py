@@ -615,3 +615,30 @@ class TestSettingsGeneralLayout(unittest.TestCase):
                                     ))
         finally:
             dialog.close()
+
+
+
+def test_settings_chevrons_use_the_drawing_for_the_theme(monkeypatch):
+    """The page menu and the rail's chapters match the stylesheet's chevrons."""
+    from PyQt6.QtGui import QIcon, QPixmap
+    from PyQt6.QtWidgets import QApplication
+
+    from ui_qt.dialogs import settings_dialog as dialog_module
+    from ui_qt.widgets import nav_rail
+
+    app = QApplication.instance() or QApplication([])
+    asked = []
+    monkeypatch.setattr(
+        dialog_module, "design_icon", lambda name: asked.append(name) or QIcon(),
+    )
+    monkeypatch.setattr(
+        nav_rail, "tabler_pixmap", lambda name, size: asked.append(name) or QPixmap(size, size),
+    )
+    wanted = f"chevron-down-slate{dialog_module.current_palette().css('icon-suffix')}.svg"
+    dialog = dialog_module.SettingsDialog()
+    try:
+        chevrons = {name for name in asked if name.startswith("chevron-down-slate")}
+        assert chevrons == {wanted}
+    finally:
+        dialog.deleteLater()
+        app.processEvents()

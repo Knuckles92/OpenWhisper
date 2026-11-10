@@ -66,9 +66,12 @@ export function weekGroup(date: Date | null, now = new Date()): string {
   return date.getFullYear() === now.getFullYear() ? month : `${month} ${date.getFullYear()}`;
 }
 
+/** Shown for a missing date; the desktop app's UNKNOWN_DATE says the same. */
+export const UNKNOWN_DATE = 'Unknown date';
+
 /** "Today · 9:02 AM", "Yesterday · …", "Thu Sep 17 · 2:00 PM". */
 export function friendlyStart(date: Date | null, now = new Date()): string {
-  if (!date) return 'Unknown date';
+  if (!date) return UNKNOWN_DATE;
   const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   const days = Math.round((startOfDay(now).getTime() - startOfDay(date).getTime()) / DAY_MS);
   if (days === 0) return `Today · ${time}`;
@@ -943,7 +946,7 @@ export default function HistoryPane({
                     </button>
                   </div>
                   <div className="shelf-detail-meta">
-                    <span>{metaParts.join(' · ') || 'Unknown date'}</span>
+                    <span>{metaParts.join(' · ') || UNKNOWN_DATE}</span>
                     <StatusPill meeting={selected} />
                     <span className="shelf-detail-id">ID {selected.id}</span>
                   </div>

@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timezone, tzinfo
 from typing import Any, Dict, Optional
 
+from services.format_utils import UNKNOWN_DATE
+
 
 def utc_now_iso() -> str:
     """Return the current instant as an unambiguous UTC ISO string."""
@@ -68,7 +70,7 @@ def seconds_since(value: Any) -> Optional[float]:
 def format_meeting_started_at(value: Any) -> str:
     """Format a meeting start time for Qt history and leftover identity."""
     started = as_local_time(value)
-    return started.strftime("%b %d, %Y · %I:%M %p") if started else "Unknown date"
+    return started.strftime("%b %d, %Y · %I:%M %p") if started else UNKNOWN_DATE
 
 
 def meeting_duration_s(

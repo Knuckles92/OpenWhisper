@@ -43,13 +43,14 @@ from PyQt6.QtWidgets import (
 from meeting.platform import meeting_mode_supported, meeting_setup_available, meeting_unsupported_os_name
 from meeting.content import fallback_meeting_title, meeting_insights_pill
 from meeting.time_utils import (
+    UNKNOWN_DATE,
     format_meeting_duration,
     format_meeting_identity_meta,
     format_meeting_started_at,
 )
 from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
 from ui_qt.utils.palette import token_color
-from ui_qt.utils.restyle import set_style_property
+from ui_qt.utils.restyle import repolish, set_style_property
 from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton
 from ui_qt.widgets.cards import Card
 from ui_qt.widgets.eliding_label import ElidingLabel
@@ -487,8 +488,6 @@ def _step_action_label(step_id: str, step_status, allow_actions: bool) -> str:
         return "Retry"
     if step_status == "completed" and step_id in _OPTIONAL_RERUN_STEPS:
         return "Run again"
-    if step_status == "failed" and step_id == "finalize":
-        return "Retry"
     return ""
 
 
@@ -568,6 +567,8 @@ class MeetingModeTab(QWidget):
         self._developer_mode = False
         self._built = False
         self._stage_state: Optional[str] = None
+        #: What the finalization step rows were last built from.
+        self._steps_shown: Optional[tuple] = None
         self._recent_token = 0
         _relay().loaded.connect(self._on_recent_loaded)
 
@@ -1523,7 +1524,8 @@ class MeetingModeTab(QWidget):
             self._elapsed_base_s = float(elapsed_s)
         except (TypeError, ValueError):
             self._elapsed_base_s = 0.0
-        self._running_since = time.monotonic()
+        # A paused meeting's clock stays where the runtime put it.
+        self._running_since = None if self._paused else time.monotonic()
         self._refresh_elapsed()
 
     def _apply_status(self, status: str, payload: Dict[str, Any]) -> None:
@@ -1770,8 +1772,7 @@ class MeetingModeTab(QWidget):
         """Colour the on-air card for what capture is doing right now."""
         tone = "starting" if not self._active else "paused" if self._paused else "live"
         for widget in (self.session_card, self.status_pill):
-            if widget.property("tone") != tone:
-                set_style_property(widget, "tone", tone)
+            set_style_property(widget, "tone", tone)
         self.live_dot.set_live(tone == "live")
         # Pause becomes Resume, and a button sizes itself to its new label.
         for button in (self.pause_button, self.end_button):
@@ -1842,7 +1843,7 @@ class MeetingModeTab(QWidget):
             identity.get("display_title") or identity.get("title") or ""
         ).strip()
         meta = format_meeting_identity_meta(identity) if identity else ""
-        if meta == "Unknown date" and not identity.get("started_at"):
+        if meta == UNKNOWN_DATE and not identity.get("started_at"):
             meta = ""
         self.identity_title.setText(title or "Meeting result")
         self.identity_meta.setText(meta)
@@ -2015,13 +2016,9 @@ class MeetingModeTab(QWidget):
 
     def _apply_finalization_tone(self, tone: str) -> None:
         self.finalization_card.setProperty("finalizationTone", tone)
-        # Force QSS to re-evaluate dynamic properties.
+        # The title's colour follows its card's tone.
         for widget in (self.finalization_card, self.finalization_title):
-            style = widget.style()
-            if style is not None:
-                style.unpolish(widget)
-                style.polish(widget)
-        self.finalization_card.update()
+            repolish(widget)
 
     def _speaker_rerun_allowed(self) -> bool:
         """Whether a speaker re-run could label anything right now."""
@@ -2049,6 +2046,21 @@ class MeetingModeTab(QWidget):
             current_step: 1-based index of current step.
             allow_actions: When False, hide per-row Retry / Run again.
         """
+        # Every state update lands here. Rebuilding rows that would come out
+        # the same takes keyboard focus off a Retry button for nothing.
+        shown = (
+            tuple(
+                (str(s.get("id") or ""), str(s.get("status", "pending")),
+                 str(s.get("name") or ""), str(s.get("detail") or ""))
+                for s in steps
+            ),
+            allow_actions,
+            self._speaker_rerun_allowed(),
+            self._speaker_rerun_tip(),
+        )
+        if shown == self._steps_shown:
+            return
+        self._steps_shown = shown
         while self.finalization_steps_layout.count():
             item = self.finalization_steps_layout.takeAt(0)
             widget = item.widget()

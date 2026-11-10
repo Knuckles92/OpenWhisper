@@ -193,6 +193,7 @@ from ui_qt.utils.agent_lookup import lookup_relay
 from ui_qt.utils.app_icon import app_icon
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
+from ui_qt.utils.palette import current_palette
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets import (
@@ -809,7 +810,7 @@ class SettingsDialog(QDialog):
         self.page_menu_button = QPushButton()
         self.page_menu_button.setObjectName("settingsPageMenu")
         self.page_menu_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.page_menu_button.setIcon(design_icon("chevron-down-slate.svg"))
+        self._apply_page_menu_icon()
         self.page_menu_button.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         self.page_menu_button.setAccessibleName("Choose a settings page")
         self.page_menu_button.clicked.connect(self._show_page_menu)
@@ -5104,6 +5105,18 @@ class SettingsDialog(QDialog):
         self._set_rule_mic_recording(False)
         self.cleanup_rule_activity.finish()
         self._update_cleanup_rule_controls()
+
+    def _apply_page_menu_icon(self) -> None:
+        # The same per-theme chevron the stylesheet and the rail draw.
+        suffix = current_palette().css("icon-suffix")
+        self.page_menu_button.setIcon(design_icon(f"chevron-down-slate{suffix}.svg"))
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        # A theme switch restyles the window. QDialog.__init__ already
+        # delivers events, so the button may not exist yet.
+        if event.type() == QEvent.Type.StyleChange and "page_menu_button" in self.__dict__:
+            self._apply_page_menu_icon()
 
     def event(self, event):
         # While a global capture is waiting, Esc must not reject Settings.
