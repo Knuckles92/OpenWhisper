@@ -43,10 +43,11 @@ from ui_qt.dialogs.settings_destinations import (
     SNIPPETS,
     STYLES,
 )
+from ui_qt.whats_new import WHATS_NEW
 from ui_qt.widgets.setting_tile import InfoTile, TileBase
 
 NEW_PAGES = (DICTIONARY, SNIPPETS, STYLES, COMMANDS)
-INTRO_SEEN = "flow_features_intro_seen"
+INTRO_SEEN = "whats_new_seen"
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -137,7 +138,7 @@ def _modules():
 
 
 def _intro_tiles(widget):
-    return [tile for tile in widget.findChildren(InfoTile) if tile.property("tileId") == "flowIntro"]
+    return [tile for tile in widget.findChildren(InfoTile) if tile.property("tileId") == "whatsNew"]
 
 
 class TestPersonalizeRail:
@@ -391,17 +392,14 @@ class TestHomePersonalize:
         try:
             notes = _intro_tiles(dialog._pages[OVERVIEW])
             assert len(notes) == 1
-            text = notes[0].description_label.text()
-            for feature in ("dictionary", "snippets", "styles", "Command Mode",
-                            "hands-free", "Stats", "Scratchpad"):
-                assert feature in text
+            assert notes[0].description_label.text() == WHATS_NEW.text
             assert notes[0].isVisible()
             dismiss = next(
                 button for button in notes[0].findChildren(QPushButton)
                 if button.text() == "Got it"
             )
             dismiss.click()
-            assert store.get(INTRO_SEEN) is True
+            assert store.get(INTRO_SEEN) == WHATS_NEW.updated
             assert notes[0].isHidden()
         finally:
             dialog.close()
@@ -410,6 +408,13 @@ class TestHomePersonalize:
             assert not _intro_tiles(reopened._pages[OVERVIEW])
         finally:
             reopened.close()
+
+    def test_a_rewritten_note_shows_again_after_an_older_one_was_dismissed(self, make_dialog):
+        dialog, _store = make_dialog({INTRO_SEEN: "2000-01-01"})
+        try:
+            assert len(_intro_tiles(dialog._pages[OVERVIEW])) == 1
+        finally:
+            dialog.close()
 
 
 @pytest.mark.usefixtures("isolated_app_theme")

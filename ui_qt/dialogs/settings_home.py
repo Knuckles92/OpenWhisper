@@ -38,7 +38,6 @@ from services.settings import (
     SettingsKey,
     UiFontScale,
     UiTheme,
-    resolve_flow_features_intro_seen,
     resolve_meeting_end_polish,
     resolve_meeting_end_report,
     resolve_recording_hands_free_latch,
@@ -53,6 +52,7 @@ from services.settings import (
     setting_value,
 )
 from services.text_llm import get_profile, profile_display_name
+from ui_qt import whats_new
 from ui_qt.dialogs import cleanup_levels, settings_microphones
 from ui_qt.dialogs.settings_destinations import (
     APPEARANCE,
@@ -267,18 +267,17 @@ class HomePage(QWidget):
         self.refresh()
 
     def _build_intro(self, layout):
-        """The dismissible "New in OpenWhisper" note, until it is dismissed."""
-        if resolve_flow_features_intro_seen(self.dialog._settings_snapshot()):
+        """The current ``ui_qt/whats_new.py`` note, until it is dismissed."""
+        seen = setting_value(SettingsKey.WHATS_NEW_SEEN, self.dialog._settings_snapshot())
+        if whats_new.is_seen(seen):
             return
         self.intro = InfoTile(
             "New in OpenWhisper",
-            "Your own dictionary and snippets, styles that match each app, "
-            "Command Mode for editing by voice, hands-free dictation, Stats, "
-            "and a Scratchpad.",
+            whats_new.WHATS_NEW.text,
             design_icon("wand-purple.svg"),
         )
         self.intro.setProperty("kind", "intro")
-        self.intro.setProperty("tileId", "flowIntro")
+        self.intro.setProperty("tileId", "whatsNew")
         dismiss = neutral_button(Button("Got it"))
         dismiss.setToolTip("Hide this note")
         fit_compact_button(dismiss, 88)
@@ -287,7 +286,7 @@ class HomePage(QWidget):
         layout.addWidget(self.intro)
 
     def _dismiss_intro(self):
-        if self.dialog._persist(SettingsKey.FLOW_FEATURES_INTRO_SEEN, True):
+        if self.dialog._persist(SettingsKey.WHATS_NEW_SEEN, whats_new.WHATS_NEW.updated):
             self.intro.hide()
 
     def section(self, key: str) -> QWidget:
