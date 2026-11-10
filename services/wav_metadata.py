@@ -148,15 +148,6 @@ def _is_wave(data: bytes) -> bool:
     return len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WAVE"
 
 
-def _has_bext_or_info(data: bytes) -> bool:
-    for chunk_id, payload in _iter_chunks(data):
-        if chunk_id == b"bext":
-            return True
-        if chunk_id == b"LIST" and payload[:4] == b"INFO":
-            return True
-    return False
-
-
 def _iter_chunks(data: bytes) -> Iterator[Tuple[bytes, bytes]]:
     if not _is_wave(data):
         raise WavMetadataError("Not a RIFF WAVE file")
@@ -171,10 +162,6 @@ def _iter_chunks(data: bytes) -> Iterator[Tuple[bytes, bytes]]:
             break
         yield chunk_id, data[start:end]
         offset = end + (size & 1)
-
-
-def _with_riff_size(data: bytes) -> bytes:
-    return data[:4] + struct.pack("<I", len(data) - 8) + data[8:]
 
 
 def _riff_chunk(chunk_id: bytes, payload: bytes) -> bytes:

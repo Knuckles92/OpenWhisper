@@ -56,10 +56,6 @@ class NvidiaGpu:
     compute_capability: Optional[Tuple[int, int]] = None
 
     @property
-    def total_gb(self) -> float:
-        return self.total_mib / 1024
-
-    @property
     def short_name(self) -> str:
         """``GTX 1050 Ti`` rather than ``NVIDIA GeForce GTX 1050 Ti``."""
         name = self.name

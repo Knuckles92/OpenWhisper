@@ -447,36 +447,6 @@ class AudioProcessor:
             current_pos = boundary - overlap
         return split_points
 
-    def _create_chunks(self, audio_data: np.ndarray, sample_rate: int,
-                      split_points: List[int], original_file: str) -> List[str]:
-        chunk_files = []
-        _max_samples, overlap_samples = self._chunk_limits(sample_rate)
-
-        temp_dir = tempfile.mkdtemp(prefix="audio_chunks_")
-        self.temp_files.append(temp_dir)
-
-        start_idx = 0
-        for i, end_idx in enumerate(split_points + [len(audio_data)]):
-            chunk_start = max(0, start_idx - (overlap_samples if i > 0 else 0))
-            chunk_end = min(len(audio_data), end_idx + overlap_samples)
-
-            chunk_data = audio_data[chunk_start:chunk_end]
-
-            chunk_filename = os.path.join(temp_dir, f"chunk_{i:03d}.wav")
-
-            self._save_audio_chunk(chunk_data, sample_rate, chunk_filename)
-
-            chunk_files.append(chunk_filename)
-            self.temp_files.append(chunk_filename)
-
-            start_idx = end_idx
-
-            logger.info(f"Created chunk {i+1}: {chunk_filename} "
-                        f"({len(chunk_data)/sample_rate:.1f}s, "
-                        f"{os.path.getsize(chunk_filename)/(1024*1024):.1f}MB)")
-
-        return chunk_files
-
     def _save_audio_chunk(self, audio_data: np.ndarray, sample_rate: int, filename: str):
         with wave.open(filename, 'wb') as wav_file:
             wav_file.setnchannels(1)

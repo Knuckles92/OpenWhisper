@@ -482,14 +482,6 @@ class HotkeyManager:
     def _should_trigger_record_toggle(self) -> bool:
         return self._debouncer.should_trigger()
 
-    def _matches_record_main_key(self, event) -> bool:
-        """Match a KEY_UP against the record hotkey's main key, modifiers aside.
-
-        The user may release modifiers before the main key, so release
-        matching cannot require the hotkey's modifier set.
-        """
-        return self._matches_main_key(event, self.hotkeys.get('record_toggle'))
-
     @staticmethod
     def _matches_main_key(event, hotkey_string: str) -> bool:
         if not hotkey_string:
