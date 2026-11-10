@@ -988,8 +988,16 @@ class RecordSync:
                 while not self._stop.is_set():
                     items = [item for item in connection.request(
                         "records_list", kind=kind, limit=100, timeout=60,
-                    ).get("records") or [] if item.get("id") not in skipped]
+                    ).get("records") or []
+                        if isinstance(item, dict) and item.get("id") not in skipped]
                     if not items:
+                        if skipped:
+                            # The host lists its newest first with no paging,
+                            # so anything older than these stays there too.
+                            logger.warning(
+                                "Stopped bringing back %s records: %d could not be imported",
+                                kind, len(skipped),
+                            )
                         break
                     for item in items:
                         record_id = str(item["id"])
