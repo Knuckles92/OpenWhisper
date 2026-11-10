@@ -9,7 +9,7 @@
 
     Prerequisites:
         .\venv\Scripts\activate
-        pip install -r requirements.txt -r requirements-build.txt
+        pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
         winget install -e --id JRSoftware.InnoSetup
 
     Code signing is optional and off by default. To sign, set both:
@@ -81,9 +81,17 @@ function Get-TreeSize($Path) {
 }
 
 # Locate the interpreter
-$Python = Join-Path $RepoRoot 'venv\Scripts\python.exe'
-if (-not (Test-Path $Python)) {
-    throw "Virtual environment not found at $Python. Create it with: python -m venv venv"
+# OPENWHISPER_PYTHON, then venv\ (pip), then .venv\ (uv sync), as the
+# Linux and macOS builders do.
+$Python = $env:OPENWHISPER_PYTHON
+if (-not $Python) {
+    $Python = @('venv', '.venv') |
+        ForEach-Object { Join-Path $RepoRoot "$_\Scripts\python.exe" } |
+        Where-Object { Test-Path $_ } |
+        Select-Object -First 1
+}
+if (-not $Python -or -not (Test-Path $Python)) {
+    throw "Virtual environment not found. Create one with: python -m venv venv (or uv sync --locked)"
 }
 
 $Version = (& $Python -c "import _version; print(_version.__version__)").Trim()

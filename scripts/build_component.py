@@ -4,6 +4,7 @@ Usage::
 
     python scripts/build_component.py gpu-accel
     python scripts/build_component.py meeting-agent
+    python scripts/build_component.py meeting-agent-opencode
 
 ``gpu-accel`` resolves the NVIDIA wheels that ``requirements-gpu.txt`` selects
 for the target platform, records the SHA-256 that pip reports for each,
@@ -191,7 +192,6 @@ def _measure(archives: List[dict]) -> Dict[str, int]:
     The digests come from pip's resolution report rather than being recomputed
     here; this pass exists to measure the extracted payload.
 
-
     The size the installer needs is the extracted payload, not the compressed
     wheel, and it drives the pre-install free-space check — so it is measured
     rather than estimated.
@@ -199,9 +199,6 @@ def _measure(archives: List[dict]) -> Dict[str, int]:
     Returns:
         Mapping of wheel name to its compressed size, plus ``install_bytes``.
     """
-    import zipfile
-    from urllib.request import urlopen
-
     sizes: Dict[str, int] = {}
     install_bytes = 0
     with tempfile.TemporaryDirectory() as work:

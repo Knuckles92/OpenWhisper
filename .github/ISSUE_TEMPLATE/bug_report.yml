@@ -31,7 +31,7 @@ body:
     id: platform
     attributes:
       label: OS version and hardware
-      description: Include OS/version (and desktop or compositor on Linux), CPU, and GPU/VRAM if relevant. Parakeet and Nemotron run on Windows x64 and Linux x86_64 (Parakeet also on Apple Silicon CPU); Qwen3-ASR and Moonshine require Windows x64.
+      description: Include OS/version (and desktop or compositor on Linux), CPU, and GPU/VRAM if relevant. The README lists which speech engines each platform supports.
   - type: dropdown
     id: backend
     attributes:

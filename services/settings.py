@@ -310,6 +310,12 @@ class SettingsKey:
     VOICE_ROUTING_ENABLED: Final[str] = "voice_routing_enabled"
     # Also route a normal dictation that starts with an action's name.
     VOICE_ROUTING_ON_DICTATION: Final[str] = "voice_routing_on_dictation"
+    # The Models pages' memory: the model last chosen per provider, and the
+    # provider the cleanup endpoint picker last showed. No defaults; absent
+    # until a choice is made.
+    CLEANUP_MODEL_MEMORY: Final[str] = "cleanup_model_memory"
+    MEETING_MODEL_MEMORY: Final[str] = "meeting_model_memory"
+    CLEANUP_ENDPOINT_PROVIDER: Final[str] = "cleanup_endpoint_provider"
     # Live API permissions, rechecked on every request. Reading events is
     # the same trust as reading history; the rest can act for the user.
     API_LIVE_EVENTS: Final[str] = "api_live_events"
