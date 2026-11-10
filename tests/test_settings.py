@@ -455,7 +455,9 @@ class TestMeetingSettings:
         self.resolve_port = resolve_meeting_server_port
 
     def test_defaults_come_from_config(self):
-        settings = {self.keys.SELECTED_MODEL: "local_whisper"}
+        # A meeting engine of its own with nothing saved; one that follows
+        # dictation takes the dictation model instead.
+        settings = {self.keys.SELECTED_MODEL: "local_whisper", self.keys.MEETING_SPEECH_SEPARATE: True}
         assert self.resolve_whisper_model(settings) == (config.MEETING_ASR_MODEL or config.MEETING_WHISPER_MODEL)
         assert self.resolve_language({}) == config.MEETING_LANGUAGE
         assert self.resolve_provider({}) == "openrouter"
