@@ -442,8 +442,7 @@ class RemoteEngineSection(QObject):
         self.meeting_use_button.setObjectName("remoteUseForMeetingsButton")
         def use_for_meetings():
             from ui_qt.dialogs.settings_destinations import MEETING_VOICE
-            combo = dialog.models.meeting_source_combo
-            combo.setCurrentIndex(combo.findData("remote"))
+            dialog.models.use_remote_for_meetings()
             dialog.select_destination(MEETING_VOICE)
         self.meeting_use_button.clicked.connect(use_for_meetings)
         use_row.addWidget(self.meeting_use_button)

@@ -562,8 +562,10 @@ def test_crash_reports_worker_error(monkeypatch, caplog):
 
 def test_meeting_model_selection_preserves_whisper_fallback():
     from services.settings import resolve_meeting_whisper_model
-    assert resolve_meeting_whisper_model({"meeting_asr_model":"nemotron-3.5"}) == "nemotron-3.5"
-    assert resolve_meeting_whisper_model({"meeting_asr_model":"qwen-1.7b","meeting_whisper_model":"small"}) == "small"
+    own = {"meeting_speech_separate": True}
+    assert resolve_meeting_whisper_model({**own, "meeting_asr_model":"nemotron-3.5"}) == "nemotron-3.5"
+    assert resolve_meeting_whisper_model(
+        {**own, "meeting_asr_model":"qwen-1.7b","meeting_whisper_model":"small"}) == "small"
 
 
 def test_moonshine_sessions_finalize_and_close(monkeypatch):

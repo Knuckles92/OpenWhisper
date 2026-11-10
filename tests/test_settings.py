@@ -484,6 +484,7 @@ class TestMeetingSettings:
 
     def test_saved_choices_round_trip(self):
         saved = {
+            self.keys.MEETING_SPEECH_SEPARATE: True,
             self.keys.MEETING_WHISPER_MODEL: "small.en",
             self.keys.MEETING_LANGUAGE: "en",
             self.keys.MEETING_LLM_PROVIDER: "openai",
@@ -984,7 +985,7 @@ def test_speech_defaults_follow_mlx_hardware_and_os_support(
 
 def test_mlx_meeting_default_preserves_explicit_selections(monkeypatch):
     from services import settings as module
-    from services.settings import resolve_meeting_whisper_model
+    from services.settings import own_meeting_speech, resolve_meeting_whisper_model
 
     defaults = {
         **module.SETTING_DEFAULTS,
@@ -992,19 +993,27 @@ def test_mlx_meeting_default_preserves_explicit_selections(monkeypatch):
         SettingsKey.MEETING_ASR_MODEL: "parakeet-v3-mlx",
     }
     monkeypatch.setattr(module, "SETTING_DEFAULTS", defaults)
+
+    def own(settings):
+        return own_meeting_speech(settings).model
+
     assert resolve_meeting_whisper_model({}) == "parakeet-v3-mlx"
-    assert resolve_meeting_whisper_model({SettingsKey.MEETING_WHISPER_MODEL: "auto"}) == "auto"
-    assert resolve_meeting_whisper_model({SettingsKey.MEETING_WHISPER_MODEL: "tiny"}) == "tiny"
-    assert resolve_meeting_whisper_model({SettingsKey.MEETING_ASR_MODEL: "parakeet-v3"}) == "parakeet-v3"
+    assert own({}) == "parakeet-v3-mlx"
+    assert own({SettingsKey.MEETING_WHISPER_MODEL: "auto"}) == "auto"
+    assert own({SettingsKey.MEETING_WHISPER_MODEL: "tiny"}) == "tiny"
+    assert own({SettingsKey.MEETING_ASR_MODEL: "parakeet-v3"}) == "parakeet-v3"
 
 
-def test_meeting_inherits_quick_record_parakeet_unless_explicitly_set(monkeypatch):
+def test_a_separate_meeting_engine_with_no_model_saved_takes_dictation_parakeet(monkeypatch):
     from services import settings as module
 
     monkeypatch.setattr("config.parakeet_default_supported", lambda: True)
     defaults = {**module.SETTING_DEFAULTS, SettingsKey.SELECTED_MODEL: "parakeet"}
     monkeypatch.setattr(module, "SETTING_DEFAULTS", defaults)
-    resolve = module.resolve_meeting_whisper_model
+
+    def resolve(settings):
+        return module.own_meeting_speech(settings).model
+
     assert resolve({}) == "parakeet-v3"
     choices = {SettingsKey.LOCAL_ASR_MODELS: {"parakeet": "orukeet-v0.1"}}
     assert resolve(choices) == "orukeet-v0.1"

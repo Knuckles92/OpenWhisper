@@ -144,6 +144,7 @@ def test_custom_choices_survive_refresh_for_both_model_assignments(tmp_path):
     local = model_folder(tmp_path / "mine")
     hub = "owner/model/ct2_int8"
     settings = {SettingsKey.CUSTOM_WHISPER_MODELS: [local, hub],
+                SettingsKey.MEETING_SPEECH_SEPARATE: True,
                 SettingsKey.MEETING_WHISPER_MODEL: hub}
     assert resolve_meeting_whisper_model(settings) == hub
     picker = LocalModelPicker()

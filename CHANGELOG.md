@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Changed
+
+- **Meetings use your dictation engine** — a meeting now transcribes with the engine and model chosen for dictation, so there is one speech engine to set up. To give meetings their own, choose **A different engine** under **Settings → Meeting Mode → Voice & speakers**; the **Runs on** and **Meeting speech model** fields appear only then. An install whose meetings already used a different engine or the paired computer keeps that choice. When the dictation engine can't transcribe meetings (the API engine, Qwen3-ASR, Parakeet Unified), meetings use the default meeting model, and Settings and the Meeting tab say so.
+
 ## [2.8.8] - 2026-11-09
 
 ### Changed

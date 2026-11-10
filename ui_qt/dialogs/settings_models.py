@@ -67,8 +67,9 @@ from services.settings import (
     resolve_meeting_llm_model,
     resolve_meeting_llm_provider,
     resolve_meeting_speaker_id_backend,
-    resolve_meeting_whisper_model,
-    resolve_meeting_asr_source,
+    meeting_model_label,
+    own_meeting_speech,
+    resolve_meeting_speech,
     resolve_meeting_final_thinking,
     resolve_meeting_live_thinking,
     resolve_transcript_cleanup_model,
@@ -332,10 +333,17 @@ class ModelAssignments(QObject):
             return self.engine_combo.currentData() or "local_whisper"
         return setting_value(SettingsKey.SELECTED_MODEL, self._settings_snapshot())
 
-    def _meeting_source(self):
+    def _meeting_speech(self):
+        """The meeting's engine as the page shows it once built, else as saved."""
+        settings = dict(self._settings_snapshot())
         if MEETING_VOICE in self._built:
-            return self.meeting_source_combo.currentData()
-        return resolve_meeting_asr_source(self._settings_snapshot())
+            settings[SettingsKey.MEETING_SPEECH_SEPARATE] = bool(
+                self.meeting_engine_combo.currentData())
+            settings[SettingsKey.MEETING_ASR_SOURCE] = self.meeting_source_combo.currentData()
+        return resolve_meeting_speech(settings)
+
+    def _meeting_source(self):
+        return self._meeting_speech().source
 
     # ---- construction helpers ----
 
@@ -494,13 +502,23 @@ class ModelAssignments(QObject):
         """Meeting Mode → Voice & speakers."""
         self._group_title(layout, "Speech")
         card = self._card(layout)
+        # Meetings use the dictation engine unless given one of their own;
+        # only then do the source and model below it show.
+        self.meeting_engine_combo = ElidingComboBox()
+        self.meeting_engine_combo.setObjectName("meetingSpeechEngineCombo")
+        self.meeting_engine_combo.setMinimumHeight(40)
+        self.meeting_engine_combo.addItem("Same as dictation", False)
+        self.meeting_engine_combo.addItem("A different engine", True)
+        self.meeting_engine_combo.currentIndexChanged.connect(self._on_meeting_engine_changed)
+        card.addWidget(self._field("Speech engine", self.meeting_engine_combo))
         self.meeting_source_combo = ElidingComboBox()
         self.meeting_source_combo.setObjectName("meetingSpeechSourceCombo")
         self.meeting_source_combo.setMinimumHeight(40)
         self.meeting_source_combo.addItem("This computer", "local")
         self.meeting_source_combo.addItem("Remote computer", "remote")
         self.meeting_source_combo.currentIndexChanged.connect(self._on_meeting_source_changed)
-        card.addWidget(self._field("Speech engine", self.meeting_source_combo))
+        self.meeting_source_field = self._field("Runs on", self.meeting_source_combo)
+        card.addWidget(self.meeting_source_field)
         self.meeting_whisper_picker = LocalModelPicker(include_speech_models=True)
         self.meeting_whisper_picker.custom_models_requested.connect(self._add_custom_models)
         self.meeting_whisper_picker.model_changed.connect(
@@ -792,6 +810,29 @@ class ModelAssignments(QObject):
         from ui_qt.dialogs.settings_destinations import REMOTE_ENGINE
         self._host.select_destination(REMOTE_ENGINE)
 
+    def _on_meeting_engine_changed(self, _index):
+        separate = bool(self.meeting_engine_combo.currentData())
+        try:
+            settings_manager.save_setting(SettingsKey.MEETING_SPEECH_SEPARATE, separate)
+        except Exception as exc:
+            logger.error("Couldn't save the meeting speech engine choice: %s", exc)
+            self._say(f"Couldn't save the meeting speech engine: {exc}")
+            self._load_meeting_settings()
+            return
+        self.meeting_remote_status.setText("")
+        self._refresh_meeting_source()
+        self._refresh_rail_values()
+
+    def use_remote_for_meetings(self) -> None:
+        """Send meeting speech to the paired computer, as its own engine if needed."""
+        if resolve_meeting_speech(self._settings_snapshot()).source != "remote":
+            settings_manager.update_settings({
+                SettingsKey.MEETING_SPEECH_SEPARATE: True,
+                SettingsKey.MEETING_ASR_SOURCE: "remote",
+            })
+        self._load_meeting_settings()
+        self._refresh_rail_values()
+
     def _on_meeting_source_changed(self, _index):
         source = self.meeting_source_combo.currentData()
         settings_manager.save_setting(SettingsKey.MEETING_ASR_SOURCE, source)
@@ -800,8 +841,10 @@ class ModelAssignments(QObject):
         self._refresh_rail_values()
 
     def _refresh_meeting_source(self):
-        remote = self.meeting_source_combo.currentData() == "remote"
-        self.meeting_local_model_field.setVisible(not remote)
+        separate = bool(self.meeting_engine_combo.currentData())
+        remote = separate and self.meeting_source_combo.currentData() == "remote"
+        self.meeting_source_field.setVisible(separate)
+        self.meeting_local_model_field.setVisible(separate and not remote)
         self.meeting_remote_controls.setVisible(remote)
         self.meeting_remote_status.setVisible(remote)
         self._refresh_meeting_runtime_label()
@@ -892,6 +935,7 @@ class ModelAssignments(QObject):
             self._update_engine_caption()
             self._update_ondemand_whisper_enabled()
             self._refresh_engine_inventory()
+        self._refresh_meeting_runtime_label()
         self._refresh_rail_values()
 
     def _on_dictation_languages_changed(self) -> None:
@@ -1661,8 +1705,12 @@ class ModelAssignments(QObject):
             self.meeting_model_picker.set_active_selection(provider, model)
             self._sync_pi_core_availability(settings)
         if self._page_is_loading(MEETING_VOICE):
+            separate = resolve_meeting_speech(settings).separate
+            blocker = self.meeting_engine_combo.blockSignals(True)
+            self.meeting_engine_combo.setCurrentIndex(self.meeting_engine_combo.findData(separate))
+            self.meeting_engine_combo.blockSignals(blocker)
             blocker = self.meeting_source_combo.blockSignals(True)
-            source = resolve_meeting_asr_source(settings)
+            source = own_meeting_speech(settings).source
             self.meeting_source_combo.setCurrentIndex(self.meeting_source_combo.findData(source))
             self.meeting_source_combo.blockSignals(blocker)
             self._refresh_meeting_source()
@@ -1821,21 +1869,31 @@ class ModelAssignments(QObject):
     def _refresh_meeting_runtime_label(self) -> None:
         if MEETING_VOICE not in self._built:
             return
-        if resolve_meeting_asr_source(self._settings_snapshot()) == "remote":
+        speech = self._meeting_speech()
+        if speech.source == "remote":
             from services.remote_asr.settings import load_client_pairing
             pairing = load_client_pairing(self._settings_snapshot())
             host = pairing.host_name if pairing else "your paired computer"
+            manage = ("Configure remote engine" if speech.separate
+                      else "Dictation → Remote engine")
             self.meeting_runtime_label.setText(
-                f"Microphone and system audio are sent to {host} over an encrypted connection. "
+                ("" if speech.separate else "Dictation uses the Remote computer, so meetings do too. ")
+                + f"Microphone and system audio are sent to {host} over an encrypted connection. "
                 "Recordings and transcripts are saved on this computer. Uses the host's "
-                "selected meeting-capable model and device; change them in Configure remote "
-                "engine → Manage host models. Changes there affect all connected clients. "
+                f"selected meeting-capable model and device; change them in {manage} "
+                "→ Manage host models. Changes there affect all connected clients. "
                 "If disconnected, recording continues here and transcription retries. "
                 "Speaker identification and AI insights have separate settings."
             )
             return
+        if not speech.separate:
+            uses = speech.note or f"Meetings use {meeting_model_label(speech.model)}, the same as dictation."
+            self.meeting_runtime_label.setText(
+                f"{uses} Change the dictation engine on Dictation → Voice model."
+            )
+            return
         from services.local_asr.catalog import MODELS, selected_device
-        model = resolve_meeting_whisper_model(self._settings_snapshot())
+        model = speech.model
         if model in MODELS:
             device = DEVICE_LABELS[selected_device(MODELS[model].backend, self._settings_snapshot())]
             self.meeting_runtime_label.setText(
@@ -2024,7 +2082,8 @@ class ModelAssignments(QObject):
         custom = custom_models(settings)
         if active_model not in [*config.WHISPER_MODEL_CHOICES, *custom]:
             active_model = config.DEFAULT_WHISPER_MODEL
-        meeting_model = resolve_meeting_whisper_model(settings)
+        # The picker holds the meetings' own model, shown or not.
+        meeting_model = own_meeting_speech(settings).model
         loaded_model = self._get_loaded_model() if self._get_loaded_model else None
 
         if self._page_is_loading(VOICE_MODEL):
@@ -2131,13 +2190,13 @@ class ModelAssignments(QObject):
         return f"{provider} · {self._active_text_model or 'default model'}"
 
     def meeting_model_label(self) -> str:
-        if self._meeting_source() == "remote":
+        speech = self._meeting_speech()
+        if speech.source == "remote":
             return "Remote computer"
         from services.local_asr.catalog import MODELS
-        if MEETING_VOICE in self._built:
+        model = speech.model
+        if speech.separate and MEETING_VOICE in self._built:
             model = self.meeting_whisper_picker.current_model()
-        else:
-            model = resolve_meeting_whisper_model(self._settings_snapshot())
         return MODELS[model].label if model in MODELS else model
 
     def _meeting_language_value(self):

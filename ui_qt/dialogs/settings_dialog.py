@@ -1016,8 +1016,8 @@ class SettingsDialog(QDialog):
         self._add_page(
             MEETING_VOICE,
             "Voice & speakers",
-            "Choose local or remote speech for live captions and the optional "
-            "end-of-meeting re-transcription. Applies to your next meeting.",
+            "The speech engine for live captions and the optional end-of-meeting "
+            "re-transcription: dictation's, or one of its own. Applies to your next meeting.",
             self.models.build_meeting_voice_page,
         )
         self._add_page(
