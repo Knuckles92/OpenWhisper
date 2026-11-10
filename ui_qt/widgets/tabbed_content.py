@@ -1,5 +1,6 @@
 """Main-window tab container."""
 import logging
+import sys
 from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QTabBar, QStackedWidget
@@ -136,21 +137,20 @@ class TabbedContentWidget(QWidget):
 
     def _init_meeting_tab_lock(self) -> None:
         """Grey Meeting Mode on unsupported OSes until (and after) first ack."""
-        import sys
-
         supported = meeting_mode_supported()
-        preview = (
-            sys.platform.startswith("linux")
-            and linux_meeting_implementation_ready()
-        )
         acknowledged = (
             resolve_meeting_linux_preview_ack()
-            if preview else resolve_meeting_unsupported_platform_ack()
+            if self._meeting_is_preview() else resolve_meeting_unsupported_platform_ack()
         )
         self._meeting_unlocked = supported or acknowledged
         unsupported = not supported
         set_style_property(self.tab_bar, "unsupportedMeeting", unsupported)
         self._apply_meeting_tab_tooltip()
+
+    @staticmethod
+    def _meeting_is_preview() -> bool:
+        """Linux with capture implemented but not publicly supported yet."""
+        return sys.platform.startswith("linux") and linux_meeting_implementation_ready()
 
     def _apply_meeting_tab_tooltip(self) -> None:
         if meeting_mode_supported():
@@ -160,16 +160,7 @@ class TabbedContentWidget(QWidget):
             )
             return
         os_name = meeting_unsupported_os_name()
-        try:
-            import sys
-
-            preview = (
-                sys.platform.startswith("linux")
-                and linux_meeting_implementation_ready()
-            )
-        except Exception:
-            preview = False
-        if preview:
+        if self._meeting_is_preview():
             if self._meeting_unlocked:
                 tip = (
                     f"Meeting Mode on {os_name} is a preview; "
@@ -207,12 +198,7 @@ class TabbedContentWidget(QWidget):
             QEvent.Type.MouseButtonDblClick,
         ):
             if event.button() == Qt.MouseButton.LeftButton:
-                pos = (
-                    event.position().toPoint()
-                    if hasattr(event, "position")
-                    else event.pos()
-                )
-                index = self.tab_bar.tabAt(pos)
+                index = self.tab_bar.tabAt(event.position().toPoint())
                 if index == self.TAB_MEETING_MODE and self.meeting_tab_is_locked():
                     self._on_locked_meeting_tab_activated()
                     return True

@@ -49,7 +49,7 @@ from meeting.time_utils import (
 )
 from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
 from ui_qt.utils.palette import token_color
-from ui_qt.utils.restyle import set_style_property
+from ui_qt.utils.restyle import repolish, set_style_property
 from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton
 from ui_qt.widgets.cards import Card
 from ui_qt.widgets.eliding_label import ElidingLabel
@@ -487,8 +487,6 @@ def _step_action_label(step_id: str, step_status, allow_actions: bool) -> str:
         return "Retry"
     if step_status == "completed" and step_id in _OPTIONAL_RERUN_STEPS:
         return "Run again"
-    if step_status == "failed" and step_id == "finalize":
-        return "Retry"
     return ""
 
 
@@ -1523,7 +1521,8 @@ class MeetingModeTab(QWidget):
             self._elapsed_base_s = float(elapsed_s)
         except (TypeError, ValueError):
             self._elapsed_base_s = 0.0
-        self._running_since = time.monotonic()
+        # A paused meeting's clock stays where the runtime put it.
+        self._running_since = None if self._paused else time.monotonic()
         self._refresh_elapsed()
 
     def _apply_status(self, status: str, payload: Dict[str, Any]) -> None:
@@ -1770,8 +1769,7 @@ class MeetingModeTab(QWidget):
         """Colour the on-air card for what capture is doing right now."""
         tone = "starting" if not self._active else "paused" if self._paused else "live"
         for widget in (self.session_card, self.status_pill):
-            if widget.property("tone") != tone:
-                set_style_property(widget, "tone", tone)
+            set_style_property(widget, "tone", tone)
         self.live_dot.set_live(tone == "live")
         # Pause becomes Resume, and a button sizes itself to its new label.
         for button in (self.pause_button, self.end_button):
@@ -2015,13 +2013,9 @@ class MeetingModeTab(QWidget):
 
     def _apply_finalization_tone(self, tone: str) -> None:
         self.finalization_card.setProperty("finalizationTone", tone)
-        # Force QSS to re-evaluate dynamic properties.
+        # The title's colour follows its card's tone.
         for widget in (self.finalization_card, self.finalization_title):
-            style = widget.style()
-            if style is not None:
-                style.unpolish(widget)
-                style.polish(widget)
-        self.finalization_card.update()
+            repolish(widget)
 
     def _speaker_rerun_allowed(self) -> bool:
         """Whether a speaker re-run could label anything right now."""
