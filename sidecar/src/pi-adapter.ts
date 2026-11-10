@@ -250,6 +250,19 @@ export async function createSession(opts: CreateSessionOptions): Promise<PiSessi
     opts.modelMetadata,
     opts.headers,
   );
+  try {
+    return await openSession(opts, agentDir);
+  } catch (error) {
+    // models.json carries provider headers; a failed start must not leave it.
+    await fs.rm(agentDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function openSession(
+  opts: CreateSessionOptions,
+  agentDir: string,
+): Promise<PiSession> {
   const reasoning = opts.modelMetadata?.reasoning ??
     ((opts.kind || opts.provider) === "openrouter" ||
     (opts.kind || opts.provider) === "openai");

@@ -51,7 +51,7 @@ def _start_mcp_events() -> None:
 
 
 def reload(kind: str) -> None:
-    """Settings changed ``kind``: webhooks, programs, filters or mcp_events."""
+    """Settings changed ``kind``: webhooks, programs or mcp_events."""
     try:
         if kind == "webhooks":
             from services.automation import webhooks

@@ -71,6 +71,7 @@ def _rank_candidates(repository, query, judge, exclude_meeting_id):
     candidates = repository.search_candidates(query, exclude_meeting_id=exclude_meeting_id,
                                               limit=MAX_CANDIDATES, shared_only=not judge.is_local)
     ranked = []
+    shared = {}
     for offset in range(0, len(candidates), BATCH_SIZE):
         _require_enabled()
         batch = candidates[offset:offset + BATCH_SIZE]
@@ -78,14 +79,19 @@ def _rank_candidates(repository, query, judge, exclude_meeting_id):
         # retrieval: text leaves this computer only from meetings that
         # shared it with AI insights on.
         if not judge.is_local:
-            batch = [r for r in batch if _shared_with_insights(repository, r)]
+            # One row read per meeting and batch; a row carries its whole state.
+            shared.clear()
+            batch = [r for r in batch if _shared_with_insights(repository, r, shared)]
         ranked.extend(_judge_batch(judge, query, batch, deadline))
     _require_enabled()
     return ranked
 
 
-def _shared_with_insights(repository, row):
-    return (repository.get_meeting(row["meeting_id"]) or {}).get("cloud_enabled")
+def _shared_with_insights(repository, row, seen):
+    meeting_id = row["meeting_id"]
+    if meeting_id not in seen:
+        seen[meeting_id] = (repository.get_meeting(meeting_id) or {}).get("cloud_enabled")
+    return seen[meeting_id]
 
 
 def _judge_batch(judge, query, batch, deadline):

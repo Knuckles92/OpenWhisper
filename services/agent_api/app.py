@@ -220,7 +220,7 @@ def _register_transcription_routes(app: FastAPI, store: FederatedHistory) -> Non
         limit: Limit = 20,
         cursor: Cursor = None,
     ):
-        """List newest first; optionally match text, raw text, or source name."""
+        """List newest first; optionally match text, raw text, title, or source name."""
         return store.transcriptions(q=q, limit=limit, cursor=cursor, **filters)
 
     @app.get(

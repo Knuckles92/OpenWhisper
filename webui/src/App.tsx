@@ -23,6 +23,7 @@ import ReportTabs from './components/report/ReportTabs';
 import TranscriptPane from './components/TranscriptPane';
 import { EvidenceProvider } from './evidence';
 import {
+  ALL_REPORT_VIEWS,
   enabledReportViews,
   resolveReportView,
   writeStoredReportView,
@@ -80,7 +81,7 @@ function MeetingDashboard({ token, role, guestName, initialSession }: DashboardP
   const [transcriptAttempt, setTranscriptAttempt] = useState(0);
   const transcriptComplete = transcriptLoad.status === 'complete';
   const [reportView, setReportView] = useState<ReportViewId>(() =>
-    resolveReportView(['ribbon', 'brief', 'signal']),
+    resolveReportView([...ALL_REPORT_VIEWS]),
   );
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playbackMoment, setPlaybackMoment] = useState<PlaybackMoment | null>(null);

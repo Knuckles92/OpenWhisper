@@ -163,6 +163,11 @@ class InstalledAgentCore:
         try:
             driver.start(server, self._personas)
         except Exception:
+            # A driver may have launched its process before failing to warm up.
+            try:
+                driver.close()
+            except Exception:
+                logger.debug("Could not close the agent driver", exc_info=True)
             server.stop()
             raise
         self._server = server

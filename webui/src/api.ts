@@ -168,11 +168,6 @@ export const api = {
     return request(`/api/search?${qs({token, q: query, mode})}`);
   },
 
-  async search(token: string, query: string): Promise<SearchRow[]> {
-    const data = await request<unknown>(`/api/search?${qs({ token, q: query })}`);
-    return asArray<SearchRow>(data, 'results', 'items');
-  },
-
   exportUrl(token: string, fmt: ExportFormat, meetingId: string): string {
     return `/api/export/${fmt}?${qs({ token, meeting_id: meetingId })}`;
   },

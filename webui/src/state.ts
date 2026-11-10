@@ -7,7 +7,6 @@ import {
   type HelloMsg,
   type MeetingInfo,
   type MeetingStateDoc,
-  type Participant,
   type PatchMsg,
   type Question,
   type Role,
@@ -402,10 +401,6 @@ export function meetingReducer(state: MeetingUiState, action: UiAction): Meeting
   }
 }
 
-/** Lookup a segment by evidence id. */
-export function segmentById(segments: Segment[], id: string): Segment | undefined {
-  return segments.find((s) => s.id === id);
-}
 
 /** Card items grouped and sorted: pinned first, then by updated_at desc. */
 export function sortedCardItems(items: CardItem[]): CardItem[] {

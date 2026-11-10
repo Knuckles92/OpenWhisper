@@ -128,8 +128,8 @@ Moonshine Small and Medium are CPU-only, so they ran the `IN1009,IN1005,IN1007`
 slice (1.8 audio hours). On that slice the offline pass scored 31.15% (Small)
 and 31.98% (Medium) against 27.67% for Parakeet, 32.79% for Nemotron and
 33.75% for Whisper, at live RTF 0.10 and 0.15 on this CPU. Medium did not
-beat Small. Exact counts for every run are in
-[the recorded evidence](../../docs/benchmarks/meeting-mode-parakeet-vs-whisper-2026-09-04.json).
+beat Small. The exact counts for every run
+(`meeting-mode-parakeet-vs-whisper-2026-09-04.json`) were not kept in the repository.
 
 The LLM-judged product eval on the Parakeet run split the default slice:
 the clean End package won IN1007, the unpolished draft package won IN1005,

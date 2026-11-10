@@ -528,3 +528,24 @@ def test_custom_responses_luna_off_keeps_existing_endpoint_behavior():
         generate(client, profile, model="gpt-6-luna", reasoning_level="off",
                  messages=[{"role": "user", "content": "raw"}])
     assert "reasoning" not in json.loads(requests[0].content)
+
+
+def test_every_capability_entry_is_reachable_through_a_route():
+    """A model without a route is rejected before its capabilities are read."""
+    from services import text_model_catalog as catalog
+
+    for kind, capabilities in catalog._CAPABILITIES.items():
+        routed = set().union(*catalog._ROUTES[kind].values())
+        assert not set(capabilities) - routed, kind
+
+
+def test_every_capability_reasoning_format_survives_a_saved_snapshot():
+    from services import text_model_catalog as catalog
+
+    formats = {
+        entry["reasoning_format"]
+        for capabilities in catalog._CAPABILITIES.values()
+        for entry in capabilities.values()
+        if entry.get("reasoning_format")
+    }
+    assert formats <= set(catalog._SAVED_REASONING_FORMATS)

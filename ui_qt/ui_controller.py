@@ -271,7 +271,6 @@ class UIController(QObject):
             self._dock_icon_sync = install_dock_icon_sync(QApplication.instance())
 
         self.is_recording = False
-        self.audio_levels: List[float] = [0.0] * 20
         self.streaming_flow_active = False
         self._transcription_source_tab: int = TabbedContentWidget.TAB_QUICK_RECORD
 
@@ -467,8 +466,6 @@ class UIController(QObject):
         self.main_window.on_show_copied_animation = self.show_copied_animation
         self.main_window.confirm_quit = self._confirm_quit_while_busy
 
-        self.tray_manager.show_requested.connect(self._on_tray_show)
-        self.tray_manager.hide_requested.connect(self._on_tray_hide)
         self.tray_manager.exit_requested.connect(self._on_tray_exit)
         self.tray_manager.toggle_recording.connect(self._on_tray_toggle_recording)
         self.tray_manager.meeting_toggle_requested.connect(
@@ -487,7 +484,6 @@ class UIController(QObject):
         # Filled once now as well: some platforms won't open an empty submenu.
         self.populate_language_menu(self.tray_manager.language_menu)
 
-        self.overlay.state_changed.connect(self._on_overlay_state_changed)
         self.overlay.language_cycle_requested.connect(self.cycle_dictation_language)
         self.overlay.walkthrough_snap_requested.connect(self._on_overlay_snap)
         self.overlay.walkthrough_finish_requested.connect(self._on_overlay_finish)
@@ -643,14 +639,6 @@ class UIController(QObject):
         if self.on_streaming_settings_changed:
             self.on_streaming_settings_changed()
 
-    def _on_tray_show(self):
-        self.main_window.restore_from_tray()
-        logger.debug("Window shown from tray")
-
-    def _on_tray_hide(self):
-        self.main_window.hide()
-        logger.debug("Window hidden to tray")
-
     def _on_tray_update(self):
         self.main_window.restore_from_tray()
         self.show_found_update()
@@ -671,9 +659,6 @@ class UIController(QObject):
     def _on_shell_toggle_recording(self):
         """The desktop shell's record button (Omarchy, over D-Bus)."""
         self._on_tray_toggle_recording(source="dbus")
-
-    def _on_overlay_state_changed(self, state: str):
-        logger.debug(f"Overlay state changed to: {state}")
 
     def _show_recording_overlay(self):
         self.tray_manager.set_recording(True)
@@ -867,7 +852,10 @@ class UIController(QObject):
 
     def clear_transcription_stats(self):
         self.main_window.clear_transcription_stats()
-        self.main_window.upload_file_tab.clear_transcription_stats()
+        # The Upload tab is built on first visit; a recording must not build it.
+        upload = self.main_window._screen_widgets.get("upload")
+        if upload is not None:
+            upload.clear_transcription_stats()
 
     def set_status(self, status: str):
         self.status_changed.emit(status)
@@ -986,7 +974,6 @@ class UIController(QObject):
             self.overlay.set_state(overlay_state)
 
     def update_audio_levels(self, levels: List[float]):
-        self.audio_levels = levels
         self.audio_levels_updated.emit(levels)
 
     def hide_overlay(self):
@@ -1811,6 +1798,7 @@ class UIController(QObject):
             self.on_model_batch_stop()
 
     def _show_download_progress(self, model_name: str) -> None:
+        self._hide_download_progress()
         dialog = QProgressDialog(
             f'Downloading "{model_name}"…',
             None,
@@ -1851,6 +1839,7 @@ class UIController(QObject):
         self._download_progress_dialog = None
         if dialog is not None:
             dialog.close()
+            dialog.deleteLater()
 
     def on_model_deleted(self, model_name: str, success: bool, error: str):
         _models, downloads = self._settings_parts()
@@ -2761,7 +2750,7 @@ class UIController(QObject):
             logger.debug(f"Error stopping cancel animation timer: {e}")
 
         try:
-            if hasattr(self.overlay, 'timer') and self.overlay.timer.isActive():
+            if self.overlay.timer.isActive():
                 self.overlay.timer.stop()
             self.overlay.close()
         except Exception as e:

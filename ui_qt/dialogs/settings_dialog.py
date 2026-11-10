@@ -62,6 +62,7 @@ from services.history_manager import history_manager
 from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display, parse_hotkey
 from services.recorder import AudioRecorder
 from services.settings import (
+    INSIGHT_REVIEW_CONSENT,
     LEGACY_STREAMING_KEYS,
     HuggingFaceAccessPolicy,
     MeetingServerBind,
@@ -254,7 +255,6 @@ logger = logging.getLogger(__name__)
 _RULE_DICTATION_CAP_MS = 60_000
 
 #: The consent version saved when the meeting insight review is turned on.
-_INSIGHT_REVIEW_CONSENT = "typesafe-text-v1"
 
 
 def is_native_wayland_session(
@@ -1175,6 +1175,16 @@ class SettingsDialog(QDialog):
                 continue
             self.select_destination(key)
             return False
+        # Built by this dialog, not a page module, so it is asked here.
+        if keep != CLEANUP_PROFILES and CLEANUP_PROFILES in self._built_pages:
+            try:
+                saved = self.cleanup_profiles_panel.save_draft(ask=ask)
+            except Exception:
+                logger.exception("Couldn't save the cleanup profile draft")
+                saved = True
+            if not saved:
+                self.select_destination(CLEANUP_PROFILES)
+                return False
         return True
 
     def set_standard_hotkey(self, action: str, hotkey: str) -> str:
@@ -4018,7 +4028,18 @@ class SettingsDialog(QDialog):
         if self._rail_batch_depth:
             self._rail_refresh_pending = True
             return
-        settings = self._settings_snapshot()
+        if self._refresh_snapshot is not None:
+            self._render_rail_values(self._refresh_snapshot)
+            return
+        # Every save lands here, and the values below read the settings many
+        # times over; one copy serves them all.
+        self._refresh_snapshot = self._settings_snapshot()
+        try:
+            self._render_rail_values(self._refresh_snapshot)
+        finally:
+            self._refresh_snapshot = None
+
+    def _render_rail_values(self, settings: dict) -> None:
         profile_count = len(load_cleanup_profiles(settings))
         self.rail.set_value(CLEANUP_PROFILES, f"{profile_count} profile{'' if profile_count == 1 else 's'}")
         self.rail.set_value(GENERAL, _general_rail_value(settings))
@@ -4481,9 +4502,12 @@ class SettingsDialog(QDialog):
                 self.meeting_review_check.setChecked(False)
                 self.meeting_review_check.blockSignals(False)
                 return
-        self._persist(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT,
-                      _INSIGHT_REVIEW_CONSENT if checked else "")
-        self._persist(SettingsKey.MEETING_INSIGHT_REVIEW, bool(checked))
+        # One write, so the consent and the switch never disagree on disk.
+        self._persist_many({
+            SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT:
+                INSIGHT_REVIEW_CONSENT if checked else "",
+            SettingsKey.MEETING_INSIGHT_REVIEW: bool(checked),
+        })
 
     def _on_end_report_toggled(self, checked: bool) -> None:
         self._update_report_views_enabled()
@@ -5243,7 +5267,7 @@ class SettingsDialog(QDialog):
         if self._page_is_loading(MEETING_AFTER):
             review_on = (
                 settings.get(SettingsKey.MEETING_INSIGHT_REVIEW) is True
-                and settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == _INSIGHT_REVIEW_CONSENT
+                and settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == INSIGHT_REVIEW_CONSENT
             )
             self.meeting_review_check.setChecked(review_on)
             self.meeting_end_report_check.setChecked(resolve_meeting_end_report(settings))

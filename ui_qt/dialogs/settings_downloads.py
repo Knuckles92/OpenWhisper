@@ -336,6 +336,8 @@ class DownloadsPage(QWidget):
         'filter_edit',
         'inspector_name',
         '_inspector_docked',
+        'rows',
+        'fact_labels',
     })
 
     def __getattr__(self, name):

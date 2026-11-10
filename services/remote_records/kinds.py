@@ -710,6 +710,9 @@ class MeetingRecords:
         rows = self._children(record, record_id, spool, models)
 
         audio = _SpoolSwap(self.root, record_id, staged, spool, old_spool)
+        # What the rows being replaced pointed at; an update that drops a
+        # chunk must not leave its audio behind.
+        replaced = self._chunk_files(record_id) if update and old_spool else set()
         try:
             if update and old_spool:
                 audio.add_files(sizes)
@@ -720,7 +723,15 @@ class MeetingRecords:
             audio.roll_back()
             raise
         audio.discard_old()
+        audio.prune(replaced - set(sizes))
         return {"files": len(sizes)}
+
+    def _chunk_files(self, record_id: str) -> set:
+        rows = self.repository.export_meeting_rows(record_id) or {}
+        return {
+            os.path.basename(str(chunk.get("file_path") or ""))
+            for chunk in rows.get("chunks") or ()
+        } - {""}
 
     def _import_spool(self, record_id: str, old_spool: Optional[str], update: bool) -> str:
         """The folder an imported meeting's audio goes in."""
@@ -866,6 +877,16 @@ class _SpoolSwap:
             source = os.path.join(self.staged, name)
             if os.path.isfile(source):
                 _move(source, os.path.join(self.spool, name))
+
+    def prune(self, names) -> None:
+        """After an update: remove chunk audio the record no longer lists."""
+        for name in names:
+            path = os.path.join(self.spool, name)
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+            except OSError:
+                logger.debug("Could not remove stale meeting audio %s", path, exc_info=True)
 
     def replace(self) -> None:
         if self.old_spool and os.path.isdir(self.old_spool):

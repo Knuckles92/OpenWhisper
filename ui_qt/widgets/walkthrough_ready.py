@@ -252,7 +252,7 @@ class WalkthroughReadyCard(QWidget):
         self.menu.setToolTipsVisible(True)
         self.open_action = self._menu_action("Open PDF", self._open)
         self.open_word_action = self._menu_action("Open Word document", self._open_word)
-        self.folder_action = self._menu_action("Show in folder", self._reveal)
+        self._menu_action("Show in folder", self._reveal)
         self.menu.addSeparator()
         self.copy_pdf_action = self._menu_action(
             "Copy PDF", lambda: self._copy(WalkthroughCopyFormat.PDF))

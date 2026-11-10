@@ -300,7 +300,6 @@ class OmarchyControls(QObject):
             hyprland.evaluate(f"hl.unbind({json.dumps(sequence)})")
             matching = []
         if not matching:
-            self._owned[action] = (hotkey, sequence, symbol, mask)
             for released in (False, True):
                 _bind_trigger(action, sequence, description, released)
             binds.extend(
@@ -362,18 +361,31 @@ def _bind_trigger(action: str, sequence: str, description: str, released: bool) 
     hyprland.evaluate(f"hl.bind({json.dumps(sequence)}, {dispatcher}, {lua_options})")
 
 
+# The bar polls four times a second; the fields only change with the settings.
+_language_cache: list = []
+
+
 def _language_status() -> dict:
     """The bar's language fields: ``language`` is the chip text, "" with one language."""
     try:
         from services import dictation_language
         from services.settings import settings_manager
 
-        settings = settings_manager.load_all_settings()
-        choices = dictation_language.language_choices(settings)
-        code = dictation_language.current_language(settings)
+        signature = settings_manager.file_signature()
+        if signature is not None and _language_cache and _language_cache[0] == signature:
+            return dict(_language_cache[1])
+        fields = _read_language_status(dictation_language, settings_manager)
     except Exception:
         log.debug("Dictation language unavailable for the bar", exc_info=True)
         return {"language": "", "language_name": ""}
+    _language_cache[:] = [signature, fields]
+    return dict(fields)
+
+
+def _read_language_status(dictation_language, settings_manager) -> dict:
+    settings = settings_manager.load_all_settings()
+    choices = dictation_language.language_choices(settings)
+    code = dictation_language.current_language(settings)
     return {
         "language": dictation_language.short_label(code) if len(choices) > 1 else "",
         "language_name": dictation_language.label(code),

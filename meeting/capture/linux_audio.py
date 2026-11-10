@@ -83,16 +83,6 @@ class LinuxAudioCapability:
     remediation_key: str = REASON_UNKNOWN_FAILURE
     detail: str = ""
 
-    @property
-    def sink_id(self) -> str:
-        """Stable default-sink identifier used by capture sources."""
-        return self.default_sink
-
-    @property
-    def monitor_id(self) -> str:
-        """Stable monitor-source identifier used by capture sources."""
-        return self.monitor_source
-
 
 @dataclass(frozen=True)
 class LinuxMonitorSelection:

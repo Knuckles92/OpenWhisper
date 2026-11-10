@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes go into the latest release line, currently **2.7.x**, and ship as a new patch release. Older lines do not get fixes; update to the [latest release](https://github.com/Knuckles92/OpenWhisper/releases/latest). Source checkouts should track `main`.
+Security fixes go into the latest release line, currently **2.8.x**, and ship as a new patch release. Older lines do not get fixes; update to the [latest release](https://github.com/Knuckles92/OpenWhisper/releases/latest). Source checkouts should track `main`.
 
 ## Reporting a vulnerability
 
@@ -21,7 +21,7 @@ Leave API keys, tokens, and private recordings out of the report. This is a one-
 
 ## Scope
 
-OpenWhisper runs on your computer and keeps recordings, transcripts, and settings in its data folder. Most features stay on the computer; the ones below listen on a network port, accept credentials, or download and run code, and are where reports are most useful. Defaults are as of 2.7.x. [Network and privacy](docs/network-and-privacy.md) lists every outbound connection.
+OpenWhisper runs on your computer and keeps recordings, transcripts, and settings in its data folder. Most features stay on the computer; the ones below listen on a network port, accept credentials, or download and run code, and are where reports are most useful. Defaults are as of 2.8.x. [Network and privacy](docs/network-and-privacy.md) lists every outbound connection.
 
 ### Host Mode and remote engines
 

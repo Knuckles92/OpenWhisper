@@ -173,10 +173,6 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 markers = ["qt: Qt/UI tests requiring application, widget cleanup and agent-probe isolation"]
 
-[tool.black]
-line-length = 88
-target-version = ["py312"]
-
 [tool.ruff]
 line-length = 88
 target-version = "py312"

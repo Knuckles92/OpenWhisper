@@ -213,15 +213,8 @@ actual_version="$("$EXE_PATH" --version)"
 [[ "$actual_version" == "OpenWhisper $VERSION" ]] || \
     fail "frozen executable reported '$actual_version', expected 'OpenWhisper $VERSION'"
 
-if command -v xvfb-run >/dev/null; then
-    xvfb-run -a "$EXE_PATH" --self-test
-    xvfb-run -a "$PYTHON" scripts/check_release_health.py --executable "$EXE_PATH" --output build/release-health.json --timeout 45
-elif [[ -n "${DISPLAY:-}" ]]; then
-    "$EXE_PATH" --self-test
-    "$PYTHON" scripts/check_release_health.py --executable "$EXE_PATH" --output build/release-health.json --timeout 45
-else
-    echo "    warning: bundle import self-test skipped (install xvfb to run it headlessly)" >&2
-fi
+xvfb-run -a "$EXE_PATH" --self-test
+xvfb-run -a "$PYTHON" scripts/check_release_health.py --executable "$EXE_PATH" --output build/release-health.json --timeout 45
 
 dist_bytes="$(du -sb "$DIST_DIR" | cut -f1)"
 echo "    bundle size: $(format_size "$dist_bytes")"

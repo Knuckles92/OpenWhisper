@@ -6,7 +6,7 @@ The intended live behavior is concrete: a conditional paper offer becomes an acc
 
 ## What I tested
 
-The new `benchmarks/meeting_mode/typesafe_live_state_probe.py` replays selected chronological ASR updates for four manually named candidate records from public AMI meetings:
+A probe script (`typesafe_live_state_probe.py`, not kept in the repository) replayed selected chronological ASR updates for four manually named candidate records from public AMI meetings:
 
 - IN1009: offering, accepting and repeating the promise to send paper links, with unrelated speech in between.
 - IN1005: a concern about whether directory classification is a fair task-specific model comparison, the eventual acceptance, and later discussion of other weaknesses.

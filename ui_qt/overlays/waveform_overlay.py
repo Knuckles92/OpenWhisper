@@ -179,9 +179,7 @@ class WaveformOverlay(QWidget):
         self.overlay_width = config.WAVEFORM_OVERLAY_WIDTH
         self.overlay_height = config.WAVEFORM_OVERLAY_HEIGHT
         self._base_height = self.overlay_height
-        self._streaming_max_height = getattr(
-            config, "WAVEFORM_STREAMING_MAX_HEIGHT", 200
-        )
+        self._streaming_max_height = config.WAVEFORM_STREAMING_MAX_HEIGHT
         self.setFixedSize(self.overlay_width, self.overlay_height)
 
         self.current_state = self.STATE_IDLE
@@ -229,7 +227,6 @@ class WaveformOverlay(QWidget):
         self.timer = QTimer()
         self.timer.timeout.connect(self._update_animation)
         self.frame_rate = config.WAVEFORM_FRAME_RATE
-        self.animation_duration = 0
         self.last_frame_time = time.monotonic()
 
         self.hidden_timer = QTimer()
@@ -1657,6 +1654,11 @@ class WaveformOverlay(QWidget):
     def _finish_hide(self):
         """Hide now and stop animations."""
         self._fading_since = None
+        # Hidden while parked over a snap: give back the raised window level,
+        # or the next park would record it as the level to return to.
+        level, self._unparked_level = self._unparked_level, None
+        if level is not None:
+            macos.set_level(self, level)
         self.timer.stop()
         self.hidden_timer.stop()
 

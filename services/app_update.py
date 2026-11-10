@@ -407,8 +407,6 @@ def source_update_hint(channel: str) -> Optional[str]:
     """Copy-paste commands for a source/git checkout, or ``None``."""
     if channel == InstallChannel.GIT:
         return "git pull --ff-only\npip install -r requirements.txt"
-    if channel == InstallChannel.SOURCE:
-        return None
     return None
 
 

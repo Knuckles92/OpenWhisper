@@ -106,7 +106,6 @@ class BackupSettingsPage(QWidget):
         self.setObjectName("backupSettingsPage")
         self._coordinator = coordinator
         self._inspected_path = ""
-        self._inspected_info = None
         self._pending_inspection_path = ""
         self._busy = False
         self._operation = ""
@@ -467,7 +466,6 @@ class BackupSettingsPage(QWidget):
         if not path:
             return
         self._inspected_path = ""
-        self._inspected_info = None
         self._pending_inspection_path = path
         self.inspection_location_label.setText("")
         self.inspection_location_label.hide()
@@ -591,14 +589,12 @@ class BackupSettingsPage(QWidget):
         self.set_busy(False)
         if error or info is None:
             self._inspected_path = ""
-            self._inspected_info = None
             self.inspection_location_label.setText("")
             self.inspection_location_label.hide()
             self.inspection_label.setText(f"Could not inspect backup: {error or 'Unknown error'}")
             self.status_label.setText(self.inspection_label.text())
             self._update_actions()
             return
-        self._inspected_info = info
         self._inspected_path = str(_field(info, "path", "") or self._pending_inspection_path)
         recordings = "included" if _field(info, "include_recordings", False) else "not included"
         warnings = _field(info, "warnings", ()) or ()

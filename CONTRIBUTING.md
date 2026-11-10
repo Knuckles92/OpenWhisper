@@ -216,6 +216,20 @@ old assets. `npm run build` alone can use stale packages already in
 `node_modules`, producing a different bundle from CI. CI installs the lockfile
 with `npm ci` and requires the rebuilt directory to match the committed files.
 
+## Developer scripts
+
+Tools in `scripts/` that no build or test runs for you. Each one documents its options in its module docstring.
+
+| Script | Use |
+| --- | --- |
+| `build_windows_runtime.py`, `build_macos_runtime.py`, `build_mlx_runtime.py` | Re-pin a speech runtime's wheels and write the matching `services/local_asr/*runtime.json` |
+| `serve_update_feed.py` | Serve a locally built release as the update feed, to try the native updater before publishing |
+| `mcp_events_demo.py` | Subscribe to MCP Events as an agent would and print each signed event (see [MCP](docs/mcp.md)) |
+| `qa_omarchy_ui.py`, `qa_omarchy_matrix.py`, `qa_omarchy_controls.py` | Exercise the Omarchy interface, its state matrix, and its D-Bus controls on a Hyprland session |
+| `bench_section_decode.py` | Measure Local Whisper word loss on long and short clips for each decode option set |
+
+Design notes for behavior with no user-facing page: [guided setup](docs/guided-setup.md) and [recording and transcription reliability](docs/reliability.md).
+
 ## Source launchers
 
 From a source checkout you can register `ow` and `openwhisper` so the app launches from any terminal — no need to `cd` into the repo or activate the venv first. Native packages already provide those commands.

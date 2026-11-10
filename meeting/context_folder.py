@@ -49,14 +49,6 @@ _SKIP_DIR_NAMES = frozenset({
     "node_modules",
 })
 _DOC_EXTS = frozenset({".pdf", ".docx", ".pptx", ".xlsx"})
-_TEXT_EXTS = frozenset({
-    ".md", ".markdown", ".mdx", ".txt", ".rst", ".csv", ".tsv",
-    ".json", ".jsonl", ".yaml", ".yml", ".toml", ".ini", ".cfg",
-    ".conf", ".xml", ".html", ".htm", ".css", ".svg",
-    ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java",
-    ".kt", ".c", ".h", ".cpp", ".hpp", ".rb", ".php", ".sh",
-    ".sql", ".r", ".tex", ".log", ".env.example",
-})
 _SKIP_EXTS = frozenset({
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico",
     ".tif", ".tiff", ".heic", ".avif",
@@ -384,8 +376,6 @@ def _extract_text(path: Path) -> str:
             extracted = _extract_pptx(path)
         elif suffix == ".xlsx":
             extracted = _extract_xlsx(path)
-        elif suffix in _TEXT_EXTS:
-            extracted = _extract_plain(path)
         else:
             extracted = _extract_plain(path)
     except Exception:

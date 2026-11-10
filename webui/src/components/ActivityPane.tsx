@@ -167,20 +167,22 @@ export default function ActivityPane({
   const [undoingSeq, setUndoingSeq] = useState<number | null>(null);
   const [, setClock] = useState(0);
 
-  const mergeEvents = useCallback((rows: AuditEvent[], reset: boolean) => {
+  // ``paged`` is false for the quiet refresh of the newest page, which must
+  // keep the older pages already loaded and what is known about more.
+  const mergeEvents = useCallback((rows: AuditEvent[], reset: boolean, paged = true) => {
     setEvents((current) => {
       const bySeq = new Map((reset ? [] : current).map((event) => [event.seq, event]));
       for (const event of rows) bySeq.set(event.seq, event);
       return [...bySeq.values()].sort((a, b) => b.seq - a.seq);
     });
-    setHasMore(rows.length === 100);
+    if (paged) setHasMore(rows.length === 100);
   }, []);
 
   const loadLatest = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     setError(null);
     try {
-      mergeEvents(await api.events(token), true);
+      mergeEvents(await api.events(token), !quiet, !quiet);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load agent activity');
     } finally {

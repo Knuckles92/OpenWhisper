@@ -315,6 +315,12 @@ class SettingsKey:
     VOICE_ROUTING_ENABLED: Final[str] = "voice_routing_enabled"
     # Also route a normal dictation that starts with an action's name.
     VOICE_ROUTING_ON_DICTATION: Final[str] = "voice_routing_on_dictation"
+    # The Models pages' memory: the model last chosen per provider, and the
+    # provider the cleanup endpoint picker last showed. No defaults; absent
+    # until a choice is made.
+    CLEANUP_MODEL_MEMORY: Final[str] = "cleanup_model_memory"
+    MEETING_MODEL_MEMORY: Final[str] = "meeting_model_memory"
+    CLEANUP_ENDPOINT_PROVIDER: Final[str] = "cleanup_endpoint_provider"
     # Live API permissions, rechecked on every request. Reading events is
     # the same trust as reading history; the rest can act for the user.
     API_LIVE_EVENTS: Final[str] = "api_live_events"
@@ -1011,6 +1017,15 @@ class SettingsManager:
                 except FileNotFoundError:
                     pass
 
+    def file_signature(self):
+        """A cheap token that changes when the settings file does, or None.
+
+        For a caller that polls: compare it before paying for
+        ``load_all_settings``, which copies every setting.
+        """
+        with self._lock:
+            return self._file_signature()
+
     def load_all_settings(self) -> Dict[str, Any]:
         """Load settings, returning an empty dict on failure."""
         with self._lock:
@@ -1140,7 +1155,7 @@ class SettingsManager:
         """Load saved hotkeys or platform defaults."""
         try:
             settings = self.load_all_settings()
-            return settings.get(SettingsKey.HOTKEYS, config.DEFAULT_HOTKEYS)
+            return settings.get(SettingsKey.HOTKEYS, config.DEFAULT_HOTKEYS.copy())
         except Exception as e:
             logger.warning(f"Failed to load settings: {e}")
 
@@ -2107,20 +2122,20 @@ def compose_transcript_cleanup_prompt(base_prompt: str, rules: List[str]) -> str
 
 
 #: The consent text version a meeting insight review was agreed under
-#: (``meeting.insight_review.CONSENT``).
-_INSIGHT_REVIEW_CONSENT: Final[str] = "typesafe-text-v1"
+#: (``meeting.state.review.REVIEW_CONSENT``; a test keeps the two equal).
+INSIGHT_REVIEW_CONSENT: Final[str] = "typesafe-text-v1"
 
 
 def resolve_meeting_insight_review(settings=None):
     if settings is None:
         settings = settings_manager.load_all_settings()
     enabled = resolve_bool_setting(SettingsKey.MEETING_INSIGHT_REVIEW, settings)
-    consent = settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == _INSIGHT_REVIEW_CONSENT
+    consent = settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == INSIGHT_REVIEW_CONSENT
     sensitivity = resolve_choice_setting(
         SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY, ("normal", "thorough"), settings,
     )
     return {
         "enabled": enabled and consent and resolve_typesafe_enabled(settings),
-        "consent": _INSIGHT_REVIEW_CONSENT if consent else "",
+        "consent": INSIGHT_REVIEW_CONSENT if consent else "",
         "sensitivity": sensitivity,
     }

@@ -1611,9 +1611,6 @@ def prune_abandoned_transactions(appdata: Optional[str] = None) -> List[str]:
     return removed
 
 
-
-
-
 def cleanup_transaction_after_parent(
     transaction_id: str,
     parent_pid: int,
@@ -1625,7 +1622,7 @@ def cleanup_transaction_after_parent(
         TransactionState.SUPERSEDED,
     }:
         raise UpdateApplyError("Refusing to clean a non-terminal transaction.")
-    _wait_for_pid(parent_pid, 120.0)
+    _wait_for_pid(parent_pid, _PARENT_WAIT_S)
     if not _remove_transaction_payloads(journal):
         return
     tx = transaction_dir(journal.transaction_id, journal.appdata or None)

@@ -154,9 +154,8 @@ def resolve_speaker_participants(
     mapping: Dict[str, Optional[str]] = {}
     claimed = set()
     for speaker, participant_id in named_map.items():
-        if speaker in speaker_to_segment_ids or speaker in named_map:
-            mapping[speaker] = participant_id
-            claimed.add(participant_id)
+        mapping[speaker] = participant_id
+        claimed.add(participant_id)
 
     pending: List[Tuple[str, str, int, int]] = []
     for speaker, segment_ids in speaker_to_segment_ids.items():
@@ -382,6 +381,7 @@ def _anchor_clips_from_window(
     participants_by_id: Dict[str, Dict[str, Any]],
     *,
     limit: int = MAX_KNOWN_SPEAKERS,
+    bitrate: Optional[int] = None,
 ) -> List[Tuple[str, str, str]]:
     """Build (slug, data_url, participant_id) anchors for later windows."""
     scored: List[Tuple[float, str]] = []
@@ -406,6 +406,7 @@ def _anchor_clips_from_window(
             float(best.get("start_s") or 0.0),
             float(best.get("end_s") or 0.0),
             origin_s=origin_s,
+            **({"bitrate": bitrate} if bitrate else {}),
         )
         if not clip:
             continue
@@ -750,7 +751,7 @@ class _LoopbackSpeakerPass:
         anchors = _anchor_clips_from_window(
             self.frames, self.rate, self.origin_s, dict(self.speaker_segments),
             self.segments_by_id, speaker_to_pid, participants_by_id,
-            limit=MAX_KNOWN_SPEAKERS,
+            limit=MAX_KNOWN_SPEAKERS, bitrate=self.bitrate,
         )
         return _merge_anchor_references(known, anchors)
 

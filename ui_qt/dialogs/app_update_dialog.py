@@ -534,6 +534,8 @@ class AppUpdateDialog(QDialog):
         """Re-enable the dialog after a failed download or prepare."""
         self._busy = False
         self._cancel_requested = False
+        # The choices are editable again, so a later close must save them.
+        self._persisted = False
         self._set_body_tone("error")
         self.body_label.setText(message or "The download failed.")
         self.progress_panel.hide()

@@ -708,7 +708,11 @@ def _mark_ended(repository: Any, meeting: Dict[str, Any]) -> None:
     interrupted ``pending``/``running`` finalization is normalized to a durable
     terminal outcome before the snapshot is persisted.
     """
-    fields: Dict[str, Any] = {"status": "ended", "ended_at": now_iso()}
+    fields: Dict[str, Any] = {"status": "ended"}
+    if not meeting.get("ended_at"):
+        # A meeting that ended on its own keeps that time; stamping now
+        # would stretch its duration by however long recovery waited.
+        fields["ended_at"] = now_iso()
     state_json = meeting.get("state_json")
     if state_json:
         # Patch the raw document so keys this version does not model survive.

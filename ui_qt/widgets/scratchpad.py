@@ -587,8 +587,6 @@ class ScratchpadWindow(QWidget):
 
     def append_block(self, text: str) -> None:
         """Add ``text`` after everything else, separated by a blank line."""
-        from PyQt6.QtGui import QTextCursor
-
         existing = self.editor.toPlainText()
         separator = "" if not existing.strip() else ("\n" if existing.endswith("\n") else "\n\n")
         cursor = QTextCursor(self.editor.document())

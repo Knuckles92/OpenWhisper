@@ -99,7 +99,7 @@ class CleanupProfilesPanel(QWidget):
         library_layout.addWidget(self.profile_list, 1)
         # "New profile" is the one action most visits want; the other two
         # sit side by side beneath it instead of three stacked full-width blocks.
-        actions = self._library_actions = QGridLayout()
+        actions = QGridLayout()
         actions.setHorizontalSpacing(8)
         actions.setVerticalSpacing(8)
         for text, callback, row, column, span in (
@@ -214,8 +214,34 @@ class CleanupProfilesPanel(QWidget):
             self.rules_check.isChecked(),
         )
 
+    def has_unsaved_changes(self) -> bool:
+        return self._saved is not None and self._draft() != self._saved
+
+    def save_draft(self, *, ask: bool = False) -> bool:
+        """Save an unsaved edit when Settings is left, as its other editors do.
+
+        A draft that can't be saved yet stays in the editor with the reason.
+        With ``ask`` the user discards it or keeps editing instead.
+
+        Returns:
+            False when the user chose to keep editing.
+        """
+        if not self.has_unsaved_changes() or self.save_profile() or not ask:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Unsaved profile",
+            f"{self.message.text()} Discard your changes to this profile?",
+            QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Discard:
+            return False
+        self.refresh(self._profile_id)
+        return True
+
     def _save_before_switch(self) -> bool:
-        if self._saved is not None and self._draft() != self._saved:
+        if self.has_unsaved_changes():
             answer = QMessageBox.question(
                 self,
                 "Unsaved profile",
@@ -232,11 +258,7 @@ class CleanupProfilesPanel(QWidget):
 
     def refresh(self, selected_id=None) -> None:
         # Raising Settings must not discard an in-progress draft.
-        if (
-            selected_id is None
-            and self._saved is not None
-            and self._draft() != self._saved
-        ):
+        if selected_id is None and self.has_unsaved_changes():
             self._follow_saved_hotkey()
             return
         selected_id = self._profile_id if selected_id is None else selected_id

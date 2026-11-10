@@ -101,7 +101,12 @@ def delete(key: str) -> None:
     target = model_dir(key)
     target.parent.mkdir(parents=True, exist_ok=True)
     with _locks[key], FileLock(str(target) + ".lock"):
-        for directory in (model_dir(key), model_dir(key).with_name(key + ".partial")):
+        for directory in (
+            target,
+            target.with_name(target.name + ".partial"),
+            # An interrupted swap leaves this; download() would move it back.
+            target.with_name(target.name + ".previous"),
+        ):
             if directory.exists():
                 shutil.rmtree(directory)
 

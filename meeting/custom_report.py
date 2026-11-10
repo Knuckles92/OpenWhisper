@@ -956,7 +956,9 @@ def _clean_markdown(markdown: str) -> str:
         if len(lines) >= 2 and lines[-1].strip().startswith("```"):
             text = "\n".join(lines[1:-1]).strip()
     if len(text) > MAX_REPORT_CHARS:
-        text = text[:MAX_REPORT_CHARS].rstrip() + "\n\n*(Report truncated.)*"
+        # The notice counts toward the cap, which the store enforces again.
+        notice = "\n\n*(Report truncated.)*"
+        text = text[:MAX_REPORT_CHARS - len(notice)].rstrip() + notice
     return text
 
 

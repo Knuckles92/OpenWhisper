@@ -492,7 +492,7 @@ class _Editor(QFrame):
         self.baseline = None
         self.saved = False
         self._requests = _Requests(self)
-        layout = self._form = QVBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(6)
         self.name_edit = QLineEdit()

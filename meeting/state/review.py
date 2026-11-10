@@ -8,7 +8,8 @@ from meeting.interfaces import OpResult
 from meeting.state.schema import CardItem, new_id, now_iso
 
 #: Consent the meeting must record before a review may run.
-_REVIEW_CONSENT = "typesafe-text-v1"
+#: The consent version a review needs; ``services.settings`` saves the same value.
+REVIEW_CONSENT = "typesafe-text-v1"
 
 #: Suffix that appends a review answer to a note block it clarifies.
 _CLARIFICATION_PREFIX = "\n\nUser clarification (supersedes earlier wording on this point): "
@@ -39,7 +40,7 @@ def _system(state, op, ctx):
     if ctx.actor_type != "system":
         return "system_only"
     if (not state.insight_review.get("enabled") or not state.cloud_enabled
-            or state.insight_review.get("consent") != _REVIEW_CONSENT):
+            or state.insight_review.get("consent") != REVIEW_CONSENT):
         return "review_disabled"
     return None
 
@@ -64,7 +65,7 @@ def finish_review(state, op, ctx):
     if review.get("run_id") != op.get("run_id") or review.get("status") != "running":
         return _reject(op, "stale_review")
     if (not state.cloud_enabled or not review.get("enabled")
-            or review.get("consent") != _REVIEW_CONSENT):
+            or review.get("consent") != REVIEW_CONSENT):
         review.update(status="unavailable", message="AI insights are off. Review was stopped.")
         return _result(op, state)
     changed, eligible = _apply_assessments(state, op)

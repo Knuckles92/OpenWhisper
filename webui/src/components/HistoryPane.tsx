@@ -443,9 +443,13 @@ export default function HistoryPane({
   const selected = meetings.find((m) => m.id === selectedId)
     ?? (selectedMeeting?.id === selectedId ? selectedMeeting : undefined);
 
+  // Keyed on the id and title, not the row object: every list refresh makes
+  // a new object, which would overwrite a rename being typed.
+  const selectedKey = selected?.id;
+  const renameSource = selected ? String(selected.title ?? '') : null;
   useEffect(() => {
-    if (selected) setRenameDraft(String(selected.title ?? ''));
-  }, [selected]);
+    if (renameSource !== null) setRenameDraft(renameSource);
+  }, [selectedKey, renameSource]);
 
   useEffect(() => {
     if (!focusReport || !detail || !reportRef.current) return;

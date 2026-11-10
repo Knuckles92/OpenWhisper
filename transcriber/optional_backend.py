@@ -82,7 +82,9 @@ class LocalSpeechBackend(TranscriptionBackend):
         return self.last_error or f"{self.name} is not loaded"
 
     def is_available(self):
-        return self._process is not None and self.model is not None and self._process.process.poll() is None
+        # cleanup() on another thread may clear the attribute between reads.
+        process = self._process
+        return process is not None and self.model is not None and process.process.poll() is None
 
     @property
     def generation(self) -> int:

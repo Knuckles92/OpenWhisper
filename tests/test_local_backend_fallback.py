@@ -319,7 +319,8 @@ def hardware(monkeypatch):
         )
         monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda: gpu)
         monkeypatch.setattr(gpu_info.sys, "platform", "linux")
-        return module.LocalWhisperBackend(model_name="auto", load=False)
+        # No explicit model: the dictation backend takes it from settings.
+        return module.LocalWhisperBackend(load=False)
 
     return install
 

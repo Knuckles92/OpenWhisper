@@ -87,6 +87,11 @@ def speech_model_downloaded(settings: dict) -> bool | None:
     engine = setting_value(SettingsKey.SELECTED_MODEL, settings)
     if engine == "local_whisper":
         model = setting_value(SettingsKey.WHISPER_MODEL, settings)
+        if model == "auto":
+            # "auto" names no repository; ask for the model it resolves to.
+            from transcriber.local_backend import LocalWhisperBackend
+
+            model = LocalWhisperBackend(model_name="auto", load=False).resolve_auto_model()
     elif engine in BACKENDS:
         model = selected_model(engine, settings)
         if missing_runtime(model, settings):

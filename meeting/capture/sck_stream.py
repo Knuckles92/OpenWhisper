@@ -287,6 +287,7 @@ class ScreenCaptureKitLoopbackSource:
         )
         if not ok:
             logger.error("Could not attach the system-audio output: %s", err)
+            self._release()
             return
 
         started = threading.Event()
@@ -300,10 +301,18 @@ class ScreenCaptureKitLoopbackSource:
         if not started.wait(_START_TIMEOUT_S):
             logger.error("ScreenCaptureKit did not start within %.1fs",
                          _START_TIMEOUT_S)
+            # It may still start late; nothing here would own or stop it then.
+            try:
+                stream.stopCaptureWithCompletionHandler_(lambda error: None)
+            except Exception:
+                logger.debug("Could not stop the late ScreenCaptureKit stream",
+                             exc_info=True)
+            self._release()
             return
         if outcome.get("error") is not None:
             logger.error("ScreenCaptureKit refused to start: %s",
                          outcome["error"])
+            self._release()
             return
 
         self._stream = stream

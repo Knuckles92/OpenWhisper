@@ -164,7 +164,6 @@ class HotkeyManager:
         self.on_command_press: Optional[Callable] = None
         self.on_command_release: Optional[Callable] = None
         self.on_cancel: Optional[Callable] = None
-        self.on_enable_toggle: Optional[Callable] = None
         self.on_minimize_tray: Optional[Callable] = None
         self.on_meeting_toggle: Optional[Callable] = None
         self.on_scratchpad_toggle: Optional[Callable] = None
@@ -176,7 +175,6 @@ class HotkeyManager:
         self.on_paste_walkthrough: Optional[Callable] = None
         self.on_status_update: Optional[Callable] = None
         self.on_status_update_auto_hide: Optional[Callable] = None
-        self.is_transcribing_fn: Optional[Callable[[], bool]] = None
 
         self._setup_keyboard_hook()
 
@@ -577,12 +575,10 @@ class HotkeyManager:
                      on_record_press: Callable = None,
                      on_record_release: Callable = None,
                      on_cancel: Callable = None,
-                     on_enable_toggle: Callable = None,
                      on_minimize_tray: Callable = None,
                      on_meeting_toggle: Callable = None,
                      on_status_update: Callable = None,
                      on_status_update_auto_hide: Callable = None,
-                     is_transcribing_fn: Callable[[], bool] = None,
                      on_command_press: Callable = None,
                      on_command_release: Callable = None,
                      on_scratchpad_toggle: Callable = None,
@@ -604,7 +600,6 @@ class HotkeyManager:
         self.on_command_press = on_command_press
         self.on_command_release = on_command_release
         self.on_cancel = on_cancel
-        self.on_enable_toggle = on_enable_toggle
         self.on_minimize_tray = on_minimize_tray
         self.on_meeting_toggle = on_meeting_toggle
         self.on_scratchpad_toggle = on_scratchpad_toggle
@@ -616,4 +611,3 @@ class HotkeyManager:
         self.on_paste_walkthrough = on_paste_walkthrough
         self.on_status_update = on_status_update
         self.on_status_update_auto_hide = on_status_update_auto_hide
-        self.is_transcribing_fn = is_transcribing_fn

@@ -448,11 +448,12 @@ def _configured_builtin(profile: TextLLMProfile, settings: Dict[str, Any]) -> Te
         api_key_env = validate_api_key_env(str(settings.get(env_key) or ""))
     except ValueError:
         api_key_env = ""
-    return replace(
-        profile,
-        base_url=normalize_base_url(settings.get(url_key) or default_url),
-        api_key_env=api_key_env,
-    )
+    try:
+        base_url = normalize_base_url(settings.get(url_key) or default_url)
+    except (ValueError, AttributeError):
+        # A hand-edited address must not take every profile lookup down.
+        base_url = normalize_base_url(default_url)
+    return replace(profile, base_url=base_url, api_key_env=api_key_env)
 
 
 def normalize_local_server_url(url: str) -> str:

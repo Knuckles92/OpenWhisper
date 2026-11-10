@@ -277,6 +277,16 @@ def _recover_session(directory: Path, recordings_folder: str, recovered: list[st
         _remove_session(directory)
     except (BlockingIOError, PermissionError):
         pass  # active session, including another app process
+    except FileNotFoundError:
+        # The app died after making the folder and before writing into it:
+        # nothing was recorded, and leaving it would warn at every start.
+        if lease is not None:
+            lease.close()
+            lease = None
+        try:
+            _remove_session(directory)
+        except OSError:
+            logger.debug('Could not remove an empty dictation journal', exc_info=True)
     except Exception:
         logger.warning('Could not recover interrupted dictation', exc_info=True)
     finally:

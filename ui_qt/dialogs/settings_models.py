@@ -893,7 +893,7 @@ class ModelAssignments(QObject):
         self.refresh()
 
     def _add_custom_models(self):
-        added = add_custom_models(self.host, settings_manager, self._cached)
+        added = add_custom_models(self._host, settings_manager, self._cached)
         if added:
             self.refresh()
             self._say(f"Added {len(added)} custom models. Choose a model above to load it.")
@@ -1212,11 +1212,11 @@ class ModelAssignments(QObject):
         picker.delete_endpoint_requested.connect(self._delete_text_endpoint)
 
     def _refresh_picker_profiles(self) -> None:
-        profiles = list_profiles(self._settings_snapshot())
         settings = self._settings_snapshot()
+        profiles = list_profiles(settings)
         pickers = (
-            (self.__dict__.get("text_model_picker"), "cleanup_model_memory", CLEANUP),
-            (self.__dict__.get("meeting_model_picker"), "meeting_model_memory", MEETING_INTELLIGENCE),
+            (self.__dict__.get("text_model_picker"), SettingsKey.CLEANUP_MODEL_MEMORY, CLEANUP),
+            (self.__dict__.get("meeting_model_picker"), SettingsKey.MEETING_MODEL_MEMORY, MEETING_INTELLIGENCE),
         )
         for picker, key, page in pickers:
             if picker is None or not self._page_is_loading(page):
@@ -1548,7 +1548,7 @@ class ModelAssignments(QObject):
             return
         if choice not in TranscriptCleanupProvider.INSTALLED:
             return
-        memory = self._settings_snapshot().get("cleanup_model_memory", {})
+        memory = self._settings_snapshot().get(SettingsKey.CLEANUP_MODEL_MEMORY, {})
         model = memory.get(choice, "") if isinstance(memory, dict) else ""
         self._save_cleanup_agent(choice, model if isinstance(model, str) else "")
 
@@ -1559,17 +1559,17 @@ class ModelAssignments(QObject):
     def _save_cleanup_agent(self, agent_id: str, model: str) -> None:
         try:
             def merge(settings: dict) -> None:
-                stored = settings.get("cleanup_model_memory")
+                stored = settings.get(SettingsKey.CLEANUP_MODEL_MEMORY)
                 memory = dict(stored) if isinstance(stored, dict) else {}
                 previous_provider = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER)
                 previous_model = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_MODEL)
                 if (previous_provider not in TranscriptCleanupProvider.INSTALLED
                         and isinstance(previous_provider, str)
                         and isinstance(previous_model, str)):
-                    settings["cleanup_endpoint_provider"] = previous_provider
+                    settings[SettingsKey.CLEANUP_ENDPOINT_PROVIDER] = previous_provider
                     memory[previous_provider] = previous_model
                 memory[agent_id] = model
-                settings["cleanup_model_memory"] = memory
+                settings[SettingsKey.CLEANUP_MODEL_MEMORY] = memory
                 settings[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] = agent_id
                 settings[SettingsKey.TRANSCRIPT_CLEANUP_MODEL] = model
 
@@ -1580,7 +1580,7 @@ class ModelAssignments(QObject):
         self._active_text_provider = agent_id
         self._active_text_model = model
         self.cleanup_agent_picker.set_saved_models(
-            self._settings_snapshot().get("cleanup_model_memory", {})
+            self._settings_snapshot().get(SettingsKey.CLEANUP_MODEL_MEMORY, {})
         )
         self.cleanup_agent_picker.set_choice(agent_id)
         self._show_cleanup_runner()
@@ -1599,12 +1599,12 @@ class ModelAssignments(QObject):
         ):
             return
         try:
-            memory = {**self._settings_snapshot().get("cleanup_model_memory", {}), provider: model}
+            memory = {**self._settings_snapshot().get(SettingsKey.CLEANUP_MODEL_MEMORY, {}), provider: model}
             settings_manager.update_settings({
                 SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider,
                 SettingsKey.TRANSCRIPT_CLEANUP_MODEL: model,
-                "cleanup_model_memory": memory,
-                "cleanup_endpoint_provider": provider,
+                SettingsKey.CLEANUP_MODEL_MEMORY: memory,
+                SettingsKey.CLEANUP_ENDPOINT_PROVIDER: provider,
             })
         except Exception as exc:
             logger.error("Couldn't activate text model: %s", exc)
@@ -1631,11 +1631,11 @@ class ModelAssignments(QObject):
         ):
             return
         try:
-            memory = {**self._settings_snapshot().get("meeting_model_memory", {}), provider: model}
+            memory = {**self._settings_snapshot().get(SettingsKey.MEETING_MODEL_MEMORY, {}), provider: model}
             settings_manager.update_settings({
                 SettingsKey.MEETING_LLM_PROVIDER: provider,
                 SettingsKey.MEETING_LLM_MODEL: model,
-                "meeting_model_memory": memory,
+                SettingsKey.MEETING_MODEL_MEMORY: memory,
             })
         except Exception as exc:
             logger.error("Couldn't activate meeting LLM model: %s", exc)
@@ -1681,17 +1681,15 @@ class ModelAssignments(QObject):
         self._active_text_model = model
         if not self._page_is_loading(CLEANUP):
             return
-        self._active_text_provider = provider
-        self._active_text_model = model
         self.text_model_picker.set_sort(sort)
         self._refresh_picker_profiles()
         installed = provider in TranscriptCleanupProvider.INSTALLED
-        endpoint = settings.get("cleanup_endpoint_provider", config.TRANSCRIPT_CLEANUP_PROVIDER)
+        endpoint = settings.get(SettingsKey.CLEANUP_ENDPOINT_PROVIDER, config.TRANSCRIPT_CLEANUP_PROVIDER)
         if get_profile(endpoint, settings) is None:
             endpoint = config.TRANSCRIPT_CLEANUP_PROVIDER
         self.text_model_picker.set_provider(endpoint if installed else provider, "" if installed else model)
         self.text_model_picker.set_active_selection(provider, model)
-        memory = settings.get("cleanup_model_memory")
+        memory = settings.get(SettingsKey.CLEANUP_MODEL_MEMORY)
         memory = dict(memory) if isinstance(memory, dict) else {}
         if installed:
             # The saved model is what runs, whatever the memory last held.
@@ -1805,9 +1803,9 @@ class ModelAssignments(QObject):
         return "" if backend in ("api", "remote") else backend
 
     def _refresh_engine_inventory(self) -> None:
+        """Say what the selected engine has on this computer."""
         if VOICE_MODEL not in self._built:
             return
-        """Say what the selected engine has on this computer."""
         backend = self.engine_combo.currentData() or WHISPER_FILTER
         if backend in ("api", "remote"):
             self.engine_inventory_label.setText("")
@@ -2116,14 +2114,6 @@ class ModelAssignments(QObject):
     def active_text_provider(self) -> str:
         return self._active_text_provider
 
-    @property
-    def active_text_model(self) -> str:
-        return self._active_text_model
-
-    @property
-    def active_meeting_provider(self) -> str:
-        return self._active_meeting_provider
-
     def voice_summary(self) -> str:
         """The dictation engine and model, as the rail shows it."""
         engine_value = self._engine_value()
@@ -2286,9 +2276,6 @@ class ModelAssignments(QObject):
         if self.meeting_agent_is_installed():
             return True
         return provider_is_remote(self._active_meeting_provider)
-
-    def meeting_model_name(self) -> str:
-        return self._active_meeting_llm_model
 
     def meeting_agent_core_label(self) -> str:
         if self.meeting_agent_is_installed():

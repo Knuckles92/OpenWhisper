@@ -121,6 +121,10 @@ class ArchivedMeetingDashboard:
     def resume(self) -> None:
         """Ignore live-session controls for an already-ended meeting."""
 
+    def request_note_adjustment(self, text: str) -> None:
+        """Reject note requests because no intelligence worker is running."""
+        raise RuntimeError("Turn on AI insights in an active meeting first.")
+
     def set_cloud_enabled(self, enabled: bool) -> None:
         """Reject cloud toggles because no intelligence worker is running."""
         raise RuntimeError("AI insights are unavailable for archived playback")

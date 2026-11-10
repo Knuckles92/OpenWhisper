@@ -559,11 +559,6 @@ export type ServerMessage =
   | MeetingEndedMsg
   | PongMsg;
 
-export type ClientMessage =
-  | { type: 'action'; client_action_id: string; op: Op }
-  | { type: 'undo'; client_action_id: string; seq: number }
-  | { type: 'ping' };
-
 export interface SessionResponse {
   voice_commands?: VoiceCommandGuide;
   role: Role;
