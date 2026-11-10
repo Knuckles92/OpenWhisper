@@ -714,6 +714,23 @@ class MeetingModeTab(QWidget):
         body.setContentsMargins(16, 16, 16, 12)
         body.setSpacing(0)
 
+        # The beta mark belongs to the feature, so it sits on the title
+        # rather than beside a note about where speech is sent.
+        heading = QHBoxLayout()
+        heading.setContentsMargins(0, 0, 0, 12)
+        heading.setSpacing(8)
+        heading.addWidget(self._text("Meeting Mode", "meetingColumnTitle"))
+        self.beta_tag = QLabel("Beta")
+        self.beta_tag.setObjectName("meetingColumnBetaTag")
+        self.beta_tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.beta_tag.setAccessibleName("Meeting Mode is in beta")
+        beta_notice = "Transcripts and insights may be inaccurate."
+        self.beta_tag.setAccessibleDescription(beta_notice)
+        self.beta_tag.setToolTip(beta_notice)
+        heading.addWidget(self.beta_tag, 0, Qt.AlignmentFlag.AlignVCenter)
+        heading.addStretch(1)
+        body.addLayout(heading)
+
         # One slot holds Start, or the dashboard actions while a meeting
         # runs (Pause and End are on the stage), so the rows below stay put.
         self.top_slot = self._plain()
@@ -789,22 +806,10 @@ class MeetingModeTab(QWidget):
         slot.addStretch(1)
         body.addWidget(self.top_slot)
 
-        about = QHBoxLayout()
-        about.setContentsMargins(0, 10, 0, 0)
-        about.setSpacing(8)
-        beta_badge = QLabel("Beta")
-        beta_badge.setObjectName("meetingBetaBadge")
-        beta_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        beta_badge.setMinimumHeight(20)
-        beta_badge.setAccessibleName("Meeting Mode is in beta")
-        beta_notice = "Transcripts and insights may be inaccurate."
-        beta_badge.setAccessibleDescription(beta_notice)
-        beta_badge.setToolTip(beta_notice)
-        about.addWidget(beta_badge, 0, Qt.AlignmentFlag.AlignTop)
         self.speech_destination = WrappedLabel("")
         self.speech_destination.setObjectName("meetingColumnNote")
-        about.addWidget(self.speech_destination, 1)
-        body.addLayout(about)
+        self.speech_destination.setContentsMargins(0, 10, 0, 0)
+        body.addWidget(self.speech_destination)
 
         self._section(body, "AI INSIGHTS")
         body.addWidget(self._build_ai_panel())

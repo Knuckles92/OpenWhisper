@@ -608,6 +608,18 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.tab.set_meeting_state({"speech": {**speech, "connected": True}})
         self.assertNotIn("Reconnecting", self.tab.speech_destination.text())
 
+    def test_beta_tag_marks_the_title_not_the_speech_note(self):
+        """Beta labels the feature, so it shares a row with the title only."""
+        title = self.tab.column.findChild(QLabel, "meetingColumnTitle")
+        self.assertEqual(title.text(), "Meeting Mode")
+        body = self.tab.column.layout()
+        heading = body.itemAt(0).layout()
+        self.assertGreaterEqual(heading.indexOf(title), 0)
+        self.assertGreaterEqual(heading.indexOf(self.tab.beta_tag), 0)
+        self.assertIn("inaccurate", self.tab.beta_tag.toolTip())
+        self.assertGreaterEqual(body.indexOf(self.tab.speech_destination), 0)
+        self.assertIsNone(self.tab.column.findChild(QLabel, "meetingBetaBadge"))
+
     def test_ai_details_show_only_while_setting_up(self):
         """Idle explains AI insights; otherwise only the switch remains."""
         self.assertFalse(self.tab.ai_details.isHidden())

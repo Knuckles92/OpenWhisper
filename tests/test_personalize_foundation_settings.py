@@ -38,7 +38,7 @@ DESIGN_DEFAULTS = {
     "dictation_languages": [],
     "dictation_active_language": "",
     "scratchpad_always_on_top": True,
-    "flow_features_intro_seen": False,
+    "whats_new_seen": "",
 }
 
 

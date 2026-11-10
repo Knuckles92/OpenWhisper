@@ -305,8 +305,9 @@ class SettingsKey:
     SCRATCHPAD_ALWAYS_ON_TOP: Final[str] = "scratchpad_always_on_top"
     # {x, y, width, height} of the Scratchpad window; no default.
     SCRATCHPAD_GEOMETRY: Final[str] = "scratchpad_geometry"
-    # The dismissible "New in OpenWhisper" tile.
-    FLOW_FEATURES_INTRO_SEEN: Final[str] = "flow_features_intro_seen"
+    # The ``updated`` date of the "New in OpenWhisper" note last dismissed
+    # (ui_qt/whats_new.py); "" = none yet.
+    WHATS_NEW_SEEN: Final[str] = "whats_new_seen"
     # Automation (docs/design/automation/design.md). Saved actions: what a
     # hotkey, a spoken name or the local API does with the words.
     ACTIONS: Final[str] = "actions"
@@ -865,7 +866,7 @@ SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
     SettingsKey.DICTATION_LANGUAGES: [],
     SettingsKey.DICTATION_ACTIVE_LANGUAGE: "",
     SettingsKey.SCRATCHPAD_ALWAYS_ON_TOP: True,
-    SettingsKey.FLOW_FEATURES_INTRO_SEEN: False,
+    SettingsKey.WHATS_NEW_SEEN: "",
     # Automation: nothing runs until the user sets it up.
     SettingsKey.ACTIONS: [],
     SettingsKey.VOICE_ROUTING_ENABLED: False,
@@ -1473,7 +1474,6 @@ resolve_snippets_enabled = _bool_resolver(SettingsKey.SNIPPETS_ENABLED)
 resolve_recording_hands_free_latch = _bool_resolver(
     SettingsKey.RECORDING_HANDS_FREE_LATCH)
 resolve_scratchpad_always_on_top = _bool_resolver(SettingsKey.SCRATCHPAD_ALWAYS_ON_TOP)
-resolve_flow_features_intro_seen = _bool_resolver(SettingsKey.FLOW_FEATURES_INTRO_SEEN)
 # Automation switches.
 resolve_voice_routing_enabled = _bool_resolver(SettingsKey.VOICE_ROUTING_ENABLED)
 resolve_voice_routing_on_dictation = _bool_resolver(SettingsKey.VOICE_ROUTING_ON_DICTATION)

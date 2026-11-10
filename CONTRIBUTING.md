@@ -6,6 +6,7 @@
 - For a larger feature or a new dependency, open an issue or a discussion first so the approach can be agreed before you build it.
 - Run the tests for the code you touched and `uv run --locked ruff check --select F .` (see [Validation](#validation)). UI changes need both interfaces checked (see [Desktop feature parity](#desktop-feature-parity)) and before/after screenshots in the pull request.
 - Add a user-visible change to `CHANGELOG.md` under `## [Unreleased]`, in the matching `### Added`, `### Changed`, or `### Fixed` group. Follow the existing entries: a bold summary, then what changed for the user and any limits. Internal refactors and test-only changes need no entry.
+- When a change is a headline feature, rewrite the "New in OpenWhisper" note in `ui_qt/whats_new.py` and set its `updated` date; the file explains how. A minor or major version bump must update its `release_line`.
 - Update the README or the page in `docs/` that describes the behavior you changed.
 - Keep API keys, tokens, private hostnames, and transcript content out of code, tests, logs, and screenshots.
 - Report security problems privately; see [SECURITY.md](SECURITY.md).

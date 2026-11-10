@@ -188,7 +188,7 @@ meeting starts. Host-kept entries fetch audio first.
 **Discoverability.** Settings Home gets a Personalize card filled by page
 modules (dictionary count + Add word, snippets count, Match tone to each app,
 Command Mode shortcut). A dismissible "New in OpenWhisper" tile on Home
-(`flow_features_intro_seen`). The Quick Record hint shows
+(text in `ui_qt/whats_new.py`; `whats_new_seen` holds the note last dismissed). The Quick Record hint shows
 the Command Mode shortcut or "Set a Command Mode shortcut".
 
 ## Architecture
@@ -469,7 +469,7 @@ Settings keys (foundation adds all of them):
 | `dictation_languages` | list of codes, [] | S8 |
 | `dictation_active_language` | str, "" | S8 |
 | `scratchpad_always_on_top` | bool, True | S8 |
-| `flow_features_intro_seen` | bool, False | foundation |
+| `whats_new_seen` | str (the dismissed note's `updated` date), "" | foundation |
 
 Lists of objects with fixed field names only (the backup scrub drops dict
 keys containing words like "token"); `dictation_snippets` is exempt from the
