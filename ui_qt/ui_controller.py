@@ -1706,7 +1706,7 @@ class UIController(QObject):
 
     def open_downloads(self, component_id: Optional[str] = None):
         """Show Settings on Downloads, optionally focused on one component."""
-        setup = self._guided_setup_dialog
+        setup = getattr(self, "_guided_setup_dialog", None)
         if component_id and setup is not None and setup.shows_runtime_install(component_id):
             # Started from guided setup, which shows this install itself.
             return
