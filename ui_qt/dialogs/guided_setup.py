@@ -15,6 +15,7 @@ from collections.abc import Callable
 from PyQt6.QtCore import QEvent, QSignalBlocker, QSize, Qt, QTimer
 from PyQt6.QtWidgets import (
     QApplication,
+    QProgressBar,
     QBoxLayout,
     QDialog,
     QFrame,
@@ -33,6 +34,7 @@ from services import cleanup_prompts, guided_setup
 from services.credentials import resolve_credential
 from services.hotkey_manager import format_hotkey_display
 from services.settings import (
+    RecordingTriggerMode,
     SettingsKey,
     resolve_bool_setting,
     resolve_recording_hands_free_latch,
@@ -47,6 +49,7 @@ from ui_qt.dialogs.settings_destinations import (
     API_KEYS,
     CLEANUP,
     GENERAL,
+    HOTKEYS,
     RECORDING,
     VOICE_MODEL,
 )
@@ -57,6 +60,7 @@ from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets import Button
 from ui_qt.widgets.buttons import compact_primary_button, neutral_button
 from ui_qt.widgets.hotkey_capture import mouse_shortcut_note
+from ui_qt.widgets.microphone_check import MicrophoneCheck
 from ui_qt.widgets.no_wheel import ElidingComboBox
 from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
 from ui_qt.widgets.segmented_bar import SegmentedBar
@@ -91,12 +95,21 @@ QLabel#guidedPrivacy[remote="true"] {
     color: @warning-text; background: @warning-tint; border-color: @warning-tint-border;
 }
 QLabel#guidedError { color: @danger-text; font-size: 13px; background: transparent; border: none; }
-QLabel#guidedStep {
+QPushButton#guidedStep {
     color: @slate-text-3; padding: 8px 6px; border: none; border-bottom: 2px solid @slate-border;
-    font-size: 13px; background: transparent;
+    border-radius: 0; font-size: 13px; background: transparent;
 }
-QLabel#guidedStep[active="true"] { color: @accent; border-color: @accent; font-weight: 600; }
-QLabel#guidedStep[done="true"] { color: @slate-text-2; border-color: @accent; }
+QPushButton#guidedStep:hover { color: @slate-text; }
+QPushButton#guidedStep:focus { color: @slate-text; border-bottom-color: @accent-hover; }
+QPushButton#guidedStep[active="true"] { color: @accent; border-color: @accent; font-weight: 600; }
+QPushButton#guidedStep[done="true"] { color: @slate-text-2; border-color: @accent; }
+QPushButton#guidedStep[done="true"]:hover { color: @slate-text; }
+QProgressBar#microphoneCheckBar, QProgressBar#guidedProgress {
+    background: @slate-raised; border: none; border-radius: 4px;
+}
+QProgressBar#microphoneCheckBar::chunk, QProgressBar#guidedProgress::chunk {
+    background: @accent; border-radius: 4px;
+}
 QLabel#guidedKeycap {
     color: @slate-text; background: @slate-raised; border: 1px solid @slate-border-strong;
     border-bottom-width: 3px; border-radius: 8px; padding: 6px 16px; font-size: 22px; font-weight: 600;
@@ -161,6 +174,10 @@ def provider_summary(settings: dict) -> tuple[str, str, str, bool, bool]:
     return profile.name, status, privacy, not local, needs_key
 
 
+def _on_number_pad(hotkey: str) -> bool:
+    return hotkey.startswith("kp ") or "+kp " in hotkey
+
+
 def shortcut_help(hotkey: str, settings: dict) -> str:
     """How the recording shortcut is used, in the user's trigger mode."""
     if resolve_recording_trigger_mode(settings) == "push_hold":
@@ -169,7 +186,7 @@ def shortcut_help(hotkey: str, settings: dict) -> str:
             text += " Double-tap to keep recording hands-free."
     else:
         text = "Press it to start dictating, and again to stop."
-    if hotkey.startswith("kp ") or "+kp " in hotkey:
+    if _on_number_pad(hotkey):
         text += " It's on the number pad."
     note = mouse_shortcut_note(hotkey)
     return " ".join(filter(None, (text, note)))
@@ -191,7 +208,8 @@ def _button(text, callback, name="guidedButton"):
         button = styled(Button(text))
     button.setObjectName(name)
     button.setCursor(Qt.CursorShape.PointingHandCursor)
-    button.setAutoDefault(False)
+    # Enter presses the focused button, and Continue from anywhere else.
+    button.setAutoDefault(True)
     button.clicked.connect(callback)
     return button
 
@@ -232,6 +250,8 @@ class GuidedSetupDialog(QDialog):
             when setup first needs it (never for the welcome page alone).
         open_destination: Opens Settings on a destination key.
         open_all_settings: Opens Settings on its home page.
+        download_model: Starts the app's own download of a model by name,
+            consent included. None sends the user to the model page instead.
     """
 
     def __init__(
@@ -241,6 +261,7 @@ class GuidedSetupDialog(QDialog):
         *,
         open_destination: Callable,
         open_all_settings: Callable,
+        download_model: Callable | None = None,
         manager=None,
     ):
         super().__init__(parent)
@@ -249,9 +270,22 @@ class GuidedSetupDialog(QDialog):
         self.manager = settings_manager if manager is None else manager
         self.open_destination = open_destination
         self.open_all_settings = open_all_settings
+        self._download_model = download_model
+        # The speech download this window started: the model name while it
+        # downloads, whether its runtime is installing, and (text, done, total).
+        self.expecting_download = False
+        self._requested_model = None
+        self._model_busy = None
+        self._runtime_busy = False
+        self._download_progress = None
+        self._download_error = ""
         self.page = WELCOME
         self._finished = False
         self._speech_ready = None
+        self._provider_needs_key = False
+        # (tone, text) once a dictation has been tried on the last page.
+        self._try_result = None
+        self._tried_text = ""
         self._rows = []
         self.setObjectName("guidedSetupDialog")
         self.setWindowTitle("Set up OpenWhisper")
@@ -270,6 +304,9 @@ class GuidedSetupDialog(QDialog):
         self._privacy_reveal_timer = QTimer(self)
         self._privacy_reveal_timer.setSingleShot(True)
         self._privacy_reveal_timer.timeout.connect(self._reveal_cleanup_privacy)
+        self._try_fill_timer = QTimer(self)
+        self._try_fill_timer.setSingleShot(True)
+        self._try_fill_timer.timeout.connect(self._fill_try_box)
         self._setup_ui()
         self.show_page(WELCOME)
 
@@ -321,12 +358,15 @@ class GuidedSetupDialog(QDialog):
         column.setContentsMargins(28, 16, 28, 0)
         column.setSpacing(12)
         self.step_row, steps = _group(QHBoxLayout, 8)
-        self.step_labels = []
-        for title in STEPS:
-            label = _label(title, "guidedStep")
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            steps.addWidget(label, 1)
-            self.step_labels.append(label)
+        self.step_buttons = []
+        for index, title in enumerate(STEPS):
+            step = QPushButton(title)
+            step.setObjectName("guidedStep")
+            step.setCursor(Qt.CursorShape.PointingHandCursor)
+            step.setAccessibleName(f"Step {index + 1} of {len(STEPS)}: {title}")
+            step.clicked.connect(lambda _=False, page=RECORD + index: self.show_page(page))
+            steps.addWidget(step, 1)
+            self.step_buttons.append(step)
         column.addWidget(self.step_row)
         self.scroll = QScrollArea()
         self.scroll.setObjectName("guidedScroll")
@@ -359,6 +399,7 @@ class GuidedSetupDialog(QDialog):
         self.back_button = _button("Back", self._back)
         actions.addWidget(self.back_button)
         self.next_button = _button("Continue", self._continue, "guidedPrimary")
+        self.next_button.setDefault(True)
         actions.addWidget(self.next_button)
         root.addWidget(footer)
 
@@ -371,10 +412,11 @@ class GuidedSetupDialog(QDialog):
         heading, text = _group(spacing=6)
         heading_label = _label(title, name)
         text.addWidget(heading_label)
-        text.addWidget(_label(lede, "guidedLede"))
+        lede_label = _label(lede, "guidedLede")
+        text.addWidget(lede_label)
         column.addWidget(heading)
         self.pages.addWidget(page)
-        return column, heading_label
+        return column, heading_label, lede_label
 
     def _card(self, column):
         card = QFrame()
@@ -400,6 +442,15 @@ class GuidedSetupDialog(QDialog):
         self._rows.append((row, control))
         return description
 
+    def _progress_bar(self):
+        bar = QProgressBar()
+        bar.setObjectName("guidedProgress")
+        bar.setTextVisible(False)
+        bar.setFixedHeight(8)
+        bar.setAccessibleName("Speech model download")
+        bar.hide()
+        return bar
+
     def _link_row(self, column, text, callback):
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
@@ -410,7 +461,7 @@ class GuidedSetupDialog(QDialog):
         return link
 
     def _welcome_page(self):
-        column, _ = self._page(
+        column, _, _ = self._page(
             "Welcome to OpenWhisper",
             "Speak, and your words appear wherever you're typing. "
             "Three quick choices and you're ready.",
@@ -446,7 +497,7 @@ class GuidedSetupDialog(QDialog):
         column.addStretch()
 
     def _record_page(self):
-        column, _ = self._page(
+        column, _, _ = self._page(
             "How will you record?",
             "Pick a microphone and the shortcut that starts dictation.",
         )
@@ -456,8 +507,18 @@ class GuidedSetupDialog(QDialog):
         self.microphone.setMinimumHeight(38)
         self.microphone.setMinimumWidth(200)
         self.microphone.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._row(card, "Microphone", "Saved backup microphones stay in place.", self.microphone)
+        holder, microphone_row = _group(QHBoxLayout, 8)
+        microphone_row.addWidget(self.microphone, 1)
+        self.mic_test_button = _button("Test", self._toggle_mic_check)
+        self.mic_test_button.setAccessibleName("Test microphone")
+        microphone_row.addWidget(self.mic_test_button)
+        self.microphone_detail = self._row(card, "Microphone", "", holder)
+        self.microphone.setAccessibleName("Microphone")
         self.microphone.currentIndexChanged.connect(self._choose_microphone)
+        self.mic_check = MicrophoneCheck(lambda: self.settings._recording_look_recorder())
+        self.mic_check.running_changed.connect(self._mic_check_changed)
+        self.mic_check.hide()
+        card.addWidget(self.mic_check)
         holder, shortcut_row = _group(QHBoxLayout, 8)
         self.shortcut = ProfileHotkeyInput()
         self.shortcut.setAccessibleName("Recording shortcut")
@@ -467,13 +528,33 @@ class GuidedSetupDialog(QDialog):
         shortcut_row.addWidget(self.shortcut)
         shortcut_row.addWidget(_button("Change", self._capture_shortcut))
         self.shortcut_detail = self._row(card, "Shortcut", "", holder)
+        self.trigger = ElidingComboBox()
+        self.trigger.setObjectName("basicSettingsCombo")
+        self.trigger.setMinimumHeight(38)
+        self.trigger.setMinimumWidth(200)
+        self.trigger.addItem("Press to start and stop", RecordingTriggerMode.TOGGLE)
+        self.trigger.addItem("Hold to talk", RecordingTriggerMode.PUSH_HOLD)
+        self._row(
+            card,
+            "Press or hold",
+            "Press once and talk for as long as you like, or hold the shortcut like a walkie-talkie.",
+            self.trigger,
+        )
+        self.trigger.currentIndexChanged.connect(self._choose_trigger)
+        holder, speech_row = _group(QHBoxLayout, 8)
+        self.speech_download_button = _button("Download", self._download_speech)
+        self.speech_download_button.setAccessibleName("Download the speech model")
+        speech_row.addWidget(self.speech_download_button)
         self.speech_button = _button("Change", lambda: self._open(VOICE_MODEL), "guidedLink")
-        self.speech_summary = self._row(card, "Speech engine", "", self.speech_button)
+        speech_row.addWidget(self.speech_button)
+        self.speech_summary = self._row(card, "Speech engine", "", holder)
+        self.speech_progress = self._progress_bar()
+        card.addWidget(self.speech_progress)
         self._link_row(column, "More recording options", lambda: self._open(RECORDING))
         column.addStretch()
 
     def _clean_up_page(self):
-        column, _ = self._page(
+        column, _, _ = self._page(
             "Tidy up what you say?",
             "Optional. After each dictation, an AI model fixes punctuation and drops filler words.",
         )
@@ -521,7 +602,7 @@ class GuidedSetupDialog(QDialog):
         column.addStretch()
 
     def _output_page(self):
-        column, _ = self._page(
+        column, _, _ = self._page(
             "Where should your words go?",
             "Choose what happens when you finish speaking.",
         )
@@ -559,7 +640,22 @@ class GuidedSetupDialog(QDialog):
         column.addStretch()
 
     def _ready_page(self):
-        column, _ = self._page("You're ready", "Give it a try before you go.")
+        column, self.ready_title, self.ready_lede = self._page("You're ready", "")
+        self.ready_speech, speech = _group(QHBoxLayout, 8)
+        self.ready_speech_note = _label("", "guidedDetail")
+        set_style_property(self.ready_speech_note, "tone", "attention")
+        speech.addWidget(self.ready_speech_note, 1)
+        self.ready_download_button = _button("Download", self._download_speech, "guidedLink")
+        speech.addWidget(self.ready_download_button)
+        column.addWidget(self.ready_speech)
+        self.ready_progress = self._progress_bar()
+        column.addWidget(self.ready_progress)
+        self.ready_cleanup, cleanup = _group(QHBoxLayout, 8)
+        self.ready_cleanup_note = _label("", "guidedDetail")
+        set_style_property(self.ready_cleanup_note, "tone", "attention")
+        cleanup.addWidget(self.ready_cleanup_note, 1)
+        cleanup.addWidget(_button("Add key", lambda: self._open(API_KEYS), "guidedLink"))
+        column.addWidget(self.ready_cleanup)
         card = self._card(column)
         key_row = QHBoxLayout()
         key_row.setSpacing(16)
@@ -580,12 +676,6 @@ class GuidedSetupDialog(QDialog):
         card.addWidget(self.try_box)
         self.try_note = _label("")
         card.addWidget(self.try_note)
-        self.ready_speech, speech = _group(QHBoxLayout, 8)
-        self.ready_speech_note = _label("", "guidedDetail")
-        set_style_property(self.ready_speech_note, "tone", "attention")
-        speech.addWidget(self.ready_speech_note, 1)
-        speech.addWidget(_button("Get it now", lambda: self._open(VOICE_MODEL), "guidedLink"))
-        column.addWidget(self.ready_speech)
         column.addWidget(
             _label("Change any of this later in Settings, or run setup again from File → Guided setup.")
         )
@@ -614,10 +704,23 @@ class GuidedSetupDialog(QDialog):
             self.microphone.setCurrentIndex(
                 max(0, self.microphone.findData(settings_microphones.preferred_token(settings)))
             )
+        backups = len(settings_microphones.saved_priority(settings)) > 1
+        self.microphone_detail.setText(
+            "The one OpenWhisper listens to. Test it to see that it hears you."
+            + (" Your backup microphones stay as they are." if backups else "")
+        )
+        with QSignalBlocker(self.trigger):
+            self.trigger.setCurrentIndex(
+                max(0, self.trigger.findData(resolve_recording_trigger_mode(settings)))
+            )
         hotkey = self.manager.load_hotkey_settings().get("record_toggle", "")
         if not self.shortcut._capturing:
             self.shortcut.set_hotkey(hotkey)
-        self.shortcut_detail.setText(shortcut_help(self.shortcut.hotkey, settings))
+        self.shortcut_detail.setText(
+            shortcut_help(self.shortcut.hotkey, settings)
+            # The default is a number-pad key, which most laptops lack.
+            + (" No number pad? Choose Change." if _on_number_pad(self.shortcut.hotkey) else "")
+        )
         for switch, key in (
             (self.cleanup_switch, SettingsKey.TRANSCRIPT_CLEANUP_ENABLED),
             (self.paste_switch, SettingsKey.AUTO_PASTE),
@@ -630,6 +733,8 @@ class GuidedSetupDialog(QDialog):
         self._refresh_speech()
         self._refresh_output()
         self._refresh_ready(settings, hotkey)
+        # Rows that come and go change this page's height.
+        self.pages.adjustSize()
 
     def _refresh_cleanup(self, settings):
         enabled = self.cleanup_switch.isChecked()
@@ -655,6 +760,7 @@ class GuidedSetupDialog(QDialog):
         self.sample_result.setText(
             "Meet at two, actually three." if level == "light" else "Meet at 3."
         )
+        self._provider_needs_key = False
         if enabled:
             name, status, privacy, remote, needs_key = provider_summary(settings)
             self.provider_detail.setText(f"{name} · {status}")
@@ -663,26 +769,58 @@ class GuidedSetupDialog(QDialog):
             self._provider_needs_key = needs_key
             self.privacy.setText(privacy)
             set_style_property(self.privacy, "remote", remote)
+            self.ready_cleanup_note.setText(
+                f"AI cleanup needs an API key for {name}. Until it has one, "
+                "your text arrives without cleanup."
+            )
+        self.ready_cleanup.setVisible(self._provider_needs_key)
 
     def _refresh_speech(self):
         models = self._settings.models
         summary = models.voice_summary()
-        if self._speech_ready is None:
+        progress = self._download_progress
+        missing = self._speech_ready is False
+        if progress:
+            text, done, total = progress
+            for bar in (self.speech_progress, self.ready_progress):
+                bar.setRange(0, 100 if total > 0 else 0)
+                if total > 0:
+                    bar.setValue(int(done * 100 / total))
+            self.speech_summary.setText(f"{summary} · {text}")
+            self.ready_speech_note.setText(f"{summary}: {text}")
+            tone = ""
+        elif self._speech_ready is None:
             self.speech_summary.setText(f"{summary} · {models.voice_detail()}")
-            set_style_property(self.speech_summary, "tone", "")
+            tone = ""
         elif self._speech_ready:
             self.speech_summary.setText(f"{summary} · Downloaded and ready")
-            set_style_property(self.speech_summary, "tone", "ready")
+            tone = "ready"
         else:
-            self.speech_summary.setText(
-                f"{summary} · Not downloaded yet. It's offered when you first dictate."
+            problem = self._download_error or (
+                "Not downloaded yet. Download it now, or it's offered when you first dictate."
             )
-            set_style_property(self.speech_summary, "tone", "attention")
-        self.speech_button.setText("Get it now" if self._speech_ready is False else "Change")
-        self.ready_speech_note.setText(
-            f"{summary} isn't downloaded yet, so your first dictation starts with the download."
+            self.speech_summary.setText(f"{summary} · {problem}")
+            self.ready_speech_note.setText(
+                f"{summary}: {self._download_error}"
+                if self._download_error
+                else f"{summary} isn't downloaded yet, so your first dictation "
+                "starts with the download."
+            )
+            tone = "attention"
+        set_style_property(self.speech_summary, "tone", tone)
+        set_style_property(self.ready_speech_note, "tone", tone)
+        self.speech_progress.setVisible(bool(progress))
+        self.ready_progress.setVisible(bool(progress))
+        self.speech_download_button.setVisible(missing and not progress)
+        self.ready_download_button.setVisible(not progress)
+        self.ready_speech.setVisible(missing or bool(progress))
+        waiting = missing or bool(progress)
+        self.ready_title.setText("Almost ready" if waiting else "You're ready")
+        self.ready_lede.setText(
+            "One thing left before your first dictation."
+            if waiting
+            else "Give it a try before you go."
         )
-        self.ready_speech.setVisible(self._speech_ready is False)
 
     def _refresh_output(self):
         if self._settings._native_wayland:
@@ -710,7 +848,10 @@ class GuidedSetupDialog(QDialog):
             f"Try it here: press {shown} and say something." if shown else "Try it here."
         )
         paste_key = "⌘V" if sys.platform == "darwin" else "Ctrl+V"
-        if not self.paste_switch.isChecked():
+        set_style_property(self.try_note, "tone", self._try_result[0] if self._try_result else "")
+        if self._try_result:
+            self.try_note.setText(self._try_result[1])
+        elif not self.paste_switch.isChecked():
             self.try_note.setText(
                 f"Auto-paste is off, so click here and press {paste_key} after you speak."
                 if self.copy_switch.isChecked()
@@ -760,6 +901,36 @@ class GuidedSetupDialog(QDialog):
             return
         source.setCurrentIndex(index)
         self._source_result()
+        if self.mic_check.running:
+            self.mic_check.start()
+
+    def _toggle_mic_check(self):
+        if self.mic_check.running:
+            self.mic_check.stop()
+            return
+        self.mic_check.show()
+        self.mic_check.start()
+        self.pages.adjustSize()
+
+    def _mic_check_changed(self, running):
+        self.mic_test_button.setText("Stop" if running else "Test")
+
+    def _choose_trigger(self, _index):
+        self.settings.ensure_page(HOTKEYS)
+        source = self.settings.record_mode_combo
+
+        def saved():
+            return source.findData(resolve_recording_trigger_mode(self.manager.load_all_settings()))
+
+        # Resync first: a previous failed save must allow the same choice again.
+        with QSignalBlocker(source):
+            source.setCurrentIndex(saved())
+        source.setCurrentIndex(source.findData(self.trigger.currentData()))
+        self._source_result()
+        with QSignalBlocker(source):
+            source.setCurrentIndex(saved())
+        # Settings shows the double-tap row for the saved mode, not a refused one.
+        self.settings._load_hands_free_latch(self.manager.load_all_settings())
 
     def _capture_shortcut(self):
         self.shortcut.setFocus()
@@ -779,7 +950,122 @@ class GuidedSetupDialog(QDialog):
         self._queue_refresh()
 
     def _provider_action(self):
-        self._open(API_KEYS if getattr(self, "_provider_needs_key", False) else CLEANUP)
+        self._open(API_KEYS if self._provider_needs_key else CLEANUP)
+
+    # ---- the speech download ----
+
+    def _download_speech(self):
+        model = guided_setup.speech_model_name(self.manager.load_all_settings())
+        if model is None or self._download_model is None:
+            self._open(VOICE_MODEL)
+            return
+        self._download_error = ""
+        self.expecting_download = True
+        self._requested_model = model
+        # The app's own request: its consent dialogs decide whether it starts.
+        self._download_model(model)
+        self.refresh()
+
+    def shows_model_download(self, name):
+        return self._model_busy == name
+
+    def shows_runtime_install(self, component_id):
+        """Whether this window is showing the install the user started here."""
+        from services.local_asr.catalog import RUNTIME_IDS
+
+        return self.expecting_download and self.isVisible() and component_id in RUNTIME_IDS
+
+    def model_download_started(self, name):
+        if not self.expecting_download or name != self._requested_model:
+            return
+        self._model_busy = name
+        self._download_progress = ("Downloading…", 0, 0)
+        self.refresh()
+
+    def model_download_progress(self, name, done, total):
+        if name != self._model_busy:
+            return
+        text = "Downloading…"
+        if total > 0:
+            from services.format_utils import format_size_bytes
+
+            text = f"Downloading… {format_size_bytes(done)} of {format_size_bytes(total)}"
+        self._download_progress = (text, done, total)
+        self._refresh_speech()
+
+    def model_download_finished(self, name, success):
+        if name != self._model_busy:
+            return
+        self._model_busy = None
+        if not success:
+            self._download_error = "The download didn't finish. Check your connection and try again."
+        self._download_settled()
+
+    def runtime_install_progress(self, component_id, done, total):
+        if not self.shows_runtime_install(component_id) and not self._runtime_busy:
+            return
+        self._runtime_busy = True
+        if self._model_busy is None:
+            self._download_progress = ("Installing what the model runs on…", done, total)
+            self._refresh_speech()
+
+    def runtime_install_finished(self, component_id, success, message):
+        if not self._runtime_busy:
+            return
+        self._runtime_busy = False
+        if not success:
+            self._download_error = message or "The install didn't finish. Try again."
+        self._download_settled()
+
+    def _download_settled(self):
+        if self._model_busy is not None:
+            return
+        if self._runtime_busy:
+            self._download_progress = ("Installing what the model runs on…", 0, 0)
+        else:
+            self._download_progress = None
+            self._update_speech_status()
+            if self._speech_ready is not False or self._download_error:
+                self.expecting_download = False
+        if self._settings is not None:
+            self.refresh()
+
+    # ---- trying it out ----
+
+    def dictation_received(self, text):
+        """A dictation finished while the try-it page is up."""
+        if self.page != READY or not self.isVisible() or not text:
+            return
+        self._tried_text = text
+        self._try_result = ("ready", "That worked. OpenWhisper is set up.")
+        # A first dictation may have just downloaded the model.
+        self._update_speech_status()
+        self._queue_refresh()
+        # A paste lands a moment after the transcript is announced; wait it out.
+        self._try_fill_timer.start(1500 if self.paste_switch.isChecked() else 300)
+
+    def dictation_failed(self, message):
+        if self.page != READY or not self.isVisible():
+            return
+        self._try_fill_timer.stop()
+        self._try_result = (
+            "attention",
+            f"That one didn't come through: {message}" if message
+            else "That one didn't come through. Try again.",
+        )
+        self._queue_refresh()
+
+    def _fill_try_box(self):
+        # Auto-paste is off, or could not reach this box: show the words anyway.
+        if self.page != READY or self.try_box.toPlainText().strip():
+            return
+        self.try_box.setPlainText(self._tried_text)
+        if self.copy_switch.isChecked():
+            where = "It's on your clipboard too."
+        else:
+            where = "It's saved in History."
+        self._try_result = ("ready", f"That worked. Here's what you said. {where}")
+        self.refresh()
 
     def show_error(self, text):
         self.error.setText(text)
@@ -791,6 +1077,9 @@ class GuidedSetupDialog(QDialog):
         """Start a fresh pass: the welcome page when offered, else the first step."""
         self._finished = guided_setup.is_completed(self.manager)
         self.try_box.clear()
+        self._download_error = ""
+        self._try_result = None
+        self._try_fill_timer.stop()
         self.show_error("")
         if welcome:
             self.show_page(WELCOME)
@@ -799,6 +1088,8 @@ class GuidedSetupDialog(QDialog):
 
     def show_page(self, page):
         self.shortcut.cancel_capture()
+        self.mic_check.stop()
+        self.mic_check.hide()
         self.page = max(WELCOME, min(READY, page))
         self.pages.setCurrentIndex(self.page)
         # Size the stack to this page alone, or every page scrolls as far as
@@ -809,12 +1100,17 @@ class GuidedSetupDialog(QDialog):
         self.pages.adjustSize()
         step = self.page - RECORD
         self.step_row.setVisible(self.page != WELCOME)
-        for index, label in enumerate(self.step_labels):
+        for index, button in enumerate(self.step_buttons):
             done = index < step
-            label.setText(f"{'✓' if done else index + 1}  {STEPS[index]}")
-            set_style_property(label, "active", index == step)
-            set_style_property(label, "done", done)
-        self.skip_button.setText("Not now" if self.page == WELCOME else "Skip setup")
+            button.setText(f"{'✓' if done else index + 1}  {STEPS[index]}")
+            set_style_property(button, "active", index == step)
+            set_style_property(button, "done", done)
+        if self.page == WELCOME:
+            skip = "Not now"
+        else:
+            # Reopened from the File menu after finishing: nothing is skipped.
+            skip = "Close" if self._finished else "Skip setup"
+        self.skip_button.setText(skip)
         self.skip_button.setVisible(self.page != READY)
         self.back_button.setVisible(self.page > RECORD)
         self.next_button.setText(
@@ -829,8 +1125,12 @@ class GuidedSetupDialog(QDialog):
         self._reflow()
         if self.page == CLEAN_UP and self.cleanup_switch.isChecked():
             self._privacy_reveal_timer.start(0)
-        if self.page == READY and self.isVisible():
-            self.try_box.setFocus()
+        if self.isVisible():
+            self._focus_page()
+
+    def _focus_page(self):
+        # Never the header's All settings link, where Enter would leave setup.
+        (self.try_box if self.page == READY else self.next_button).setFocus()
 
     def _back(self):
         self.show_page(self.page - 1)
@@ -917,9 +1217,13 @@ class GuidedSetupDialog(QDialog):
             self.resize(self.size().boundedTo(available).expandedTo(self.minimumSize()))
         super().showEvent(event)
         self._queue_refresh()
-        if self.page == READY:
-            self.try_box.setFocus()
+        self._focus_page()
 
     def hideEvent(self, event):
         self.shortcut.cancel_capture()
+        self.mic_check.stop()
+        self._try_fill_timer.stop()
+        # A request that was declined must not claim later installs.
+        if self._model_busy is None and not self._runtime_busy:
+            self.expecting_download = False
         super().hideEvent(event)
