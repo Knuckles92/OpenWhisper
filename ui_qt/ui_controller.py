@@ -1444,6 +1444,7 @@ class UIController(QObject):
                 self.main_window,
                 open_destination=self.open_settings_destination,
                 open_all_settings=self.open_settings_dialog,
+                download_model=self._download_model_for_setup,
             )
             # The last page answers the user's first dictation.
             self.transcription_received.connect(
@@ -1456,6 +1457,10 @@ class UIController(QObject):
         if not dialog.isVisible():
             dialog.begin(welcome=welcome)
         self._raise_dialog(dialog)
+
+    def _download_model_for_setup(self, model_name: str) -> None:
+        if self.on_model_download_requested:
+            self.on_model_download_requested(model_name)
 
     def _settings_for_guided_setup(self) -> SettingsDialog:
         settings = self._prepare_settings_dialog()
@@ -1701,6 +1706,10 @@ class UIController(QObject):
 
     def open_downloads(self, component_id: Optional[str] = None):
         """Show Settings on Downloads, optionally focused on one component."""
+        setup = self._guided_setup_dialog
+        if component_id and setup is not None and setup.shows_runtime_install(component_id):
+            # Started from guided setup, which shows this install itself.
+            return
         dialog = self._prepare_settings_dialog()
         dialog.refresh()
         dialog.select_destination(DOWNLOADS)
@@ -1765,7 +1774,13 @@ class UIController(QObject):
         if downloads is not None:
             downloads.set_downloading(model_name)
             models.set_downloading(model_name)
-        # Settings shows its own progress (the Downloads row and rail value).
+        setup = self._guided_setup_dialog
+        if setup is not None:
+            setup.model_download_started(model_name)
+        # Settings shows its own progress (the Downloads row and rail value),
+        # and so does guided setup for a download started there.
+        if setup is not None and setup.isVisible() and setup.shows_model_download(model_name):
+            return
         if self._settings_dialog is None or not self._settings_dialog.isVisible():
             self._show_download_progress(model_name)
 
@@ -1774,6 +1789,8 @@ class UIController(QObject):
         if downloads is not None:
             downloads.set_download_progress(model_name, done, total)
             models.set_download_progress(model_name, done, total)
+        if self._guided_setup_dialog is not None:
+            self._guided_setup_dialog.model_download_progress(model_name, done, total)
         self._update_download_progress(model_name, done, total)
 
     def on_model_download_finished(self, model_name: str, success: bool):
@@ -1783,6 +1800,8 @@ class UIController(QObject):
         if downloads is not None:
             downloads.finish_download(model_name, success)
             models.finish_download(model_name, success)
+        if self._guided_setup_dialog is not None:
+            self._guided_setup_dialog.model_download_finished(model_name, success)
         self._hide_download_progress()
         self.refresh_model_views()
 
@@ -1868,6 +1887,8 @@ class UIController(QObject):
         _models, downloads = self._settings_parts()
         if downloads is not None:
             downloads.set_component_progress(component_id, phase, done, total)
+        if self._guided_setup_dialog is not None:
+            self._guided_setup_dialog.runtime_install_progress(component_id, done, total)
 
     def on_component_state_changed(self):
         models, downloads = self._settings_parts()
@@ -1882,6 +1903,8 @@ class UIController(QObject):
         if downloads is not None:
             downloads.finish_component_install(component_id, success, message)
             models.refresh_component_state()
+        if self._guided_setup_dialog is not None:
+            self._guided_setup_dialog.runtime_install_finished(component_id, success, message)
 
     def ensure_meeting_platform_ack(self) -> bool:
         """Clear platform access gates before Meeting Mode opens or starts.

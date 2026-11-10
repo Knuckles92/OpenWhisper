@@ -49,7 +49,8 @@ with a box to try dictating in. Code: `ui_qt/dialogs/guided_setup.py`
   - Press or hold: the Hotkeys page's trigger mode (press to start and stop,
     or hold to talk).
   - Speech engine: says plainly whether the local model (and its runtime)
-    is downloaded. "Get it now" opens the model page.
+    is downloaded. "Download" fetches both without leaving setup, with a
+    progress bar in the row; "Change" opens the model page.
 - **Clean up:**
   - The cleanup switch. It starts off on a new install, and setup never
     turns it on.
@@ -65,7 +66,8 @@ with a box to try dictating in. Code: `ui_qt/dialogs/guided_setup.py`
   OpenWhisper's own (`openwhisperHotkeyWindow`), so the in-app shortcut
   fallback works there on macOS and Linux.
   - What is still missing is listed above the box: a speech model that is
-    not downloaded ("Get it now"; the page is then titled "Almost ready"),
+    not downloaded ("Download", with the same in-place progress; the page
+    is then titled "Almost ready"),
     and cleanup that is on without its API key ("Add key").
   - The controller forwards `transcription_received` and
     `transcription_error_received`. A dictation made on this page turns the
@@ -76,7 +78,19 @@ with a box to try dictating in. Code: `ui_qt/dialogs/guided_setup.py`
 Every control is a projection: changes go through the Settings window's
 own save handlers, confirmations and runtime callbacks, and a failed save
 restores both the projection and its source. Setup never probes a
-provider, sends sample text, downloads a model, or resets preferences.
+provider, sends sample text, or resets preferences, and downloads nothing
+until "Download" is pressed.
+
+## The speech download
+
+"Download" calls `ApplicationController.request_model_download` through the
+controller, so the Hugging Face download policy, its consent dialog and the
+runtime dialog (CPU or GPU) all still apply; declining either leaves setup
+as it was. The controller forwards model and component progress to the
+window. For a download started in setup it shows neither the pop-up
+progress dialog nor Settings → Downloads, and downloads started anywhere
+else are not claimed. An engine with no local model, or a build without
+the downloader, falls back to opening the model page.
 
 ## Tests
 
@@ -84,6 +98,7 @@ provider, sends sample text, downloads a model, or resets preferences.
 - eligibility, and the welcome page (dismissal, retry, lazy Settings);
 - every step's save path and failure restore;
 - the microphone test, press or hold, step tabs and Enter;
+- the in-place download: progress, the runtime, failure and retry;
 - privacy and key copy, model status, the Ready page (what is missing,
   dictation feedback) and staying completed;
 - layouts at 540 px / 130%;

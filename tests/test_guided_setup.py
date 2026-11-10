@@ -138,6 +138,7 @@ def make_setup(tmp_path, monkeypatch):
             get_settings,
             open_destination=MagicMock(),
             open_all_settings=MagicMock(),
+            download_model=MagicMock(),
             manager=store,
         )
         setup.speech = speech
@@ -456,7 +457,7 @@ def test_speech_engine_status_is_honest_and_links_to_the_model_page(make_setup, 
     text = setup.speech_summary.text()
     assert ("Downloaded and ready" in text) is ready
     assert ("Not downloaded yet" in text) is not ready
-    assert setup.speech_button.text() == ("Change" if ready else "Get it now")
+    assert setup.speech_download_button.isHidden() is ready
     setup.speech_button.click()
     setup.open_destination.assert_called_with(VOICE_MODEL)
     setup.show_page(setup_ui.READY)
@@ -658,6 +659,78 @@ def test_record_step_tells_laptop_users_how_to_leave_the_number_pad(make_setup):
     assert "No number pad? Choose Change." in setup.shortcut_detail.text()
     setup.show_page(setup_ui.READY)
     assert "Choose Change" not in setup.keycap_help.text()
+
+
+# ---- the speech download ----
+
+
+@pytest.fixture
+def downloading(make_setup, monkeypatch):
+    setup, _, _ = make_setup()
+    monkeypatch.setattr(guided_setup, "speech_model_name", lambda settings: "parakeet-v3")
+    setup.speech["ready"] = False
+    setup.show()
+    setup.show_page(setup_ui.RECORD)
+    return setup
+
+
+def test_download_runs_in_place_with_progress_through_model_and_runtime(downloading):
+    setup = downloading
+    setup.speech_download_button.click()
+    setup._download_model.assert_called_once_with("parakeet-v3")
+    setup.open_destination.assert_not_called()
+    setup.model_download_started("tiny.en")
+    assert setup.speech_progress.isHidden()
+    setup.model_download_started("parakeet-v3")
+    assert setup.shows_model_download("parakeet-v3")
+    setup.model_download_progress("parakeet-v3", 300_000_000, 1_200_000_000)
+    assert setup.speech_progress.value() == 25
+    assert "300 MB of 1.20 GB" in setup.speech_summary.text()
+    assert setup.speech_download_button.isHidden()
+    assert setup.shows_runtime_install("asr-nvidia-cpu")
+    setup.runtime_install_progress("asr-nvidia-cpu", 0, 0)
+    setup.model_download_finished("parakeet-v3", True)
+    assert "Installing" in setup.speech_summary.text()
+    assert not setup.speech_progress.isHidden()
+    setup.show_page(setup_ui.READY)
+    assert setup.ready_title.text() == "Almost ready"
+    assert not setup.ready_progress.isHidden() and setup.ready_download_button.isHidden()
+    setup.speech["ready"] = True
+    setup.runtime_install_finished("asr-nvidia-cpu", True, "")
+    assert setup.ready_title.text() == "You're ready"
+    assert setup.ready_speech.isHidden() and setup.ready_progress.isHidden()
+    assert not setup.expecting_download
+
+
+def test_failed_download_says_so_and_can_be_retried(downloading):
+    setup = downloading
+    setup.speech_download_button.click()
+    setup.model_download_started("parakeet-v3")
+    setup.model_download_finished("parakeet-v3", False)
+    assert "didn't finish" in setup.speech_summary.text()
+    assert setup.speech_progress.isHidden()
+    assert not setup.speech_download_button.isHidden()
+    setup.speech_download_button.click()
+    assert setup._download_model.call_count == 2
+    assert "didn't finish" not in setup.speech_summary.text()
+
+
+def test_download_without_a_local_model_or_downloader_opens_the_model_page(make_setup):
+    setup, _, _ = make_setup()
+    setup.speech["ready"] = False
+    setup.show_page(setup_ui.READY)
+    setup._download_model = None
+    setup.ready_download_button.click()
+    setup.open_destination.assert_called_with(VOICE_MODEL)
+
+
+def test_downloads_started_elsewhere_are_not_claimed(downloading):
+    setup = downloading
+    setup.model_download_started("parakeet-v3")
+    setup.runtime_install_progress("asr-nvidia-cpu", 1, 2)
+    assert setup.speech_progress.isHidden()
+    assert not setup.shows_runtime_install("asr-nvidia-cpu")
+    assert not setup.shows_model_download("parakeet-v3")
 
 
 # ---- getting around ----

@@ -74,14 +74,9 @@ def save_state(state: str, manager=None) -> None:
     manager.save_setting(SettingsKey.GUIDED_SETUP_STATE, state)
 
 
-def speech_model_downloaded(settings: dict) -> bool | None:
-    """Whether dictation's local model and runtime are on this computer.
-
-    None when dictation does not run a local model (an API server or a
-    remote host). Reads the disk only; never downloads or probes a server.
-    """
-    from services.hf_access import is_model_cached
-    from services.local_asr.catalog import BACKENDS, missing_runtime, selected_model
+def speech_model_name(settings: dict) -> str | None:
+    """The local model dictation runs, or None for an API server or a remote host."""
+    from services.local_asr.catalog import BACKENDS, selected_model
     from services.settings import setting_value
 
     engine = setting_value(SettingsKey.SELECTED_MODEL, settings)
@@ -92,12 +87,26 @@ def speech_model_downloaded(settings: dict) -> bool | None:
             from transcriber.local_backend import LocalWhisperBackend
 
             model = LocalWhisperBackend(model_name="auto", load=False).resolve_auto_model()
-    elif engine in BACKENDS:
-        model = selected_model(engine, settings)
-        if missing_runtime(model, settings):
-            return False
-    else:
+        return model
+    if engine in BACKENDS:
+        return selected_model(engine, settings)
+    return None
+
+
+def speech_model_downloaded(settings: dict) -> bool | None:
+    """Whether dictation's local model and runtime are on this computer.
+
+    None when dictation does not run a local model. Reads the disk only;
+    never downloads or probes a server.
+    """
+    from services.hf_access import is_model_cached
+    from services.local_asr.catalog import missing_runtime
+
+    model = speech_model_name(settings)
+    if model is None:
         return None
+    if missing_runtime(model, settings):
+        return False
     try:
         return is_model_cached(model)
     except Exception:

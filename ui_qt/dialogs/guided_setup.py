@@ -15,6 +15,7 @@ from collections.abc import Callable
 from PyQt6.QtCore import QEvent, QSignalBlocker, QSize, Qt, QTimer
 from PyQt6.QtWidgets import (
     QApplication,
+    QProgressBar,
     QBoxLayout,
     QDialog,
     QFrame,
@@ -103,8 +104,12 @@ QPushButton#guidedStep:focus { color: @slate-text; border-bottom-color: @accent-
 QPushButton#guidedStep[active="true"] { color: @accent; border-color: @accent; font-weight: 600; }
 QPushButton#guidedStep[done="true"] { color: @slate-text-2; border-color: @accent; }
 QPushButton#guidedStep[done="true"]:hover { color: @slate-text; }
-QProgressBar#microphoneCheckBar { background: @slate-raised; border: none; border-radius: 4px; }
-QProgressBar#microphoneCheckBar::chunk { background: @accent; border-radius: 4px; }
+QProgressBar#microphoneCheckBar, QProgressBar#guidedProgress {
+    background: @slate-raised; border: none; border-radius: 4px;
+}
+QProgressBar#microphoneCheckBar::chunk, QProgressBar#guidedProgress::chunk {
+    background: @accent; border-radius: 4px;
+}
 QLabel#guidedKeycap {
     color: @slate-text; background: @slate-raised; border: 1px solid @slate-border-strong;
     border-bottom-width: 3px; border-radius: 8px; padding: 6px 16px; font-size: 22px; font-weight: 600;
@@ -245,6 +250,8 @@ class GuidedSetupDialog(QDialog):
             when setup first needs it (never for the welcome page alone).
         open_destination: Opens Settings on a destination key.
         open_all_settings: Opens Settings on its home page.
+        download_model: Starts the app's own download of a model by name,
+            consent included. None sends the user to the model page instead.
     """
 
     def __init__(
@@ -254,6 +261,7 @@ class GuidedSetupDialog(QDialog):
         *,
         open_destination: Callable,
         open_all_settings: Callable,
+        download_model: Callable | None = None,
         manager=None,
     ):
         super().__init__(parent)
@@ -262,6 +270,15 @@ class GuidedSetupDialog(QDialog):
         self.manager = settings_manager if manager is None else manager
         self.open_destination = open_destination
         self.open_all_settings = open_all_settings
+        self._download_model = download_model
+        # The speech download this window started: the model name while it
+        # downloads, whether its runtime is installing, and (text, done, total).
+        self.expecting_download = False
+        self._requested_model = None
+        self._model_busy = None
+        self._runtime_busy = False
+        self._download_progress = None
+        self._download_error = ""
         self.page = WELCOME
         self._finished = False
         self._speech_ready = None
@@ -425,6 +442,15 @@ class GuidedSetupDialog(QDialog):
         self._rows.append((row, control))
         return description
 
+    def _progress_bar(self):
+        bar = QProgressBar()
+        bar.setObjectName("guidedProgress")
+        bar.setTextVisible(False)
+        bar.setFixedHeight(8)
+        bar.setAccessibleName("Speech model download")
+        bar.hide()
+        return bar
+
     def _link_row(self, column, text, callback):
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
@@ -515,8 +541,15 @@ class GuidedSetupDialog(QDialog):
             self.trigger,
         )
         self.trigger.currentIndexChanged.connect(self._choose_trigger)
+        holder, speech_row = _group(QHBoxLayout, 8)
+        self.speech_download_button = _button("Download", self._download_speech)
+        self.speech_download_button.setAccessibleName("Download the speech model")
+        speech_row.addWidget(self.speech_download_button)
         self.speech_button = _button("Change", lambda: self._open(VOICE_MODEL), "guidedLink")
-        self.speech_summary = self._row(card, "Speech engine", "", self.speech_button)
+        speech_row.addWidget(self.speech_button)
+        self.speech_summary = self._row(card, "Speech engine", "", holder)
+        self.speech_progress = self._progress_bar()
+        card.addWidget(self.speech_progress)
         self._link_row(column, "More recording options", lambda: self._open(RECORDING))
         column.addStretch()
 
@@ -612,8 +645,11 @@ class GuidedSetupDialog(QDialog):
         self.ready_speech_note = _label("", "guidedDetail")
         set_style_property(self.ready_speech_note, "tone", "attention")
         speech.addWidget(self.ready_speech_note, 1)
-        speech.addWidget(_button("Get it now", lambda: self._open(VOICE_MODEL), "guidedLink"))
+        self.ready_download_button = _button("Download", self._download_speech, "guidedLink")
+        speech.addWidget(self.ready_download_button)
         column.addWidget(self.ready_speech)
+        self.ready_progress = self._progress_bar()
+        column.addWidget(self.ready_progress)
         self.ready_cleanup, cleanup = _group(QHBoxLayout, 8)
         self.ready_cleanup_note = _label("", "guidedDetail")
         set_style_property(self.ready_cleanup_note, "tone", "attention")
@@ -742,23 +778,43 @@ class GuidedSetupDialog(QDialog):
     def _refresh_speech(self):
         models = self._settings.models
         summary = models.voice_summary()
-        if self._speech_ready is None:
+        progress = self._download_progress
+        missing = self._speech_ready is False
+        if progress:
+            text, done, total = progress
+            for bar in (self.speech_progress, self.ready_progress):
+                bar.setRange(0, 100 if total > 0 else 0)
+                if total > 0:
+                    bar.setValue(int(done * 100 / total))
+            self.speech_summary.setText(f"{summary} · {text}")
+            self.ready_speech_note.setText(f"{summary}: {text}")
+            tone = ""
+        elif self._speech_ready is None:
             self.speech_summary.setText(f"{summary} · {models.voice_detail()}")
-            set_style_property(self.speech_summary, "tone", "")
+            tone = ""
         elif self._speech_ready:
             self.speech_summary.setText(f"{summary} · Downloaded and ready")
-            set_style_property(self.speech_summary, "tone", "ready")
+            tone = "ready"
         else:
-            self.speech_summary.setText(
-                f"{summary} · Not downloaded yet. It's offered when you first dictate."
+            problem = self._download_error or (
+                "Not downloaded yet. Download it now, or it's offered when you first dictate."
             )
-            set_style_property(self.speech_summary, "tone", "attention")
-        self.speech_button.setText("Get it now" if self._speech_ready is False else "Change")
-        self.ready_speech_note.setText(
-            f"{summary} isn't downloaded yet, so your first dictation starts with the download."
-        )
-        self.ready_speech.setVisible(self._speech_ready is False)
-        waiting = self._speech_ready is False
+            self.speech_summary.setText(f"{summary} · {problem}")
+            self.ready_speech_note.setText(
+                f"{summary}: {self._download_error}"
+                if self._download_error
+                else f"{summary} isn't downloaded yet, so your first dictation "
+                "starts with the download."
+            )
+            tone = "attention"
+        set_style_property(self.speech_summary, "tone", tone)
+        set_style_property(self.ready_speech_note, "tone", tone)
+        self.speech_progress.setVisible(bool(progress))
+        self.ready_progress.setVisible(bool(progress))
+        self.speech_download_button.setVisible(missing and not progress)
+        self.ready_download_button.setVisible(not progress)
+        self.ready_speech.setVisible(missing or bool(progress))
+        waiting = missing or bool(progress)
         self.ready_title.setText("Almost ready" if waiting else "You're ready")
         self.ready_lede.setText(
             "One thing left before your first dictation."
@@ -896,6 +952,84 @@ class GuidedSetupDialog(QDialog):
     def _provider_action(self):
         self._open(API_KEYS if self._provider_needs_key else CLEANUP)
 
+    # ---- the speech download ----
+
+    def _download_speech(self):
+        model = guided_setup.speech_model_name(self.manager.load_all_settings())
+        if model is None or self._download_model is None:
+            self._open(VOICE_MODEL)
+            return
+        self._download_error = ""
+        self.expecting_download = True
+        self._requested_model = model
+        # The app's own request: its consent dialogs decide whether it starts.
+        self._download_model(model)
+        self.refresh()
+
+    def shows_model_download(self, name):
+        return self._model_busy == name
+
+    def shows_runtime_install(self, component_id):
+        """Whether this window is showing the install the user started here."""
+        from services.local_asr.catalog import RUNTIME_IDS
+
+        return self.expecting_download and self.isVisible() and component_id in RUNTIME_IDS
+
+    def model_download_started(self, name):
+        if not self.expecting_download or name != self._requested_model:
+            return
+        self._model_busy = name
+        self._download_progress = ("Downloading…", 0, 0)
+        self.refresh()
+
+    def model_download_progress(self, name, done, total):
+        if name != self._model_busy:
+            return
+        text = "Downloading…"
+        if total > 0:
+            from services.format_utils import format_size_bytes
+
+            text = f"Downloading… {format_size_bytes(done)} of {format_size_bytes(total)}"
+        self._download_progress = (text, done, total)
+        self._refresh_speech()
+
+    def model_download_finished(self, name, success):
+        if name != self._model_busy:
+            return
+        self._model_busy = None
+        if not success:
+            self._download_error = "The download didn't finish. Check your connection and try again."
+        self._download_settled()
+
+    def runtime_install_progress(self, component_id, done, total):
+        if not self.shows_runtime_install(component_id) and not self._runtime_busy:
+            return
+        self._runtime_busy = True
+        if self._model_busy is None:
+            self._download_progress = ("Installing what the model runs on…", done, total)
+            self._refresh_speech()
+
+    def runtime_install_finished(self, component_id, success, message):
+        if not self._runtime_busy:
+            return
+        self._runtime_busy = False
+        if not success:
+            self._download_error = message or "The install didn't finish. Try again."
+        self._download_settled()
+
+    def _download_settled(self):
+        if self._model_busy is not None:
+            return
+        if self._runtime_busy:
+            self._download_progress = ("Installing what the model runs on…", 0, 0)
+        else:
+            self._download_progress = None
+            self._update_speech_status()
+            if self._speech_ready is not False or self._download_error:
+                self.expecting_download = False
+        if self._settings is not None:
+            self.refresh()
+
     # ---- trying it out ----
 
     def dictation_received(self, text):
@@ -943,6 +1077,7 @@ class GuidedSetupDialog(QDialog):
         """Start a fresh pass: the welcome page when offered, else the first step."""
         self._finished = guided_setup.is_completed(self.manager)
         self.try_box.clear()
+        self._download_error = ""
         self._try_result = None
         self._try_fill_timer.stop()
         self.show_error("")
@@ -1088,4 +1223,7 @@ class GuidedSetupDialog(QDialog):
         self.shortcut.cancel_capture()
         self.mic_check.stop()
         self._try_fill_timer.stop()
+        # A request that was declined must not claim later installs.
+        if self._model_busy is None and not self._runtime_busy:
+            self.expecting_download = False
         super().hideEvent(event)
