@@ -1161,6 +1161,10 @@ class HostDashboard(QWidget):
             self._schedule("engine", "models", "live")
         elif kind in ("models", "components"):
             self._schedule("models")
+        elif kind == "records":
+            # A paired computer stored a record: only the stored counts on
+            # the device rows change, not the host's state or its engine.
+            self._schedule("devices")
         else:
             self._schedule("all")
 
@@ -1180,6 +1184,11 @@ class HostDashboard(QWidget):
             if "all" in pending:
                 self._refresh_host()
                 pending.update(("engine", "live"))
+            elif "devices" in pending:
+                if self._state is None:
+                    self._refresh_host()
+                else:
+                    self._render_devices(self._state)
             if "engine" in pending:
                 self._refresh_engine()
             if "live" in pending:
