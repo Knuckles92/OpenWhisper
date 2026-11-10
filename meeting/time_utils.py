@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timezone, tzinfo
 from typing import Any, Dict, Optional
 
+from services.format_utils import UNKNOWN_DATE
+
 
 def utc_now_iso() -> str:
     """Return the current instant as an unambiguous UTC ISO string."""
@@ -63,10 +65,6 @@ def seconds_since(value: Any) -> Optional[float]:
     return (
         datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)
     ).total_seconds()
-
-
-#: What a meeting with no readable start time shows in place of its date.
-UNKNOWN_DATE = "Unknown date"
 
 
 def format_meeting_started_at(value: Any) -> str:

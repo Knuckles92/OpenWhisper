@@ -115,3 +115,10 @@ test('the speaker banner waits for a reason, then says why it fell back', async 
   await act(async () => root.render(React.createElement(HeaderBar, {...props, state: {...live, diarization_available: true, diarization_reason: reason}})));
   assert.doesNotMatch(container.textContent, /Me \/ Others channels/);
 });
+
+test('the dashboard and the desktop app name a missing date the same way', () => {
+  const {UNKNOWN_DATE, friendlyStart} = require('../src/components/HistoryPane.tsx');
+  const python = fs.readFileSync(path.join(__dirname, '../../services/format_utils.py'), 'utf8');
+  assert.equal(UNKNOWN_DATE, python.match(/^UNKNOWN_DATE = "(.+)"$/m)[1]);
+  assert.equal(friendlyStart(null), UNKNOWN_DATE);
+});

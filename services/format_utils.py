@@ -1,6 +1,10 @@
 """Shared display-formatting helpers."""
 from datetime import datetime
 
+#: Shown in place of a date that is missing or unreadable. The dashboard
+#: repeats it (webui/src/components/HistoryPane.tsx); a test keeps them equal.
+UNKNOWN_DATE = "Unknown date"
+
 
 def format_timestamp(iso_timestamp: str) -> str:
     """Format an ISO-8601 timestamp for the user's local timezone.
