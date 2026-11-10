@@ -20,6 +20,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ### Fixed
 
+- **Walkthrough write-ups that failed with "has been deleted"** — writing or re-writing a walkthrough's PDF and Word documents could occasionally stop with "Couldn't finish: wrapped C/C++ object of type QTextFrame has been deleted" and leave the documents as they were. The documents are now built so that can't happen.
 - **Settings chevrons in the light theme** — the sidebar chapters and the narrow-window page menu now use the same darker arrow as the rest of Settings, and follow a theme switch.
 - **Settings follows the main window's engine** — changing the model, device or quantization on Quick Record or Upload File now shows in an open Settings window straight away, as a backend change already did.
 - **Adding custom Whisper models** — **Add custom models…** on the Voice model pages opens again instead of doing nothing.

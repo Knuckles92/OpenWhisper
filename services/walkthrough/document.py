@@ -19,12 +19,26 @@ import logging
 import math
 import os
 import re
+import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QLocale, QMarginsF, QPointF, QRectF, QSizeF, Qt, QUrl
+from PyQt6.QtCore import (
+    QCoreApplication,
+    QEvent,
+    QLocale,
+    QMarginsF,
+    QObject,
+    QPointF,
+    QRectF,
+    QSizeF,
+    Qt,
+    QThread,
+    QUrl,
+    pyqtSignal,
+)
 from PyQt6.QtGui import (
     QColor,
     QFont,
@@ -474,6 +488,54 @@ def _local_page_size() -> QPageSize:
     return QPageSize(QPageSize.PageSizeId.A4)
 
 
+class _MainThreadGate(QObject):
+    """Lives on the main thread; sets each event it is sent once that thread reaches it."""
+
+    asked = pyqtSignal(object)
+
+    def __init__(self, main_thread: QThread) -> None:
+        super().__init__()
+        self.moveToThread(main_thread)
+        # After the move, so the call is queued to the main thread.
+        self.asked.connect(self._answer, Qt.ConnectionType.QueuedConnection)
+
+    def _answer(self, event: threading.Event) -> None:
+        event.set()
+
+
+_gate: _MainThreadGate | None = None
+_gate_lock = threading.Lock()
+#: How long a worker waits for the main thread. A main thread too busy to
+#: answer isn't delivering the late notices either.
+_SETTLE_SECONDS = 0.25
+
+
+def _new_document() -> QTextDocument:
+    """A QTextDocument whose frames and tables PyQt won't report as deleted.
+
+    PyQt learns that a frame or table it wrapped was destroyed from a notice
+    it handles on the main thread. For a document built on a worker that
+    notice arrives late, and it names the object by address, so it can land
+    on a frame of the next document that reused the address: "wrapped C/C++
+    object of type QTextFrame has been deleted". Letting the main thread
+    work through the notices of earlier documents first leaves none to
+    misfire, as it handles them in order.
+    """
+    app = QCoreApplication.instance()
+    if app is not None:
+        if QThread.currentThread() == app.thread():
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.MetaCall.value)
+        else:
+            global _gate
+            with _gate_lock:
+                if _gate is None:
+                    _gate = _MainThreadGate(app.thread())
+            caught_up = threading.Event()
+            _gate.asked.emit(caught_up)
+            caught_up.wait(_SETTLE_SECONDS)
+    return QTextDocument()
+
+
 def _layout_dpi() -> int:
     """Layout units per inch of a QTextDocument without a paint device.
 
@@ -688,7 +750,7 @@ class _Composer:
         self.page = page
         self.unit = dpi / 72  # layout units per point
         self.format = document_format
-        self.doc = QTextDocument()
+        self.doc = _new_document()
         self.doc.setDocumentMargin(0)
         # Laid out at screen resolution but painted at the PDF's: hinted
         # advances would space the letters unevenly once scaled.
@@ -1035,7 +1097,7 @@ class _MarkdownComposer:
         self.folder = folder
         self.text_color = _color(look.text_color)
         self.heading_color = _color(look.heading_color) or self.text_color
-        self.doc = QTextDocument()
+        self.doc = _new_document()
         self.doc.setDocumentMargin(0)
         self.doc.setUseDesignMetrics(True)
         self.doc.setDefaultFont(_document_font(look.font.strip()))
