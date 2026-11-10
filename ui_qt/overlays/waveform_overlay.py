@@ -1654,6 +1654,11 @@ class WaveformOverlay(QWidget):
     def _finish_hide(self):
         """Hide now and stop animations."""
         self._fading_since = None
+        # Hidden while parked over a snap: give back the raised window level,
+        # or the next park would record it as the level to return to.
+        level, self._unparked_level = self._unparked_level, None
+        if level is not None:
+            macos.set_level(self, level)
         self.timer.stop()
         self.hidden_timer.stop()
 
