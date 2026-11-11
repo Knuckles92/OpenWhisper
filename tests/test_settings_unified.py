@@ -33,6 +33,7 @@ from services.settings import (
 )
 from ui_qt.dialogs import settings_api_keys
 from ui_qt.dialogs import settings_cleanup_rules
+from ui_qt.dialogs import settings_fast_judgments
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
@@ -870,10 +871,10 @@ class TestWorkers:
                 settings_api_keys.TYPESAFE_CREDENTIAL_ENV, "ts-live-0123456789abcdefghij"
             )
             monkeypatch.setattr(
-                settings_dialog_module, "typesafe_verify_key", blocked((True, "ok"))
+                settings_fast_judgments, "typesafe_verify_key", blocked((True, "ok"))
             )
             dialog.select_destination(MEETING_FAST)
-            dialog._test_typesafe_route()
+            dialog.fast_judgments.test_route()
         elif work == "cleanup-rule-polish":
             monkeypatch.setattr(
                 "services.transcript_cleanup.polish_cleanup_rule", blocked(("Rule.", None))

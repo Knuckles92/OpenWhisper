@@ -18,6 +18,7 @@ from services import credentials
 from services.settings import SettingsKey, SettingsManager
 from ui_qt.dialogs import settings_api_keys
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
+from ui_qt.dialogs import settings_fast_judgments
 from services.typesafe import CREDENTIAL_ENV as TYPESAFE_CREDENTIAL_ENV
 from services.typesafe import OPENROUTER_ROUTE
 from ui_qt.dialogs.settings_dialog import (
@@ -110,7 +111,7 @@ class TestFastJudgmentsNotice(TypeSafeMessagingTestCase):
 
 class TestFastJudgmentsRailBadge(TypeSafeMessagingTestCase):
     def _badge(self, dialog):
-        return dialog._meeting_fast_rail_value()
+        return dialog.fast_judgments.rail_value()
 
     def test_off_reads_off(self):
         dialog = self._open(**{SettingsKey.TYPESAFE_ENABLED: False})
@@ -323,7 +324,7 @@ class TestJevConnection(TypeSafeMessagingTestCase):
         self.store.set(OPENROUTER_ENV, OPENROUTER_KEY)
         dialog = self._open(**{SettingsKey.TYPESAFE_PROVIDER: "openrouter"})
         with patch.object(
-            settings_dialog_module, "typesafe_verify_key",
+            settings_fast_judgments, "typesafe_verify_key",
             return_value=(True, "openrouter.ai accepted the key and typesafe/jev-1.13 answered in 0.15 s."),
         ) as verify, patch.object(settings_dialog_module.threading, "Thread") as thread:
             dialog.typesafe_route_test_btn.click()
@@ -337,7 +338,7 @@ class TestJevConnection(TypeSafeMessagingTestCase):
 
     def test_testing_without_a_key_says_so_without_a_request(self):
         dialog = self._open(**{SettingsKey.TYPESAFE_PROVIDER: "openrouter"})
-        with patch.object(settings_dialog_module, "typesafe_verify_key") as verify:
+        with patch.object(settings_fast_judgments, "typesafe_verify_key") as verify:
             dialog.typesafe_route_test_btn.click()
         verify.assert_not_called()
         self.assertIn("No OpenRouter API key to test", dialog.typesafe_route_status.text())
@@ -347,7 +348,7 @@ class TestJevConnection(TypeSafeMessagingTestCase):
         self.store.set(TYPESAFE_CREDENTIAL_ENV, TYPESAFE_KEY)
         dialog = self._open()
         with patch.object(
-            settings_dialog_module, "typesafe_verify_key",
+            settings_fast_judgments, "typesafe_verify_key",
             return_value=(False, "api.typesafe.ai rejected the key (HTTP 401)."),
         ), patch.object(settings_dialog_module.threading, "Thread") as thread:
             dialog.typesafe_route_test_btn.click()
@@ -405,7 +406,7 @@ class TestTextModelJudge(TypeSafeMessagingTestCase):
     def test_test_button_asks_the_local_model_without_a_key(self):
         dialog = self._open(**self.LOCAL)
         with patch.object(
-            settings_dialog_module, "typesafe_verify_key",
+            settings_fast_judgments, "typesafe_verify_key",
             return_value=(True, "Ollama · qwen3:4b answered in 0.80 s."),
         ) as verify, patch.object(settings_dialog_module.threading, "Thread") as thread:
             dialog.typesafe_route_test_btn.click()
