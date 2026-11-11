@@ -32,6 +32,7 @@ from services.settings import (
     SettingsManager,
 )
 from ui_qt.dialogs import settings_api_keys
+from ui_qt.dialogs import settings_cleanup_rules
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
@@ -878,13 +879,13 @@ class TestWorkers:
                 "services.transcript_cleanup.polish_cleanup_rule", blocked(("Rule.", None))
             )
             dialog.select_destination(CLEANUP_RULES)
-            dialog._polish_cleanup_rule("capitalize kubernetes")
+            dialog.cleanup_rules.polish_rule("capitalize kubernetes")
         else:
-            monkeypatch.setattr(settings_dialog_module, "AudioRecorder", _FakeRecorder)
+            monkeypatch.setattr(settings_cleanup_rules, "AudioRecorder", _FakeRecorder)
             dialog.on_dictation_transcribe = blocked("capitalize kubernetes")
             dialog.select_destination(CLEANUP_RULES)
-            dialog._toggle_rule_dictation()
-            dialog._toggle_rule_dictation()
+            dialog.cleanup_rules.toggle_dictation()
+            dialog.cleanup_rules.toggle_dictation()
         workers = [t for t in threading.enumerate() if t.name == work]
         assert workers
         ref = weakref.ref(dialog)

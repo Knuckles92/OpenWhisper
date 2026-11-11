@@ -774,7 +774,8 @@ class ApplicationController(QObject):
                     or meeting._archive_starting or meeting._retry_meeting_id):
                 return "Finish the meeting and its processing before backing up or restoring."
             dialog = getattr(self.ui_controller, "_settings_dialog", None)
-            if dialog is not None and getattr(dialog, "_rule_dictation_state", "idle") != "idle":
+            rules = getattr(dialog, "cleanup_rules", None) if dialog is not None else None
+            if getattr(rules, "dictation_state", "idle") != "idle":
                 return "Finish dictating the cleanup rule before backing up or restoring."
             self._backup_in_progress = True
         central = self.ui_controller.main_window.centralWidget()

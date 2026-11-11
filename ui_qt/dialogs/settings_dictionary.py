@@ -602,7 +602,7 @@ class _DictionaryPage(QObject):
             # the rules that are left.
             rules_list.clear()
             rules_list.addItems(resolve_transcript_cleanup_rules(self.dialog._settings_snapshot()))
-            self.dialog._update_cleanup_rule_controls()
+            self.dialog.cleanup_rules.update_controls()
         self.reload()
         if moved:
             self.say(f"Moved {moved} spelling rule{'' if moved == 1 else 's'} here.")

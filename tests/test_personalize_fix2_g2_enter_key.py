@@ -191,7 +191,7 @@ def test_enter_adds_a_learned_rule(make_dialog, monkeypatch):
     title = dialog.page_title.text()
     # Adding a rule polishes it with the cleanup provider, which needs a network.
     polish = MagicMock()
-    monkeypatch.setattr(dialog, "_polish_cleanup_rule", polish)
+    monkeypatch.setattr(dialog.cleanup_rules, "polish_rule", polish)
 
     _type_and_press(dialog.cleanup_rule_input, "Use British spelling")
 

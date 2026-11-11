@@ -1016,6 +1016,21 @@ class TestApplicationController:
         assert "meeting" in controller._acquire_backup()
         assert not controller._backup_in_progress
 
+    def test_backup_waits_for_a_rule_dictation_in_settings(self):
+        controller = self._create_controller()
+        controller._startup_database_ready = True
+        central = types.SimpleNamespace(isEnabled=lambda: True, setEnabled=Mock())
+        controller.ui_controller.main_window.centralWidget = lambda: central
+        rules = types.SimpleNamespace(dictation_state="recording")
+        controller.ui_controller._settings_dialog = types.SimpleNamespace(cleanup_rules=rules)
+        assert "cleanup rule" in controller._acquire_backup()
+        rules.dictation_state = "transcribing"
+        assert "cleanup rule" in controller._acquire_backup()
+        assert controller._backup_in_progress is False
+        rules.dictation_state = "idle"
+        assert controller._acquire_backup() is None
+        controller._release_backup()
+
     def test_walkthrough_library_edit_leaves_dictation_free(self):
         """A redone write-up runs an agent for minutes; the hotkey must still dictate."""
         controller = self._create_controller()
