@@ -5,6 +5,11 @@ API-free fallback through its release redirect and checksum asset. Nothing
 is fetched from the project website. ``_version.__version__`` is compared as
 semver against the latest stable tag; git commit distance is ignored.
 
+Copies on the opt-in beta release track (:class:`ReleaseTrack`) also consider
+GitHub prereleases and are offered whichever published release has the
+highest version. Betas use ordinary ``major.minor.patch`` tags; only GitHub's
+prerelease flag marks them, so promoting one to stable needs no rebuild.
+
 Validated HKCU Windows installs may hand a verified ``tar.xz`` to
 ``OpenWhisperUpdater.exe``; other Windows installs use the setup exe. Native
 Linux package installs, source copies, and git checkouts are notify-only.
@@ -43,6 +48,7 @@ from services.app_update_apply import (
 )
 from services.settings import (
     SettingsKey,
+    resolve_update_beta_track_enabled,
     resolve_update_check_enabled,
     resolve_update_notify_enabled,
     settings_manager,
@@ -71,6 +77,12 @@ GITHUB_REPO: Final[str] = "Knuckles92/OpenWhisper"
 LATEST_RELEASE_URL: Final[str] = (
     f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 )
+# Newest releases first, prereleases included; drafts are only listed for
+# authenticated maintainers and are skipped regardless. Releases older than
+# the thirty newest carry lower versions than those on this page.
+RELEASE_LIST_URL: Final[str] = (
+    f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=30"
+)
 RELEASES_PAGE_URL: Final[str] = f"https://github.com/{GITHUB_REPO}/releases"
 LATEST_RELEASE_PAGE_URL: Final[str] = f"{RELEASES_PAGE_URL}/latest"
 UPDATE_FEED_ENV: Final[str] = "OPENWHISPER_UPDATE_FEED_URL"
@@ -84,6 +96,9 @@ _RATE_LIMIT_MESSAGE: Final[str] = (
     f"{RELEASES_PAGE_URL}."
 )
 _MAX_ASSET_BYTES: Final[int] = 2 * 1024 * 1024 * 1024
+# Release tags the beta track may select: exactly what the apply path's
+# strict parser accepts, so a suffixed tag (``v2.9.0-rc.1``) is never offered.
+_RELEASE_TAG_RE: Final[re.Pattern[str]] = re.compile(r"[vV]?\d+\.\d+\.\d+")
 _DOWNLOAD_KEEP_WINDOW_S: Final[int] = 30
 _MAX_REDIRECTS: Final[int] = 5
 _GITHUB_RELEASE_ASSET_HOSTS: Final[Tuple[str, ...]] = (
@@ -104,6 +119,17 @@ class InstallChannel:
     INSTALLER: Final[str] = "installer"
     GIT: Final[str] = "git"
     SOURCE: Final[str] = "source"
+
+
+class ReleaseTrack:
+    """Which GitHub releases this copy is offered.
+
+    Not to be confused with :class:`InstallChannel`, which says how the copy
+    was installed.
+    """
+
+    STABLE: Final[str] = "stable"
+    BETA: Final[str] = "beta"
 
 
 class UpdateStatus:
@@ -151,6 +177,7 @@ class ReleaseInfo:
     setup_asset: Optional[ReleaseAsset] = None
     native_asset: Optional[ReleaseAsset] = None
     macos_asset: Optional[ReleaseAsset] = None
+    prerelease: bool = False
 
     @property
     def asset(self) -> Optional[ReleaseAsset]:
@@ -170,6 +197,7 @@ class UpdateCheckResult:
     apply_mode: str = ApplyMode.NOTIFY_ONLY
     git_hint: Optional[str] = None
     git_summary: Optional[str] = None
+    release_track: str = ReleaseTrack.STABLE
 
 
 ProgressCallback = Callable[[str, int, int], None]
@@ -255,6 +283,42 @@ def compare_versions(current: str, latest: str) -> str:
     if current_tuple > latest_tuple:
         return UpdateStatus.DEVELOPMENT
     return UpdateStatus.UP_TO_DATE
+
+
+def release_track(settings: Optional[Dict] = None) -> str:
+    """Return this copy's :class:`ReleaseTrack` from settings.
+
+    Stable unless the user opted in to beta updates in Settings, and stable
+    when settings cannot be read.
+    """
+    if settings is None:
+        try:
+            settings = settings_manager.load_all_settings()
+        except Exception as exc:
+            logger.debug("Could not load the release track: %s", exc)
+            return ReleaseTrack.STABLE
+    if resolve_update_beta_track_enabled(settings):
+        return ReleaseTrack.BETA
+    return ReleaseTrack.STABLE
+
+
+def release_track_changed(manager=None) -> None:
+    """Make the next automatic check due now after the user switches tracks.
+
+    Clearing the last successful check time keeps a stale offer (a beta the
+    user just opted out of, or no beta yet for one who opted in) from
+    lingering until the regular interval. Failed-check and rate-limit
+    backoffs are kept.
+
+    Args:
+        manager: The settings manager the caller saved the track with.
+    """
+    try:
+        (manager or settings_manager).update_settings(
+            {}, remove=(SettingsKey.UPDATE_LAST_CHECK_AT,)
+        )
+    except Exception as exc:
+        logger.warning("Could not reset the update check time: %s", exc)
 
 
 def parse_last_check_at(raw: object) -> Optional[datetime]:
@@ -429,11 +493,15 @@ def local_git_summary(repo_root: Optional[str] = None) -> Optional[str]:
     return summary or None
 
 
-def parse_release_payload(payload: Dict) -> ReleaseInfo:
-    """Parse a GitHub ``/releases/latest`` JSON object.
+def parse_release_payload(
+    payload: Dict, *, allow_prerelease: bool = False
+) -> ReleaseInfo:
+    """Parse a GitHub release JSON object.
 
     Args:
-        payload: Decoded API body.
+        payload: Decoded API body (``/releases/latest`` or one list entry).
+        allow_prerelease: The beta track: a published prerelease's assets are
+            installable. Drafts never are, on any track.
 
     Returns:
         Structured release metadata. ``asset.sha256`` is ``None`` when the
@@ -452,11 +520,14 @@ def parse_release_payload(payload: Dict) -> ReleaseInfo:
         html_url = f"https://github.com/{GITHUB_REPO}/releases/tag/{tag_name}"
     notes = payload.get("body") if isinstance(payload.get("body"), str) else ""
     assets = payload.get("assets") or []
-    stable = not bool(payload.get("draft")) and not bool(payload.get("prerelease"))
+    prerelease = bool(payload.get("prerelease"))
+    installable = not bool(payload.get("draft")) and (
+        allow_prerelease or not prerelease
+    )
     setup_asset = None
     native_asset = None
     macos_asset = None
-    if stable:
+    if installable:
         setup_asset = _parse_named_asset(
             assets,
             expected_name=setup_asset_name(version),
@@ -480,7 +551,40 @@ def parse_release_payload(payload: Dict) -> ReleaseInfo:
         setup_asset=setup_asset,
         native_asset=native_asset,
         macos_asset=macos_asset,
+        prerelease=prerelease,
     )
+
+
+def select_newest_release(payload: object) -> ReleaseInfo:
+    """Pick the beta track's offer from a GitHub ``/releases`` list.
+
+    Drafts and tags that are not plain ``major.minor.patch`` are skipped. The
+    highest version wins; on a tie (``v2.6.01`` and ``v2.6.1``) a stable
+    release beats a prerelease. Assets of the chosen release then pass every
+    check :func:`parse_release_payload` applies to a stable release.
+
+    Raises:
+        AppUpdateError: The list is unreadable or holds no usable release.
+    """
+    if not isinstance(payload, list):
+        raise AppUpdateError(
+            "The update server returned a response that could not be read."
+        )
+    best: Optional[Tuple[Tuple[int, int, int], bool, Dict]] = None
+    for item in payload:
+        if not isinstance(item, dict) or bool(item.get("draft")):
+            continue
+        tag_name = item.get("tag_name")
+        if not isinstance(tag_name, str) or not _RELEASE_TAG_RE.fullmatch(
+            tag_name.strip()
+        ):
+            continue
+        key = (parse_version(tag_name), not bool(item.get("prerelease")))
+        if best is None or key > best[:2]:
+            best = (*key, item)
+    if best is None:
+        raise AppUpdateError("The update server did not report a release version.")
+    return parse_release_payload(best[2], allow_prerelease=True)
 
 
 def _expected_asset_url(tag_name: str, filename: str) -> str:
@@ -609,15 +713,17 @@ def update_feed_override() -> Optional[str]:
     return None
 
 
-def latest_release_url() -> str:
+def latest_release_url(track: str = ReleaseTrack.STABLE) -> str:
     override = update_feed_override()
     if override:
         logger.warning("Update feed overridden by %s: %s", UPDATE_FEED_ENV, override)
         return override
+    if track == ReleaseTrack.BETA:
+        return RELEASE_LIST_URL
     return LATEST_RELEASE_URL
 
 
-def fetch_latest_release() -> ReleaseInfo:
+def fetch_latest_release(track: Optional[str] = None) -> ReleaseInfo:
     """Fetch GitHub metadata, using the public release when the API is limited.
 
     The fallback gets the stable tag from GitHub's latest-release redirect,
@@ -625,11 +731,23 @@ def fetch_latest_release() -> ReleaseInfo:
     never scrapes HTML or infers a package digest. The loopback test feed
     stays independent of production fallback and API cooldown state.
 
+    The beta track reads the release list instead of ``/releases/latest``.
+    GitHub has no API-free way to name the newest prerelease, so while the
+    API is rate-limited a beta copy falls back to the newest stable release,
+    exactly like a stable copy; it sees the prerelease again once the API
+    answers.
+
+    Args:
+        track: A :class:`ReleaseTrack`. Read from settings when omitted.
+
     Raises:
         AppUpdateError: Network, HTTP, or payload failure.
     """
-    url = latest_release_url()
-    if url == LATEST_RELEASE_URL and _api_retry_pending():
+    if track is None:
+        track = release_track()
+    url = latest_release_url(track)
+    github_api = url in (LATEST_RELEASE_URL, RELEASE_LIST_URL)
+    if github_api and _api_retry_pending():
         return _fetch_latest_release_from_web()
     try:
         with _open(
@@ -638,7 +756,7 @@ def fetch_latest_release() -> ReleaseInfo:
         ) as response:
             raw = response.read()
     except Exception as exc:
-        if url == LATEST_RELEASE_URL and _is_rate_limited(exc):
+        if github_api and _is_rate_limited(exc):
             _remember_api_rate_limit(exc)
             logger.info("GitHub API rate-limited; checking the public release instead")
             return _fetch_latest_release_from_web()
@@ -649,15 +767,21 @@ def fetch_latest_release() -> ReleaseInfo:
         raise AppUpdateError(
             "The update server returned a response that could not be read."
         ) from exc
+    if url == RELEASE_LIST_URL:
+        return select_newest_release(payload)
     if not isinstance(payload, dict):
         raise AppUpdateError("The update server returned a response that could not be read.")
-    return parse_release_payload(payload)
+    # The loopback soak feed serves one release; on the beta track its
+    # prerelease assets are installable, as they would be from GitHub.
+    return parse_release_payload(
+        payload, allow_prerelease=track == ReleaseTrack.BETA
+    )
 
 
 def _api_retry_pending() -> bool:
     try:
         settings = settings_manager.load_all_settings()
-        retry_at = parse_last_check_at(settings.get(SettingsKey.UPDATE_API_RETRY_AT))
+        retry_at = parse_last_check_at(SettingsKey.UPDATE_API_RETRY_AT.read(settings))
         return retry_at is not None and retry_at > datetime.now(timezone.utc)
     except Exception as exc:
         logger.debug("Could not load GitHub API cooldown: %s", exc)
@@ -792,7 +916,12 @@ def _release_asset_from_checksum(tag: str, name: str, digest: str) -> dict | Non
 
 
 def check_for_update(*, persist: bool = True) -> UpdateCheckResult:
-    """Compare the running version to GitHub's latest stable release.
+    """Compare the running version to the newest release on this copy's track.
+
+    Leaving the beta track never downgrades: a copy running a prerelease
+    newer than the latest stable release reports
+    :attr:`UpdateStatus.DEVELOPMENT` until a stable release with a higher
+    (or, once the beta is promoted, equal) version is published.
 
     Args:
         persist: Store the last successful or failed check for auto-check
@@ -806,8 +935,9 @@ def check_for_update(*, persist: bool = True) -> UpdateCheckResult:
         AppUpdateError: The GitHub request failed.
     """
     channel = detect_channel()
+    track = release_track()
     try:
-        release = fetch_latest_release()
+        release = fetch_latest_release(track)
     except AppUpdateError:
         if persist:
             _save_check_timestamp(SettingsKey.UPDATE_LAST_FAILED_CHECK_AT)
@@ -825,6 +955,7 @@ def check_for_update(*, persist: bool = True) -> UpdateCheckResult:
         apply_mode=apply_mode,
         git_hint=source_update_hint(channel),
         git_summary=local_git_summary() if channel == InstallChannel.GIT else None,
+        release_track=track,
     )
 
 

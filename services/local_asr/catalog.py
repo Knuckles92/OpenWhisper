@@ -109,14 +109,16 @@ def artifacts(key: str) -> dict:
 
 
 def selected_model(backend: str, settings: dict) -> str:
-    chosen = settings.get("local_asr_models")
-    key = chosen.get(backend) if isinstance(chosen, dict) else None
+    from services.settings import SettingsKey
+
+    key = SettingsKey.LOCAL_ASR_MODELS.read(settings).get(backend)
     return key if key in MODELS and MODELS[key].backend == backend else DEFAULT_MODELS[backend]
 
 
 def selected_device(backend: str, settings: dict) -> str:
-    devices = settings.get("local_asr_devices", {})
-    device = devices.get(backend) if isinstance(devices, dict) else None
+    from services.settings import SettingsKey
+
+    device = SettingsKey.LOCAL_ASR_DEVICES.read(settings).get(backend)
     if backend == "parakeet_mlx":
         return device if device in ("auto", "cpu") else "auto"
     if backend == "moonshine":

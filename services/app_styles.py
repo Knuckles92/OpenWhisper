@@ -91,9 +91,7 @@ _SURFACE_PROMPTS: Final[dict[str, str]] = {
 
 def resolve_tones(settings: Mapping) -> dict[str, str]:
     """``{category: tone}`` for every category; invalid or missing ones are Formal."""
-    stored = settings.get(SettingsKey.APP_STYLE_TONES)
-    if not isinstance(stored, Mapping):
-        stored = {}
+    stored = SettingsKey.APP_STYLE_TONES.read(settings) or {}
     return {
         category: stored[category] if stored.get(category) in Tone.ALL else Tone.FORMAL
         for category in AppCategory.ALL
@@ -102,7 +100,7 @@ def resolve_tones(settings: Mapping) -> dict[str, str]:
 
 def resolve_overrides(settings: Mapping) -> tuple[tuple[str, str], ...]:
     """The user's valid ``(match, category)`` choices, first one per app wins."""
-    return catalog.parse_overrides(settings.get(SettingsKey.APP_STYLE_OVERRIDES))
+    return catalog.parse_overrides(SettingsKey.APP_STYLE_OVERRIDES.read(settings))
 
 
 def category_for(snapshot: Optional[FocusSnapshot], settings: Mapping) -> str:

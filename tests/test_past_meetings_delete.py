@@ -60,8 +60,8 @@ class TestPastMeetingsDelete:
 
         with (
             patch(
-                "ui_qt.widgets.past_meetings_panel.settings_manager.get",
-                return_value=True,
+                "ui_qt.widgets.past_meetings_panel.settings_manager.load_all_settings",
+                return_value={SettingsKey.CONFIRM_MEETING_DELETE: True},
             ),
             patch.object(
                 MeetingDeleteDialog,
@@ -83,8 +83,8 @@ class TestPastMeetingsDelete:
 
         with (
             patch(
-                "ui_qt.widgets.past_meetings_panel.settings_manager.get",
-                return_value=True,
+                "ui_qt.widgets.past_meetings_panel.settings_manager.load_all_settings",
+                return_value={SettingsKey.CONFIRM_MEETING_DELETE: True},
             ),
             patch.object(
                 MeetingDeleteDialog,
@@ -106,8 +106,8 @@ class TestPastMeetingsDelete:
 
         with (
             patch(
-                "ui_qt.widgets.past_meetings_panel.settings_manager.get",
-                return_value=True,
+                "ui_qt.widgets.past_meetings_panel.settings_manager.load_all_settings",
+                return_value={SettingsKey.CONFIRM_MEETING_DELETE: True},
             ),
             patch.object(
                 MeetingDeleteDialog,
@@ -122,8 +122,8 @@ class TestPastMeetingsDelete:
     def test_dont_ask_again_preference_is_saved(self):
         with (
             patch(
-                "ui_qt.widgets.past_meetings_panel.settings_manager.get",
-                return_value=True,
+                "ui_qt.widgets.past_meetings_panel.settings_manager.load_all_settings",
+                return_value={SettingsKey.CONFIRM_MEETING_DELETE: True},
             ),
             patch.object(
                 MeetingDeleteDialog,
@@ -151,8 +151,8 @@ class TestPastMeetingsDelete:
 
         with (
             patch(
-                "ui_qt.widgets.past_meetings_panel.settings_manager.get",
-                return_value=False,
+                "ui_qt.widgets.past_meetings_panel.settings_manager.load_all_settings",
+                return_value={SettingsKey.CONFIRM_MEETING_DELETE: False},
             ),
             patch.object(MeetingDeleteDialog, "exec") as show_confirmation,
         ):

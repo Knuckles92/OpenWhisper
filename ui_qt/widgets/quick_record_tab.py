@@ -19,7 +19,6 @@ from services.cleanup_profiles import load_cleanup_profiles
 from services.hotkey_manager import format_hotkey_display
 from services.settings import (
     SettingsKey,
-    setting_value,
     settings_manager,
 )
 
@@ -196,7 +195,7 @@ class QuickRecordTab(TranscriptionTabBase):
 
     def refresh_cleanup_profiles(self) -> None:
         settings = settings_manager.load_all_settings()
-        selected = setting_value(SettingsKey.QUICK_RECORD_PROFILE, settings)
+        selected = SettingsKey.QUICK_RECORD_PROFILE.read(settings)
         recording = getattr(self, "is_recording", False)
         active_profile = getattr(self, "_active_cleanup_profile", None)
         if recording:
@@ -244,10 +243,8 @@ class QuickRecordTab(TranscriptionTabBase):
 
     def _refresh_command_hint(self) -> None:
         settings = settings_manager.load_all_settings()
-        hotkeys = settings.get(SettingsKey.HOTKEYS)
-        command_key = format_hotkey_display(
-            hotkeys.get("command_mode", "") if isinstance(hotkeys, dict) else ""
-        )
+        hotkeys = SettingsKey.HOTKEYS.read(settings) or {}
+        command_key = format_hotkey_display(hotkeys.get("command_mode", ""))
         # Until an agent's lookup lands, assume the provider still works.
         ready = text_rewrite.provider_readiness(settings) is not False
         self.command_hint.setText(

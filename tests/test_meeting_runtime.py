@@ -1210,10 +1210,10 @@ def test_remembered_cloud_on_prompts_when_consent_missing(runtime, monkeypatch):
     consents = []
     rt.meeting_consent_requested.connect(lambda: consents.append(True))
 
-    def fake_get(key, default=False):
-        return key == SettingsKey.MEETING_CLOUD_LAST_ENABLED
-
-    monkeypatch.setattr(_RUNTIME_GLOBALS["settings_manager"], "get", fake_get)
+    monkeypatch.setattr(
+        _RUNTIME_GLOBALS["settings_manager"], "load_all_settings",
+        lambda: {SettingsKey.MEETING_CLOUD_LAST_ENABLED: True},
+    )
     monkeypatch.setattr(rt, "_cloud_consent_given", lambda: False)
 
     rt.start_meeting()

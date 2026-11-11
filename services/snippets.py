@@ -14,7 +14,7 @@ import difflib
 import re
 from dataclasses import asdict, dataclass
 from html import escape
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 from uuid import uuid4
 
 from config import config
@@ -77,9 +77,7 @@ def normalize(text: str) -> str:
 
 def load_snippets(settings: Mapping) -> list[Snippet]:
     """The valid saved snippets, in their saved order."""
-    raw = (settings or {}).get(SettingsKey.DICTATION_SNIPPETS)
-    if not isinstance(raw, list):
-        return []
+    raw = SettingsKey.DICTATION_SNIPPETS.read(settings or {})
     snippets: list[Snippet] = []
     ids: set[str] = set()
     triggers: set[str] = set()
@@ -88,7 +86,8 @@ def load_snippets(settings: Mapping) -> list[Snippet]:
             break
         if not isinstance(item, dict):
             continue
-        snippet_id, trigger, text = (item.get(key) for key in ("id", "trigger", "text"))
+        fields: list[Any] = [item.get(key) for key in ("id", "trigger", "text")]
+        snippet_id, trigger, text = fields
         if not all(isinstance(value, str) for value in (snippet_id, trigger, text)):
             continue
         snippet_id, trigger = snippet_id.strip(), trigger.strip()

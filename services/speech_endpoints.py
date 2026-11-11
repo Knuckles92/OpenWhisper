@@ -184,8 +184,8 @@ def _settings(settings: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
 
 
 def _overrides(settings: Mapping[str, Any], endpoint_id: str) -> Dict[str, Any]:
-    servers = settings.get(SettingsKey.API_TRANSCRIPTION_SERVERS)
-    entry = servers.get(endpoint_id) if isinstance(servers, dict) else None
+    servers = SettingsKey.API_TRANSCRIPTION_SERVERS.read(settings) or {}
+    entry = servers.get(endpoint_id)
     return entry if isinstance(entry, dict) else {}
 
 
@@ -221,9 +221,8 @@ def selected_endpoint(settings: Optional[Mapping[str, Any]] = None) -> SpeechEnd
     A Custom slot without an address can't be used, so it reads as OpenAI.
     """
     settings = _settings(settings)
-    endpoint_id = settings.get(SettingsKey.API_TRANSCRIPTION_ENDPOINT)
     endpoint = configured_endpoint(
-        endpoint_id if isinstance(endpoint_id, str) else OPENAI_ENDPOINT_ID, settings,
+        SettingsKey.API_TRANSCRIPTION_ENDPOINT.read(settings), settings,
     )
     return endpoint if endpoint.is_configured else _BY_ID[OPENAI_ENDPOINT_ID]
 
@@ -301,8 +300,7 @@ def _update_server(endpoint_id: str, values: Dict[str, str]) -> None:
         raise ValueError(f"{endpoint_id} has no server settings.")
 
     def apply(settings: Dict[str, Any]) -> None:
-        servers = settings.get(SettingsKey.API_TRANSCRIPTION_SERVERS)
-        servers = dict(servers) if isinstance(servers, dict) else {}
+        servers = dict(SettingsKey.API_TRANSCRIPTION_SERVERS.read(settings) or {})
         entry = servers.get(endpoint_id)
         servers[endpoint_id] = {**(entry if isinstance(entry, dict) else {}), **values}
         settings[SettingsKey.API_TRANSCRIPTION_SERVERS] = servers

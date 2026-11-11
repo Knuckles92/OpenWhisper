@@ -50,7 +50,6 @@ from services.settings import (
     SettingsKey,
     WalkthroughCopyFormat,
     resolve_walkthrough_copy_format,
-    setting_value,
     settings_manager,
 )
 from services.walkthrough.document import clock
@@ -297,7 +296,7 @@ class WalkthroughReadyCard(QWidget):
             note = "write-up failed, copied as spoken" if result.write_up_error else "paste it into your agent"
             settings = settings_manager.load_all_settings()
             if resolve_walkthrough_copy_format(settings) == WalkthroughCopyFormat.AGENT_TASK:
-                if setting_value(SettingsKey.AUTO_PASTE, settings):
+                if SettingsKey.AUTO_PASTE.read(settings):
                     note = "preparing to paste PDF, then instructions"
                     if result.write_up_error:
                         note = "write-up failed; preparing to paste as-spoken PDF, then instructions"

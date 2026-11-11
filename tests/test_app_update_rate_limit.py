@@ -258,7 +258,7 @@ def test_failed_checks_throttle_auto_retry_without_claiming_success(
     monkeypatch.setattr(
         app_update,
         "fetch_latest_release",
-        lambda: (_ for _ in ()).throw(app_update.AppUpdateError("offline")),
+        lambda _track=None: (_ for _ in ()).throw(app_update.AppUpdateError("offline")),
     )
     with pytest.raises(app_update.AppUpdateError):
         app_update.check_for_update()

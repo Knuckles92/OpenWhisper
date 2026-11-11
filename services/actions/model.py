@@ -248,7 +248,8 @@ def _spoken(value: Any) -> tuple[str, ...]:
 def _parse(item: Any) -> Optional[Action]:
     if not isinstance(item, dict):
         return None
-    action_id, name, kind = (item.get(k) for k in ("id", "name", "kind"))
+    fields: list[Any] = [item.get(k) for k in ("id", "name", "kind")]
+    action_id, name, kind = fields
     if not all(isinstance(v, str) and v.strip() for v in (action_id, name, kind)):
         return None
     kind = kind.strip()
@@ -258,6 +259,7 @@ def _parse(item: Any) -> Optional[Action]:
     if not isinstance(shaping, str) or not shaping.strip():
         shaping = SHAPING_CLEANUP
     description = item.get("description")
+    enabled = item.get("enabled")
     return Action(
         id=action_id.strip(),
         name=name.strip(),
@@ -267,15 +269,13 @@ def _parse(item: Any) -> Optional[Action]:
         shaping=shaping.strip(),
         spoken_names=_spoken(item.get("spoken_names")),
         description=description.strip()[:DESCRIPTION_MAX_CHARS] if isinstance(description, str) else "",
-        enabled=item.get("enabled") if isinstance(item.get("enabled"), bool) else True,
+        enabled=enabled if isinstance(enabled, bool) else True,
     )
 
 
 def load_actions(settings: Mapping) -> list[Action]:
     """Saved actions; malformed rows, repeated ids and extras past the limit are skipped."""
-    raw = (settings or {}).get(SettingsKey.ACTIONS)
-    if not isinstance(raw, list):
-        return []
+    raw = SettingsKey.ACTIONS.read(settings or {})
     actions, seen = [], set()
     for item in raw:
         action = _parse(item)

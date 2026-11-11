@@ -104,9 +104,9 @@ def _engine_support(settings: dict, backend=None) -> tuple[str, str, str]:
     """
     from services.local_asr.catalog import BACKENDS
     from services.recognition_context import engine_support
-    from services.settings import SettingsKey, setting_value
+    from services.settings import SettingsKey
 
-    engine = setting_value(SettingsKey.SELECTED_MODEL, settings)
+    engine = SettingsKey.SELECTED_MODEL.read(settings)
     support = engine_support(engine)
     name = _ENGINE_NAMES.get(engine) or BACKENDS.get(engine, "")
     destination = ""

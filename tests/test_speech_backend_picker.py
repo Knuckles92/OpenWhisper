@@ -1,5 +1,7 @@
 """GUI recommendation labels preserve engine identities and user choices."""
 import pytest
+
+from tests.helpers import patch_setting_defaults
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QComboBox
 
@@ -44,19 +46,14 @@ def test_annotated_selection_emits_canonical_name_and_syncs_silently(monkeypatch
 
 
 def test_fresh_mac_settings_select_mlx_for_dictation_and_meetings(monkeypatch, tmp_path):
-    from services import settings as settings_module
     from tests.test_settings_models import _Host, _isolated_settings
-    from ui_qt.dialogs import settings_models as models_module
 
     monkeypatch.setattr(picker, "parakeet_mlx_supported", lambda: True)
     monkeypatch.setattr(config, "DEFAULT_BACKEND", "parakeet_mlx")
-    defaults = {
-        **settings_module.SETTING_DEFAULTS,
+    patch_setting_defaults(monkeypatch, {
         SettingsKey.SELECTED_MODEL: "parakeet_mlx",
         SettingsKey.MEETING_ASR_MODEL: "parakeet-v3-mlx",
-    }
-    monkeypatch.setattr(settings_module, "SETTING_DEFAULTS", defaults)
-    monkeypatch.setattr(models_module, "SETTING_DEFAULTS", defaults)
+    })
     manager = SettingsManager(str(tmp_path / "settings.json"))
     with _isolated_settings(manager):
         host = _Host(lambda: None)

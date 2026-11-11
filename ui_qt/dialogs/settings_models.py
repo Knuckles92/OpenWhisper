@@ -50,12 +50,10 @@ from services.installed_agents import AGENT_SPECS
 from services.whisper_sources import custom_models
 from ui_qt.dialogs.custom_whisper_dialog import add_custom_models
 from services.settings import (
-    SETTING_DEFAULTS,
     MeetingAgentCore,
     MeetingLanguage,
     MeetingSpeakerIdBackend,
     SettingsKey,
-    TranscriptCleanupModelSort,
     TranscriptCleanupProvider,
     default_transcript_cleanup_model,
     resolve_meeting_agent_core,
@@ -75,7 +73,6 @@ from services.settings import (
     resolve_transcript_cleanup_model,
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
-    setting_value,
     settings_manager,
 )
 from services.text_llm import (
@@ -338,7 +335,7 @@ class ModelAssignments(QObject):
     def _engine_value(self):
         if VOICE_MODEL in self._built:
             return self.engine_combo.currentData() or "local_whisper"
-        return setting_value(SettingsKey.SELECTED_MODEL, self._settings_snapshot())
+        return SettingsKey.SELECTED_MODEL.read(self._settings_snapshot())
 
     def _meeting_speech(self):
         """The meeting's engine as the page shows it once built, else as saved."""
@@ -1057,8 +1054,7 @@ class ModelAssignments(QObject):
         """Save one agent's model, keeping every other agent's entry."""
         try:
             def merge(settings: dict) -> None:
-                stored = settings.get(SettingsKey.MEETING_AGENT_MODELS)
-                merged = dict(stored) if isinstance(stored, dict) else {}
+                merged = dict(SettingsKey.MEETING_AGENT_MODELS.read(settings))
                 merged[agent_id] = model
                 settings[SettingsKey.MEETING_AGENT_MODELS] = merged
 
@@ -1548,8 +1544,7 @@ class ModelAssignments(QObject):
             return
         if choice not in TranscriptCleanupProvider.INSTALLED:
             return
-        memory = self._settings_snapshot().get(SettingsKey.CLEANUP_MODEL_MEMORY, {})
-        model = memory.get(choice, "") if isinstance(memory, dict) else ""
+        model = SettingsKey.CLEANUP_MODEL_MEMORY.read(self._settings_snapshot()).get(choice, "")
         self._save_cleanup_agent(choice, model if isinstance(model, str) else "")
 
     def _on_cleanup_agent_model_chosen(self, agent_id: str, model: str) -> None:
@@ -1559,13 +1554,11 @@ class ModelAssignments(QObject):
     def _save_cleanup_agent(self, agent_id: str, model: str) -> None:
         try:
             def merge(settings: dict) -> None:
-                stored = settings.get(SettingsKey.CLEANUP_MODEL_MEMORY)
-                memory = dict(stored) if isinstance(stored, dict) else {}
-                previous_provider = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER)
-                previous_model = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_MODEL)
-                if (previous_provider not in TranscriptCleanupProvider.INSTALLED
-                        and isinstance(previous_provider, str)
-                        and isinstance(previous_model, str)):
+                memory = dict(SettingsKey.CLEANUP_MODEL_MEMORY.read(settings))
+                previous_provider = SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER.stored(settings)
+                previous_model = SettingsKey.TRANSCRIPT_CLEANUP_MODEL.stored(settings)
+                if (previous_provider is not None and previous_model is not None
+                        and previous_provider not in TranscriptCleanupProvider.INSTALLED):
                     settings[SettingsKey.CLEANUP_ENDPOINT_PROVIDER] = previous_provider
                     memory[previous_provider] = previous_model
                 memory[agent_id] = model
@@ -1580,7 +1573,7 @@ class ModelAssignments(QObject):
         self._active_text_provider = agent_id
         self._active_text_model = model
         self.cleanup_agent_picker.set_saved_models(
-            self._settings_snapshot().get(SettingsKey.CLEANUP_MODEL_MEMORY, {})
+            SettingsKey.CLEANUP_MODEL_MEMORY.read(self._settings_snapshot())
         )
         self.cleanup_agent_picker.set_choice(agent_id)
         self._show_cleanup_runner()
@@ -1599,7 +1592,8 @@ class ModelAssignments(QObject):
         ):
             return
         try:
-            memory = {**self._settings_snapshot().get(SettingsKey.CLEANUP_MODEL_MEMORY, {}), provider: model}
+            memory = {**SettingsKey.CLEANUP_MODEL_MEMORY.read(self._settings_snapshot()),
+                      provider: model}
             settings_manager.update_settings({
                 SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: provider,
                 SettingsKey.TRANSCRIPT_CLEANUP_MODEL: model,
@@ -1631,7 +1625,8 @@ class ModelAssignments(QObject):
         ):
             return
         try:
-            memory = {**self._settings_snapshot().get(SettingsKey.MEETING_MODEL_MEMORY, {}), provider: model}
+            memory = {**SettingsKey.MEETING_MODEL_MEMORY.read(self._settings_snapshot()),
+                      provider: model}
             settings_manager.update_settings({
                 SettingsKey.MEETING_LLM_PROVIDER: provider,
                 SettingsKey.MEETING_LLM_MODEL: model,
@@ -1670,12 +1665,8 @@ class ModelAssignments(QObject):
             model = ""
         model = model.strip()
 
-        sort = settings_manager.get(
-            SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT,
-            SETTING_DEFAULTS[SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT],
-        )
-        if sort not in TranscriptCleanupModelSort.ALL:
-            sort = config.TRANSCRIPT_CLEANUP_MODEL_SORT
+        sort = SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT.read(
+            settings_manager.load_all_settings())
 
         self._active_text_provider = provider
         self._active_text_model = model
@@ -1684,13 +1675,12 @@ class ModelAssignments(QObject):
         self.text_model_picker.set_sort(sort)
         self._refresh_picker_profiles()
         installed = provider in TranscriptCleanupProvider.INSTALLED
-        endpoint = settings.get(SettingsKey.CLEANUP_ENDPOINT_PROVIDER, config.TRANSCRIPT_CLEANUP_PROVIDER)
+        endpoint = SettingsKey.CLEANUP_ENDPOINT_PROVIDER.read(settings)
         if get_profile(endpoint, settings) is None:
             endpoint = config.TRANSCRIPT_CLEANUP_PROVIDER
         self.text_model_picker.set_provider(endpoint if installed else provider, "" if installed else model)
         self.text_model_picker.set_active_selection(provider, model)
-        memory = settings.get(SettingsKey.CLEANUP_MODEL_MEMORY)
-        memory = dict(memory) if isinstance(memory, dict) else {}
+        memory = dict(SettingsKey.CLEANUP_MODEL_MEMORY.read(settings))
         if installed:
             # The saved model is what runs, whatever the memory last held.
             memory[provider] = model
@@ -1752,8 +1742,8 @@ class ModelAssignments(QObject):
             self._update_ondemand_whisper_enabled()
             self.api_server.refresh()
         if self._page_is_loading(RUNTIME):
-            device = setting_value(SettingsKey.WHISPER_DEVICE, settings)
-            compute = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings)
+            device = SettingsKey.WHISPER_DEVICE.read(settings)
+            compute = SettingsKey.WHISPER_COMPUTE_TYPE.read(settings)
             if self.device_combo.findData(str(device)) < 0:
                 device = "auto"
             blocker = self.device_combo.blockSignals(True)
@@ -1908,9 +1898,9 @@ class ModelAssignments(QObject):
             )
             return
         settings = self._settings_snapshot()
-        device = str(setting_value(SettingsKey.WHISPER_DEVICE, settings))
+        device = SettingsKey.WHISPER_DEVICE.read(settings)
         device = DEVICE_LABELS.get(device, device)
-        compute = str(setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings))
+        compute = SettingsKey.WHISPER_COMPUTE_TYPE.read(settings)
         self.meeting_runtime_label.setText(
             f"Device and quantization come from Models & storage → Runtime "
             f"({device} · {compute}) and are shared with dictation's Local "
@@ -2081,9 +2071,7 @@ class ModelAssignments(QObject):
     ) -> None:
         self._cached = dict(cached)
         settings = self._settings_snapshot()
-        active_model = settings_manager.get(
-            SettingsKey.WHISPER_MODEL, SETTING_DEFAULTS[SettingsKey.WHISPER_MODEL]
-        )
+        active_model = SettingsKey.WHISPER_MODEL.read(settings_manager.load_all_settings())
         custom = custom_models(settings)
         if active_model not in [*config.WHISPER_MODEL_CHOICES, *custom]:
             active_model = config.DEFAULT_WHISPER_MODEL
@@ -2121,7 +2109,7 @@ class ModelAssignments(QObject):
             if VOICE_MODEL in self._built:
                 model = self.ondemand_whisper_picker.current_model()
             else:
-                model = setting_value(SettingsKey.WHISPER_MODEL, self._settings_snapshot())
+                model = SettingsKey.WHISPER_MODEL.read(self._settings_snapshot())
             return f"Local Whisper · {model}"
         if engine_value == "api":
             from services import speech_endpoints
@@ -2154,7 +2142,7 @@ class ModelAssignments(QObject):
                 return "Pair with a host in Remote engine"
             return f"Sent to {pairing.host_name} on your network"
         if engine_value == "local_whisper":
-            device = setting_value(SettingsKey.WHISPER_DEVICE, self._settings_snapshot())
+            device = SettingsKey.WHISPER_DEVICE.read(self._settings_snapshot())
             return f"On this computer · {device}"
         from services.local_asr.catalog import selected_device
         return f"On this computer · {selected_device(engine_value, self._settings_snapshot())}"
@@ -2292,9 +2280,9 @@ class ModelAssignments(QObject):
             device = self.device_combo.currentText()
             compute = self.compute_combo.currentText()
         else:
-            device = setting_value(SettingsKey.WHISPER_DEVICE, settings)
+            device = SettingsKey.WHISPER_DEVICE.read(settings)
             device = DEVICE_LABELS.get(device, device)
-            compute = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings)
+            compute = SettingsKey.WHISPER_COMPUTE_TYPE.read(settings)
         return f"{device} · {compute}"
 
     def _refresh_rail_values(self) -> None:

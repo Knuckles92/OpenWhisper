@@ -59,12 +59,12 @@ def initialize(manager=None) -> None:
 
 def should_invite(manager=None) -> bool:
     manager = settings_manager if manager is None else manager
-    return manager.get(SettingsKey.GUIDED_SETUP_STATE) == PENDING
+    return SettingsKey.GUIDED_SETUP_STATE.read(manager.load_all_settings()) == PENDING
 
 
 def is_completed(manager=None) -> bool:
     manager = settings_manager if manager is None else manager
-    return manager.get(SettingsKey.GUIDED_SETUP_STATE) == COMPLETED
+    return SettingsKey.GUIDED_SETUP_STATE.read(manager.load_all_settings()) == COMPLETED
 
 
 def save_state(state: str, manager=None) -> None:
@@ -77,11 +77,9 @@ def save_state(state: str, manager=None) -> None:
 def speech_model_name(settings: dict) -> str | None:
     """The local model dictation runs, or None for an API server or a remote host."""
     from services.local_asr.catalog import BACKENDS, selected_model
-    from services.settings import setting_value
-
-    engine = setting_value(SettingsKey.SELECTED_MODEL, settings)
+    engine = SettingsKey.SELECTED_MODEL.read(settings)
     if engine == "local_whisper":
-        model = setting_value(SettingsKey.WHISPER_MODEL, settings)
+        model = SettingsKey.WHISPER_MODEL.read(settings)
         if model == "auto":
             # "auto" names no repository; ask for the model it resolves to.
             from transcriber.local_backend import LocalWhisperBackend

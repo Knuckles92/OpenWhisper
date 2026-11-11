@@ -422,7 +422,9 @@ class CaptureService(ContextCaptureService):
 
     def _excluded(self, identity: AppIdentity) -> bool:
         try:
-            values = self._settings().get("app_context_excluded_apps")
+            from services.settings import SettingsKey
+
+            values = SettingsKey.APP_CONTEXT_EXCLUDED_APPS.read(self._settings())
         except Exception:
             logger.debug("Excluded apps unavailable", exc_info=True)
             return True
