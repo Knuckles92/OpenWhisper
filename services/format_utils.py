@@ -17,7 +17,7 @@ def format_timestamp(iso_timestamp: str) -> str:
         if dt.tzinfo is not None:
             dt = dt.astimezone()
         return dt.strftime("%b %d, %Y %I:%M %p")
-    except Exception:
+    except (TypeError, ValueError, OSError, OverflowError):
         return iso_timestamp
 
 

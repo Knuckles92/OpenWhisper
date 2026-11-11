@@ -26,6 +26,12 @@ def test_format_timestamp_keeps_naive_legacy_wall_time():
     assert format_timestamp(naive.isoformat()) == "Aug 20, 2026 04:46 PM"
 
 
+def test_format_timestamp_returns_unreadable_values_unchanged():
+    assert format_timestamp("") == ""
+    assert format_timestamp("not a date") == "not a date"
+    assert format_timestamp(None) is None
+
+
 def test_history_create_stores_aware_utc_and_empty_preview():
     entry = TranscriptionHistory.create(
         text="   ",

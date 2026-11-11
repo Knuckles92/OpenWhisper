@@ -213,6 +213,7 @@ class BackupCoordinator(QObject):
         try:
             reason = self._acquire()
         except Exception as exc:
+            logger.warning("Could not reserve the data for a %s operation", operation, exc_info=True)
             reason = str(exc)
         if reason:
             if not automatic:
@@ -245,12 +246,14 @@ class BackupCoordinator(QObject):
             try:
                 result, error = future.result()
             except Exception as exc:
+                logger.warning("Backup operation %s failed", operation, exc_info=True)
                 result, error = None, str(exc) or "Backup operation failed."
             self._worker_finished.emit(operation, result, error, automatic)
 
         try:
             self._executor.submit(work).add_done_callback(finished)
         except Exception as exc:
+            logger.warning("Could not start the %s operation", operation, exc_info=True)
             self._finish(operation, None, str(exc), automatic)
         return True
 
@@ -279,7 +282,7 @@ class BackupCoordinator(QObject):
                 self._prune_automatic_backups()
         except Exception as exc:
             error = "Backup saved, but its history or retention could not be updated: " + str(exc)
-            logger.warning(error)
+            logger.warning("%s", error, exc_info=True)
             return error
         return ""
 

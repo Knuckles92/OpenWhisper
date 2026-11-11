@@ -248,12 +248,18 @@ def _activate_downloadable_components() -> None:
         from services.components import prune_orphans
         prune_orphans()
     except Exception:
-        pass
+        # Logging is not configured yet; the last-resort handler prints this
+        # to stderr so a broken component tree is not silently ignored.
+        logging.getLogger(__name__).warning(
+            "Could not settle interrupted component installs", exc_info=True
+        )
     try:
         from services.component_runtime import activate_components
         activate_components()
     except Exception:
-        pass
+        logging.getLogger(__name__).warning(
+            "Could not activate downloadable components", exc_info=True
+        )
 
 
 def _early_update_gate() -> None:

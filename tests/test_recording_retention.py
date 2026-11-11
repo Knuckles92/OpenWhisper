@@ -342,6 +342,25 @@ class TestRecordingRotation:
 
         assert manager.get_recordings_usage() == (2, 100)
 
+    def test_recordings_with_unparsable_names_fall_back_to_file_time(self):
+        manager = HistoryManager(
+            recordings_folder=self.recordings_dir,
+            max_recordings=None,
+        )
+        self._touch_recording("20260101_120000")
+        self._touch_recording("20260101_120000-2")
+        self._touch_recording("not-a-stamp")
+
+        recordings = {rec.filename: rec for rec in manager.get_recordings()}
+
+        assert set(recordings) == {
+            "recording_20260101_120000.wav",
+            "recording_20260101_120000-2.wav",
+            "recording_not-a-stamp.wav",
+        }
+        assert recordings["recording_20260101_120000.wav"].timestamp == "2026-01-01T12:00:00"
+        assert recordings["recording_not-a-stamp.wav"].timestamp
+
     @patch("services.history_manager.db")
     @patch("services.history_manager.datetime")
     def test_same_second_recordings_never_overwrite_each_other(

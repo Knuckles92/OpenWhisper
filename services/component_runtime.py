@@ -160,7 +160,7 @@ def activate_component(component_id: str) -> Tuple[bool, str]:
         )
         return True, ""
     except Exception as exc:
-        logger.warning(f"Failed to activate component '{component_id}': {exc}")
+        logger.warning(f"Failed to activate component '{component_id}': {exc}", exc_info=True)
         return False, str(exc)
 
 
@@ -180,7 +180,7 @@ def activate_components() -> ActivationReport:
     try:
         from services.components import available_component_ids, is_installed
     except Exception:
-        logger.debug("Component system unavailable", exc_info=True)
+        logger.warning("Component system unavailable", exc_info=True)
         return ActivationReport()
 
     for component_id in available_component_ids():
