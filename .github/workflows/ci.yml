@@ -9,8 +9,7 @@ on:
         type: string
   pull_request:
   push:
-    # TEMPORARY: dev branch trigger to iterate on the Windows full suite. Remove before merge.
-    branches: [main, dev/vibrant-galileo-vmt4a0-windows-ci]
+    branches: [main]
 
 permissions:
   contents: read
