@@ -10,6 +10,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Added
 
 - **Beta updates** — turn on **Get beta updates** in **Settings → App → General → Updates** to be offered test releases a few days before everyone else. You get whichever of the newest beta and the newest regular release has the higher version, verified exactly like any release. Turning it off never downgrades: you keep the beta until a regular release with the same or a higher version is out. While GitHub's API is rate-limited, beta copies are offered regular releases only. Everyone who leaves it off sees exactly what they saw before. See [Beta releases](docs/beta-releases.md).
+- **Claude Code or Codex for AI cleanup, when you have one** — the first time AI cleanup is on and you have not picked what runs it, OpenWhisper looks for Claude Code and Codex on this computer. If one is installed and signed in, it asks once whether cleanup should run through it, with the account you already use there and no API key. Say yes and it becomes the cleanup model; say no and cleanup stays on OpenRouter, and you are not asked again. Nothing switches without your answer, and a model you already chose is never touched. Change it any time in **Settings → AI cleanup**.
 
 ### Changed
 
