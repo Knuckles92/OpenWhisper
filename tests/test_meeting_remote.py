@@ -256,14 +256,14 @@ def test_engine_persists_actual_remote_route_before_capture(paired, engine, repo
     monkeypatch.setattr(meeting, "_start_diarizer", lambda: None)
     monkeypatch.setattr(meeting, "_maybe_start_intelligence", lambda: None)
 
-    def capture():
+    def capture(meeting_id, spool_dir):
         row = repo.get_meeting(meeting.meeting_id)
         assert row["asr_model"] == engine.model
         assert saved_remote_route(row) == dict(paired, family=engine.family, model=engine.model, language="de")
         assert meeting.store.snapshot()["speech"]["connected"] is True
         return "Ready"
 
-    monkeypatch.setattr(meeting, "_start_capture", capture)
+    monkeypatch.setattr(meeting._capture, "start", capture)
     try:
         meeting.start()
     finally:
@@ -276,7 +276,7 @@ def test_unavailable_remote_aborts_before_recording(paired, engine, repo, tmp_pa
     meeting = MeetingEngine(MeetingEngineOptions(asr_remote=paired, spool_root=str(tmp_path),
                                                 speaker_id_backend="off"), repository=repo)
     capture = Mock()
-    monkeypatch.setattr(meeting, "_start_capture", capture)
+    monkeypatch.setattr(meeting._capture, "start", capture)
     monkeypatch.setattr(meeting, "_start_fast_features", lambda: None)
     monkeypatch.setattr(meeting, "_start_heartbeat", lambda: None)
     monkeypatch.setattr(meeting, "_start_diarizer", lambda: None)
