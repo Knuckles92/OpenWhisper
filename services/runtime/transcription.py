@@ -1916,8 +1916,9 @@ class TranscriptionRuntime:
         """
         try:
             outcome = run(text, job)
-        except Exception:
-            logger.warning("Text filters failed; keeping the text", exc_info=True)
+        except Exception as exc:
+            # Type only: a filter's error may quote the dictated text.
+            logger.warning("Text filters failed (%s); keeping the text", type(exc).__name__)
             return job, text
         filtered = outcome.text if isinstance(outcome.text, str) else text
         emptied = bool((text or "").strip()) and not filtered.strip()
@@ -1944,8 +1945,10 @@ class TranscriptionRuntime:
 
         try:
             decision = routing.decide(text, job, settings, cancel=self._cancel_requested)
-        except Exception:
-            logger.warning("Spoken routing failed; pasting the dictation", exc_info=True)
+        except Exception as exc:
+            # Type only: the judge's error may quote the dictated text.
+            logger.warning("Spoken routing failed (%s); pasting the dictation",
+                           type(exc).__name__)
             decision = None
         if decision is not None and decision.failure:
             with self._job_lock:
@@ -2012,7 +2015,7 @@ class TranscriptionRuntime:
             self._raise_if_canceled()
             logger.warning(
                 "An action's transform couldn't run (%s); sending the cleaned words",
-                type(exc).__name__, exc_info=True,
+                type(exc).__name__,
             )
             self._shaping_notice = f"{transform.name} couldn't run — sent your cleaned words"
             return fixed, raw_text, info

@@ -137,7 +137,7 @@ def handler_available(scheme: str) -> Optional[bool]:
         else:
             found = _linux_handler(scheme)
     except Exception as exc:  # a lookup must never break an action
-        logger.warning("Handler lookup failed (%s)", type(exc).__name__, exc_info=True)
+        logger.warning("Handler lookup failed (%s)", type(exc).__name__)
         found = None
     with _handler_lock:
         _handler_cache[scheme] = (time.monotonic(), found)

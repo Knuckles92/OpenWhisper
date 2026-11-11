@@ -46,3 +46,40 @@ def test_pipeline_resolved_is_none_when_not_ready_cancelled_or_failed():
     done: Future = Future()
     done.set_result("value")
     assert dictation_pipeline._resolved(done, 0) == "value"
+
+
+def _bare_runtime():
+    from services.runtime.transcription import TranscriptionRuntime
+
+    runtime = TranscriptionRuntime.__new__(TranscriptionRuntime)
+    runtime._cancel_requested = lambda: False
+    return runtime
+
+
+def test_a_failing_text_filter_keeps_the_words_and_logs_no_dictated_text(caplog):
+    def run(text, job):
+        raise RuntimeError(f"filter choked on: {text}")
+
+    job = object()
+    with caplog.at_level("DEBUG"):
+        assert _bare_runtime()._filtered(run, "my private words", job) == (
+            job, "my private words")
+    assert "Text filters failed (RuntimeError)" in caplog.text
+    assert "my private words" not in caplog.text
+
+
+def test_failed_spoken_routing_pastes_the_dictation_and_logs_no_dictated_text(
+    caplog, monkeypatch
+):
+    from services.actions import routing
+
+    def decide(text, job, settings, cancel=None):
+        raise RuntimeError(f"judge rejected: {text}")
+
+    monkeypatch.setattr(routing, "decide", decide)
+    job = object()
+    with caplog.at_level("DEBUG"):
+        assert _bare_runtime()._route("my private words", job, {}) == (
+            job, "my private words")
+    assert "Spoken routing failed (RuntimeError)" in caplog.text
+    assert "my private words" not in caplog.text

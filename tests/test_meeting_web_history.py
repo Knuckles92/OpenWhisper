@@ -1,4 +1,5 @@
 """Bounded web history reads retain paging, content capabilities and host access."""
+import base64
 import json
 
 import pytest
@@ -105,6 +106,9 @@ _BAD_CURSORS = [
     "WzEsMiwzXQ",  # [1,2,3]: wrong length
     "MQ",  # 1: not iterable
     "bnVsbA",  # null
+    # Nested deeper than the JSON parser recurses.
+    pytest.param(base64.urlsafe_b64encode(b"[" * 100_000).decode().rstrip("="),
+                 id="too-deeply-nested"),
 ]
 
 
@@ -124,6 +128,9 @@ def test_malformed_history_cursors_are_client_errors(cursor):
 
 @pytest.mark.parametrize("cursor", _BAD_CURSORS + [
     "WyJhIiwiYiJd",  # ["a","b"]: start is not a number
+    # An integer too large for float().
+    pytest.param(base64.urlsafe_b64encode(b'[' + b"9" * 400 + b',"s"]').decode().rstrip("="),
+                 id="start-overflows-float"),
 ])
 def test_malformed_transcript_cursors_are_client_errors(cursor):
     from fastapi import HTTPException

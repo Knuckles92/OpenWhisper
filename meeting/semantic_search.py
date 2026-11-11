@@ -60,8 +60,10 @@ def search_history(repository, query, *, semantic=False, exclude_meeting_id=None
         logger.warning("Semantic history ranking unavailable (%s); using keyword results", exc)
         fallback["message"] = UNAVAILABLE_MESSAGE
         return fallback
-    except Exception:
-        logger.warning("Semantic history ranking failed; using keyword results", exc_info=True)
+    except Exception as exc:
+        # Type only: a judge or storage error may quote the query or a passage.
+        logger.warning("Semantic history ranking failed (%s); using keyword results",
+                       type(exc).__name__)
         fallback["message"] = UNAVAILABLE_MESSAGE
         return fallback
 
