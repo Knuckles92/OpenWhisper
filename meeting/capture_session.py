@@ -15,9 +15,11 @@ capture layer is imported inside the methods that need it.
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
+import traceback
+from typing import Any, Callable, Dict, Hashable, List, Optional
 
 from meeting.interfaces import (
     CHANNEL_LOOPBACK,
@@ -37,6 +39,70 @@ CAPTURE_RETRY_INTERVAL_S = 3.0
 CAPTURE_RECOVERY_BUDGET_S = 12.0
 #: Microphones one open tries before waiting for the next watchdog pass.
 MIC_OPEN_ATTEMPTS = 4
+
+
+def where_it_failed(exc: Optional[BaseException]) -> str:
+    """The exception's type and the call stack it was raised from, without
+    its message: ``RuntimeError at engine.py:120 in _on_chunk < ...``.
+
+    For failures in code that handles transcript text, prompts or keys. The
+    message can quote them (a validation error prints its input); the type
+    and the file, line and function of each frame cannot, and are what is
+    needed to find the fault.
+    """
+    if exc is None:
+        return "unknown error"
+    frames = traceback.extract_tb(exc.__traceback__)
+    stack = " < ".join(
+        f"{frame.filename.replace(chr(92), '/').rsplit('/', 1)[-1]}:{frame.lineno} in {frame.name}"
+        for frame in reversed(frames)
+    )
+    return f"{type(exc).__name__} at {stack}" if stack else type(exc).__name__
+
+
+class FailureLog:
+    """Report a failure once, then log repeats at debug until it recovers.
+
+    For handlers on paths that run every second, every chunk or every block,
+    where a lasting fault would otherwise write an error on every pass. The
+    first failure is logged at error, as these handlers always did.
+    """
+
+    def __init__(self, log: logging.Logger) -> None:
+        self._log = log
+        self._failing: set = set()
+        self._lock = threading.Lock()
+
+    def failed(self, key: Hashable, message: str, *args: Any,
+               type_only: bool = False) -> None:
+        """Log the exception being handled; call only from an ``except`` block.
+
+        Args:
+            key: Identifies the failure; a key is reported at error again
+                only after ``recovered(key)``.
+            message: Log format string, with ``args``.
+            type_only: Log where it failed (see ``where_it_failed``) and not
+                the exception's message, for code whose errors could quote
+                transcript text, prompts or keys.
+        """
+        with self._lock:
+            first = key not in self._failing
+            self._failing.add(key)
+        level = logging.ERROR if first else logging.DEBUG
+        if first:
+            message += "; repeats are logged at debug until it recovers"
+        if type_only:
+            self._log.log(level, message + " (%s)", *args,
+                          where_it_failed(sys.exc_info()[1]))
+        else:
+            self._log.log(level, message, *args, exc_info=True)
+
+    def recovered(self, *keys: Hashable) -> None:
+        """Let the next failure under any of ``keys`` be reported again."""
+        if not self._failing:
+            return
+        with self._lock:
+            self._failing.difference_update(keys)
 
 
 class MeetingCapture:
@@ -105,6 +171,9 @@ class MeetingCapture:
         self._loopback_was_available = False
         self._explicit_message: Optional[str] = None
         self.integrity_error: Optional[str] = None
+        # Restart and watchdog failures repeat every pass while a device is
+        # gone; only the first of a run is a warning.
+        self._failures = FailureLog(logger)
 
     def start(self, meeting_id: str, spool_dir: str) -> Optional[str]:
         """Open mic and loopback streams; returns a user-facing degradation
@@ -227,15 +296,22 @@ class MeetingCapture:
         from meeting.capture.sck_stream import ScreenCaptureKitLoopbackSource
         from meeting.capture.soundcard_stream import SoundcardLoopbackSource
 
-        for backend in (ScreenCaptureKitLoopbackSource, SoundcardLoopbackSource):
+        backends = (ScreenCaptureKitLoopbackSource, SoundcardLoopbackSource)
+        for backend in backends:
             try:
                 if backend.available() and self.start_source(
                     backend(), reuse_spool=reuse_spool,
                 ):
+                    self._failures.recovered(
+                        *(("fallback", b.__name__) for b in backends)
+                    )
                     return True
             except Exception:
-                logger.exception("%s loopback fallback unavailable",
-                                 backend.__name__)
+                # Third-party audio backends; the watchdog retries this
+                # every few seconds while system audio is missing.
+                self._failures.failed(("fallback", backend.__name__),
+                                      "%s loopback fallback unavailable",
+                                      backend.__name__)
         return False
 
     def start_source(
@@ -285,7 +361,10 @@ class MeetingCapture:
             started = True
             active = bool(source.is_active())
         except Exception:
-            logger.exception("Failed to start %s capture", channel)
+            # Device drivers can raise anything; reached on every watchdog
+            # restart attempt while a device keeps failing.
+            self._failures.failed(("start", channel),
+                                  "Failed to start %s capture", channel)
             active = False
         if not active:
             if started:
@@ -311,6 +390,8 @@ class MeetingCapture:
                 if existing.channel != channel
             ]
             self.sources.append(source)
+        self._failures.recovered(("start", channel), ("open", channel),
+                                 ("restart", channel))
         return True
 
     def make_block_router(self, channel: str, spool: Any,
@@ -432,8 +513,12 @@ class MeetingCapture:
             for channel in (CHANNEL_MIC, CHANNEL_LOOPBACK):
                 try:
                     self._watch_channel(channel)
+                    self._failures.recovered(("watchdog", channel))
                 except Exception:
-                    logger.exception("Capture watchdog failed for %s", channel)
+                    # Thread loop: a failing probe must not end the watchdog.
+                    # It runs every second, so only the first failure warns.
+                    self._failures.failed(("watchdog", channel),
+                                          "Capture watchdog failed for %s", channel)
             self.check_spool_health()
             self.update_status()
 
@@ -541,8 +626,11 @@ class MeetingCapture:
             if device is None:
                 try:
                     device = self._find_mic()
+                    self._failures.recovered(("probe", CHANNEL_MIC))
                 except Exception:
-                    logger.exception("Microphone probe failed")
+                    # PortAudio enumeration; retried on each watchdog restart.
+                    self._failures.failed(("probe", CHANNEL_MIC),
+                                          "Microphone probe failed")
                     return False
             if device is None and self.mic_excluded and not retried_all:
                 # Every microphone failed once. One may only have hiccuped,
@@ -561,7 +649,8 @@ class MeetingCapture:
                     reuse_spool=reuse_spool,
                 )
             except Exception:
-                logger.exception("Failed to open microphone stream")
+                self._failures.failed(("open", CHANNEL_MIC),
+                                      "Failed to open microphone stream")
                 opened = False
             if opened:
                 self.mic_device = device
@@ -617,7 +706,10 @@ class MeetingCapture:
             if channel == CHANNEL_LOOPBACK:
                 return self.start_fallback_loopback(reuse_spool=True)
         except Exception:
-            logger.exception("Could not restart %s capture", channel)
+            # Called from the watchdog every few seconds while a channel is
+            # down; the first failure of a run warns with its traceback.
+            self._failures.failed(("restart", channel),
+                                  "Could not restart %s capture", channel)
         return False
 
     def _stop_source(self, channel: str) -> None:
