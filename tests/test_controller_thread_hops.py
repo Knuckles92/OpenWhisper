@@ -146,3 +146,37 @@ def test_a_busy_hotkey_notice_is_shown_on_the_qt_thread():
     assert len(shown) == 1
     assert shown[0][1] is threading.main_thread()
     assert "already in progress" in shown[0][0]
+
+
+class _Receiver(QObject):
+    """A slot owner on the Qt thread, as the UI controller is."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def record(self, *args):
+        self.calls.append((args, threading.current_thread()))
+
+
+@pytest.mark.parametrize("module, cls, signal, args", [
+    ("services.runtime.updater", "UpdaterRuntime", "update_check_finished", (None, "offline", False)),
+    ("services.runtime.models", "ModelRuntime", "model_deleted", ("tiny", True, "")),
+    ("services.runtime.components", "ComponentRuntime", "component_progress", ("gpu-accel", "download", 1, 2)),
+    ("services.runtime.remote", "RemoteRuntime", "remote_settled", ("offline",)),
+    ("services.runtime.meeting", "MeetingRuntime", "meeting_status_update", ("Starting",)),
+])
+def test_feature_runtimes_deliver_worker_signals_on_the_qt_thread(module, cls, signal, args):
+    """The signals moved off the controller still hop from worker threads to Qt."""
+    import importlib
+
+    runtime_cls = getattr(importlib.import_module(module), cls)
+    runtime = runtime_cls(SimpleNamespace(ui_controller=SimpleNamespace()))
+    assert runtime.thread() is QCoreApplication.instance().thread()
+    receiver = _Receiver()
+    getattr(runtime, signal).connect(receiver.record)
+
+    _off_qt_thread(lambda: getattr(runtime, signal).emit(*args))
+    assert receiver.calls == []
+    QCoreApplication.sendPostedEvents()
+    assert receiver.calls == [(args, threading.main_thread())]
