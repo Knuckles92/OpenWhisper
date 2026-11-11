@@ -181,11 +181,9 @@ class McpRuntime:
 
     def restore(self, settings):
         self._settings = settings
-        if settings.get(SettingsKey.MCP_ENABLED, False) is True:
-            port = settings.get(SettingsKey.MCP_PORT, DEFAULT_PORT)
-            if not _is_valid_port(port):
-                port = DEFAULT_PORT
-            if settings.get(SettingsKey.MCP_TAILSCALE_ENABLED, False) is True:
+        if SettingsKey.MCP_ENABLED.read(settings):
+            port = SettingsKey.MCP_PORT.read(settings)
+            if SettingsKey.MCP_TAILSCALE_ENABLED.read(settings):
                 self.start(port, tailscale=True)
             else:
                 self.start(port)
@@ -202,7 +200,7 @@ class McpRuntime:
     def _serve(self, port, tailscale=False):
         from services.credentials import CredentialStoreError
 
-        sockets = []
+        sockets: list[socket.socket] = []
         error = ""
         try:
             addresses, allowed_hosts, remote_url = _listen_addresses(port, tailscale)

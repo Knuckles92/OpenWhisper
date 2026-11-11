@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import asdict, dataclass
+from typing import Any
 
 from services.settings import SettingsKey
 from services.walkthrough.write_up import DEFAULT_INSTRUCTIONS
@@ -67,17 +68,15 @@ STARTER_STYLES = (
 
 def saved_styles(settings: dict) -> list[WriteUpStyle]:
     """The user's styles, without the default; the starters until any is saved."""
-    raw = (settings or {}).get(SettingsKey.WALKTHROUGH_WRITE_UP_STYLES)
+    raw = SettingsKey.WALKTHROUGH_WRITE_UP_STYLES.read(settings or {})
     if raw is None:
         return list(STARTER_STYLES)
-    if not isinstance(raw, list):
-        return []
     styles: list[WriteUpStyle] = []
     seen: set[str] = set()
     for item in raw:
         if not isinstance(item, dict):
             continue
-        values = [item.get(key) for key in ("id", "name", "instructions")]
+        values: list[Any] = [item.get(key) for key in ("id", "name", "instructions")]
         if any(not isinstance(value, str) or not value.strip() for value in values):
             continue
         style = WriteUpStyle(*(value.strip() for value in values))

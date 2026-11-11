@@ -32,8 +32,8 @@ class TestHistorySidebarDelete:
     def test_delete_is_canceled_when_confirmation_is_rejected(self):
         with (
             patch(
-                "ui_qt.widgets.history_sidebar.settings_manager.get",
-                return_value=True,
+                "ui_qt.widgets.history_sidebar.settings_manager.load_all_settings",
+                return_value={SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE: True},
             ),
             patch.object(
                 QMessageBox,
@@ -58,8 +58,8 @@ class TestHistorySidebarDelete:
 
         with (
             patch(
-                "ui_qt.widgets.history_sidebar.settings_manager.get",
-                return_value=True,
+                "ui_qt.widgets.history_sidebar.settings_manager.load_all_settings",
+                return_value={SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE: True},
             ),
             patch.object(
                 QMessageBox,
@@ -88,8 +88,8 @@ class TestHistorySidebarDelete:
         entry = SimpleNamespace(audio_file="recording.wav")
         with (
             patch(
-                "ui_qt.widgets.history_sidebar.settings_manager.get",
-                return_value=True,
+                "ui_qt.widgets.history_sidebar.settings_manager.load_all_settings",
+                return_value={SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE: True},
             ),
             patch.object(
                 QMessageBox,
@@ -124,8 +124,8 @@ class TestHistorySidebarDelete:
     def test_dont_ask_again_preference_is_saved(self):
         with (
             patch(
-                "ui_qt.widgets.history_sidebar.settings_manager.get",
-                return_value=True,
+                "ui_qt.widgets.history_sidebar.settings_manager.load_all_settings",
+                return_value={SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE: True},
             ),
             patch.object(
                 QMessageBox,
@@ -155,8 +155,8 @@ class TestHistorySidebarDelete:
     def test_saved_opt_out_skips_confirmation(self):
         with (
             patch(
-                "ui_qt.widgets.history_sidebar.settings_manager.get",
-                return_value=False,
+                "ui_qt.widgets.history_sidebar.settings_manager.load_all_settings",
+                return_value={SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE: False},
             ),
             patch.object(QMessageBox, "exec") as show_confirmation,
             patch(

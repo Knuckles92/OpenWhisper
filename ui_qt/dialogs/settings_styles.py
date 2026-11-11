@@ -24,7 +24,6 @@ from services.settings import (
     resolve_app_context_read_text,
     resolve_app_styles_enabled,
     resolve_transcript_cleanup_provider,
-    setting_value,
 )
 from services.text_llm import get_profile, profile_display_name
 from ui_qt.dialogs.settings_destinations import STYLES
@@ -129,7 +128,7 @@ _MAX_EXCLUDED = 100
 
 
 def cleanup_on(settings: dict) -> bool:
-    return bool(setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings))
+    return SettingsKey.TRANSCRIPT_CLEANUP_ENABLED.read(settings)
 
 
 def reads_text_near_cursor(settings: dict) -> bool:
@@ -234,9 +233,8 @@ def _choices() -> list[str]:
 
 
 def _excluded(settings: dict) -> list[str]:
-    raw = settings.get(SettingsKey.APP_CONTEXT_EXCLUDED_APPS)
     values, seen = [], set()
-    for value in raw if isinstance(raw, list) else ():
+    for value in SettingsKey.APP_CONTEXT_EXCLUDED_APPS.read(settings):
         name = value.strip() if isinstance(value, str) else ""
         if name and name.casefold() not in seen:
             seen.add(name.casefold())

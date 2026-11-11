@@ -1,13 +1,13 @@
 """Named, on-demand output formats, independent of standard dictation."""
 
 from dataclasses import asdict, dataclass
+from typing import Any, Mapping
 
 from config import config
 from services.hotkey_manager import format_hotkey, parse_hotkey
 from services.settings import (
     SettingsKey,
     compose_transcript_cleanup_prompt,
-    setting_value,
 )
 
 
@@ -43,9 +43,9 @@ STARTER_PROFILES = (
 )
 
 
-def load_cleanup_profiles(settings: dict) -> list[CleanupProfile]:
+def load_cleanup_profiles(settings: Mapping[str, Any]) -> list[CleanupProfile]:
     """Read valid profiles; starters appear only before a library is saved."""
-    raw = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_PROFILES)
+    raw = SettingsKey.TRANSCRIPT_CLEANUP_PROFILES.read(settings)
     if raw is None:
         return list(STARTER_PROFILES)
     if not isinstance(raw, list):
@@ -55,7 +55,7 @@ def load_cleanup_profiles(settings: dict) -> list[CleanupProfile]:
     for item in raw:
         if not isinstance(item, dict):
             continue
-        values = [item.get(key) for key in ("id", "name", "instructions")]
+        values: list[Any] = [item.get(key) for key in ("id", "name", "instructions")]
         if any(not isinstance(value, str) or not value.strip() for value in values):
             continue
         profile_id, name, instructions = (value.strip() for value in values)
@@ -75,7 +75,9 @@ def load_cleanup_profiles(settings: dict) -> list[CleanupProfile]:
     return profiles
 
 
-def find_cleanup_profile(settings: dict, profile_id: str) -> CleanupProfile | None:
+def find_cleanup_profile(
+    settings: Mapping[str, Any], profile_id: str,
+) -> CleanupProfile | None:
     return next(
         (p for p in load_cleanup_profiles(settings) if p.id == profile_id), None
     )
@@ -89,14 +91,14 @@ def cleanup_may_run(settings: dict) -> bool:
     Command Mode and transforms always use the cleanup model, so their
     shortcuts count too.
     """
-    if setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings):
+    if SettingsKey.TRANSCRIPT_CLEANUP_ENABLED.read(settings):
         return True
-    if settings.get(SettingsKey.QUICK_RECORD_PROFILE):
+    if SettingsKey.QUICK_RECORD_PROFILE.read(settings):
         return True
     if any(profile.hotkey for profile in load_cleanup_profiles(settings)):
         return True
-    hotkeys = settings.get(SettingsKey.HOTKEYS)
-    if isinstance(hotkeys, dict) and hotkeys.get("command_mode"):
+    hotkeys = SettingsKey.HOTKEYS.read(settings)
+    if hotkeys is not None and hotkeys.get("command_mode"):
         return True
     from services.text_transforms import load_transforms
 
@@ -160,7 +162,7 @@ def delete_cleanup_profile(settings: dict, profile_id: str) -> None:
     settings[SettingsKey.TRANSCRIPT_CLEANUP_PROFILES] = [
         p.to_dict() for p in load_cleanup_profiles(settings) if p.id != profile_id
     ]
-    if settings.get(SettingsKey.QUICK_RECORD_PROFILE) == profile_id:
+    if SettingsKey.QUICK_RECORD_PROFILE.read(settings) == profile_id:
         settings[SettingsKey.QUICK_RECORD_PROFILE] = ""
 
 

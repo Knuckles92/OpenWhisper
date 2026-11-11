@@ -11,10 +11,8 @@ from typing import Iterable, Mapping, Optional
 
 from services.local_asr import languages as local_languages
 from services.settings import (
-    LEGACY_API_MODELS,
     MeetingLanguage,
     SettingsKey,
-    setting_value,
 )
 
 AUTO = MeetingLanguage.AUTO
@@ -59,14 +57,9 @@ def _remote_state() -> tuple[str, Optional[tuple[str, ...]], str]:
 
 def engine(settings: Mapping) -> str:
     """The recording engine the settings select, such as "parakeet" or "api"."""
-    from config import config
 
-    value = settings.get(SettingsKey.SELECTED_MODEL)
-    if isinstance(value, str) and value in LEGACY_API_MODELS:
-        return "api"
-    if isinstance(value, str) and value in (config.MODEL_VALUE_MAP or {}).values():
-        return value
-    return setting_value(SettingsKey.SELECTED_MODEL, {})
+    # A pre-2.0 API model name reads as "api".
+    return SettingsKey.SELECTED_MODEL.read(settings)
 
 
 def _whisper_is_english_only(model: str) -> bool:
@@ -84,8 +77,7 @@ def accepted_languages(settings: Mapping) -> tuple[str, ...]:
     """Every concrete language the current engine accepts, in display order."""
     backend = engine(settings)
     if backend == "local_whisper":
-        model = setting_value(SettingsKey.WHISPER_MODEL, settings)
-        if isinstance(model, str) and _whisper_is_english_only(model):
+        if _whisper_is_english_only(SettingsKey.WHISPER_MODEL.read(settings)):
             return ("en",)
         return _WHISPER_CODES
     if backend == "api":
@@ -118,9 +110,7 @@ def single_language_reason(settings: Mapping) -> str:
 
 def chosen_languages(settings: Mapping) -> list[str]:
     """``dictation_languages`` as saved: known codes, in order, without repeats."""
-    raw = settings.get(SettingsKey.DICTATION_LANGUAGES)
-    if not isinstance(raw, (list, tuple)):
-        return []
+    raw = SettingsKey.DICTATION_LANGUAGES.read(settings)
     chosen: list[str] = []
     for code in raw:
         if isinstance(code, str) and code in _LABELS and code != AUTO and code not in chosen:
@@ -136,8 +126,8 @@ def language_choices(settings: Mapping) -> list[str]:
 
 def job_language(settings: Mapping) -> str:
     """The language for a dictation starting now; "" for the engine's own setting."""
-    active = settings.get(SettingsKey.DICTATION_ACTIVE_LANGUAGE)
-    return active if isinstance(active, str) and active in language_choices(settings) else ""
+    active = SettingsKey.DICTATION_ACTIVE_LANGUAGE.read(settings)
+    return active if active in language_choices(settings) else ""
 
 
 def engine_language(settings: Mapping) -> str:
@@ -149,8 +139,8 @@ def engine_language(settings: Mapping) -> str:
     if backend in ("local_whisper", "api"):
         accepted = accepted_languages(settings)
         return accepted[0] if len(accepted) == 1 else AUTO
-    stored = setting_value(SettingsKey.LOCAL_ASR_LANGUAGE, settings)
-    return local_languages.selected_language(backend, stored if isinstance(stored, str) else None)
+    return local_languages.selected_language(
+        backend, SettingsKey.LOCAL_ASR_LANGUAGE.read(settings))
 
 
 def current_language(settings: Mapping) -> str:
@@ -175,8 +165,8 @@ def set_chosen(settings: dict, codes: Iterable[str]) -> None:
         {SettingsKey.DICTATION_LANGUAGES: list(codes)}
     )
     choices = language_choices(settings)
-    active = settings.get(SettingsKey.DICTATION_ACTIVE_LANGUAGE)
-    if active not in choices:
+    # Repairs what is stored, so a malformed value counts as not a choice.
+    if SettingsKey.DICTATION_ACTIVE_LANGUAGE.stored(settings) not in choices:
         settings[SettingsKey.DICTATION_ACTIVE_LANGUAGE] = choices[0] if choices else ""
 
 

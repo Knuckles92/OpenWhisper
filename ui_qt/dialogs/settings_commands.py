@@ -43,8 +43,9 @@ _COMMAND_ACTION = "command_mode"
 
 
 def _command_hotkey(settings: dict) -> str:
-    hotkeys = settings.get("hotkeys")
-    value = hotkeys.get(_COMMAND_ACTION, "") if isinstance(hotkeys, dict) else ""
+    from services.settings import SettingsKey
+
+    value = (SettingsKey.HOTKEYS.read(settings) or {}).get(_COMMAND_ACTION, "")
     return value if isinstance(value, str) else ""
 
 
