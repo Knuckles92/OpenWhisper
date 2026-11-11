@@ -106,6 +106,16 @@ def _engine_runs(engine, meeting_id: str) -> bool:
     return engine is not None and getattr(engine, "meeting_id", None) == meeting_id
 
 
+def _clock_fields(engine) -> Dict[str, float]:
+    """The meeting clock for the Meeting tab: pause-aware meeting seconds and
+    the ``time.monotonic()`` instant they were read.
+
+    The main window retains the latest state and replays it into a tab built
+    later, so the tab needs the instant too, not just the count.
+    """
+    return {"elapsed_s": float(engine.clock.now_s()), "elapsed_at": time.monotonic()}
+
+
 def _ended_message(payload: Dict[str, Any], status: str, *, finalizing: bool) -> str:
     """The status line when a meeting ends."""
     if finalizing:
@@ -1046,16 +1056,9 @@ class MeetingRuntime(QObject):
             if demo else "Meeting in progress"
         )
         self.controller.meeting_active = True
-        elapsed_s = 0.0
-        if demo:
-            try:
-                elapsed_s = float(engine.clock.now_s())
-            except Exception:
-                logger.debug("Demo clock unavailable; starting at 0s", exc_info=True)
-                elapsed_s = 0.0
         self.meeting_state_changed.emit(
             {"active": True, "paused": False, "status": "active",
-             "cloud_enabled": cloud, "elapsed_s": elapsed_s}
+             "cloud_enabled": cloud, **_clock_fields(engine)}
         )
         logger.info(
             "Demo meeting started: %s" if demo else "Meeting started: %s",
@@ -1150,7 +1153,7 @@ class MeetingRuntime(QObject):
             return
         self.meeting_status_update.emit("Meeting paused")
         self.meeting_state_changed.emit(
-            {"active": True, "paused": True, "status": "paused"}
+            {"active": True, "paused": True, "status": "paused", **_clock_fields(engine)}
         )
 
     def resume_meeting(self) -> None:
@@ -1165,7 +1168,7 @@ class MeetingRuntime(QObject):
             return
         self.meeting_status_update.emit("Meeting in progress")
         self.meeting_state_changed.emit(
-            {"active": True, "paused": False, "status": "active"}
+            {"active": True, "paused": False, "status": "active", **_clock_fields(engine)}
         )
 
     def end_meeting(self) -> None:
@@ -2088,6 +2091,7 @@ class MeetingRuntime(QObject):
             # changes the engine status; mirror it onto the tab.
             if status in ("active", "paused"):
                 state_payload["paused"] = status == "paused"
+                state_payload.update(_clock_fields(self._engine))
             # Prefer human notes when present; otherwise keep the short
             # lifecycle status for the status line.
             note = payload.get("note")

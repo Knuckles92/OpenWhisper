@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 
 STARTUP_TIMEOUT_S = 15.0
 STOP_JOIN_TIMEOUT_S = 10.0
+#: How long stop lets open responses finish before uvicorn cancels them. A
+#: dashboard tab keeps one open (the recording player streams audio), and
+#: without a limit uvicorn waits on it until the browser lets go.
+GRACEFUL_SHUTDOWN_S = 1.0
 
 
 def discover_lan_ipv4() -> Optional[str]:
@@ -128,6 +132,7 @@ class MeetingWebServer:
             log_level="warning",
             access_log=False,
             lifespan="on",
+            timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_S,
             # The host app owns logging (ui_qt.bootstrap.setup_logging). Left at
             # its default, uvicorn runs dictConfig on a formatter that probes
             # sys.stdout.isatty(); a windowed (--noconsole) frozen build has no
