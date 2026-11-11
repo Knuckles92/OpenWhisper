@@ -855,30 +855,23 @@ def _controller(backend, events):
         _reload_handoff_lock=threading.Lock(),
         _reload_pending=False,
         executor=Mock(),
-        _remote_restoring=False,
-        _remote_job_retry=None,
-        _remote_retry_step=0,
-        _remote_retry_at=None,
-        _remote_link=None,
-        _remote_reported="",
         ui_controller=Mock(),
     )
-    from PyQt6.QtCore import QTimer
+    from services.runtime.remote import RemoteRuntime
 
-    controller._remote_watch = QTimer()
-    controller._remote_retry_timer = QTimer()
-    controller._remote_retry_timer.setSingleShot(True)
+    controller.remote = RemoteRuntime(controller)
+    for name in ("remote_settled", "remote_retry_requested"):
+        setattr(controller.remote, name, _Signal(name, events))
+    controller.models = SimpleNamespace(
+        runtime_consent_requested=_Signal("runtime_consent_requested", events))
     for name in ("device_info_update", "status_update", "engine_busy_changed",
-                 "runtime_consent_requested", "streaming_setup_requested",
-                 "remote_settled", "remote_retry_requested"):
+                 "streaming_setup_requested"):
         setattr(controller, name, _Signal(name, events))
     for name in ("_reload_worker", "_reload_selected_engine", "_finish_speech_reload",
                  "_flush_pending_streaming_setup", "transcription_readiness_message",
                  "local_whisper_loading_message", "_submit_restore_reload",
-                 "release_local_engine", "restore_local_engine", "retry_remote_now",
-                 "_selected_remote", "_watch_remote", "_on_remote_watch",
-                 "_publish_remote_link", "_schedule_remote_retry", "_cancel_remote_retry",
-                 "_on_remote_settled", "_on_local_engine_settings_changed"):
+                 "release_local_engine", "restore_local_engine",
+                 "_selected_remote", "_on_local_engine_settings_changed"):
         setattr(controller, name, getattr(ApplicationController, name).__get__(controller))
     return controller
 
@@ -911,31 +904,31 @@ def test_selecting_the_remote_engine_connects_without_a_warmup_decode(paired_bac
 
 
 def test_a_dropped_host_is_reported_at_once_and_retried_with_backoff(paired_backend, host):
-    from services.application_controller import REMOTE_RETRY_DELAYS_S
+    from services.runtime.remote import REMOTE_RETRY_DELAYS_S
 
     events = []
     controller = _controller(paired_backend, events)
     controller._reload_worker()
-    controller._on_remote_settled("reload")
-    assert controller._remote_watch.isActive()
+    controller.remote._on_settled("reload")
+    assert controller.remote._watch_timer.isActive()
     published = controller.ui_controller.set_remote_link.call_args[0][0]
     assert published.state == "connected" and published.retry_at is None
     host.stop()
     assert _wait_for(lambda: not paired_backend._process.alive)
     events.clear()
-    controller._on_remote_watch()
+    controller.remote._on_watch_tick()
     # Said now, not at the next recording.
     assert ("device_info_update", "devbox stopped answering.", False) in events
-    assert controller._remote_retry_timer.isActive()
-    assert controller._remote_retry_timer.interval() == REMOTE_RETRY_DELAYS_S[0] * 1000
+    assert controller.remote._retry_timer.isActive()
+    assert controller.remote._retry_timer.interval() == REMOTE_RETRY_DELAYS_S[0] * 1000
     link = controller.ui_controller.set_remote_link.call_args[0][0]
     assert link.state == "offline" and link.retry_at is not None
     # Each failure waits longer, up to the last delay, which repeats.
-    controller._remote_retry_timer.stop()
+    controller.remote._retry_timer.stop()
     for delay in (*REMOTE_RETRY_DELAYS_S[1:], REMOTE_RETRY_DELAYS_S[-1]):
-        controller._on_remote_settled("offline")
-        assert controller._remote_retry_timer.interval() == delay * 1000
-        controller._remote_retry_timer.stop()
+        controller.remote._on_settled("offline")
+        assert controller.remote._retry_timer.interval() == delay * 1000
+        controller.remote._retry_timer.stop()
 
 
 def test_a_quiet_reconnect_restores_the_engine_card(paired_backend, host):
@@ -945,12 +938,12 @@ def test_a_quiet_reconnect_restores_the_engine_card(paired_backend, host):
     port = host.port
     host.stop()
     assert _wait_for(lambda: not paired_backend._process.alive)
-    controller._on_remote_watch()
+    controller.remote._on_watch_tick()
     host.start(port=port, bind="127.0.0.1")
     events.clear()
-    controller._on_remote_settled(paired_backend.restore_link())
+    controller.remote._on_settled(paired_backend.restore_link())
     assert ("device_info_update", "Fake Parakeet on devbox | cuda", True) in events
-    assert not controller._remote_retry_timer.isActive() and controller._remote_retry_step == 0
+    assert not controller.remote._retry_timer.isActive() and controller.remote._retry_step == 0
     # The preview may have been waiting for this connection.
     assert ("streaming_setup_requested",) in events
 
@@ -964,9 +957,9 @@ def test_repeat_failures_dont_clear_the_status_line_every_time():
     backend.last_error = "Couldn't reach devbox:47821."
     events = []
     controller = _controller(backend, events)
-    controller._on_remote_settled("offline")
-    controller._remote_retry_timer.stop()
-    controller._on_remote_settled("offline")
+    controller.remote._on_settled("offline")
+    controller.remote._retry_timer.stop()
+    controller.remote._on_settled("offline")
     reports = [event for event in events if event[0] == "device_info_update"]
     assert reports == [("device_info_update", "Couldn't reach devbox:47821.", False)]
 
@@ -977,8 +970,8 @@ def test_an_unpaired_remote_is_not_retried():
     backend = RemoteSpeechBackend()
     backend.reload_model()
     controller = _controller(backend, [])
-    controller._on_remote_settled("reload")
-    assert not controller._remote_retry_timer.isActive()
+    controller.remote._on_settled("reload")
+    assert not controller.remote._retry_timer.isActive()
 
 
 def test_a_meeting_leaves_the_remote_connection_alone(paired_backend, engine):
@@ -1329,14 +1322,13 @@ def test_cleanup_ends_a_switch_the_host_is_still_loading(paired_backend, host, e
 
 def _client_controller(backend, events):
     from unittest.mock import Mock
-    from services.application_controller import ApplicationController
 
     controller = _controller(backend, events)
     controller._reload_in_flight = False
     controller._reload_note = ""
     controller.ui_controller = Mock()
-    for name in ("select_remote_model", "remote_models"):
-        setattr(controller, name, getattr(ApplicationController, name).__get__(controller))
+    controller.remote_models = controller.remote.remote_models
+    controller.select_remote_model = controller.remote.select_remote_model
     return controller
 
 
@@ -1376,7 +1368,7 @@ def _host_controller(current="parakeet"):
     """The host's switch methods on a stand-in whose main window selects backends."""
     from unittest.mock import Mock
     from config import config
-    from services.application_controller import ApplicationController
+    from services.runtime.remote import RemoteRuntime
 
     controller = SimpleNamespace(
         _current_model_name=current,
@@ -1395,9 +1387,12 @@ def _host_controller(current="parakeet"):
         controller._current_model_name = config.MODEL_VALUE_MAP[display]
 
     controller.ui_controller.select_transcription_backend.side_effect = select
-    for name in ("_switch_engine_to", "_switch_engine_for_client", "_on_client_model_switch"):
-        setattr(controller, name, getattr(ApplicationController, name).__get__(controller))
-    controller.client_model_switch_requested = SimpleNamespace(emit=controller._on_client_model_switch)
+    remote = SimpleNamespace(controller=controller)
+    for name in ("_switch_engine_to", "switch_engine_for_client", "_on_client_model_switch"):
+        setattr(remote, name, getattr(RemoteRuntime, name).__get__(remote))
+    remote.client_model_switch_requested = SimpleNamespace(emit=remote._on_client_model_switch)
+    controller._switch_engine_for_client = remote.switch_engine_for_client
+    controller._switch_engine_to = remote._switch_engine_to
     return controller
 
 

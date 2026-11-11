@@ -245,6 +245,8 @@ def test_a_meeting_start_stops_playback(monkeypatch):
             return type("Signal", (), {"emit": lambda *_a: None})()
 
     runtime = meeting.MeetingRuntime.__new__(meeting.MeetingRuntime)
+    # A QObject, so its own signals can be emitted.
+    meeting.QObject.__init__(runtime)
     runtime.controller = Controller()
     runtime._lock = threading.Lock()
     monkeypatch.setattr(threading.Thread, "start", lambda self: None)

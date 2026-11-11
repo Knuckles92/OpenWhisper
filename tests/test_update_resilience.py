@@ -261,25 +261,25 @@ def test_old_updater_floor_requires_setup(journal):
 
 
 def test_queued_success_after_cancel_cannot_launch():
-    from services.application_controller import ApplicationController
+    from services.runtime.updater import UpdaterRuntime
     attempt = object()
     controller = SimpleNamespace(
-        _update_attempt=attempt, _update_cancel=threading.Event(),
-        discard_update_handoff=MagicMock(), ui_controller=MagicMock(),
+        _attempt=attempt, _cancel=threading.Event(),
+        discard_handoff=MagicMock(), ui_controller=MagicMock(),
     )
-    controller._update_cancel.set()
-    ApplicationController._on_update_download_finished(controller, attempt, "native:" + "a" * 32, "")
-    controller.discard_update_handoff.assert_called_once()
+    controller._cancel.set()
+    UpdaterRuntime._on_download_finished(controller, attempt, "native:" + "a" * 32, "")
+    controller.discard_handoff.assert_called_once()
     assert controller.ui_controller.on_update_download_finished.call_args.args[0] is None
 
 
 def test_stale_attempt_cannot_change_current_dialog():
-    from services.application_controller import ApplicationController
+    from services.runtime.updater import UpdaterRuntime
     controller = SimpleNamespace(
-        _update_attempt=object(), _update_cancel=threading.Event(),
-        discard_update_handoff=MagicMock(), ui_controller=MagicMock(),
+        _attempt=object(), _cancel=threading.Event(),
+        discard_handoff=MagicMock(), ui_controller=MagicMock(),
     )
-    ApplicationController._on_update_download_finished(controller, object(), None, "old error")
+    UpdaterRuntime._on_download_finished(controller, object(), None, "old error")
     controller.ui_controller.on_update_download_finished.assert_not_called()
 
 

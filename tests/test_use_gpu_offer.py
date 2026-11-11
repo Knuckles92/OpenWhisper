@@ -9,9 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from services import application_controller as module
 from services import gpu_info, gpu_setup
-from services.application_controller import ApplicationController
+from services.runtime import models as module
+from services.runtime.models import ModelRuntime
 from services.components import ComponentId
 from services.settings import SettingsKey
 from tests.fakes.settings import InMemorySettings
@@ -52,10 +52,10 @@ def _backend(cause=GpuFallbackCause.MISSING_LIBRARIES):
 
 
 def _controller(backend, answer):
+    """ModelRuntime's offer methods on a stand-in, with its controller's parts beside them."""
     calls = []
     grants = []
-    controller = SimpleNamespace(
-        _gpu_offer_state=None,
+    owner = SimpleNamespace(
         transcription_backends={"local_whisper": backend},
         is_meeting_active=lambda: False,
         recorder=SimpleNamespace(is_recording=False),
@@ -63,16 +63,25 @@ def _controller(backend, answer):
         ui_controller=SimpleNamespace(
             show_use_gpu_dialog=lambda plan: (calls.append(("dialog", plan)), answer)[1],
         ),
-        ensure_local_model_available=lambda: calls.append(("ensure",)),
-        request_component_install=lambda component: calls.append(("install", component)),
+        components=SimpleNamespace(
+            request_install=lambda component: calls.append(("install", component)),
+        ),
         reload_whisper_model=lambda: calls.append(("reload",)),
         status_update=SimpleNamespace(emit=lambda text: calls.append(("status", text))),
+    )
+    runtime = SimpleNamespace(
+        controller=owner,
+        _gpu_offer_state=None,
+        ensure_local_model_available=lambda: calls.append(("ensure",)),
+        # The owner's, for the tests to read and set.
+        transcription_backends=owner.transcription_backends,
+        recorder=owner.recorder,
         calls=calls,
         grants=grants,
     )
     for name in ("_gpu_offer_waiting", "_offer_gpu_setup", "_start_gpu_setup"):
-        setattr(controller, name, getattr(ApplicationController, name).__get__(controller))
-    return controller
+        setattr(runtime, name, getattr(ModelRuntime, name).__get__(runtime))
+    return runtime
 
 
 @pytest.fixture

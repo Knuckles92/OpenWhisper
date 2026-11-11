@@ -938,7 +938,7 @@ class TranscriptionRuntime:
             self.controller.transcription_retry_progress.emit(progress)
             self.controller.status_update.emit(progress)
             settled = threading.Event()
-            self.controller.retry_remote_for_transcription(settled)
+            self.controller.remote.retry_for_transcription(settled)
             while not settled.is_set() and not backend.is_available():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -3024,7 +3024,7 @@ class TranscriptionRuntime:
         from transcriber.optional_backend import LocalSpeechBackend
         if isinstance(backend, LocalSpeechBackend):
             if getattr(backend, "is_remote", False) is True:
-                self.controller.retry_remote_now()
+                self.controller.remote.retry_now()
             elif backend.is_model_missing:
                 self.controller.ensure_local_model_available()
             else:

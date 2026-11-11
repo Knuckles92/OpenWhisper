@@ -322,7 +322,7 @@ class StreamingRuntime:
             logger.info(
                 "tiny.en is not in the local cache; waiting for download consent"
             )
-            self.controller.request_model_download("tiny.en")
+            self.controller.models.request_model_download("tiny.en")
             return None
 
         logger.info("Creating dedicated tiny.en backend for streaming preview...")
