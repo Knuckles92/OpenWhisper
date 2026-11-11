@@ -1304,7 +1304,7 @@ class WalkthroughTab(QWidget):
         """
         if folder is None:
             newest = self._newest()
-            closed = settings_manager.load_all_settings().get(SettingsKey.WALKTHROUGH_CLOSED)
+            closed = SettingsKey.WALKTHROUGH_CLOSED.read(settings_manager.load_all_settings())
             folder = newest if newest is not None and newest.name != closed else None
         return self._show(folder, ask=ask)
 

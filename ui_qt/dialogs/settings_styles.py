@@ -233,9 +233,8 @@ def _choices() -> list[str]:
 
 
 def _excluded(settings: dict) -> list[str]:
-    raw = settings.get(SettingsKey.APP_CONTEXT_EXCLUDED_APPS)
     values, seen = [], set()
-    for value in raw if isinstance(raw, list) else ():
+    for value in SettingsKey.APP_CONTEXT_EXCLUDED_APPS.read(settings):
         name = value.strip() if isinstance(value, str) else ""
         if name and name.casefold() not in seen:
             seen.add(name.casefold())

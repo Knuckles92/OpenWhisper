@@ -47,14 +47,13 @@ def test_annotated_selection_emits_canonical_name_and_syncs_silently(monkeypatch
 
 def test_fresh_mac_settings_select_mlx_for_dictation_and_meetings(monkeypatch, tmp_path):
     from tests.test_settings_models import _Host, _isolated_settings
-    from ui_qt.dialogs import settings_models as models_module
 
     monkeypatch.setattr(picker, "parakeet_mlx_supported", lambda: True)
     monkeypatch.setattr(config, "DEFAULT_BACKEND", "parakeet_mlx")
     patch_setting_defaults(monkeypatch, {
         SettingsKey.SELECTED_MODEL: "parakeet_mlx",
         SettingsKey.MEETING_ASR_MODEL: "parakeet-v3-mlx",
-    }, models_module)
+    })
     manager = SettingsManager(str(tmp_path / "settings.json"))
     with _isolated_settings(manager):
         host = _Host(lambda: None)

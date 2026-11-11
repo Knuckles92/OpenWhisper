@@ -316,20 +316,12 @@ def test_resolve_bool_setting_refuses_a_key_that_is_not_on_off():
 #
 # Each entry is (setting, the expression the call site used at 77b63c1, the
 # typed read that replaced it), with ``s`` for the loaded mapping. They must
-# agree on every stored value of the declared type, on a missing key, and on
-# values the old expression itself turned into a well-typed result. Where the
-# old expression handed a wrong-typed stored value (or None) on to the code
-# after it, which no setting the app writes can hold, the typed read gives the
-# default instead; that is the one allowed difference.
-
-#: The type a typed read of each kind returns.
-DECLARED_TYPES = {
-    "BoolSetting": bool, "IntSetting": int, "IntChoiceSetting": int,
-    "FloatSetting": (int, float), "StrSetting": str, "ChoiceSetting": str,
-    "ListSetting": list, "DictSetting": dict, "OptionalStrSetting": (str, type(None)),
-    "OptionalListSetting": (list, type(None)), "OptionalDictSetting": (dict, type(None)),
-    "RawSetting": object,
-}
+# agree on a missing key, on every stored value the declaration accepts as
+# it is, and wherever the old expression itself produced such a value. Where
+# the old expression handed an invalid stored value (wrong type, not one of
+# the choices, out of range, None) on to the code after it, which no setting
+# the app writes can hold, the typed read gives the default instead: the one
+# allowed difference.
 
 D = old.SETTING_DEFAULTS
 CALL_SITES: dict[str, list[tuple[Setting[Any], Callable[[dict], Any],
@@ -339,16 +331,16 @@ CALL_SITES: dict[str, list[tuple[Setting[Any], Callable[[dict], Any],
 def call_site(module: str, setting: Setting[Any], before: Callable[[dict], Any],
               after: Callable[[dict], Any] | None = None, result: Any = None) -> None:
     """Register a migrated read; ``result`` is the type of what the two return
-    when it is not the setting's own (a predicate on the value, say)."""
-    expected = result or DECLARED_TYPES[type(setting).__name__]
-    CALL_SITES.setdefault(module, []).append(
-        (setting, before, after or setting.read, expected))
+    when it is not the setting's value (a predicate on it, say)."""
+    CALL_SITES.setdefault(module, []).append((setting, before, after or setting.read, result))
 
 
-def _well_typed(expected: Any, value: Any) -> bool:
-    if isinstance(value, bool) and expected not in (bool, object):
-        return False
-    return isinstance(value, expected)
+def _valid(setting: Setting[Any], result: Any, value: Any) -> bool:
+    """Whether ``value`` is a setting value the declaration keeps as it is."""
+    if result is not None:
+        return isinstance(value, result)
+    return value is not None and setting.stored({str(setting): value}) == value and (
+        type(setting.stored({str(setting): value})) is type(value))
 
 
 # Registered call sites, by module.
@@ -447,6 +439,19 @@ def test_port_defaults_match_their_servers():
 
     assert SettingsKey.MCP_PORT.default == new.MCP_DEFAULT_PORT == MCP_PORT
     assert SettingsKey.REMOTE_HOST_PORT.default == new.REMOTE_HOST_DEFAULT_PORT == REMOTE_PORT
+call_site("ui_qt.dialogs.settings_models", SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT,
+          lambda s: (lambda v: v if v in old.TranscriptCleanupModelSort.ALL
+                     else config.TRANSCRIPT_CLEANUP_MODEL_SORT)(
+              s.get(SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT,
+                    D[SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT])))
+for _key in (SettingsKey.CLEANUP_MODEL_MEMORY, SettingsKey.MEETING_AGENT_MODELS):
+    call_site("ui_qt.dialogs.settings_models", _key,
+              lambda s, k=_key: (lambda v: dict(v) if isinstance(v, dict) else {})(s.get(k)),
+              lambda s, k=_key: dict(k.read(s)))
+for _key in (SettingsKey.WHISPER_DEVICE, SettingsKey.WHISPER_COMPUTE_TYPE,
+             SettingsKey.WHISPER_MODEL, SettingsKey.SELECTED_MODEL):
+    call_site("ui_qt.dialogs.settings_models", _key,
+              lambda s, k=_key: old.setting_value(k, s))
 
 
 def test_config_is_where_the_defaults_come_from():
@@ -465,8 +470,8 @@ def test_migrated_call_sites_read_what_they_read_before(module):
             except Exception:
                 after(copy.deepcopy(settings))
                 continue
-            if not _well_typed(result, expected):
+            if not _valid(setting, result, expected):
                 got = after(copy.deepcopy(settings))
-                assert got == expected or _well_typed(result, got), (module, setting, value)
+                assert got == expected or _valid(setting, result, got), (module, setting, value)
                 continue
             assert after(copy.deepcopy(settings)) == expected, (module, setting, value)

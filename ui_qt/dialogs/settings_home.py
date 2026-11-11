@@ -268,7 +268,7 @@ class HomePage(QWidget):
 
     def _build_intro(self, layout):
         """The current ``ui_qt/whats_new.py`` note, until it is dismissed."""
-        seen = setting_value(SettingsKey.WHATS_NEW_SEEN, self.dialog._settings_snapshot())
+        seen = SettingsKey.WHATS_NEW_SEEN.read(self.dialog._settings_snapshot())
         if whats_new.is_seen(seen):
             return
         self.intro = InfoTile(
@@ -746,7 +746,7 @@ class HomePage(QWidget):
         models = self.dialog.models
         with QSignalBlocker(self.voice_combo):
             self.voice_combo.setCurrentIndex(
-                max(0, self.voice_combo.findData(setting_value(SettingsKey.SELECTED_MODEL, settings)))
+                max(0, self.voice_combo.findData(SettingsKey.SELECTED_MODEL.read(settings)))
             )
         self.voice_detail.setText(
             models.voice_detail() if models.voice_is_remote() else "Audio is transcribed on this computer."

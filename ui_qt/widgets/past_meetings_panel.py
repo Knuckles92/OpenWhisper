@@ -15,7 +15,7 @@ from meeting.content import (
     summarize_meeting_content,
 )
 from meeting.time_utils import format_meeting_duration, format_meeting_started_at
-from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
+from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.file_reveal import open_folder_in_file_manager
 from ui_qt.utils.list_reconcile import MeetingDelivery, reconcile_cards
 from ui_qt.utils.restyle import set_style_property
@@ -808,10 +808,8 @@ class PastMeetingsPanel(QWidget):
             return
         delete_recordings = False
         try:
-            should_confirm = settings_manager.get(
-                SettingsKey.CONFIRM_MEETING_DELETE,
-                SETTING_DEFAULTS[SettingsKey.CONFIRM_MEETING_DELETE],
-            )
+            should_confirm = SettingsKey.CONFIRM_MEETING_DELETE.read(
+                settings_manager.load_all_settings())
         except Exception as exc:
             logger.warning("Failed to load meeting deletion preference: %s", exc)
             should_confirm = True

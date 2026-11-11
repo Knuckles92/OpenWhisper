@@ -30,6 +30,7 @@ from services.actions.model import (
     SHAPING_CLEANUP,
     SHAPING_RAW,
 )
+from services.settings import SettingsKey
 from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.action_copy import (
@@ -441,8 +442,7 @@ class RouteShortcutField(CommandShortcutField):
     def hotkey(self) -> str:
         hotkeys = self.dialog.current_hotkeys or {}
         if not hotkeys:
-            stored = self.dialog._settings_snapshot().get("hotkeys")
-            hotkeys = stored if isinstance(stored, dict) else {}
+            hotkeys = SettingsKey.HOTKEYS.read(self.dialog._settings_snapshot()) or {}
         value = hotkeys.get(self.ACTION, "")
         return value if isinstance(value, str) else ""
 

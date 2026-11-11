@@ -62,7 +62,7 @@ def token_entry(token) -> Optional[dict]:
 
 
 def saved_priority(settings: dict) -> List[dict]:
-    return audio_devices.normalize_priority(settings.get(SettingsKey.AUDIO_INPUT_PRIORITY))
+    return audio_devices.normalize_priority(SettingsKey.AUDIO_INPUT_PRIORITY.read(settings))
 
 
 def preferred_token(settings: dict) -> str:
