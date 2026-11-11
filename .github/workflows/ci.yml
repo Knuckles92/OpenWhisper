@@ -99,10 +99,14 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: ./venv/bin/python -m pytest -n auto -v --durations=20 -o faulthandler_timeout=120
 
-  windows-updater:
-    name: Windows updater and OpenCode regression tests
+  windows:
+    # The full suite on Windows, plus the OpenCode adapter checks and the
+    # Windows OpenCode component build. Windows has its own hotkey, paste,
+    # audio and installer/updater code; every test file runs here, so new
+    # ones need no list to be covered.
+    name: Windows tests
     runs-on: windows-2022
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -117,11 +121,16 @@ jobs:
           python -m venv venv
           . .\venv\Scripts\Activate.ps1
           python -m pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
-      - name: Run updater and controller tests
+      - name: Run test suite
+        # Hang guard: Windows has no coreutils timeout; the step limit kills a
+        # stuck run and faulthandler dumps every thread's stack first.
+        timeout-minutes: 20
         shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           . .\venv\Scripts\Activate.ps1
-          python -m pytest tests/test_app_update.py tests/test_app_update_rate_limit.py tests/test_app_update_apply.py tests/test_app_update_dialog.py tests/test_app_update_handoff.py tests/test_updater_helper.py tests/test_update_startup_gate.py tests/test_update_resilience.py tests/test_application_controller.py tests/test_bootstrap.py -q
+          python -m pytest -n auto -v --durations=20 -o faulthandler_timeout=120
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -141,7 +150,8 @@ jobs:
           . .\venv\Scripts\Activate.ps1
           python scripts/build_component.py meeting-agent-opencode
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python -m pytest tests/test_opencode_sidecar.py tests/test_meeting_sidecar.py -q
+          # The full suite skipped this: it needs the payload just built.
+          python -m pytest -q -rs tests/test_opencode_sidecar.py::test_python_supervisor_with_packaged_sdk_all_meeting_passes
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: opencode-component-windows
@@ -201,6 +211,11 @@ jobs:
         run: python -m pip install -r requirements.txt pytest pypdfium2
       - run: python -m pip check
       - name: Run cross-platform recording, cancellation and persistence regressions
+        # The windows job runs the whole suite with the release pins, so the
+        # Windows release leg skips this list. It stays for the source legs:
+        # they install the documented source dependencies without release
+        # constraints (Python 3.11 on Windows), which no full-suite job does.
+        if: matrix.dependencies == 'source' || runner.os != 'Windows'
         timeout-minutes: 10
         run: >-
           python -m pytest -q -o faulthandler_timeout=90
