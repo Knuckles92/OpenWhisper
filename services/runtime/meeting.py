@@ -25,7 +25,6 @@ from services.components import (
     speaker_model_path,
 )
 from services.settings import (
-    SETTING_DEFAULTS,
     MeetingSpeakerIdBackend,
     SettingsKey,
     resolve_meeting_audio_upload_consent,
@@ -814,12 +813,8 @@ class MeetingRuntime(QObject):
             return
 
         if cloud_enabled is None:
-            cloud = bool(
-                settings_manager.get(
-                    SettingsKey.MEETING_CLOUD_LAST_ENABLED,
-                    SETTING_DEFAULTS[SettingsKey.MEETING_CLOUD_LAST_ENABLED],
-                )
-            )
+            cloud = SettingsKey.MEETING_CLOUD_LAST_ENABLED.read(
+                settings_manager.load_all_settings())
         else:
             cloud = bool(cloud_enabled)
 
@@ -1723,12 +1718,8 @@ class MeetingRuntime(QObject):
         )
 
     def _cloud_consent_given(self) -> bool:
-        return bool(
-            settings_manager.get(
-                SettingsKey.MEETING_CLOUD_CONSENT_GIVEN,
-                SETTING_DEFAULTS[SettingsKey.MEETING_CLOUD_CONSENT_GIVEN],
-            )
-        )
+        return SettingsKey.MEETING_CLOUD_CONSENT_GIVEN.read(
+            settings_manager.load_all_settings())
 
     def finalize_recovered(self, meeting_id: str) -> None:
         """Finalize an interrupted meeting from the recovery dialog."""

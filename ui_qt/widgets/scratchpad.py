@@ -439,7 +439,7 @@ class ScratchpadWindow(QWidget):
         screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
         available = screen.availableGeometry() if screen is not None else QRect(0, 0, 1280, 800)
         rect = self._default_rect(available)
-        saved = settings_manager.get(SettingsKey.SCRATCHPAD_GEOMETRY)
+        saved = SettingsKey.SCRATCHPAD_GEOMETRY.read(settings_manager.load_all_settings())
         try:
             if isinstance(saved, dict) and {"x", "y", "width", "height"}.issubset(saved):
                 rect = QRect(int(saved["x"]), int(saved["y"]), int(saved["width"]), int(saved["height"]))
@@ -459,7 +459,7 @@ class ScratchpadWindow(QWidget):
         geometry = self.geometry()
         value = {"x": geometry.x(), "y": geometry.y(), "width": geometry.width(), "height": geometry.height()}
         try:
-            if settings_manager.get(SettingsKey.SCRATCHPAD_GEOMETRY) != value:
+            if SettingsKey.SCRATCHPAD_GEOMETRY.read(settings_manager.load_all_settings()) != value:
                 settings_manager.save_setting(SettingsKey.SCRATCHPAD_GEOMETRY, value)
         except Exception:
             logger.warning("Couldn't save the Scratchpad position", exc_info=True)

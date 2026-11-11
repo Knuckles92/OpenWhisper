@@ -424,7 +424,9 @@ class CaptureService(ContextCaptureService):
 
     def _excluded(self, identity: AppIdentity) -> bool:
         try:
-            values = self._settings().get("app_context_excluded_apps")
+            from services.settings import SettingsKey
+
+            values = SettingsKey.APP_CONTEXT_EXCLUDED_APPS.read(self._settings())
         except Exception:
             logger.warning("Excluded apps unavailable; not reading text near the cursor", exc_info=True)
             return True

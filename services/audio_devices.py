@@ -362,7 +362,7 @@ def sound_mapper(devices: Sequence[InputDevice]) -> Optional[InputDevice]:
 def _legacy_index(settings: Mapping[str, Any]) -> Optional[int]:
     from services.settings import SettingsKey
 
-    legacy = settings.get(SettingsKey.AUDIO_INPUT_DEVICE)
+    legacy = SettingsKey.AUDIO_INPUT_DEVICE.read(settings)
     if not isinstance(legacy, int) or isinstance(legacy, bool):
         return None
     return legacy
@@ -393,7 +393,7 @@ def load_priority(settings: Optional[Mapping[str, Any]] = None, *, manager=None,
     if settings is None:
         settings = manager.load_all_settings()
     if SettingsKey.AUDIO_INPUT_PRIORITY in settings:
-        return normalize_priority(settings[SettingsKey.AUDIO_INPUT_PRIORITY])
+        return normalize_priority(SettingsKey.AUDIO_INPUT_PRIORITY.read(settings))
     legacy = _legacy_index(settings)
     if legacy is None:
         return []
@@ -411,7 +411,7 @@ def load_priority(settings: Optional[Mapping[str, Any]] = None, *, manager=None,
 
     def migrate(current: dict) -> List[dict]:
         if SettingsKey.AUDIO_INPUT_PRIORITY in current:
-            return normalize_priority(current[SettingsKey.AUDIO_INPUT_PRIORITY])
+            return normalize_priority(SettingsKey.AUDIO_INPUT_PRIORITY.read(current))
         current[SettingsKey.AUDIO_INPUT_PRIORITY] = migrated
         return migrated
 

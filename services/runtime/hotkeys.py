@@ -18,7 +18,6 @@ from services.cleanup_profiles import load_cleanup_profiles
 from services.actions.model import load_actions
 from services.hotkey_conflicts import ACTION, PROFILE, TRANSFORM, hotkey_conflict
 from services.settings import (
-    SETTING_DEFAULTS,
     RecordingTriggerMode,
     SettingsKey,
     resolve_recording_hands_free_latch,
@@ -453,13 +452,12 @@ class HotkeyRuntime:
 
     @staticmethod
     def _auto_paste_enabled() -> bool:
-        key = SettingsKey.AUTO_PASTE
-        return bool(settings_manager.get(key, SETTING_DEFAULTS[key]))
+        return SettingsKey.AUTO_PASTE.read(settings_manager.load_all_settings())
 
     @staticmethod
     def _accessibility_intro_seen() -> bool:
-        key = SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN
-        return bool(settings_manager.get(key, SETTING_DEFAULTS[key]))
+        return SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN.read(
+            settings_manager.load_all_settings())
 
     def _check_autopaste_permission(self) -> None:
         """Offer optional setup once, remembering dismissal across launches."""

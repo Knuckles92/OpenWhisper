@@ -54,11 +54,9 @@ from services.model_catalog import ModelDetails, custom_model_details, get_model
 from services.whisper_sources import custom_model_label, custom_models, is_custom_model, parse_source
 from ui_qt.dialogs.custom_whisper_dialog import add_custom_models
 from services.settings import (
-    SETTING_DEFAULTS,
     SettingsKey,
     is_hf_hub_offline_env_set,
     resolve_meeting_whisper_model,
-    setting_value,
     settings_manager,
 )
 from ui_qt.dialogs.component_details_dialog import ComponentDetailsDialog
@@ -1112,7 +1110,7 @@ class DownloadsPage(QWidget):
     def _on_delete_clicked(self, model_name: str) -> None:
         if is_custom_model(model_name):
             settings = self._settings_snapshot()
-            if model_name in (setting_value(SettingsKey.WHISPER_MODEL, settings),
+            if model_name in (SettingsKey.WHISPER_MODEL.read(settings),
                               resolve_meeting_whisper_model(settings)):
                 self.message_label.setText("Choose another model before removing this assignment.")
                 return
@@ -1383,13 +1381,11 @@ class DownloadsPage(QWidget):
         The dictation model is the loaded one when dictation is set to auto;
         the meeting model is "" when meetings use remote speech.
         """
-        active_model = settings_manager.get(
-            SettingsKey.WHISPER_MODEL, SETTING_DEFAULTS[SettingsKey.WHISPER_MODEL]
-        )
+        active_model = SettingsKey.WHISPER_MODEL.read(settings_manager.load_all_settings())
         if active_model not in [*config.WHISPER_MODEL_CHOICES, *custom_models(settings)]:
             active_model = config.DEFAULT_WHISPER_MODEL
         from services.local_asr.catalog import BACKENDS, selected_model
-        selected_backend = setting_value(SettingsKey.SELECTED_MODEL, settings)
+        selected_backend = SettingsKey.SELECTED_MODEL.read(settings)
         if selected_backend in BACKENDS:
             active_model = selected_model(selected_backend, settings)
         meeting_model = resolve_meeting_whisper_model(settings)

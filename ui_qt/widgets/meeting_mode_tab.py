@@ -48,7 +48,8 @@ from meeting.time_utils import (
     format_meeting_identity_meta,
     format_meeting_started_at,
 )
-from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
+from services.setting_types import BoolSetting
+from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.palette import token_color
 from ui_qt.utils.restyle import repolish, set_style_property
 from ui_qt.widgets.buttons import Button, DangerButton, SuccessButton
@@ -376,8 +377,8 @@ def meeting_audio_shows_platform_warning(platform: Optional[str] = None) -> bool
     return True
 
 
-def _saved_setting(key: str):
-    return settings_manager.get(key, SETTING_DEFAULTS[key])
+def _saved_switch(setting: BoolSetting) -> bool:
+    return setting.read(settings_manager.load_all_settings())
 
 
 #: Identity fields a meeting-state payload may update, kept for the header.
@@ -578,7 +579,7 @@ class MeetingModeTab(QWidget):
 
         self._setup_ui()
         self.set_developer_mode(
-            bool(_saved_setting(SettingsKey.DEVELOPER_MODE))
+            _saved_switch(SettingsKey.DEVELOPER_MODE)
         )
         self._apply_layout_state()
 
@@ -867,7 +868,7 @@ class MeetingModeTab(QWidget):
         self.cloud_checkbox.setText("AI insights")
         self.cloud_checkbox.setAccessibleName("AI insights")
         self.cloud_checkbox.setChecked(
-            bool(_saved_setting(SettingsKey.MEETING_CLOUD_LAST_ENABLED))
+            _saved_switch(SettingsKey.MEETING_CLOUD_LAST_ENABLED)
         )
         self.cloud_checkbox.setAccessibleDescription(
             "When on, transcript text goes to the AI model chosen in "

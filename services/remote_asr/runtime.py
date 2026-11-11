@@ -9,7 +9,7 @@ from services.local_asr.catalog import (
     runtime_id,
     selected_device,
 )
-from services.settings import SettingsKey, setting_value, settings_manager
+from services.settings import SettingsKey, settings_manager
 from services.local_asr.languages import language_choices, selected_language
 
 #: The settings a paired computer may change on the host's engine.
@@ -45,8 +45,8 @@ def runtime_state(engine: dict) -> dict:
                 compute_types[device] = ["auto"]
         devices = ["auto", "cpu"] + (["cuda"] if cuda else [])
         selected = {
-            "device": setting_value(SettingsKey.WHISPER_DEVICE, settings),
-            "compute_type": setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings),
+            "device": SettingsKey.WHISPER_DEVICE.read(settings),
+            "compute_type": SettingsKey.WHISPER_COMPUTE_TYPE.read(settings),
         }
         compute_types["auto"] = compute_types.get("cuda" if cuda else "cpu", ["auto"])
     elif family == "parakeet_mlx":
@@ -59,7 +59,7 @@ def runtime_state(engine: dict) -> dict:
         if devices and devices[0] != "auto":
             devices.insert(0, "auto")
         selected = {"device": selected_device(family, settings),
-                    "language": selected_language(family, setting_value(SettingsKey.LOCAL_ASR_LANGUAGE, settings))}
+                    "language": selected_language(family, SettingsKey.LOCAL_ASR_LANGUAGE.read(settings))}
     else:
         # The Vulkan runtime needs only the card, not the CUDA libraries
         # CTranslate2 counts it with.
@@ -70,7 +70,7 @@ def runtime_state(engine: dict) -> dict:
         if family != "moonshine" and devices:
             devices.insert(0, "auto")
         selected = {"device": selected_device(family, settings),
-                    "language": selected_language(family, setting_value(SettingsKey.LOCAL_ASR_LANGUAGE, settings))}
+                    "language": selected_language(family, SettingsKey.LOCAL_ASR_LANGUAGE.read(settings))}
     return {
         "family": family,
         "model": engine.get("model", ""),
@@ -119,7 +119,7 @@ def _local_settings(state: dict, family: str, device: str, selected: dict, chang
         raise ValueError("This engine manages its own precision on the host.")
     if selected["language"] not in state["languages"]:
         raise ValueError("Choose a language supported by this engine on the host.")
-    devices = dict(settings_manager.get(SettingsKey.LOCAL_ASR_DEVICES, {}) or {})
+    devices = dict(SettingsKey.LOCAL_ASR_DEVICES.read(settings_manager.load_all_settings()))
     devices[family] = device
     return {SettingsKey.LOCAL_ASR_DEVICES: devices,
             SettingsKey.LOCAL_ASR_LANGUAGE: selected["language"]}

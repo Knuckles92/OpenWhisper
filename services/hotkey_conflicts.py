@@ -102,7 +102,7 @@ def _standard_conflict(
 ) -> str | None:
     saved = standard_hotkeys
     if saved is None:
-        saved = settings.get(SettingsKey.HOTKEYS) or {}
+        saved = SettingsKey.HOTKEYS.read(settings) or {}
     standard = {**config.DEFAULT_HOTKEYS, **saved}
     for action, value in standard.items():
         if exclude == (STANDARD, action):

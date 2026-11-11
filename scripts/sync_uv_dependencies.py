@@ -44,7 +44,7 @@ def generated_block() -> str:
             "# Alternative CUDA wheels for Linux or explicit developer testing.",
             array("gpu", requirements("requirements-gpu.txt")),
             "[dependency-groups]",
-            'dev = [{ include-group = "build" }, "ruff==0.16.4"]',
+            'dev = [{ include-group = "build" }, "ruff==0.16.4", "mypy==2.4.1"]',
             "# Component builders use pip's JSON dependency report.",
             array("build", requirements("requirements-build.txt") + ["pip>=24"]),
             "[tool.uv]",

@@ -18,6 +18,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ### Fixed
 
+- **Hand-edited settings read the same everywhere** — an on/off setting saved as something other than `true` or `false` (for example `"auto_paste": "false"` typed into the settings file) was treated as on by some parts of the app and as its default by others, including the saved consent for AI insights in meetings. Every part now reads only a real `true` or `false` and otherwise uses the default. Settings the app saves itself are unaffected.
 - **A broken overlay no longer floods the log** — when the recording overlay could not draw, it logged the full error on every frame; it now logs it once.
 
 ## [2.8.9] - 2026-11-10

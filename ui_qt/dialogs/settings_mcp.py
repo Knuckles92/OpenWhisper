@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from services.agent_mcp.controls import SETTING_CONTROLS, writable_settings
-from services.agent_mcp.runtime import DEFAULT_PORT, runtime
+from services.agent_mcp.runtime import runtime
 from services.agent_mcp.setup import (
     TOKEN_PLACEHOLDER,
     agent_prompt,
@@ -380,7 +380,7 @@ class McpSettingsPage(QWidget):
             )
         )
         self.agent_location.setAccessibleName("Agent computer")
-        tailscale_on = settings.get(SettingsKey.MCP_TAILSCALE_ENABLED, False) is True
+        tailscale_on = SettingsKey.MCP_TAILSCALE_ENABLED.read(settings)
         self.agent_location.setCurrentIndex(
             self._remote_index if tailscale_on or host_name else self._local_index
         )
@@ -476,9 +476,8 @@ class McpSettingsPage(QWidget):
         self.port.setAccessibleName("MCP local port")
         self.port.setRange(1, 65535)
         self.port.setKeyboardTracking(False)
-        port = settings.get(SettingsKey.MCP_PORT, DEFAULT_PORT)
         self.port.setValue(
-            port if type(port) is int and 1 <= port <= 65535 else DEFAULT_PORT
+            SettingsKey.MCP_PORT.read(settings)
         )
         self.port.valueChanged.connect(self._port_changed)
         self.advanced.body_layout.addWidget(
@@ -689,7 +688,7 @@ class McpSettingsPage(QWidget):
         self.refresh()
 
     def _start(self):
-        if self.settings.get(SettingsKey.MCP_TAILSCALE_ENABLED, False) is True:
+        if SettingsKey.MCP_TAILSCALE_ENABLED.read(self.settings.load_all_settings()):
             self.server.start(self.port.value(), tailscale=True)
         else:
             self.server.start(self.port.value())
@@ -718,8 +717,7 @@ class McpSettingsPage(QWidget):
 
     def _save_setting_permission(self, key, checked):
         def commit(saved):
-            permissions = saved.get(SettingsKey.MCP_WRITABLE_SETTINGS, {})
-            permissions = dict(permissions) if isinstance(permissions, dict) else {}
+            permissions = dict(SettingsKey.MCP_WRITABLE_SETTINGS.read(saved))
             permissions[key] = checked
             saved[SettingsKey.MCP_WRITABLE_SETTINGS] = permissions
 
@@ -739,7 +737,7 @@ class McpSettingsPage(QWidget):
             logger.warning("Could not save the MCP port", exc_info=True)
             self._notice = "Could not save the MCP port. Try again."
             self.port.blockSignals(True)
-            self.port.setValue(self.settings.get(SettingsKey.MCP_PORT, DEFAULT_PORT))
+            self.port.setValue(SettingsKey.MCP_PORT.read(self.settings.load_all_settings()))
             self.port.blockSignals(False)
         self.refresh()
 
@@ -831,12 +829,12 @@ class McpSettingsPage(QWidget):
     def refresh(self):
         status = self.server.status()
         preferences = self.settings.load_all_settings()
-        saved = preferences.get(SettingsKey.MCP_ENABLED, False) is True
+        saved = SettingsKey.MCP_ENABLED.read(preferences)
         if self.link is not None:
             # The host answers after the click, so what it refused arrives here.
             self._notice = self.link.take_problem() or self._notice
-            port = preferences.get(SettingsKey.MCP_PORT)
-            if type(port) is int and port != self.port.value() and not self.port.hasFocus():
+            port = SettingsKey.MCP_PORT.stored(preferences)
+            if port is not None and port != self.port.value() and not self.port.hasFocus():
                 self.port.blockSignals(True)
                 self.port.setValue(port)
                 self.port.blockSignals(False)
@@ -850,7 +848,7 @@ class McpSettingsPage(QWidget):
             check.setChecked(key in granted)
             check.blockSignals(False)
         self.settings_permissions.setEnabled(
-            preferences.get(SettingsKey.MCP_SETTINGS_ACCESS) is True
+            SettingsKey.MCP_SETTINGS_ACCESS.read(preferences)
         )
         access = self.settings_permissions.isEnabled()
         self.permission_summary.setText(
@@ -863,7 +861,7 @@ class McpSettingsPage(QWidget):
         self.enabled.blockSignals(False)
         self.tailscale_enabled.blockSignals(True)
         self.tailscale_enabled.setChecked(
-            preferences.get(SettingsKey.MCP_TAILSCALE_ENABLED) is True
+            SettingsKey.MCP_TAILSCALE_ENABLED.read(preferences)
         )
         self.tailscale_enabled.blockSignals(False)
         self.tailscale_tile.setEnabled(
@@ -1298,7 +1296,7 @@ class LiveAutomationSection(QWidget):
             check.blockSignals(blocked)
         blocked = self.mcp_events_switch.blockSignals(True)
         self.mcp_events_switch.setChecked(
-            preferences.get(SettingsKey.MCP_EVENTS_ENABLED) is True
+            SettingsKey.MCP_EVENTS_ENABLED.read(preferences)
         )
         self.mcp_events_switch.blockSignals(blocked)
         self.refresh_live()
@@ -1630,7 +1628,7 @@ class McpSettingsView(QWidget):
         tile.setEnabled(self._service is not None and pairing is not None)
         blocked = tile.checkbox.blockSignals(True)
         tile.checkbox.setChecked(
-            self.settings.get(SettingsKey.REMOTE_CLIENT_HISTORY, False) is True
+            SettingsKey.REMOTE_CLIENT_HISTORY.read(self.settings.load_all_settings())
         )
         tile.checkbox.blockSignals(blocked)
 

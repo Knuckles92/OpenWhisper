@@ -218,7 +218,7 @@ class TabbedContentWidget(QWidget):
     def _restore_last_tab(self):
         try:
             settings = settings_manager.load_all_settings()
-            saved = settings.get(SettingsKey.LAST_TAB_INDEX)
+            saved = SettingsKey.LAST_TAB_INDEX.read(settings)
             last_tab = next(
                 (tab for tab, saved_id in self.SAVED_TAB_IDS.items() if saved_id == saved),
                 self.TAB_QUICK_RECORD,

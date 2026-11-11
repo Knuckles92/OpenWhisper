@@ -11,10 +11,8 @@ from PyQt6.QtGui import QAction, QKeySequence, QPainter, QPen
 from config import config
 from services.hotkey_manager import format_hotkey_display
 from services.settings import (
-    SETTING_DEFAULTS,
     SettingsKey,
     resolve_meeting_mode_intro_seen,
-    setting_value,
     settings_manager,
 )
 from ui_qt.utils.collapse_animation import (
@@ -1567,8 +1565,7 @@ class MainWindow(QMainWindow):
 
     def _restore_compact_mode(self) -> None:
         try:
-            default = SETTING_DEFAULTS[SettingsKey.COMPACT_MODE]
-            if settings_manager.get(SettingsKey.COMPACT_MODE, default) is True:
+            if SettingsKey.COMPACT_MODE.read(settings_manager.load_all_settings()):
                 self.set_compact_mode(True, persist=False)
         except Exception as e:
             logger.warning(f"Failed to restore compact mode: {e}", exc_info=True)
@@ -1591,7 +1588,7 @@ class MainWindow(QMainWindow):
         x = self.x()
         y = self.y()
         try:
-            geo = settings_manager.get(SettingsKey.COMPACT_WINDOW_GEOMETRY)
+            geo = SettingsKey.COMPACT_WINDOW_GEOMETRY.read(settings_manager.load_all_settings())
             if isinstance(geo, dict) and {"x", "y"}.issubset(geo):
                 x = int(geo["x"])
                 y = int(geo["y"])
@@ -1681,9 +1678,7 @@ class MainWindow(QMainWindow):
 
     def _restore_host_mode(self) -> None:
         try:
-            if settings_manager.get(
-                SettingsKey.HOST_MODE, SETTING_DEFAULTS[SettingsKey.HOST_MODE]
-            ) is True:
+            if SettingsKey.HOST_MODE.read(settings_manager.load_all_settings()):
                 self.set_host_mode(True, persist=False)
         except Exception as e:
             logger.warning(f"Failed to restore host mode: {e}", exc_info=True)
@@ -1709,7 +1704,7 @@ class MainWindow(QMainWindow):
 
         target = None
         try:
-            saved = settings_manager.get(SettingsKey.HOST_WINDOW_GEOMETRY)
+            saved = SettingsKey.HOST_WINDOW_GEOMETRY.read(settings_manager.load_all_settings())
             if isinstance(saved, dict) and {"x", "y", "width", "height"}.issubset(saved):
                 target = QRect(
                     int(saved["x"]), int(saved["y"]),
@@ -2065,7 +2060,7 @@ class MainWindow(QMainWindow):
 
         try:
             settings = settings_manager.load_all_settings()
-            minimize_tray = setting_value(SettingsKey.MINIMIZE_TRAY, settings)
+            minimize_tray = SettingsKey.MINIMIZE_TRAY.read(settings)
         except Exception as e:
             logger.error(f"Failed to load settings: {e}", exc_info=True)
             minimize_tray = True  # Default to True on error
@@ -2293,7 +2288,7 @@ class MainWindow(QMainWindow):
                 self.resize(min(960, available.width() - 64), min(680, available.height() - 64))
             return
         try:
-            geo = settings_manager.get(SettingsKey.WINDOW_GEOMETRY)
+            geo = SettingsKey.WINDOW_GEOMETRY.read(settings_manager.load_all_settings())
             if self._apply_saved_geometry(geo):
                 return
 

@@ -7,7 +7,7 @@ import logging
 import os
 import threading
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from config import config
 from services import audio_player, dictation_pipeline, recognition_context
@@ -35,7 +35,6 @@ from services.batch_upload import (
     join_raw_parts,
 )
 from services.settings import (
-    SETTING_DEFAULTS,
     SettingsKey,
     WalkthroughCopyFormat,
     resolve_walkthrough_copy_format,
@@ -44,7 +43,6 @@ from services.settings import (
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
     resolve_transcript_cleanup_rules,
-    setting_value,
     settings_manager,
 )
 
@@ -182,10 +180,10 @@ class TranscriptionRuntime:
         # Copy buttons. Set per job after the slot is claimed.
         self._deliver_to_clipboard = True
         self._retry_entry_id: Optional[str] = None
-        self._remote_recording = None
+        self._remote_recording: Optional[Tuple[Any, Any]] = None
         self._remote_retry_exhausted = False
         self._recording_profile = None
-        self._profile_settings = None
+        self._profile_settings: Optional[Dict[str, Any]] = None
         # The recording's DictationJob from its start until its stop claims
         # the slot; uploads never inherit one.
         self._job: Optional[dictation_pipeline.DictationJob] = None
@@ -229,7 +227,7 @@ class TranscriptionRuntime:
         self._incremental = IncrementalDictation()
         # The walkthrough job's WalkthroughSession, from its start until the
         # job ends; read and changed under _job_lock.
-        self._walkthrough = None
+        self._walkthrough: Any = None
         # Stops the AI write-up of a finished walkthrough while one runs,
         # after its job; Qt thread only.
         self._write_up_cancel: Optional[threading.Event] = None
@@ -621,7 +619,7 @@ class TranscriptionRuntime:
         # Command Mode reads the selection through the clipboard first,
         # so its snapshot would no longer be the user's.
         if mode == JobMode.DICTATION and all(
-            settings_manager.get(key, SETTING_DEFAULTS[key])
+            key.read(settings_manager.load_all_settings())
             for key in (SettingsKey.AUTO_PASTE, SettingsKey.RESTORE_CLIPBOARD)
         ):
             self.controller.ui_controller.prefetch_clipboard_snapshot()
@@ -676,7 +674,9 @@ class TranscriptionRuntime:
             route = self._dictation_route()
         if profile_id and settings is None:
             settings = settings_manager.load_all_settings()
-        profile = find_cleanup_profile(settings, profile_id) if profile_id else None
+        # Loaded above whenever there is a profile to find.
+        profile = (find_cleanup_profile(settings, profile_id)
+                   if profile_id and settings is not None else None)
         if profile_id and profile is None:
             self.controller.status_update.emit("Cleanup profile no longer exists")
             return None
@@ -1511,7 +1511,10 @@ class TranscriptionRuntime:
         job = self._active_job
         if profile is _RECORDING_PROFILE:
             profile = self._recording_profile
-            settings = self._profile_settings if profile else settings_manager.load_all_settings()
+            # A recording's profile keeps the settings it started with.
+            settings = self._profile_settings if profile else None
+            if settings is None:
+                settings = settings_manager.load_all_settings()
         else:
             settings = settings_manager.load_all_settings()
         self._formatting_profile = profile
@@ -1522,7 +1525,7 @@ class TranscriptionRuntime:
         prepared = dictation_pipeline.prepare_text(raw, job, settings)
         self._spoken_text = prepared.text
         self._stats_counts = dictation_pipeline.stats_counts(prepared)
-        enabled = profile is not None or setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings)
+        enabled = profile is not None or SettingsKey.TRANSCRIPT_CLEANUP_ENABLED.read(settings)
         if not enabled or prepared.skip_cleanup:
             return self._finish_without_cleanup(prepared)
 
@@ -1618,7 +1621,7 @@ class TranscriptionRuntime:
             logger.error(f"Transcription failed: {exc}", exc_info=True)
             self.controller.transcription_failed.emit(str(exc))
 
-    def _with_final_recognition(self, job):
+    def _with_final_recognition(self, job: Optional[dictation_pipeline.DictationJob]):
         """``(job, recognition)`` for the final pass, the job updated to match."""
         recognition = self._final_pass_recognition(job)
         if job is not None and recognition is not None and recognition != (
@@ -1628,9 +1631,8 @@ class TranscriptionRuntime:
             # started; history and stats record the one decoded with.
             with self._job_lock:
                 if self._active_job is job:
-                    job = self._active_job = dataclasses.replace(
-                        job, recognition=recognition
-                    )
+                    job = dataclasses.replace(job, recognition=recognition)
+                    self._active_job = job
         return job, recognition
 
     def _timed_decode(self, backend, decode):
@@ -2247,7 +2249,7 @@ class TranscriptionRuntime:
             self._finish_job()
             return
 
-        entry = dict(
+        entry: Dict[str, Any] = dict(
                     text=transcript,
                     model=self._model_info_for_history(),
                     source_audio_path=self.controller._pending_audio_path,
@@ -2416,7 +2418,7 @@ class TranscriptionRuntime:
         settings = settings_manager.load_all_settings()
         copy_format = resolve_walkthrough_copy_format(settings)
         auto_paste = (copy_format == WalkthroughCopyFormat.AGENT_TASK
-                      and setting_value(SettingsKey.AUTO_PASTE, settings))
+                      and SettingsKey.AUTO_PASTE.read(settings))
         target = None
         if auto_paste:
             from services.focus_context import get_service
@@ -2648,8 +2650,8 @@ class TranscriptionRuntime:
             True when the paste keystroke was sent.
         """
         settings = settings_manager.load_all_settings()
-        copy_clipboard = setting_value(SettingsKey.COPY_CLIPBOARD, settings)
-        auto_paste = force_paste or setting_value(SettingsKey.AUTO_PASTE, settings)
+        copy_clipboard = SettingsKey.COPY_CLIPBOARD.read(settings)
+        auto_paste = force_paste or SettingsKey.AUTO_PASTE.read(settings)
 
         def _status(text: str) -> None:
             self._delivery_status = text + status_suffix
@@ -2699,10 +2701,10 @@ class TranscriptionRuntime:
         ui = self.controller.ui_controller
         # Only options that differ from the defaults are passed, so a plain
         # paste stays the one-argument call every UI stand-in takes.
-        options = {}
+        options: Dict[str, Any] = {}
         if html:
             options["html"] = html
-        if not setting_value(SettingsKey.RESTORE_CLIPBOARD, settings):
+        if not SettingsKey.RESTORE_CLIPBOARD.read(settings):
             options["restore"] = False
         stage = ui.stage_transcript_for_paste(transcript, **options)
         if not stage.written:

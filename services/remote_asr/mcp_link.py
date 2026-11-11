@@ -17,7 +17,7 @@ import copy
 import logging
 import threading
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from services.agent_mcp.host_control import PERMISSIONS
 from services.agent_mcp.runtime import DEFAULT_PORT, ServerStatus
@@ -33,7 +33,7 @@ LOADING, READY, FORBIDDEN, UNSUPPORTED, OFFLINE = (
     "loading", "ready", "forbidden", "unsupported", "offline",
 )
 
-_SETTING_FIELDS = {key: name for name, key in PERMISSIONS.items()}
+_SETTING_FIELDS: dict[str, str] = {key: name for name, key in PERMISSIONS.items()}
 _SETTING_FIELDS[SettingsKey.MCP_PORT] = "port"
 _SETTING_FIELDS[SettingsKey.MCP_TAILSCALE_ENABLED] = "tailscale"
 
@@ -45,7 +45,9 @@ class HostMcpLink:
         self._clock = clock
         self._lock = threading.RLock()
         self._truth: Optional[dict] = None
-        self._view: Optional[dict] = None
+        # The host's last state, or None until it answers; _show only runs
+        # once it has (it follows a successful apply).
+        self._view: Any = None
         self._availability = LOADING
         self._message = ""
         self._problem = ""
@@ -237,8 +239,8 @@ class HostMcpSettings:
         before = self.load_all_settings()
         after = copy.deepcopy(before)
         commit(after)
-        old = before.get(SettingsKey.MCP_WRITABLE_SETTINGS, {})
-        new = after.get(SettingsKey.MCP_WRITABLE_SETTINGS, {})
+        old = SettingsKey.MCP_WRITABLE_SETTINGS.read(before)
+        new = SettingsKey.MCP_WRITABLE_SETTINGS.read(after)
         changed = {key: new.get(key) is True for key in set(old) | set(new)
                    if (old.get(key) is True) != (new.get(key) is True)}
         if changed:

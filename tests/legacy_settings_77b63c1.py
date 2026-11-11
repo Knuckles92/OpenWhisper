@@ -1,0 +1,2147 @@
+"""services/settings.py at 77b63c1, before typed settings (only this docstring added).
+
+Only tests/test_typed_settings.py imports it, to show that every typed read
+resolves stored values exactly as the old resolvers did. Do not edit; delete
+it once the typed settings have shipped in a release.
+"""
+# Persistent application settings and validated resolvers (original docstring).
+import json
+from copy import deepcopy
+from dataclasses import dataclass
+import os
+import logging
+import sys
+import tempfile
+import threading
+from datetime import date
+from types import MappingProxyType
+from typing import Callable, Dict, Any, Final, List, Mapping, Tuple, Optional, TypeVar
+from config import config
+from services import openai_retirement
+from services.batch_upload import BatchRelation
+
+logger = logging.getLogger(__name__)
+SettingsMutationResult = TypeVar("SettingsMutationResult")
+
+LEGACY_API_MODELS = {
+    "api_whisper": "whisper-1",
+    "api_gpt4o": "gpt-4o-transcribe",
+    "api_gpt4o_mini": "gpt-4o-mini-transcribe",
+}
+
+
+def api_model_choices(today: Optional[date] = None) -> Tuple[str, ...]:
+    """API transcription models OpenAI still serves, in display order."""
+    if not openai_retirement.retired(today):
+        return config.API_MODEL_CHOICES
+    return tuple(
+        model for model in config.API_MODEL_CHOICES
+        if model not in openai_retirement.RETIRING_TRANSCRIPTION_MODELS
+    )
+
+
+def api_model_label(model: str, today: Optional[date] = None) -> str:
+    """Picker text for an API model; retiring ones carry the shutdown date."""
+    if (
+        model in openai_retirement.RETIRING_TRANSCRIPTION_MODELS
+        and not openai_retirement.retired(today)
+    ):
+        return f"{model} (retiring {openai_retirement.SHUTDOWN_LABEL})"
+    return model
+
+
+def serving_api_model(model: str, today: Optional[date] = None) -> str:
+    """``model`` while OpenAI serves it, otherwise the default API model."""
+    if model in api_model_choices(today):
+        return model
+    return config.DEFAULT_API_MODEL
+
+
+def resolve_api_transcription_model(
+    settings: dict[str, Any], today: Optional[date] = None,
+) -> str:
+    model = settings.get(SettingsKey.API_TRANSCRIPTION_MODEL)
+    if isinstance(model, str) and model in config.API_MODEL_CHOICES:
+        return serving_api_model(model, today)
+    legacy = settings.get(SettingsKey.SELECTED_MODEL)
+    if isinstance(legacy, str) and legacy in LEGACY_API_MODELS:
+        return serving_api_model(LEGACY_API_MODELS[legacy], today)
+    return SETTING_DEFAULTS[SettingsKey.API_TRANSCRIPTION_MODEL]
+
+
+# Bump whenever the Linux preview disclosure changes meaning. Persisting the
+# version instead of a boolean prevents an older acknowledgement from silently
+# authorizing newly added capture behavior.
+MEETING_LINUX_PREVIEW_ACK_VERSION: Final[int] = 1
+
+
+class SettingsKey:
+    """Keys persisted in the settings JSON file."""
+    HOTKEYS: Final[str] = "hotkeys"
+    SELECTED_MODEL: Final[str] = "selected_model"
+    API_TRANSCRIPTION_MODEL: Final[str] = "api_transcription_model"
+    # The API backend's server and the self-hosted servers' overrides; see
+    # services/speech_endpoints.py.
+    API_TRANSCRIPTION_ENDPOINT: Final[str] = "api_transcription_endpoint"
+    API_TRANSCRIPTION_SERVERS: Final[str] = "api_transcription_servers"
+    AUDIO_INPUT_DEVICE: Final[str] = "audio_input_device"
+    WINDOW_GEOMETRY: Final[str] = "window_geometry"
+    COMPACT_WINDOW_GEOMETRY: Final[str] = "compact_window_geometry"
+    COMPACT_MODE: Final[str] = "compact_mode"
+    # View → Host Mode: the main window shows the host dashboard instead of
+    # the recording tabs, with its own window position and size.
+    HOST_MODE: Final[str] = "host_mode"
+    HOST_WINDOW_GEOMETRY: Final[str] = "host_window_geometry"
+    AUTO_PASTE: Final[str] = "auto_paste"
+    MACOS_ACCESSIBILITY_INTRO_SEEN: Final[str] = "macos_accessibility_intro_seen"
+    COPY_CLIPBOARD: Final[str] = "copy_clipboard"
+    # Put back what the clipboard held before an auto-paste borrowed it; off
+    # leaves the pasted text on the clipboard.
+    RESTORE_CLIPBOARD: Final[str] = "restore_clipboard"
+    TRANSCRIPT_CLEANUP_ENABLED: Final[str] = "transcript_cleanup_enabled"
+    TRANSCRIPT_CLEANUP_PROMPT: Final[str] = "transcript_cleanup_prompt"
+    TRANSCRIPT_CLEANUP_PROVIDER: Final[str] = "transcript_cleanup_provider"
+    TRANSCRIPT_CLEANUP_MODEL: Final[str] = "transcript_cleanup_model"
+    TRANSCRIPT_CLEANUP_MODEL_SORT: Final[str] = "transcript_cleanup_model_sort"
+    TRANSCRIPT_CLEANUP_REASONING: Final[str] = "transcript_cleanup_reasoning"
+    # Named OpenAI-compatible endpoints (custom profiles only; builtins omitted).
+    TEXT_LLM_PROFILES: Final[str] = "text_llm_profiles"
+    # JSON list of user-taught rule strings appended to the cleanup prompt
+    TRANSCRIPT_CLEANUP_RULES: Final[str] = "transcript_cleanup_rules"
+    TRANSCRIPT_CLEANUP_PROFILES: Final[str] = "transcript_cleanup_profiles"
+    QUICK_RECORD_PROFILE: Final[str] = "quick_record_profile"
+    # Multi-file upload: last relation preset (BatchRelation) and the Custom
+    # preset's description and combine choice
+    TRANSCRIPT_BATCH_RELATION: Final[str] = "transcript_batch_relation"
+    TRANSCRIPT_BATCH_CUSTOM_INSTRUCTIONS: Final[str] = (
+        "transcript_batch_custom_instructions"
+    )
+    TRANSCRIPT_BATCH_CUSTOM_COMBINE: Final[str] = "transcript_batch_custom_combine"
+    MINIMIZE_TRAY: Final[str] = "minimize_tray"
+    STREAMING_ENABLED: Final[str] = "streaming_enabled"
+    STREAMING_CHUNK_DURATION: Final[str] = "streaming_chunk_duration"
+    STREAMING_OVERLAY_FONT_SIZE: Final[str] = "streaming_overlay_font_size"
+    # Where the overlay puts its look once preview words arrive; see
+    # StreamingOverlayLayout.
+    STREAMING_OVERLAY_LAYOUT: Final[str] = "streaming_overlay_layout"
+    # The recording overlay's look; see RecordingOverlayLook. "legacy" is Classic.
+    RECORDING_OVERLAY_LOOK: Final[str] = "recording_overlay_look"
+    # Parts of a live look's label: the pulsing dot, "Recording", the clock.
+    RECORDING_OVERLAY_DOT: Final[str] = "recording_overlay_dot"
+    RECORDING_OVERLAY_TEXT: Final[str] = "recording_overlay_text"
+    RECORDING_OVERLAY_CLOCK: Final[str] = "recording_overlay_clock"
+    # Application chrome type size as a percent of the designed theme (90–130).
+    UI_FONT_SCALE: Final[str] = "ui_font_scale"
+    # Colour theme: "dark", "light", or "system" (follow the OS setting).
+    UI_THEME: Final[str] = "ui_theme"
+    # Optional dictation onboarding; absence on an established install is not new.
+    GUIDED_SETUP_STATE: Final[str] = "guided_setup_state"
+    MEETING_SETUP_COMPLETE: Final[str] = "meeting_setup_complete"
+    # Legacy keys kept for reading/migrating older settings files
+    STREAMING_OVERLAY_ENABLED: Final[str] = "streaming_overlay_enabled"
+    STREAMING_PASTE_ENABLED: Final[str] = "streaming_paste_enabled"
+    LOCAL_ASR_MODELS: Final[str] = "local_asr_models"
+    LOCAL_ASR_DEVICES: Final[str] = "local_asr_devices"
+    LOCAL_ASR_LANGUAGE: Final[str] = "local_asr_language"
+    MEETING_ASR_MODEL: Final[str] = "meeting_asr_model"
+    MEETING_ASR_SOURCE: Final[str] = "meeting_asr_source"  # local | remote
+    # False: meetings use the dictation engine. True: the two keys above and
+    # MEETING_WHISPER_MODEL choose a separate one.
+    MEETING_SPEECH_SEPARATE: Final[str] = "meeting_speech_separate"
+    WHISPER_MODEL: Final[str] = "whisper_model"
+    CUSTOM_WHISPER_MODELS: Final[str] = "custom_whisper_models"
+    WHISPER_DEVICE: Final[str] = "whisper_device"
+    WHISPER_COMPUTE_TYPE: Final[str] = "whisper_compute_type"
+    # "Keep using the CPU" on the "Use this GPU" offer; it isn't shown again.
+    WHISPER_GPU_OFFER_DECLINED: Final[str] = "whisper_gpu_offer_declined"
+    HF_ACCESS_POLICY: Final[str] = "hf_access_policy"
+    # Legacy boolean replaced by HF_ACCESS_POLICY; kept for migration only.
+    HF_HUB_OFFLINE: Final[str] = "hf_hub_offline"
+    LAST_TAB_INDEX: Final[str] = "last_tab_index"
+    DEVELOPER_MODE: Final[str] = "developer_mode"
+    # Recording retention: "keep_all", "custom" (+ max_saved_recordings count),
+    # or "size_limit" (+ max_saved_recordings_mb folder size)
+    RECORDING_RETENTION_MODE: Final[str] = "recording_retention_mode"
+    MAX_SAVED_RECORDINGS: Final[str] = "max_saved_recordings"
+    MAX_SAVED_RECORDINGS_MB: Final[str] = "max_saved_recordings_mb"
+    # Record hotkey activation: "toggle" or "push_hold"
+    RECORDING_TRIGGER_MODE: Final[str] = "recording_trigger_mode"
+    CONFIRM_HISTORY_ENTRY_DELETE: Final[str] = "confirm_history_entry_delete"
+    CONFIRM_MEETING_DELETE: Final[str] = "confirm_meeting_delete"
+    # Meeting Mode
+    MEETING_WHISPER_MODEL: Final[str] = "meeting_whisper_model"
+    MEETING_LANGUAGE: Final[str] = "meeting_language"
+    MEETING_LLM_PROVIDER: Final[str] = "meeting_llm_provider"
+    MEETING_LLM_MODEL: Final[str] = "meeting_llm_model"
+    MEETING_AGENT_CORE: Final[str] = "meeting_agent_core"
+    MEETING_BACKUP_AGENT: Final[str] = "meeting_backup_agent"
+    #: ``{agent_id: model}`` for installed agents; "" keeps the agent's default.
+    MEETING_AGENT_MODELS: Final[str] = "meeting_agent_models"
+    #: ``TranscriptCleanupReasoning`` values for an installed agent's live
+    #: passes and its final report.
+    MEETING_LIVE_THINKING: Final[str] = "meeting_live_thinking"
+    MEETING_FINAL_THINKING: Final[str] = "meeting_final_thinking"
+    MEETING_END_REDECODE: Final[str] = "meeting_end_redecode"
+    MEETING_REDECODE_COVERAGE_GUARD: Final[str] = "meeting_redecode_coverage_guard"
+    MEETING_END_POLISH: Final[str] = "meeting_end_polish"
+    MEETING_INSIGHT_REVIEW: Final[str] = "meeting_insight_review"
+    MEETING_INSIGHT_REVIEW_CONSENT: Final[str] = "meeting_insight_review_consent"
+    MEETING_INSIGHT_REVIEW_SENSITIVITY: Final[str] = "meeting_insight_review_sensitivity"
+    MEETING_END_REPORT: Final[str] = "meeting_end_report"
+    MEETING_REPORT_RIBBON: Final[str] = "meeting_report_ribbon"
+    MEETING_REPORT_BRIEF: Final[str] = "meeting_report_brief"
+    MEETING_REPORT_SIGNAL: Final[str] = "meeting_report_signal"
+    MEETING_CLOUD_CONSENT_GIVEN: Final[str] = "meeting_cloud_consent_given"
+    MEETING_CLOUD_LAST_ENABLED: Final[str] = "meeting_cloud_last_enabled"
+    MEETING_SPEAKER_ID_BACKEND: Final[str] = "meeting_speaker_id_backend"
+    MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: Final[str] = (
+        "meeting_audio_upload_consent_given"
+    )
+    MEETING_UNSUPPORTED_PLATFORM_ACK: Final[str] = (
+        "meeting_unsupported_platform_ack"
+    )
+    MEETING_LINUX_PREVIEW_ACK_VERSION: Final[str] = (
+        "meeting_linux_preview_ack_version"
+    )
+    MEETING_MODE_INTRO_SEEN: Final[str] = "meeting_mode_intro_seen"
+    MEETING_PAST_RECALL_ENABLED: Final[str] = "meeting_past_recall_enabled"
+    MEETING_CONTEXT_FOLDER_ENABLED: Final[str] = (
+        "meeting_context_folder_enabled"
+    )
+    MEETING_CONTEXT_FOLDER_PATH: Final[str] = "meeting_context_folder_path"
+    MEETING_SERVER_BIND: Final[str] = "meeting_server_bind"
+    MEETING_SERVER_PORT: Final[str] = "meeting_server_port"
+    MCP_ENABLED: Final[str] = "mcp_enabled"
+    MCP_PORT: Final[str] = "mcp_port"
+    MCP_TAILSCALE_ENABLED: Final[str] = "mcp_tailscale_enabled"
+    MCP_RETITLE_TRANSCRIPTIONS: Final[str] = "mcp_retitle_transcriptions"
+    MCP_RETITLE_MEETINGS: Final[str] = "mcp_retitle_meetings"
+    MCP_SETTINGS_ACCESS: Final[str] = "mcp_settings_access"
+    MCP_WRITABLE_SETTINGS: Final[str] = "mcp_writable_settings"
+    # Remote engine (services/remote_asr). Client: the paired host's address,
+    # pinned certificate fingerprint and name (the token is in the OS
+    # credential store). Host: sharing switch, port, and paired devices,
+    # stored as token digests.
+    REMOTE_ENGINE_CLIENT: Final[str] = "remote_engine_client"
+    REMOTE_HOST_ENABLED: Final[str] = "remote_host_enabled"
+    # Explicit host opt-in for catalog access and model downloads by paired devices.
+    REMOTE_HOST_MODEL_MANAGEMENT: Final[str] = "remote_host_model_management"
+    REMOTE_HOST_PORT: Final[str] = "remote_host_port"
+    REMOTE_HOST_DEVICES: Final[str] = "remote_host_devices"
+    # Let computers signed in to the same Tailscale account pair without a code.
+    REMOTE_HOST_TAILSCALE_TRUST: Final[str] = "remote_host_tailscale_trust"
+    # Host opt-in: keep paired computers' records (history, meetings) here.
+    REMOTE_HOST_KEEP_RECORDS: Final[str] = "remote_host_keep_records"
+    # Host opt-in: paired computers may switch this computer's MCP server and
+    # read its connection details (services/agent_mcp/host_control.py).
+    REMOTE_HOST_MANAGE_MCP: Final[str] = "remote_host_manage_mcp"
+    # Client: where this computer's records are kept while paired:
+    # "local" (default), "host" (moved there), or "both" (copied there).
+    REMOTE_RECORDS_LOCATION: Final[str] = "remote_records_location"
+    # Client opt-in: the paired host's MCP may query local history while online.
+    # Independent of record storage and permission to manage the host's MCP.
+    REMOTE_CLIENT_HISTORY: Final[str] = "remote_client_history"
+    # TypeSafe fast judgments. The master switch gates every remote judgment;
+    # each feature has its own switch so one can be trialled at a time.
+    TYPESAFE_ENABLED: Final[str] = "typesafe_enabled"
+    # Where judgments go: TypeSafe directly, the same model through
+    # OpenRouter with the OpenRouter key, or one of the user's own text
+    # models (see TypeSafeProvider).
+    TYPESAFE_PROVIDER: Final[str] = "typesafe_provider"
+    # Which text model answers on the text-model route (TypeSafeTextModel).
+    TYPESAFE_TEXT_MODEL: Final[str] = "typesafe_text_model"
+    TYPESAFE_CITATIONS_ENABLED: Final[str] = "typesafe_citations_enabled"
+    TYPESAFE_SEMANTIC_SEARCH_ENABLED: Final[str] = "typesafe_semantic_search_enabled"
+    TYPESAFE_QUESTION_RADAR_ENABLED: Final[str] = "typesafe_question_radar_enabled"
+    TYPESAFE_HIGHLIGHTS_ENABLED: Final[str] = "typesafe_highlights_enabled"
+    TYPESAFE_TOPIC_SHIFT_ENABLED: Final[str] = "typesafe_topic_shift_enabled"
+    TYPESAFE_VOICE_COMMANDS_ENABLED: Final[str] = (
+        "typesafe_voice_commands_enabled"
+    )
+    TYPESAFE_VOICE_COMMAND_NAMES: Final[str] = "typesafe_voice_command_names"
+    # In-app updater. Absent keys mean both automatic check and notify are on.
+    UPDATE_CHECK_ENABLED: Final[str] = "update_check_enabled"
+    UPDATE_NOTIFY_ENABLED: Final[str] = "update_notify_enabled"
+    UPDATE_RESTART_PROMPT_ENABLED: Final[str] = "update_restart_prompt_enabled"
+    UPDATE_LAST_CHECK_AT: Final[str] = "update_last_check_at"
+    UPDATE_LAST_FAILED_CHECK_AT: Final[str] = "update_last_failed_check_at"
+    UPDATE_API_RETRY_AT: Final[str] = "update_api_retry_at"
+    # Personalization (docs/design/personalize/design.md).
+    # Knowing which app has focus is native, local and on by default.
+    APP_CONTEXT_ENABLED: Final[str] = "app_context_enabled"
+    # Reading text near the caret leaves this computer for AI cleanup, so it
+    # is opt-in.
+    APP_CONTEXT_READ_TEXT: Final[str] = "app_context_read_text"
+    # App ids whose text is never read.
+    APP_CONTEXT_EXCLUDED_APPS: Final[str] = "app_context_excluded_apps"
+    APP_STYLES_ENABLED: Final[str] = "app_styles_enabled"
+    # {category: tone}. Absent means every category is Formal, which is the
+    # output existing installs had; new installs are seeded once.
+    APP_STYLE_TONES: Final[str] = "app_style_tones"
+    # [{match, category}] user corrections to the built-in app catalogue.
+    APP_STYLE_OVERRIDES: Final[str] = "app_style_overrides"
+    # Preset used while AI cleanup is on; the cleanup switch stays the
+    # master on/off, so there is no stored "none".
+    TRANSCRIPT_CLEANUP_LEVEL: Final[str] = "transcript_cleanup_level"
+    # Saved rewrite instructions. Absent means the starters, so deleting
+    # every transform leaves an empty list rather than bringing them back.
+    TEXT_TRANSFORMS: Final[str] = "text_transforms"
+    # Command Mode with nothing selected writes new text at the cursor.
+    COMMAND_MODE_INSERT_WITHOUT_SELECTION: Final[str] = (
+        "command_mode_insert_without_selection"
+    )
+    # [{id, term, starred, heard, learned, new}]
+    DICTATION_DICTIONARY: Final[str] = "dictation_dictionary"
+    DICTIONARY_LEARN_ENABLED: Final[str] = "dictionary_learn_enabled"
+    # Send dictionary terms to speech engines that accept hints.
+    DICTIONARY_STEER_RECOGNITION: Final[str] = "dictionary_steer_recognition"
+    # [{id, trigger, text, formatted}]; exempt from the backup URL scrub
+    # because the expansion text is the user's own content.
+    DICTATION_SNIPPETS: Final[str] = "dictation_snippets"
+    SNIPPETS_ENABLED: Final[str] = "snippets_enabled"
+    # Push-and-hold: a quick second press keeps recording hands-free.
+    RECORDING_HANDS_FREE_LATCH: Final[str] = "recording_hands_free_latch"
+    # Ordered [{name, hostapi}] microphones; the single source of truth once
+    # migrated from the legacy AUDIO_INPUT_DEVICE index (kept for downgrades).
+    AUDIO_INPUT_PRIORITY: Final[str] = "audio_input_priority"
+    # Language codes the user dictates in, and the one currently active ("" =
+    # the engine's own setting). Never written into LOCAL_ASR_LANGUAGE.
+    DICTATION_LANGUAGES: Final[str] = "dictation_languages"
+    DICTATION_ACTIVE_LANGUAGE: Final[str] = "dictation_active_language"
+    SCRATCHPAD_ALWAYS_ON_TOP: Final[str] = "scratchpad_always_on_top"
+    # {x, y, width, height} of the Scratchpad window; no default.
+    SCRATCHPAD_GEOMETRY: Final[str] = "scratchpad_geometry"
+    # The ``updated`` date of the "New in OpenWhisper" note last dismissed
+    # (ui_qt/whats_new.py); "" = none yet.
+    WHATS_NEW_SEEN: Final[str] = "whats_new_seen"
+    # Automation (docs/design/automation/design.md). Saved actions: what a
+    # hotkey, a spoken name or the local API does with the words.
+    ACTIONS: Final[str] = "actions"
+    # Spoken routing asks Fast judgments which action the words name.
+    VOICE_ROUTING_ENABLED: Final[str] = "voice_routing_enabled"
+    # Also route a normal dictation that starts with an action's name.
+    VOICE_ROUTING_ON_DICTATION: Final[str] = "voice_routing_on_dictation"
+    # The Models pages' memory: the model last chosen per provider, and the
+    # provider the cleanup endpoint picker last showed. No defaults; absent
+    # until a choice is made.
+    CLEANUP_MODEL_MEMORY: Final[str] = "cleanup_model_memory"
+    MEETING_MODEL_MEMORY: Final[str] = "meeting_model_memory"
+    CLEANUP_ENDPOINT_PROVIDER: Final[str] = "cleanup_endpoint_provider"
+    # Live API permissions, rechecked on every request. Reading events is
+    # the same trust as reading history; the rest can act for the user.
+    API_LIVE_EVENTS: Final[str] = "api_live_events"
+    API_RUN_ACTIONS: Final[str] = "api_run_actions"
+    API_CONTROL_RECORDING: Final[str] = "api_control_recording"
+    API_TEXT_FILTERS: Final[str] = "api_text_filters"
+    # On top of running actions: let a program send words to the user's
+    # coding agent (an agent or Claude Code channel action), which acts on them.
+    API_AGENT_PROMPTS: Final[str] = "api_agent_prompts"
+    # Saved hooks: [{id, name, url, events, enabled}] and so on; secrets are
+    # in the credential store.
+    AUTOMATION_WEBHOOKS: Final[str] = "automation_webhooks"
+    AUTOMATION_PROGRAMS: Final[str] = "automation_programs"
+    AUTOMATION_FILTERS: Final[str] = "automation_filters"
+    # The MCP Events draft extension (events/subscribe with webhook delivery).
+    MCP_EVENTS_ENABLED: Final[str] = "mcp_events_enabled"
+    # How a walkthrough's PDF and Markdown look (services/walkthrough/document.py):
+    # the heading ("" for none), the line with the date, length and screenshot
+    # count, the note on how to read it, screenshot captions, and the paper.
+    WALKTHROUGH_TITLE: Final[str] = "walkthrough_title"
+    WALKTHROUGH_SHOW_DETAILS: Final[str] = "walkthrough_show_details"
+    WALKTHROUGH_SHOW_ABOUT: Final[str] = "walkthrough_show_about"
+    WALKTHROUGH_SHOW_CAPTIONS: Final[str] = "walkthrough_show_captions"
+    WALKTHROUGH_PAGE_SIZE: Final[str] = "walkthrough_page_size"
+    WALKTHROUGH_COPY_FORMAT: Final[str] = "walkthrough_copy_format"
+    # The "New" badge on Quick Record's walkthrough button gives way to a
+    # "?" once a walkthrough has started.
+    WALKTHROUGH_INTRO_SEEN: Final[str] = "walkthrough_intro_seen"
+    # Whether the main window goes to the tray as a walkthrough starts, out
+    # of the way of what is being shown.
+    WALKTHROUGH_MINIMIZE_TO_TRAY: Final[str] = "walkthrough_minimize_to_tray"
+    # Whether an installed agent writes a finished walkthrough up, which one
+    # (a MeetingAgentCore.INSTALLED id), and what it is told to make ("" for
+    # the default instructions; see services/walkthrough/write_up.py).
+    WALKTHROUGH_WRITE_UP: Final[str] = "walkthrough_write_up"
+    WALKTHROUGH_WRITE_UP_AGENT: Final[str] = "walkthrough_write_up_agent"
+    WALKTHROUGH_WRITE_UP_INSTRUCTIONS: Final[str] = "walkthrough_write_up_instructions"
+    # Saved write-up styles, [{id, name, instructions}], beside the built-in
+    # default. Absent means the starters, so deleting every style leaves an
+    # empty list rather than bringing them back.
+    WALKTHROUGH_WRITE_UP_STYLES: Final[str] = "walkthrough_write_up_styles"
+    # Whether the write-up follows notes the user speaks to the agent
+    # ("note for the agent: make the text purple") instead of writing them up.
+    WALKTHROUGH_WRITE_UP_NOTES: Final[str] = "walkthrough_write_up_notes"
+    # What a walkthrough's Snap takes, as last picked from the column's Snap
+    # menu: the Snap button and the Screenshot shortcut repeat it.
+    WALKTHROUGH_SNAP_MODE: Final[str] = "walkthrough_snap_mode"
+    WALKTHROUGH_AUTO_MODE: Final[str] = "walkthrough_auto_mode"
+    WALKTHROUGH_CAPTURE_DELAY: Final[str] = "walkthrough_capture_delay"
+    WALKTHROUGH_KEEP_MARKS: Final[str] = "walkthrough_keep_marks"
+    SNAP_TO_EDGES: Final[str] = "snap_to_edges"
+    SNAP_BOX_INFILL: Final[str] = "snap_box_infill"
+    # The capture folder name of the walkthrough last closed on the Walkthrough
+    # tab: while it is still the newest, the tab opens without one.
+    WALKTHROUGH_CLOSED: Final[str] = "walkthrough_closed"
+
+
+#: Keys the single live-preview toggle replaced. Dropped whenever that toggle
+#: is written, so an old settings file cannot resurrect the split switches.
+LEGACY_STREAMING_KEYS: Final[tuple[str, ...]] = (
+    SettingsKey.STREAMING_OVERLAY_ENABLED,
+    SettingsKey.STREAMING_PASTE_ENABLED,
+    "streaming_tiny_model_enabled",
+    "live_typing_enabled",
+)
+
+
+class RecordingRetentionMode:
+    """Values for ``SettingsKey.RECORDING_RETENTION_MODE``."""
+    KEEP_ALL: Final[str] = "keep_all"
+    # Keep the newest ``MAX_SAVED_RECORDINGS`` files.
+    CUSTOM: Final[str] = "custom"
+    # Keep the newest files that fit in ``MAX_SAVED_RECORDINGS_MB``.
+    SIZE_LIMIT: Final[str] = "size_limit"
+
+
+class RecordingTriggerMode:
+    """Values for ``SettingsKey.RECORDING_TRIGGER_MODE``."""
+    TOGGLE: Final[str] = "toggle"
+    PUSH_HOLD: Final[str] = "push_hold"
+
+    ALL: Final[Tuple[str, ...]] = (TOGGLE, PUSH_HOLD)
+
+
+class UiFontScale:
+    """Values for ``SettingsKey.UI_FONT_SCALE``.
+
+    Percents of the designed theme. Labels are what Settings shows.
+    """
+    SMALL: Final[int] = 90
+    DEFAULT: Final[int] = 100
+    LARGE: Final[int] = 115
+    EXTRA_LARGE: Final[int] = 130
+
+    ALL: Final[Tuple[int, ...]] = (SMALL, DEFAULT, LARGE, EXTRA_LARGE)
+    LABELS: Final[Dict[int, str]] = {
+        SMALL: "Small",
+        DEFAULT: "Default",
+        LARGE: "Large",
+        EXTRA_LARGE: "Extra large",
+    }
+
+
+class UiTheme:
+    """Values for ``SettingsKey.UI_THEME``. Labels are what Settings shows."""
+    DARK: Final[str] = "dark"
+    LIGHT: Final[str] = "light"
+    SYSTEM: Final[str] = "system"
+    OMARCHY: Final[str] = "omarchy"
+
+    ALL: Final[Tuple[str, ...]] = (DARK, LIGHT, SYSTEM, OMARCHY)
+    LABELS: Final[Dict[str, str]] = {
+        DARK: "Dark",
+        LIGHT: "Light",
+        SYSTEM: "Match system",
+        OMARCHY: "Omarchy desktop",
+    }
+
+
+class WalkthroughCopyFormat:
+    """Clipboard contents when a walkthrough finishes."""
+
+    BOTH: Final[str] = "both"
+    AGENT: Final[str] = "agent"  # Legacy Markdown copy preference.
+    AGENT_TASK: Final[str] = "agent_task"
+    PDF: Final[str] = "pdf"
+    WORD: Final[str] = "word"
+
+    ALL: Final[tuple[str, ...]] = (PDF, AGENT_TASK, BOTH, AGENT, WORD)
+    LABELS: Final[dict[str, str]] = {
+        PDF: "PDF copy",
+        AGENT_TASK: "Agent (PDF + instructions)",
+        BOTH: "PDF and Markdown copy",
+        AGENT: "Markdown copy",
+        WORD: "Word document copy",
+    }
+
+
+class WalkthroughSnapMode:
+    """Values for ``SettingsKey.WALKTHROUGH_SNAP_MODE``. Labels are what the Snap menu shows."""
+
+    REGION: Final[str] = "region"  # draw one on the frozen screen
+    WINDOW: Final[str] = "window"  # the window under the pointer
+    SCREEN: Final[str] = "screen"  # the whole screen under the pointer
+    DELAYED: Final[str] = "delayed"  # draw a region on the screen as it is 3 seconds on
+
+    ALL: Final[Tuple[str, ...]] = (REGION, WINDOW, SCREEN, DELAYED)
+    LABELS: Final[Dict[str, str]] = {
+        REGION: "Region",
+        WINDOW: "Window under the pointer",
+        SCREEN: "Whole screen",
+        DELAYED: "In 3 seconds",
+    }
+
+
+class WalkthroughPageSize:
+    """Values for ``SettingsKey.WALKTHROUGH_PAGE_SIZE``. Labels are what Settings shows."""
+    AUTO: Final[str] = "auto"  # Letter where the locale measures in US units, else A4
+    LETTER: Final[str] = "letter"
+    A4: Final[str] = "a4"
+
+    ALL: Final[Tuple[str, ...]] = (AUTO, LETTER, A4)
+    LABELS: Final[Dict[str, str]] = {
+        AUTO: "Automatic (Letter or A4 for your region)",
+        LETTER: "Letter",
+        A4: "A4",
+    }
+
+
+class RecordingOverlayLook:
+    """Values for ``SettingsKey.RECORDING_OVERLAY_LOOK``; see ui_qt/overlays/recording_looks.py."""
+    RIBBON: Final[str] = "ribbon"
+    BARS: Final[str] = "bars"
+    WAVE: Final[str] = "wave"
+    AURORA: Final[str] = "aurora"
+    PULSE: Final[str] = "pulse"
+    DOTS: Final[str] = "dots"
+    BAIT_BALL: Final[str] = "baitball"
+    FISH: Final[str] = "fish"
+    GLOW: Final[str] = "glow"
+    FIZZ: Final[str] = "fizz"
+    LEGACY: Final[str] = "legacy"
+
+    ALL: Final[Tuple[str, ...]] = (RIBBON, BARS, WAVE, AURORA, PULSE, DOTS, BAIT_BALL, FISH, GLOW, FIZZ, LEGACY)
+    LABELS: Final[Dict[str, str]] = {
+        RIBBON: "Ribbon",
+        BARS: "Bars",
+        WAVE: "Mirror wave",
+        AURORA: "Aurora",
+        PULSE: "Pulse",
+        DOTS: "Dots",
+        BAIT_BALL: "Bait ball",
+        FISH: "Real fish",
+        GLOW: "Deep-sea glow",
+        FIZZ: "Fizz",
+        LEGACY: "Classic",
+    }
+    DETAILS: Final[Dict[str, str]] = {
+        RIBBON: "A glowing trace of your voice",
+        BARS: "A scrolling level meter",
+        WAVE: "Your voice's outline, mirrored",
+        AURORA: "Flowing waves",
+        PULSE: "A ring that swells and ripples",
+        DOTS: "Dots that ripple as you speak",
+        BAIT_BALL: "A spinning school lifts the swell",
+        FISH: "Fish school under the waves",
+        GLOW: "Glowing fish in the deep",
+        FIZZ: "Glasses filling with fizz",
+        LEGACY: "The original particles",
+    }
+    #: Names saved by earlier builds, and what they mean now.
+    ALIASES: Final[Dict[str, str]] = {"live": RIBBON, "orb": PULSE, "bubbles": BAIT_BALL}
+
+
+class StreamingOverlayLayout:
+    """Values for ``SettingsKey.STREAMING_OVERLAY_LAYOUT``: the overlay with preview words."""
+    #: A slim row over the words: the live dot, the clock and a small copy of the look.
+    HEADER: Final[str] = "header"
+    #: The words on top and the full-size look under them, as before any words.
+    FOOTER: Final[str] = "footer"
+
+    ALL: Final[Tuple[str, ...]] = (HEADER, FOOTER)
+    LABELS: Final[Dict[str, str]] = {HEADER: "Header", FOOTER: "Footer"}
+    DETAILS: Final[Dict[str, str]] = {
+        HEADER: "Clock and a small meter above the words",
+        FOOTER: "The full look under the words",
+    }
+
+
+class TranscriptCleanupProvider:
+    """Built-in values for ``SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER``.
+
+    Custom OpenAI-compatible endpoints use ``custom_…`` profile ids stored in
+    ``SettingsKey.TEXT_LLM_PROFILES``. Resolvers accept either a built-in id
+    or a known custom profile id. Cleanup also accepts ``INSTALLED`` agent
+    ids with an empty model to use the agent's default.
+    """
+    OPENAI: Final[str] = "openai"
+    OPENROUTER: Final[str] = "openrouter"
+
+    OLLAMA: Final[str] = "ollama"
+    LM_STUDIO: Final[str] = "lm_studio"
+    VLLM: Final[str] = "vllm"
+    LLAMA_CPP: Final[str] = "llama_cpp"
+    LOCALAI: Final[str] = "localai"
+    GROQ: Final[str] = "groq"
+    OPENCODE_GO: Final[str] = "opencode_go"
+    OPENCODE_ZEN: Final[str] = "opencode_zen"
+
+    CLAUDE_CODE: Final[str] = "claude_code"
+    CODEX: Final[str] = "codex"
+    OPENCODE_CLI: Final[str] = "opencode_cli"
+    INSTALLED: Final[Tuple[str, ...]] = (CLAUDE_CODE, CODEX, OPENCODE_CLI)
+
+    ALL: Final[Tuple[str, ...]] = (
+        OPENAI, OPENROUTER, OLLAMA, LM_STUDIO, VLLM, LLAMA_CPP, LOCALAI,
+        GROQ, OPENCODE_GO, OPENCODE_ZEN,
+    )
+
+
+class TranscriptCleanupLevel:
+    """Values for ``SettingsKey.TRANSCRIPT_CLEANUP_LEVEL``."""
+    LIGHT: Final[str] = "light"
+    MEDIUM: Final[str] = "medium"
+    HIGH: Final[str] = "high"
+
+    ALL: Final[Tuple[str, ...]] = (LIGHT, MEDIUM, HIGH)
+
+
+class TranscriptCleanupModelSort:
+    """Values for ``SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT``.
+
+    "alphabetical" sorts the fetched model list client-side (A-Z). Every
+    other value maps directly to the OpenRouter ``GET /models`` ``sort``
+    query parameter and preserves the server's ranking. OpenAI's models
+    endpoint has no server-side sort, so OpenAI always uses alphabetical.
+    """
+    ALPHABETICAL: Final[str] = "alphabetical"
+    MOST_POPULAR: Final[str] = "most-popular"
+    TOP_WEEKLY: Final[str] = "top-weekly"
+    NEWEST: Final[str] = "newest"
+    PRICING_LOW_TO_HIGH: Final[str] = "pricing-low-to-high"
+    PRICING_HIGH_TO_LOW: Final[str] = "pricing-high-to-low"
+    CONTEXT_HIGH_TO_LOW: Final[str] = "context-high-to-low"
+    THROUGHPUT_HIGH_TO_LOW: Final[str] = "throughput-high-to-low"
+    LATENCY_LOW_TO_HIGH: Final[str] = "latency-low-to-high"
+
+    ALL: Final[Tuple[str, ...]] = (
+        ALPHABETICAL,
+        MOST_POPULAR,
+        TOP_WEEKLY,
+        NEWEST,
+        PRICING_LOW_TO_HIGH,
+        PRICING_HIGH_TO_LOW,
+        CONTEXT_HIGH_TO_LOW,
+        THROUGHPUT_HIGH_TO_LOW,
+        LATENCY_LOW_TO_HIGH,
+    )
+
+
+class TranscriptCleanupReasoning:
+    """Values for ``SettingsKey.TRANSCRIPT_CLEANUP_REASONING``.
+
+    "off" sends a plain temperature-0 request; the other levels request the
+    provider's reasoning/thinking effort (only meaningful on reasoning models).
+    Each runner accepts a subset, in this order; see
+    :mod:`services.thinking_levels`.
+    """
+    OFF: Final[str] = "off"
+    MINIMAL: Final[str] = "minimal"
+    LOW: Final[str] = "low"
+    MEDIUM: Final[str] = "medium"
+    HIGH: Final[str] = "high"
+    XHIGH: Final[str] = "xhigh"
+    MAX: Final[str] = "max"
+    ULTRA: Final[str] = "ultra"
+
+    ALL: Final[Tuple[str, ...]] = (OFF, MINIMAL, LOW, MEDIUM, HIGH, XHIGH, MAX, ULTRA)
+
+
+class MeetingAgentCore:
+    """Values for ``SettingsKey.MEETING_AGENT_CORE``.
+
+    ``PI`` and ``OPENCODE`` use an agent SDK with OpenWhisper's text endpoint and API key.
+    The retired ``DIRECT`` value is read only for compatibility and resolves to Pi.
+    The ``INSTALLED`` values drive a coding agent the user already has set up,
+    with its own sign-in, providers, and models.
+    """
+    PI: Final[str] = "pi"          # Bundled Node sidecar running the Pi SDK
+    DIRECT: Final[str] = "direct"  # Legacy saved value; migrated to Pi, never selectable
+    CLAUDE_CODE: Final[str] = "claude_code"  # Installed Claude Code, headless
+    CODEX: Final[str] = "codex"              # Installed Codex CLI, headless
+    OPENCODE: Final[str] = "opencode"      # Packaged OpenCode SDK; preserves saved settings
+    OPENCODE_CLI: Final[str] = "opencode_cli"  # Installed OpenCode, over ACP
+
+    INSTALLED: Final[Tuple[str, ...]] = (CLAUDE_CODE, CODEX, OPENCODE_CLI)
+    ALL: Final[Tuple[str, ...]] = (PI, OPENCODE, *INSTALLED)
+
+
+class TypeSafeProvider:
+    """Values for ``SettingsKey.TYPESAFE_PROVIDER``.
+
+    The first two run the same pinned Jev model; they differ in which key
+    pays for it and in whether OpenRouter sits between this computer and
+    TypeSafe. The third asks the same questions of a text model the user
+    already set up (``SettingsKey.TYPESAFE_TEXT_MODEL`` says which), which
+    may run on this computer.
+    """
+    TYPESAFE: Final[str] = "typesafe"      # api.typesafe.ai with TYPESAFE_API_KEY
+    OPENROUTER: Final[str] = "openrouter"  # openrouter.ai with OPENROUTER_API_KEY
+    TEXT_MODEL: Final[str] = "text_model"  # a services.text_llm profile and model
+
+    ALL: Final[Tuple[str, ...]] = (TYPESAFE, OPENROUTER, TEXT_MODEL)
+
+
+class TypeSafeTextModel:
+    """Values for ``SettingsKey.TYPESAFE_TEXT_MODEL``: whose text model judges."""
+    MEETING: Final[str] = "meeting"  # Meeting Mode → Intelligence (AI insights)
+    CLEANUP: Final[str] = "cleanup"  # AI cleanup's model
+
+    ALL: Final[Tuple[str, ...]] = (MEETING, CLEANUP)
+
+
+class MeetingSpeakerIdBackend:
+    """Values for ``SettingsKey.MEETING_SPEAKER_ID_BACKEND``."""
+    OFF: Final[str] = "off"        # Me / Others channel labels only
+    LOCAL: Final[str] = "local"    # On-device WeSpeaker clustering
+    OPENAI: Final[str] = "openai"  # Post-meeting gpt-4o-transcribe-diarize, until 2027-02-26
+
+    ALL: Final[Tuple[str, ...]] = (OFF, LOCAL, OPENAI)
+
+
+class MeetingLanguage:
+    """Spoken-language choices exposed by Meeting Mode settings."""
+
+    AUTO: Final[str] = "auto"
+    CHOICES: Final[Tuple[Tuple[str, str], ...]] = (
+        (AUTO, "Detect automatically"),
+        ("en", "English"),
+        ("es", "Spanish"),
+        ("fr", "French"),
+        ("de", "German"),
+        ("it", "Italian"),
+        ("pt", "Portuguese"),
+        ("nl", "Dutch"),
+        ("pl", "Polish"),
+        ("ru", "Russian"),
+        ("uk", "Ukrainian"),
+        ("tr", "Turkish"),
+        ("ar", "Arabic"),
+        ("he", "Hebrew"),
+        ("hi", "Hindi"),
+        ("zh", "Chinese"),
+        ("ja", "Japanese"),
+        ("ko", "Korean"),
+        ("vi", "Vietnamese"),
+        ("th", "Thai"),
+        ("id", "Indonesian"),
+        ("sv", "Swedish"),
+        ("da", "Danish"),
+        ("no", "Norwegian"),
+        ("fi", "Finnish"),
+        ("cs", "Czech"),
+        ("el", "Greek"),
+        ("ro", "Romanian"),
+        ("hu", "Hungarian"),
+    )
+    ALL: Final[Tuple[str, ...]] = tuple(code for code, _label in CHOICES)
+
+
+class MeetingServerBind:
+    """Values for ``SettingsKey.MEETING_SERVER_BIND``."""
+    LOCALHOST: Final[str] = "localhost"  # Dashboard reachable on this machine only
+    LAN: Final[str] = "lan"              # Explicitly shared on the local network
+
+    ALL: Final[Tuple[str, ...]] = (LOCALHOST, LAN)
+
+
+class HuggingFaceAccessPolicy:
+    """Values for ``SettingsKey.HF_ACCESS_POLICY``.
+
+    Cached models always load locally regardless of policy; the policy only
+    governs whether Hugging Face may be contacted to download a missing model.
+    """
+    ASK: Final[str] = "ask"          # Prompt before downloading a missing model
+    ALWAYS: Final[str] = "always"    # Download missing models without prompting
+    NEVER: Final[str] = "never"      # Stay offline unless explicitly overridden once
+
+    ALL: Final[Tuple[str, ...]] = (ASK, ALWAYS, NEVER)
+
+
+#: The default of every scalar setting, taken from ``config`` wherever config
+#: defines it. Resolvers fall back to these, and call sites read them through
+#: :func:`setting_value` instead of repeating literals.
+SETTING_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({
+    # Dictation and window
+    SettingsKey.SELECTED_MODEL: config.DEFAULT_BACKEND,
+    SettingsKey.API_TRANSCRIPTION_MODEL: config.DEFAULT_API_MODEL,
+    SettingsKey.API_TRANSCRIPTION_ENDPOINT: "openai",
+    SettingsKey.AUTO_PASTE: True,
+    SettingsKey.COPY_CLIPBOARD: True,
+    SettingsKey.RESTORE_CLIPBOARD: False,
+    SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN: False,
+    SettingsKey.COMPACT_MODE: False,
+    SettingsKey.HOST_MODE: False,
+    SettingsKey.MINIMIZE_TRAY: True,
+    SettingsKey.RECORDING_TRIGGER_MODE: config.RECORDING_TRIGGER_MODE,
+    SettingsKey.STREAMING_ENABLED: config.STREAMING_ENABLED,
+    SettingsKey.STREAMING_CHUNK_DURATION: config.STREAMING_CHUNK_DURATION_SEC,
+    SettingsKey.STREAMING_OVERLAY_FONT_SIZE: config.STREAMING_OVERLAY_FONT_SIZE,
+    SettingsKey.STREAMING_OVERLAY_LAYOUT: config.STREAMING_OVERLAY_LAYOUT,
+    SettingsKey.RECORDING_OVERLAY_LOOK: config.RECORDING_OVERLAY_LOOK,
+    SettingsKey.RECORDING_OVERLAY_DOT: True,
+    SettingsKey.RECORDING_OVERLAY_TEXT: True,
+    SettingsKey.RECORDING_OVERLAY_CLOCK: True,
+    SettingsKey.UI_FONT_SCALE: config.UI_FONT_SCALE,
+    SettingsKey.UI_THEME: config.UI_THEME,
+    SettingsKey.QUICK_RECORD_PROFILE: "",
+    SettingsKey.DEVELOPER_MODE: config.DEVELOPER_MODE,
+    # Local engines
+    SettingsKey.WHISPER_MODEL: config.DEFAULT_WHISPER_MODEL,
+    SettingsKey.CUSTOM_WHISPER_MODELS: [],
+    SettingsKey.WHISPER_DEVICE: config.FASTER_WHISPER_DEVICE,
+    SettingsKey.WHISPER_COMPUTE_TYPE: config.FASTER_WHISPER_COMPUTE_TYPE,
+    SettingsKey.WHISPER_GPU_OFFER_DECLINED: False,
+    SettingsKey.LOCAL_ASR_LANGUAGE: "en",
+    # Transcript cleanup and uploads. With no saved choice, cleanup uses
+    # OpenRouter's free router; config.TRANSCRIPT_CLEANUP_MODEL is the OpenAI
+    # profile's default model, not this setting's. No saved prompt means the
+    # cleanup level's preset, so the prompt's default is empty.
+    SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: config.TRANSCRIPT_CLEANUP_ENABLED,
+    SettingsKey.TRANSCRIPT_CLEANUP_PROMPT: "",
+    SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: config.TRANSCRIPT_CLEANUP_PROVIDER,
+    SettingsKey.TRANSCRIPT_CLEANUP_MODEL: config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL,
+    SettingsKey.TRANSCRIPT_CLEANUP_MODEL_SORT: config.TRANSCRIPT_CLEANUP_MODEL_SORT,
+    SettingsKey.TRANSCRIPT_CLEANUP_REASONING: config.TRANSCRIPT_CLEANUP_REASONING,
+    SettingsKey.TRANSCRIPT_BATCH_RELATION: config.TRANSCRIPT_BATCH_RELATION,
+    SettingsKey.TRANSCRIPT_BATCH_CUSTOM_COMBINE: config.TRANSCRIPT_BATCH_CUSTOM_COMBINE,
+    # History and recordings
+    SettingsKey.RECORDING_RETENTION_MODE: RecordingRetentionMode.CUSTOM,
+    SettingsKey.MAX_SAVED_RECORDINGS: config.MAX_SAVED_RECORDINGS,
+    SettingsKey.MAX_SAVED_RECORDINGS_MB: config.MAX_SAVED_RECORDINGS_MB,
+    SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE: True,
+    SettingsKey.CONFIRM_MEETING_DELETE: True,
+    # Meeting Mode
+    SettingsKey.MEETING_SPEECH_SEPARATE: False,
+    SettingsKey.MEETING_ASR_MODEL: config.MEETING_ASR_MODEL,
+    SettingsKey.MEETING_WHISPER_MODEL: config.MEETING_WHISPER_MODEL,
+    SettingsKey.MEETING_LANGUAGE: config.MEETING_LANGUAGE,
+    SettingsKey.MEETING_LLM_PROVIDER: TranscriptCleanupProvider.OPENROUTER,
+    SettingsKey.MEETING_LLM_MODEL: config.MEETING_LLM_MODEL,
+    SettingsKey.MEETING_AGENT_CORE: config.MEETING_AGENT_CORE,
+    SettingsKey.MEETING_BACKUP_AGENT: config.MEETING_BACKUP_AGENT,
+    SettingsKey.MEETING_AGENT_MODELS: {},
+    SettingsKey.MEETING_LIVE_THINKING: config.MEETING_LIVE_THINKING,
+    SettingsKey.MEETING_FINAL_THINKING: config.MEETING_FINAL_THINKING,
+    SettingsKey.MEETING_SPEAKER_ID_BACKEND: config.MEETING_SPEAKER_ID_BACKEND,
+    SettingsKey.MEETING_END_REDECODE: config.MEETING_END_REDECODE,
+    SettingsKey.MEETING_REDECODE_COVERAGE_GUARD: False,
+    SettingsKey.MEETING_END_POLISH: config.MEETING_END_POLISH,
+    SettingsKey.MEETING_END_REPORT: config.MEETING_END_REPORT,
+    SettingsKey.MEETING_REPORT_RIBBON: config.MEETING_REPORT_RIBBON,
+    SettingsKey.MEETING_REPORT_BRIEF: config.MEETING_REPORT_BRIEF,
+    SettingsKey.MEETING_REPORT_SIGNAL: config.MEETING_REPORT_SIGNAL,
+    SettingsKey.MEETING_INSIGHT_REVIEW: False,
+    SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY: "normal",
+    SettingsKey.MEETING_CLOUD_CONSENT_GIVEN: False,
+    SettingsKey.MEETING_CLOUD_LAST_ENABLED: False,
+    SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN: False,
+    SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK: False,
+    SettingsKey.MEETING_MODE_INTRO_SEEN: False,
+    SettingsKey.MEETING_PAST_RECALL_ENABLED: False,
+    SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED: False,
+    SettingsKey.MEETING_CONTEXT_FOLDER_PATH: "",
+    SettingsKey.MEETING_SERVER_BIND: config.MEETING_SERVER_BIND,
+    SettingsKey.MEETING_SERVER_PORT: config.MEETING_SERVER_PORT,
+    # TypeSafe: every feature is off until chosen, except topic shifts,
+    # which only apply once TypeSafe itself is on.
+    SettingsKey.TYPESAFE_ENABLED: False,
+    # Never switched implicitly: changing it changes who receives excerpts.
+    SettingsKey.TYPESAFE_PROVIDER: TypeSafeProvider.TYPESAFE,
+    SettingsKey.TYPESAFE_TEXT_MODEL: TypeSafeTextModel.MEETING,
+    SettingsKey.TYPESAFE_CITATIONS_ENABLED: False,
+    SettingsKey.TYPESAFE_SEMANTIC_SEARCH_ENABLED: False,
+    SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED: False,
+    SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED: False,
+    SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED: True,
+    SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED: False,
+    # In-app updater
+    SettingsKey.UPDATE_CHECK_ENABLED: config.UPDATE_CHECK_ENABLED,
+    SettingsKey.UPDATE_NOTIFY_ENABLED: config.UPDATE_NOTIFY_ENABLED,
+    SettingsKey.UPDATE_RESTART_PROMPT_ENABLED: config.UPDATE_RESTART_PROMPT_ENABLED,
+    # Personalization. APP_STYLE_TONES and TEXT_TRANSFORMS have no
+    # entry: their absence has its own meaning (all Formal, the starters).
+    SettingsKey.APP_CONTEXT_ENABLED: True,
+    SettingsKey.APP_CONTEXT_READ_TEXT: False,
+    SettingsKey.APP_CONTEXT_EXCLUDED_APPS: [],
+    SettingsKey.APP_STYLES_ENABLED: True,
+    SettingsKey.APP_STYLE_OVERRIDES: [],
+    SettingsKey.TRANSCRIPT_CLEANUP_LEVEL: config.TRANSCRIPT_CLEANUP_LEVEL,
+    SettingsKey.COMMAND_MODE_INSERT_WITHOUT_SELECTION: True,
+    SettingsKey.DICTATION_DICTIONARY: [],
+    SettingsKey.DICTIONARY_LEARN_ENABLED: True,
+    SettingsKey.DICTIONARY_STEER_RECOGNITION: True,
+    SettingsKey.DICTATION_SNIPPETS: [],
+    SettingsKey.SNIPPETS_ENABLED: True,
+    SettingsKey.RECORDING_HANDS_FREE_LATCH: True,
+    SettingsKey.AUDIO_INPUT_PRIORITY: [],
+    SettingsKey.DICTATION_LANGUAGES: [],
+    SettingsKey.DICTATION_ACTIVE_LANGUAGE: "",
+    SettingsKey.SCRATCHPAD_ALWAYS_ON_TOP: True,
+    SettingsKey.WHATS_NEW_SEEN: "",
+    # Automation: nothing runs until the user sets it up.
+    SettingsKey.ACTIONS: [],
+    SettingsKey.VOICE_ROUTING_ENABLED: False,
+    SettingsKey.VOICE_ROUTING_ON_DICTATION: False,
+    SettingsKey.API_LIVE_EVENTS: True,
+    SettingsKey.API_RUN_ACTIONS: False,
+    SettingsKey.API_CONTROL_RECORDING: False,
+    SettingsKey.API_TEXT_FILTERS: False,
+    SettingsKey.API_AGENT_PROMPTS: False,
+    SettingsKey.AUTOMATION_WEBHOOKS: [],
+    SettingsKey.AUTOMATION_PROGRAMS: [],
+    SettingsKey.AUTOMATION_FILTERS: [],
+    SettingsKey.MCP_EVENTS_ENABLED: False,
+    # Walkthroughs
+    SettingsKey.WALKTHROUGH_TITLE: "Walkthrough",
+    SettingsKey.WALKTHROUGH_SHOW_DETAILS: True,
+    SettingsKey.WALKTHROUGH_SHOW_ABOUT: True,
+    SettingsKey.WALKTHROUGH_SHOW_CAPTIONS: True,
+    SettingsKey.WALKTHROUGH_PAGE_SIZE: WalkthroughPageSize.AUTO,
+    SettingsKey.WALKTHROUGH_COPY_FORMAT: WalkthroughCopyFormat.PDF,
+    SettingsKey.WALKTHROUGH_INTRO_SEEN: False,
+    SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY: False,
+    SettingsKey.WALKTHROUGH_WRITE_UP: False,
+    SettingsKey.WALKTHROUGH_WRITE_UP_AGENT: MeetingAgentCore.CLAUDE_CODE,
+    SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS: "",
+    SettingsKey.WALKTHROUGH_WRITE_UP_NOTES: False,
+    SettingsKey.WALKTHROUGH_SNAP_MODE: WalkthroughSnapMode.REGION,
+    SettingsKey.WALKTHROUGH_AUTO_MODE: False,
+    SettingsKey.WALKTHROUGH_CAPTURE_DELAY: 0,
+    SettingsKey.WALKTHROUGH_KEEP_MARKS: False,
+    SettingsKey.SNAP_TO_EDGES: True,
+    SettingsKey.SNAP_BOX_INFILL: False,
+    SettingsKey.WALKTHROUGH_CLOSED: "",
+})
+
+
+_HF_HUB_OFFLINE_ENV: Final[str] = "HF_HUB_OFFLINE"
+_HF_HUB_OFFLINE_TRUTHY: Final[Tuple[str, ...]] = ("1", "on", "true", "yes")
+
+
+#: Stands for a key that is not saved, which is not the same as saved None.
+_UNSET: Final[Any] = object()
+
+
+class SettingsManager:
+    """Handles loading and saving application settings."""
+
+    def __init__(self, settings_file: str = None):
+        self.settings_file = settings_file or config.SETTINGS_FILE
+        # A setting mutation is a read-modify-write transaction.  Several UI
+        # and background workers share this singleton, so the lock must cover
+        # the complete transaction rather than only the final write.
+        self._lock = threading.RLock()
+        self._cached_signature = None
+        self._cached_settings = None
+        # (keys, callback) pairs told when a save changes one of their keys.
+        self._watchers: List[Tuple[frozenset, Callable[[frozenset], None]]] = []
+        # The module singleton is built when settings are first imported,
+        # after any pending backup restore and before anything this launch
+        # can write the file, so this tells a brand-new install apart.
+        self._launch_check = (
+            os.path.abspath(self.settings_file),
+            os.path.exists(self.settings_file),
+        )
+
+    def is_new_install(self) -> bool:
+        """Whether this launch started without a settings file.
+
+        Only for the file checked when the manager was built: one pointed at
+        another file since (tests, a data-root change) is never new.
+        """
+        path, existed = self._launch_check
+        return not existed and os.path.abspath(self.settings_file) == path
+
+    def _file_signature(self):
+        """Detect changed paths, in-place edits, and atomic external replaces."""
+        path = os.path.abspath(self.settings_file)
+        try:
+            stat = os.stat(path)
+        except FileNotFoundError:
+            return (path, None)
+        except OSError:
+            return None
+        return (path, stat.st_dev, stat.st_ino, stat.st_size,
+                stat.st_mtime_ns, stat.st_ctime_ns)
+
+    def _load_all_settings_unlocked(self, *, strict: bool = False) -> Dict[str, Any]:
+        """Read the settings mapping while the caller owns ``_lock``.
+
+        ``strict`` is used by read-modify-write operations: a malformed file
+        must not be mistaken for an empty mapping and then overwritten with a
+        single new preference.
+        """
+        if not os.path.exists(self.settings_file):
+            return {}
+        try:
+            with open(self.settings_file, 'r', encoding='utf-8') as handle:
+                settings = json.load(handle)
+            if not isinstance(settings, dict):
+                raise ValueError("settings root must be a JSON object")
+            return settings
+        except Exception as exc:
+            logger.warning(f"Failed to load all settings: {exc}")
+            if strict:
+                raise
+            return {}
+
+    def _save_all_settings_unlocked(self, settings: Dict[str, Any]) -> None:
+        """Atomically replace the settings file while ``_lock`` is held."""
+        if not isinstance(settings, dict):
+            raise TypeError("settings must be a mapping")
+
+        absolute_path = os.path.abspath(self.settings_file)
+        directory = os.path.dirname(absolute_path) or os.curdir
+        prefix = f".{os.path.basename(absolute_path)}."
+        temp_fd = -1
+        temp_path = ""
+        try:
+            temp_fd, temp_path = tempfile.mkstemp(
+                prefix=prefix,
+                suffix=".tmp",
+                dir=directory,
+            )
+            with os.fdopen(temp_fd, 'w', encoding='utf-8') as handle:
+                temp_fd = -1
+                json.dump(settings, handle, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, absolute_path)
+            # Never label the caller's mutable mapping with a signature from
+            # a concurrent external writer. The next read owns its snapshot.
+            self._cached_settings = None
+            self._cached_signature = None
+            temp_path = ""
+        finally:
+            if temp_fd >= 0:
+                os.close(temp_fd)
+            if temp_path:
+                try:
+                    os.remove(temp_path)
+                except FileNotFoundError:
+                    pass
+
+    def file_signature(self):
+        """A cheap token that changes when the settings file does, or None.
+
+        For a caller that polls: compare it before paying for
+        ``load_all_settings``, which copies every setting.
+        """
+        with self._lock:
+            return self._file_signature()
+
+    def load_all_settings(self) -> Dict[str, Any]:
+        """Load settings, returning an empty dict on failure."""
+        with self._lock:
+            signature = self._file_signature()
+            if (signature is not None and signature == self._cached_signature
+                    and self._cached_settings is not None):
+                return deepcopy(self._cached_settings)
+            settings = self._load_all_settings_unlocked()
+            if signature is not None and signature == self._file_signature():
+                self._cached_signature = signature
+                self._cached_settings = deepcopy(settings)
+            else:
+                self._cached_signature = None
+                self._cached_settings = None
+            return settings
+
+    def watch(
+        self, keys, callback: Callable[[frozenset], None],
+    ) -> Callable[[], None]:
+        """Call ``callback(changed_keys)`` after a save changes any of ``keys``.
+
+        Whoever writes a setting need not know who shows it. The callback
+        runs on the thread that saved, after the file is replaced; a save
+        through this manager is the only change it hears of. Returns a
+        function that stops the watch.
+        """
+        entry = (frozenset(keys), callback)
+        with self._lock:
+            self._watchers.append(entry)
+
+        def stop() -> None:
+            with self._lock:
+                if entry in self._watchers:
+                    self._watchers.remove(entry)
+
+        return stop
+
+    def _watched_values(self, settings: Mapping[str, Any]) -> Dict[str, Any]:
+        """Copies of the watched keys' values, taken before a save changes them."""
+        return {
+            key: deepcopy(settings[key]) if key in settings else _UNSET
+            for keys, _callback in self._watchers for key in keys
+        }
+
+    def _tell_watchers(self, before: Dict[str, Any], settings: Mapping[str, Any]) -> None:
+        changed = frozenset(
+            key for key, value in before.items() if settings.get(key, _UNSET) != value
+        )
+        if not changed:
+            return
+        with self._lock:
+            watchers = list(self._watchers)
+        for keys, callback in watchers:
+            if keys & changed:
+                try:
+                    callback(keys & changed)
+                except Exception:
+                    logger.exception("A settings watcher failed")
+
+    def save_all_settings(self, settings: Dict[str, Any]) -> None:
+        """Persist the complete settings mapping."""
+        try:
+            with self._lock:
+                before = (self._watched_values(self._load_all_settings_unlocked())
+                          if self._watchers else {})
+                self._save_all_settings_unlocked(settings)
+            self._tell_watchers(before, settings)
+            logger.info("All settings saved successfully")
+        except Exception as e:
+            logger.error(f"Failed to save all settings: {e}")
+            raise
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.load_all_settings().get(key, default)
+
+    def update_settings(
+        self,
+        updates: Dict[str, Any],
+        *,
+        remove: Tuple[str, ...] = (),
+    ) -> Dict[str, Any]:
+        """Atomically merge keys into the persisted settings mapping.
+
+        Returns a copy of the complete mapping that was committed.  Callers
+        changing several related preferences should use this method instead of
+        a separate ``load_all_settings`` / ``save_all_settings`` pair.
+        """
+        if not isinstance(updates, dict):
+            raise TypeError("updates must be a mapping")
+        def apply_updates(settings: Dict[str, Any]) -> Dict[str, Any]:
+            settings.update(updates)
+            for key in remove:
+                settings.pop(key, None)
+            return dict(settings)
+
+        return self.mutate_settings(apply_updates)
+
+    def mutate_settings(
+        self,
+        mutator: Callable[[Dict[str, Any]], SettingsMutationResult],
+    ) -> SettingsMutationResult:
+        """Atomically mutate settings with a caller-supplied transaction.
+
+        This covers structured values whose helper functions edit a settings
+        mapping in place, such as custom endpoint profiles.  The callback runs
+        while the settings lock is held; if it raises, nothing is written.
+        """
+        if not callable(mutator):
+            raise TypeError("mutator must be callable")
+        with self._lock:
+            settings = self._load_all_settings_unlocked(strict=True)
+            before = self._watched_values(settings)
+            result = mutator(settings)
+            self._save_all_settings_unlocked(settings)
+        self._tell_watchers(before, settings)
+        return result
+
+    def save_setting(self, key: str, value: Any) -> None:
+        try:
+            self.update_settings({key: value})
+            logger.debug(f"Setting saved: {key}={value}")
+        except Exception as e:
+            logger.error(f"Failed to save setting '{key}': {e}")
+            raise
+
+    def load_hotkey_settings(self) -> Dict[str, str]:
+        """Load saved hotkeys or platform defaults."""
+        try:
+            settings = self.load_all_settings()
+            return settings.get(SettingsKey.HOTKEYS, config.DEFAULT_HOTKEYS.copy())
+        except Exception as e:
+            logger.warning(f"Failed to load settings: {e}")
+
+        return config.DEFAULT_HOTKEYS.copy()
+
+    def save_hotkey_settings(self, hotkeys: Dict[str, str]) -> None:
+        try:
+            self.update_settings({SettingsKey.HOTKEYS: hotkeys})
+            logger.info("Hotkey settings saved successfully")
+        except Exception as e:
+            logger.error(f"Failed to save settings: {e}")
+            raise
+
+    def load_model_selection(self) -> str:
+        """Load a valid backend selection or the default."""
+        try:
+            settings = self.load_all_settings()
+            selected_model = settings.get(SettingsKey.SELECTED_MODEL)
+            if isinstance(selected_model, str) and selected_model in LEGACY_API_MODELS:
+                self.update_settings({
+                    SettingsKey.SELECTED_MODEL: "api",
+                    SettingsKey.API_TRANSCRIPTION_MODEL: resolve_api_transcription_model(settings),
+                })
+                return "api"
+            if selected_model and selected_model in config.MODEL_VALUE_MAP.values():
+                return selected_model
+        except Exception as e:
+            logger.warning(f"Failed to load model selection: {e}")
+
+        return SETTING_DEFAULTS[SettingsKey.SELECTED_MODEL]
+
+    def save_model_selection(self, model_value: str) -> None:
+        """Validate and save a backend selection."""
+        if not isinstance(model_value, str) or not model_value:
+            raise ValueError("model_value must be a non-empty string")
+
+        if model_value not in config.MODEL_VALUE_MAP.values():
+            valid_models = list(config.MODEL_VALUE_MAP.values())
+            raise ValueError(f"Invalid model '{model_value}'. Valid models: {valid_models}")
+
+        try:
+            self.save_setting(SettingsKey.SELECTED_MODEL, model_value)
+            logger.info(f"Model selection saved: {model_value}")
+        except Exception as e:
+            logger.error(f"Failed to save model selection: {e}")
+            raise
+
+    def load_hf_access_policy(self) -> str:
+        """Load the Hugging Face access policy, migrating the legacy setting.
+
+        Legacy migration: ``hf_hub_offline: true`` becomes ``never``; ``false``
+        or absent becomes ``ask`` (including existing installations). When a
+        legacy key or an invalid policy value is found, the migrated policy is
+        persisted and the legacy key removed.
+
+        Returns:
+            One of ``HuggingFaceAccessPolicy.ALL`` (defaults to ``ask``).
+        """
+        settings = self.load_all_settings()
+        policy = settings.get(SettingsKey.HF_ACCESS_POLICY)
+        if policy in HuggingFaceAccessPolicy.ALL:
+            return policy
+
+        legacy = settings.get(SettingsKey.HF_HUB_OFFLINE)
+        migrated = (
+            HuggingFaceAccessPolicy.NEVER if legacy
+            else HuggingFaceAccessPolicy.ASK
+        )
+        if SettingsKey.HF_HUB_OFFLINE in settings or policy is not None:
+            try:
+                self.update_settings(
+                    {SettingsKey.HF_ACCESS_POLICY: migrated},
+                    remove=(SettingsKey.HF_HUB_OFFLINE,),
+                )
+                logger.info(f"Migrated HuggingFace access policy to '{migrated}'")
+            except Exception as e:
+                logger.warning(f"Failed to persist HF policy migration: {e}")
+        return migrated
+
+    def save_hf_access_policy(self, policy: str) -> None:
+        """Validate and persist the Hugging Face access policy."""
+        if policy not in HuggingFaceAccessPolicy.ALL:
+            raise ValueError(
+                f"Invalid HF access policy '{policy}'. "
+                f"Valid values: {list(HuggingFaceAccessPolicy.ALL)}"
+            )
+        self.update_settings(
+            {SettingsKey.HF_ACCESS_POLICY: policy},
+            remove=(SettingsKey.HF_HUB_OFFLINE,),
+        )
+        logger.info(f"HuggingFace access policy saved: {policy}")
+
+
+def is_hf_hub_offline_env_set() -> bool:
+    """Return whether ``HF_HUB_OFFLINE`` is set in the process env.
+
+    An externally supplied ``HF_HUB_OFFLINE=1`` is a hard override: model
+    downloads are disabled regardless of the persisted access policy.
+    """
+    return os.environ.get(_HF_HUB_OFFLINE_ENV, "").strip().lower() in _HF_HUB_OFFLINE_TRUTHY
+
+
+settings_manager = SettingsManager()
+
+
+def seed_new_install_settings(manager=None) -> bool:
+    """Write the defaults a brand-new install starts with; True when written.
+
+    Existing installs keep today's output (no app_style_tones key means
+    every category is Formal); only a launch that found no settings file
+    gets the casual chat tones, and only once.
+    """
+    manager = settings_manager if manager is None else manager
+    is_new = getattr(manager, "is_new_install", None)
+    if not callable(is_new) or not is_new():
+        return False
+    from services.app_styles import NEW_INSTALL_TONES
+
+    def seed(settings: Dict[str, Any]) -> bool:
+        if SettingsKey.APP_STYLE_TONES in settings:
+            return False
+        settings[SettingsKey.APP_STYLE_TONES] = dict(NEW_INSTALL_TONES)
+        return True
+
+    try:
+        return bool(manager.mutate_settings(seed))
+    except Exception as exc:
+        logger.warning("Could not seed new-install settings: %s", exc)
+        return False
+
+
+def keep_unchosen_engine(manager=None) -> bool:
+    """Save the engine of an install that never chose one; True when written.
+
+    Such an install has no saved selection and follows
+    ``config.DEFAULT_BACKEND``, so moving a platform's default would switch
+    it to an engine it hasn't downloaded. A new install saves the default
+    it starts with. An existing Linux x86_64 install keeps Local Whisper,
+    its default until Parakeet replaced it (October 2026). Run before the
+    main window reads the selection.
+    """
+    manager = settings_manager if manager is None else manager
+    is_new = getattr(manager, "is_new_install", None)
+    if not callable(is_new):
+        return False
+    if is_new():
+        engine = config.DEFAULT_BACKEND
+    elif sys.platform.startswith("linux") and config.DEFAULT_BACKEND == "parakeet":
+        engine = "local_whisper"
+    else:
+        return False
+    if SettingsKey.SELECTED_MODEL in manager.load_all_settings():
+        return False
+
+    def keep(settings: Dict[str, Any]) -> bool:
+        if SettingsKey.SELECTED_MODEL in settings:
+            return False
+        settings[SettingsKey.SELECTED_MODEL] = engine
+        return True
+
+    try:
+        return bool(manager.mutate_settings(keep))
+    except Exception as exc:
+        logger.warning("Could not save the install's engine: %s", exc)
+        return False
+
+
+def setting_value(key: str, settings: Optional[Mapping[str, Any]] = None) -> Any:
+    """Return the stored value of ``key``, or its default when unset.
+
+    Unvalidated, like ``settings.get(key, default)``; a resolver validates.
+    ``settings`` is a loaded mapping; None reads the settings file.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    return settings.get(key, SETTING_DEFAULTS[key])
+
+
+def resolve_bool_setting(
+    key: str, settings: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    """Return ``key``'s stored bool, or its default when unset or not a bool."""
+    raw = setting_value(key, settings)
+    return raw if isinstance(raw, bool) else SETTING_DEFAULTS[key]
+
+
+def resolve_choice_setting(
+    key: str,
+    choices: Tuple[Any, ...],
+    settings: Optional[Mapping[str, Any]] = None,
+) -> Any:
+    """Return ``key``'s stored value when it is one of ``choices``, else its default."""
+    raw = setting_value(key, settings)
+    return raw if raw in choices else SETTING_DEFAULTS[key]
+
+
+def _int_setting(key: str, settings: Optional[Mapping[str, Any]]) -> int:
+    raw = setting_value(key, settings)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return SETTING_DEFAULTS[key]
+
+
+def _bool_resolver(key: str) -> Callable[..., bool]:
+    def resolve(settings: Optional[Mapping[str, Any]] = None) -> bool:
+        return resolve_bool_setting(key, settings)
+
+    resolve.__doc__ = (
+        f"Return the ``{key}`` setting, or {SETTING_DEFAULTS[key]} when unset "
+        "or not a bool."
+    )
+    return resolve
+
+
+def _choice_resolver(key: str, choices: Tuple[Any, ...]) -> Callable[..., Any]:
+    def resolve(settings: Optional[Mapping[str, Any]] = None) -> Any:
+        return resolve_choice_setting(key, choices, settings)
+
+    resolve.__doc__ = (
+        f"Return the ``{key}`` setting when it is one of {choices}, else "
+        f"{SETTING_DEFAULTS[key]!r}."
+    )
+    return resolve
+
+
+# Settings with a fixed set of values: the stored one when valid, else the
+# default. Each is called as ``resolve_x(settings=None)``.
+resolve_recording_trigger_mode = _choice_resolver(
+    SettingsKey.RECORDING_TRIGGER_MODE, RecordingTriggerMode.ALL)
+_resolve_recording_overlay_look = _choice_resolver(
+    SettingsKey.RECORDING_OVERLAY_LOOK, RecordingOverlayLook.ALL)
+resolve_streaming_overlay_layout = _choice_resolver(
+    SettingsKey.STREAMING_OVERLAY_LAYOUT, StreamingOverlayLayout.ALL)
+
+
+def resolve_recording_overlay_look(settings: Optional[Mapping[str, Any]] = None) -> str:
+    """The saved recording look; a name from an earlier build maps to its successor."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    alias = RecordingOverlayLook.ALIASES.get(settings.get(SettingsKey.RECORDING_OVERLAY_LOOK))
+    if alias is not None:
+        return alias
+    return _resolve_recording_overlay_look(settings)
+
+
+resolve_recording_overlay_dot = _bool_resolver(SettingsKey.RECORDING_OVERLAY_DOT)
+resolve_recording_overlay_text = _bool_resolver(SettingsKey.RECORDING_OVERLAY_TEXT)
+resolve_recording_overlay_clock = _bool_resolver(SettingsKey.RECORDING_OVERLAY_CLOCK)
+def resolve_ui_theme(settings: Optional[Mapping[str, Any]] = None) -> str:
+    from services.desktop_session import use_omarchy_ui
+
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    if SettingsKey.UI_THEME not in settings and use_omarchy_ui():
+        return UiTheme.OMARCHY
+    return resolve_choice_setting(SettingsKey.UI_THEME, UiTheme.ALL, settings)
+
+
+resolve_transcript_cleanup_reasoning = _choice_resolver(
+    SettingsKey.TRANSCRIPT_CLEANUP_REASONING, TranscriptCleanupReasoning.ALL)
+resolve_transcript_batch_relation = _choice_resolver(
+    SettingsKey.TRANSCRIPT_BATCH_RELATION, BatchRelation.ALL)
+resolve_meeting_agent_core = _choice_resolver(
+    SettingsKey.MEETING_AGENT_CORE, MeetingAgentCore.ALL)
+resolve_meeting_backup_agent = _choice_resolver(
+    SettingsKey.MEETING_BACKUP_AGENT, ("", *MeetingAgentCore.INSTALLED))
+resolve_meeting_live_thinking = _choice_resolver(
+    SettingsKey.MEETING_LIVE_THINKING, TranscriptCleanupReasoning.ALL)
+resolve_meeting_final_thinking = _choice_resolver(
+    SettingsKey.MEETING_FINAL_THINKING, TranscriptCleanupReasoning.ALL)
+resolve_meeting_server_bind = _choice_resolver(
+    SettingsKey.MEETING_SERVER_BIND, MeetingServerBind.ALL)
+resolve_transcript_cleanup_level = _choice_resolver(
+    SettingsKey.TRANSCRIPT_CLEANUP_LEVEL, TranscriptCleanupLevel.ALL)
+
+# On/off settings: the stored bool, else the default.
+resolve_transcript_batch_custom_combine = _bool_resolver(
+    SettingsKey.TRANSCRIPT_BATCH_CUSTOM_COMBINE)
+resolve_developer_mode = _bool_resolver(SettingsKey.DEVELOPER_MODE)
+resolve_update_check_enabled = _bool_resolver(SettingsKey.UPDATE_CHECK_ENABLED)
+resolve_update_notify_enabled = _bool_resolver(SettingsKey.UPDATE_NOTIFY_ENABLED)
+resolve_update_restart_prompt_enabled = _bool_resolver(
+    SettingsKey.UPDATE_RESTART_PROMPT_ENABLED)
+# Meeting consents and acknowledgements, off until given. On unsupported
+# platforms (old macOS, unsupported Linux architectures, other OSes) the
+# Meeting Mode tab stays muted until the ack is granted once; supported Linux
+# uses the versioned resolve_meeting_linux_preview_ack instead.
+resolve_meeting_audio_upload_consent = _bool_resolver(
+    SettingsKey.MEETING_AUDIO_UPLOAD_CONSENT_GIVEN)
+resolve_meeting_cloud_consent = _bool_resolver(SettingsKey.MEETING_CLOUD_CONSENT_GIVEN)
+resolve_meeting_unsupported_platform_ack = _bool_resolver(
+    SettingsKey.MEETING_UNSUPPORTED_PLATFORM_ACK)
+resolve_meeting_mode_intro_seen = _bool_resolver(SettingsKey.MEETING_MODE_INTRO_SEEN)
+# Off by default. Past recall lets AI insights send excerpts of earlier
+# meetings to the model, and the context folder excerpts of files in that
+# folder; each is separate from the current meeting's AI insights consent.
+resolve_meeting_past_recall_enabled = _bool_resolver(
+    SettingsKey.MEETING_PAST_RECALL_ENABLED)
+resolve_meeting_context_folder_enabled = _bool_resolver(
+    SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED)
+# End-of-meeting steps and report views. The coverage guard is an opt-in
+# word-count safeguard for live and retried re-transcription.
+resolve_meeting_end_redecode = _bool_resolver(SettingsKey.MEETING_END_REDECODE)
+resolve_meeting_redecode_coverage_guard = _bool_resolver(
+    SettingsKey.MEETING_REDECODE_COVERAGE_GUARD)
+resolve_meeting_end_polish = _bool_resolver(SettingsKey.MEETING_END_POLISH)
+resolve_meeting_end_report = _bool_resolver(SettingsKey.MEETING_END_REPORT)
+resolve_meeting_report_ribbon = _bool_resolver(SettingsKey.MEETING_REPORT_RIBBON)
+resolve_meeting_report_brief = _bool_resolver(SettingsKey.MEETING_REPORT_BRIEF)
+resolve_meeting_report_signal = _bool_resolver(SettingsKey.MEETING_REPORT_SIGNAL)
+# Fast judgments send a short excerpt of text and get a typed answer back,
+# not generated text: to TypeSafe, or to the user's own text model. Off by
+# default; every feature also needs it, and meeting features need the
+# meeting's AI insights consent too unless the judge runs on this computer.
+resolve_typesafe_enabled = _bool_resolver(SettingsKey.TYPESAFE_ENABLED)
+resolve_typesafe_provider = _choice_resolver(
+    SettingsKey.TYPESAFE_PROVIDER, TypeSafeProvider.ALL)
+resolve_typesafe_text_model = _choice_resolver(
+    SettingsKey.TYPESAFE_TEXT_MODEL, TypeSafeTextModel.ALL)
+# Personalization switches.
+resolve_app_context_enabled = _bool_resolver(SettingsKey.APP_CONTEXT_ENABLED)
+resolve_app_context_read_text = _bool_resolver(SettingsKey.APP_CONTEXT_READ_TEXT)
+resolve_app_styles_enabled = _bool_resolver(SettingsKey.APP_STYLES_ENABLED)
+resolve_command_mode_insert_without_selection = _bool_resolver(
+    SettingsKey.COMMAND_MODE_INSERT_WITHOUT_SELECTION)
+resolve_dictionary_learn_enabled = _bool_resolver(SettingsKey.DICTIONARY_LEARN_ENABLED)
+resolve_dictionary_steer_recognition = _bool_resolver(
+    SettingsKey.DICTIONARY_STEER_RECOGNITION)
+resolve_snippets_enabled = _bool_resolver(SettingsKey.SNIPPETS_ENABLED)
+resolve_recording_hands_free_latch = _bool_resolver(
+    SettingsKey.RECORDING_HANDS_FREE_LATCH)
+resolve_scratchpad_always_on_top = _bool_resolver(SettingsKey.SCRATCHPAD_ALWAYS_ON_TOP)
+# Automation switches.
+resolve_voice_routing_enabled = _bool_resolver(SettingsKey.VOICE_ROUTING_ENABLED)
+resolve_voice_routing_on_dictation = _bool_resolver(SettingsKey.VOICE_ROUTING_ON_DICTATION)
+resolve_mcp_events_enabled = _bool_resolver(SettingsKey.MCP_EVENTS_ENABLED)
+resolve_walkthrough_show_details = _bool_resolver(SettingsKey.WALKTHROUGH_SHOW_DETAILS)
+resolve_walkthrough_show_about = _bool_resolver(SettingsKey.WALKTHROUGH_SHOW_ABOUT)
+resolve_walkthrough_show_captions = _bool_resolver(SettingsKey.WALKTHROUGH_SHOW_CAPTIONS)
+resolve_walkthrough_page_size = _choice_resolver(
+    SettingsKey.WALKTHROUGH_PAGE_SIZE, WalkthroughPageSize.ALL)
+resolve_walkthrough_copy_format = _choice_resolver(
+    SettingsKey.WALKTHROUGH_COPY_FORMAT, WalkthroughCopyFormat.ALL)
+resolve_walkthrough_intro_seen = _bool_resolver(SettingsKey.WALKTHROUGH_INTRO_SEEN)
+resolve_walkthrough_minimize_to_tray = _bool_resolver(SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY)
+resolve_walkthrough_write_up = _bool_resolver(SettingsKey.WALKTHROUGH_WRITE_UP)
+resolve_walkthrough_write_up_agent = _choice_resolver(
+    SettingsKey.WALKTHROUGH_WRITE_UP_AGENT, MeetingAgentCore.INSTALLED)
+resolve_walkthrough_write_up_notes = _bool_resolver(SettingsKey.WALKTHROUGH_WRITE_UP_NOTES)
+resolve_walkthrough_snap_mode = _choice_resolver(
+    SettingsKey.WALKTHROUGH_SNAP_MODE, WalkthroughSnapMode.ALL)
+resolve_walkthrough_auto_mode = _bool_resolver(SettingsKey.WALKTHROUGH_AUTO_MODE)
+resolve_walkthrough_keep_marks = _bool_resolver(SettingsKey.WALKTHROUGH_KEEP_MARKS)
+resolve_snap_to_edges = _bool_resolver(SettingsKey.SNAP_TO_EDGES)
+resolve_snap_box_infill = _bool_resolver(SettingsKey.SNAP_BOX_INFILL)
+
+
+WALKTHROUGH_CAPTURE_DELAYS = (0, 1, 2, 3, 5, 10)
+
+
+def resolve_walkthrough_capture_delay(settings: Mapping[str, Any] | None = None) -> int:
+    """Seconds of quiet after an automatic click or drawing; zero keeps instant capture."""
+    raw = setting_value(SettingsKey.WALKTHROUGH_CAPTURE_DELAY, settings)
+    return raw if type(raw) is int and raw in WALKTHROUGH_CAPTURE_DELAYS else 0
+
+
+def resolve_walkthrough_title(settings: Optional[Mapping[str, Any]] = None) -> str:
+    """The walkthrough documents' heading, trimmed; "" leaves it out."""
+    raw = setting_value(SettingsKey.WALKTHROUGH_TITLE, settings)
+    return raw.strip() if isinstance(raw, str) else SETTING_DEFAULTS[SettingsKey.WALKTHROUGH_TITLE]
+
+
+def resolve_walkthrough_write_up_instructions(
+    settings: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """The write-up's own instructions, trimmed; "" means the default ones."""
+    raw = setting_value(SettingsKey.WALKTHROUGH_WRITE_UP_INSTRUCTIONS, settings)
+    return raw.strip() if isinstance(raw, str) else ""
+
+
+def resolve_max_saved_recordings(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Optional[int]:
+    """Return a positive retention count, or None when no count limit applies."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    mode = setting_value(SettingsKey.RECORDING_RETENTION_MODE, settings)
+    if mode in (RecordingRetentionMode.KEEP_ALL, RecordingRetentionMode.SIZE_LIMIT):
+        return None
+    return max(1, _int_setting(SettingsKey.MAX_SAVED_RECORDINGS, settings))
+
+
+def resolve_max_saved_recordings_bytes(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Optional[int]:
+    """Return the saved-recordings size cap in bytes, or None when no size limit applies."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    mode = settings.get(SettingsKey.RECORDING_RETENTION_MODE)
+    if mode != RecordingRetentionMode.SIZE_LIMIT:
+        return None
+
+    megabytes = _int_setting(SettingsKey.MAX_SAVED_RECORDINGS_MB, settings)
+    return max(1, megabytes) * 1024 * 1024
+
+
+def resolve_ui_font_scale(
+    settings: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Return a valid UI font-scale percent, defaulting to 100."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    percent = _int_setting(SettingsKey.UI_FONT_SCALE, settings)
+    if percent in UiFontScale.ALL:
+        return percent
+    return SETTING_DEFAULTS[SettingsKey.UI_FONT_SCALE]
+
+
+def resolve_streaming_overlay_font_size(
+    settings: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Return the preview font size clamped to 10–48 points."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    size = _int_setting(SettingsKey.STREAMING_OVERLAY_FONT_SIZE, settings)
+    return max(10, min(48, size))
+
+
+def resolve_transcript_cleanup_prompt(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """The prompt standard cleanup starts from: the saved custom prompt, or
+    the saved level's preset when there is none."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    # cleanup_prompts imports this module.
+    from services import cleanup_prompts
+
+    return cleanup_prompts.base_prompt(
+        settings, resolve_transcript_cleanup_level(settings)
+    )
+
+
+def _known_text_llm_profile_ids(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, ...]:
+    try:
+        from services.text_llm import known_profile_ids
+
+        return known_profile_ids(settings)
+    except Exception:
+        return TranscriptCleanupProvider.ALL
+
+
+def default_transcript_cleanup_model(provider: str) -> str:
+    """Return the provider default; custom endpoints have no default."""
+    if provider in TranscriptCleanupProvider.INSTALLED:
+        return ""
+    try:
+        from services.text_llm import default_model_for_profile, get_profile
+
+        profile = get_profile(provider)
+        if profile is not None:
+            return default_model_for_profile(profile)
+    except Exception:
+        pass
+    if provider == TranscriptCleanupProvider.OPENROUTER:
+        return config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
+    return config.TRANSCRIPT_CLEANUP_MODEL
+
+
+def _resolve_text_llm_assignment(
+    provider_key: str,
+    model_key: str,
+    settings: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, str]:
+    """Return a known provider/model pair, or the OpenRouter fallback.
+
+    The last chosen assignment is kept only when both halves are present
+    and the provider is still a known profile. A leftover model after a
+    deleted custom endpoint is discarded with the missing provider.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    provider = settings.get(provider_key)
+    model = settings.get(model_key)
+    if (provider_key == SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER
+            and provider in TranscriptCleanupProvider.INSTALLED
+            and isinstance(model, str)):
+        return provider, model.strip()
+    known = _known_text_llm_profile_ids(settings)
+    if (
+        isinstance(provider, str)
+        and provider in known
+        and isinstance(model, str)
+        and model.strip()
+    ):
+        return provider, model.strip()
+    return SETTING_DEFAULTS[provider_key], SETTING_DEFAULTS[model_key]
+
+
+def resolve_transcript_cleanup_provider(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return a known cleanup profile ID or the configured default."""
+    provider, _model = _resolve_text_llm_assignment(
+        SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER,
+        SettingsKey.TRANSCRIPT_CLEANUP_MODEL,
+        settings,
+    )
+    return provider
+
+
+def resolve_transcript_cleanup_model(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Resolve cleanup, replacing the retiring OpenAI default at read time."""
+    provider, model = _resolve_text_llm_assignment(
+        SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER,
+        SettingsKey.TRANSCRIPT_CLEANUP_MODEL,
+        settings,
+    )
+    if provider == TranscriptCleanupProvider.OPENAI and model == "gpt-4o-mini":
+        return config.TRANSCRIPT_CLEANUP_MODEL
+    return model
+
+
+def resolve_transcript_cleanup_rules(
+    settings: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    """Return the validated list of learned cleanup rules.
+
+    Non-list values yield an empty list; non-string and blank entries are
+    dropped, remaining entries are stripped, and the list is capped at
+    ``config.MAX_TRANSCRIPT_CLEANUP_RULES``.
+
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    raw = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_RULES)
+    if not isinstance(raw, list):
+        return []
+    rules = [r.strip() for r in raw if isinstance(r, str) and r.strip()]
+    return rules[: config.MAX_TRANSCRIPT_CLEANUP_RULES]
+
+
+def resolve_transcript_batch_custom_instructions(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the remembered Custom description, stripped and capped."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    raw = settings.get(SettingsKey.TRANSCRIPT_BATCH_CUSTOM_INSTRUCTIONS)
+    if not isinstance(raw, str):
+        return ""
+    return raw.strip()[: config.MAX_TRANSCRIPT_BATCH_INSTRUCTION_CHARS]
+
+
+@dataclass(frozen=True)
+class MeetingSpeech:
+    """Where a meeting's speech is transcribed, and with which model."""
+
+    #: "local" or "remote" (the paired computer).
+    source: str
+    #: The local model. With a remote source the host's engine decides, and
+    #: this is only what a local run of the meeting would use.
+    model: str
+    #: The meeting has an engine of its own rather than dictation's.
+    separate: bool = False
+    #: Why a meeting that follows dictation is not on the dictation engine.
+    note: str = ""
+
+
+def meeting_model_label(model: str) -> str:
+    """How a meeting speech model reads in a sentence."""
+    from services.local_asr.catalog import MODELS
+
+    if model in MODELS:
+        return MODELS[model].label
+    return "Local Whisper" if model == "auto" else f"Local Whisper {model}"
+
+
+def resolve_meeting_speech(settings: Optional[Dict[str, Any]] = None) -> MeetingSpeech:
+    """The engine a meeting uses: dictation's, unless it was given its own.
+
+    An engine that can't transcribe meetings (the API, or a model without
+    the catalog's ``meeting`` flag) leaves a following meeting on the
+    platform's default meeting model, with ``note`` saying why.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    own = _own_meeting_model(settings)
+    if settings.get(SettingsKey.MEETING_SPEECH_SEPARATE) is True:
+        remote = settings.get(SettingsKey.MEETING_ASR_SOURCE) == "remote"
+        return MeetingSpeech("remote" if remote else "local", own, separate=True)
+
+    from services.local_asr.catalog import BACKENDS, MODELS, selected_model
+
+    engine = settings.get(SettingsKey.SELECTED_MODEL)
+    if engine in LEGACY_API_MODELS:
+        engine = "api"
+    if engine not in config.MODEL_VALUE_MAP.values():
+        engine = SETTING_DEFAULTS[SettingsKey.SELECTED_MODEL]
+    if engine == "remote":
+        return MeetingSpeech("remote", own)
+    if engine == "local_whisper":
+        from services.whisper_sources import custom_models
+
+        model = settings.get(SettingsKey.WHISPER_MODEL)
+        if model not in [*config.WHISPER_MODEL_CHOICES, *custom_models(settings)]:
+            model = SETTING_DEFAULTS[SettingsKey.WHISPER_MODEL]
+        return MeetingSpeech("local", model)
+    if engine in BACKENDS:
+        model = selected_model(engine, settings)
+        if MODELS[model].meeting:
+            return MeetingSpeech("local", model)
+        name = MODELS[model].label
+    else:
+        name = "The API engine"
+    fallback = (SETTING_DEFAULTS[SettingsKey.MEETING_ASR_MODEL]
+                or SETTING_DEFAULTS[SettingsKey.MEETING_WHISPER_MODEL])
+    return MeetingSpeech(
+        "local", fallback,
+        note=f"{name} can't transcribe meetings, so meetings use {meeting_model_label(fallback)}.",
+    )
+
+
+def own_meeting_speech(settings: Optional[Dict[str, Any]] = None) -> MeetingSpeech:
+    """The engine saved for meetings alone, whether or not it is in use."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    return resolve_meeting_speech({**settings, SettingsKey.MEETING_SPEECH_SEPARATE: True})
+
+
+def keep_separate_meeting_speech(manager=None) -> bool:
+    """Save whether an install's meetings have their own engine; True when written.
+
+    Meetings used to have their own model and source always. An existing
+    install whose saved choice differs from its dictation engine keeps it
+    as a separate engine; every other install follows dictation. Decided
+    once, so a later change of dictation engine can't turn a follower into
+    a separate engine. Run after ``keep_unchosen_engine``.
+    """
+    manager = settings_manager if manager is None else manager
+    is_new = getattr(manager, "is_new_install", None)
+    if not callable(is_new):
+        return False
+    new = is_new()
+    if SettingsKey.MEETING_SPEECH_SEPARATE in manager.load_all_settings():
+        return False
+
+    def keep(settings: Dict[str, Any]) -> bool:
+        if SettingsKey.MEETING_SPEECH_SEPARATE in settings:
+            return False
+        own = own_meeting_speech(settings)
+        follows = resolve_meeting_speech(settings)
+        same = own.source == follows.source and (
+            own.source == "remote" or own.model == follows.model
+        )
+        settings[SettingsKey.MEETING_SPEECH_SEPARATE] = not (new or same)
+        return True
+
+    try:
+        return bool(manager.mutate_settings(keep))
+    except Exception as exc:
+        logger.warning("Could not save the install's meeting engine: %s", exc)
+        return False
+
+
+def resolve_meeting_asr_source(settings: Optional[Dict[str, Any]] = None) -> str:
+    """Whether a meeting's speech runs here or on the paired computer."""
+    return resolve_meeting_speech(settings).source
+
+
+def resolve_meeting_whisper_model(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """The local speech model a meeting uses."""
+    return resolve_meeting_speech(settings).model
+
+
+def _own_meeting_model(settings: Dict[str, Any]) -> str:
+    """The model saved for meetings alone, then a compatible Parakeet default."""
+    from services.local_asr.catalog import MODELS, selected_model
+    extra = settings.get(SettingsKey.MEETING_ASR_MODEL)
+    if isinstance(extra, str) and extra in MODELS and MODELS[extra].meeting:
+        return extra
+    model = settings.get(SettingsKey.MEETING_WHISPER_MODEL)
+    if isinstance(model, str):
+        from services.whisper_sources import custom_models
+        if model in [*config.WHISPER_MODEL_CHOICES, *custom_models(settings)]:
+            return model
+    from config import parakeet_default_supported
+
+    if (setting_value(SettingsKey.SELECTED_MODEL, settings) == "parakeet"
+            and (sys.platform == "darwin" or parakeet_default_supported())):
+        return selected_model("parakeet", settings)
+    return (SETTING_DEFAULTS[SettingsKey.MEETING_ASR_MODEL]
+            or SETTING_DEFAULTS[SettingsKey.MEETING_WHISPER_MODEL])
+
+
+def resolve_meeting_language(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return ``auto`` or a supported Whisper language code."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    language = settings.get(SettingsKey.MEETING_LANGUAGE)
+    if isinstance(language, str):
+        language = language.strip().lower()
+        if language in MeetingLanguage.ALL:
+            return language
+    return SETTING_DEFAULTS[SettingsKey.MEETING_LANGUAGE]
+
+
+def resolve_meeting_llm_provider(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the validated LLM provider for meeting intelligence.
+
+    Reuses the text-LLM profile vocabulary (built-in ``openai`` /
+    ``openrouter`` plus custom ``custom_…`` ids) so API keys and base URLs
+    resolve through the same plumbing.
+
+    """
+    provider, _model = _resolve_text_llm_assignment(
+        SettingsKey.MEETING_LLM_PROVIDER,
+        SettingsKey.MEETING_LLM_MODEL,
+        settings,
+    )
+    return provider
+
+
+def resolve_meeting_llm_profile(
+    settings: Optional[Dict[str, Any]] = None,
+):
+    """Return the ``TextLLMProfile`` used for meeting intelligence."""
+    from services.text_llm import builtin_profile, get_profile
+
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    profile_id = resolve_meeting_llm_provider(settings)
+    return get_profile(profile_id, settings) or builtin_profile(profile_id)
+
+
+def resolve_meeting_llm_endpoint(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Return a non-secret meeting endpoint snapshot dict."""
+    from services.text_llm import snapshot_from_profile
+
+    profile = resolve_meeting_llm_profile(settings)
+    return snapshot_from_profile(profile, resolve_meeting_llm_model(settings)).to_dict()
+
+
+def resolve_meeting_llm_model(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the last chosen meeting model, or the OpenRouter fallback."""
+    _provider, model = _resolve_text_llm_assignment(
+        SettingsKey.MEETING_LLM_PROVIDER,
+        SettingsKey.MEETING_LLM_MODEL,
+        settings,
+    )
+    return model
+
+
+def resolve_meeting_agent_models(
+    settings: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, str]:
+    """Return the model chosen for each installed agent, as a fresh dict.
+
+    Missing agents and non-string values are dropped; an empty string means
+    the agent keeps the default from its own configuration.
+    """
+    raw = setting_value(SettingsKey.MEETING_AGENT_MODELS, settings)
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        agent: model.strip()
+        for agent, model in raw.items()
+        if agent in MeetingAgentCore.INSTALLED and isinstance(model, str)
+    }
+
+
+def resolve_meeting_agent_model(
+    agent_id: str, settings: Optional[Mapping[str, Any]] = None,
+) -> str:
+    """Return the model chosen for ``agent_id``, or "" for its own default."""
+    return resolve_meeting_agent_models(settings).get(agent_id, "")
+
+
+def resolve_meeting_speaker_id_backend(
+    settings: Optional[Dict[str, Any]] = None,
+    today: Optional[date] = None,
+) -> str:
+    """Return a valid speaker-identification backend.
+
+    OpenAI speaker identification becomes on-device once OpenAI retires
+    gpt-4o-transcribe-diarize.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    backend = settings.get(SettingsKey.MEETING_SPEAKER_ID_BACKEND)
+    if backend == MeetingSpeakerIdBackend.OPENAI and openai_retirement.retired(today):
+        return MeetingSpeakerIdBackend.LOCAL
+    if backend in MeetingSpeakerIdBackend.ALL:
+        return backend
+    return SETTING_DEFAULTS[SettingsKey.MEETING_SPEAKER_ID_BACKEND]
+
+
+def resolve_meeting_linux_preview_ack(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the current Linux Meeting Mode preview was accepted.
+
+    Legacy booleans and stale/future versions deliberately fail closed. A
+    changed disclosure must bump :data:`MEETING_LINUX_PREVIEW_ACK_VERSION` so
+    users see it once before newly authorized capture behavior can start.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    value = settings.get(SettingsKey.MEETING_LINUX_PREVIEW_ACK_VERSION)
+    return (
+        type(value) is int
+        and value == MEETING_LINUX_PREVIEW_ACK_VERSION
+    )
+
+
+#: Names participants can use to address the note-taking assistant. The
+#: bare word "whisper" is deliberately absent: it is ordinary speech.
+DEFAULT_VOICE_COMMAND_NAMES: Final[Tuple[str, ...]] = (
+    "note taker", "notetaker", "assistant", "openwhisper", "open whisper",
+)
+
+
+def resolve_typesafe_feature_enabled(feature: str, settings=None) -> bool:
+    keys = {
+        "citations": SettingsKey.TYPESAFE_CITATIONS_ENABLED,
+        "semantic_search": SettingsKey.TYPESAFE_SEMANTIC_SEARCH_ENABLED,
+        "question_radar": SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED,
+        "highlights": SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED,
+    }
+    return resolve_typesafe_enabled(settings) and resolve_bool_setting(
+        keys[feature], settings,
+    )
+
+
+def resolve_typesafe_topic_shift_enabled(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether the checkpoint scheduler may ask TypeSafe about topic shifts.
+
+    On by default once TypeSafe is enabled; the lexical Jaccard rule remains
+    the fallback whenever a judgment is unavailable.
+    """
+    return resolve_typesafe_enabled(settings) and resolve_bool_setting(
+        SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, settings,
+    )
+
+
+def resolve_typesafe_voice_commands_enabled(
+    settings: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Return whether spoken instructions to the note taker are acted on.
+
+    Off by default. Only segments that name the assistant are ever judged.
+    """
+    return resolve_typesafe_enabled(settings) and resolve_bool_setting(
+        SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, settings,
+    )
+
+
+def resolve_typesafe_voice_command_names(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, ...]:
+    """Return the lowercased wake names for voice commands, defaults when unset."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    raw = settings.get(SettingsKey.TYPESAFE_VOICE_COMMAND_NAMES)
+    if not isinstance(raw, list):
+        return DEFAULT_VOICE_COMMAND_NAMES
+    names = tuple(
+        " ".join(item.strip().lower().split())
+        for item in raw
+        if isinstance(item, str) and item.strip()
+    )
+    return names or DEFAULT_VOICE_COMMAND_NAMES
+
+
+def resolve_meeting_context_folder_path(
+    settings: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Return the normalized knowledge-folder path, or empty when unset.
+
+    Expands ``~`` and makes the path absolute. Does not require the folder
+    to exist; the search module treats a missing directory as unavailable.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    raw = setting_value(SettingsKey.MEETING_CONTEXT_FOLDER_PATH, settings)
+    if not isinstance(raw, str):
+        return ""
+    cleaned = raw.strip()
+    if not cleaned:
+        return ""
+    expanded = os.path.expanduser(cleaned)
+    if not os.path.isabs(expanded):
+        expanded = os.path.abspath(expanded)
+    return os.path.normpath(expanded)
+
+
+def resolve_meeting_report_views(
+    settings: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, ...]:
+    """Return the enabled post-meeting report views, in display order.
+
+    Falls back to ``("ribbon",)`` when every view is off so a meeting never
+    ends with an empty report.
+    """
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    views = tuple(
+        name for name, key in (
+            ("ribbon", SettingsKey.MEETING_REPORT_RIBBON),
+            ("brief", SettingsKey.MEETING_REPORT_BRIEF),
+            ("signal", SettingsKey.MEETING_REPORT_SIGNAL),
+        )
+        if resolve_bool_setting(key, settings)
+    )
+    return views or ("ribbon",)
+
+
+def resolve_meeting_server_port(
+    settings: Optional[Dict[str, Any]] = None,
+) -> int:
+    """Return a dashboard port clamped to 0–65535."""
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+
+    port = _int_setting(SettingsKey.MEETING_SERVER_PORT, settings)
+    return max(0, min(65535, port))
+
+
+def compose_transcript_cleanup_prompt(base_prompt: str, rules: List[str]) -> str:
+    """Append validated learned rules to the base prompt."""
+    if not rules:
+        return base_prompt
+    numbered = "\n".join(f"{i}. {rule}" for i, rule in enumerate(rules, start=1))
+    return (
+        f"{base_prompt}\n\n"
+        f"Additional user-taught rules (always apply):\n{numbered}"
+    )
+
+
+#: The consent text version a meeting insight review was agreed under
+#: (``meeting.state.review.REVIEW_CONSENT``; a test keeps the two equal).
+INSIGHT_REVIEW_CONSENT: Final[str] = "typesafe-text-v1"
+
+
+def resolve_meeting_insight_review(settings=None):
+    if settings is None:
+        settings = settings_manager.load_all_settings()
+    enabled = resolve_bool_setting(SettingsKey.MEETING_INSIGHT_REVIEW, settings)
+    consent = settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == INSIGHT_REVIEW_CONSENT
+    sensitivity = resolve_choice_setting(
+        SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY, ("normal", "thorough"), settings,
+    )
+    return {
+        "enabled": enabled and consent and resolve_typesafe_enabled(settings),
+        "consent": INSIGHT_REVIEW_CONSENT if consent else "",
+        "sensitivity": sensitivity,
+    }

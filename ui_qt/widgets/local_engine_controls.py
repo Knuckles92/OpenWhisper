@@ -21,7 +21,7 @@ from PyQt6.QtCore import QPoint, QRect, QSize, Qt, pyqtSignal
 
 from config import config
 from services import dictation_language
-from services.settings import SETTING_DEFAULTS, SettingsKey, setting_value, settings_manager
+from services.settings import SettingsKey, settings_manager
 from services.local_asr.languages import LANGUAGE_LABELS, language_choices, selected_language
 from ui_qt.utils.icons import design_icon
 from ui_qt.widgets.buttons import Button, neutral_button
@@ -168,9 +168,7 @@ class LocalEngineControls(QWidget):
         self.compute_combo.parentWidget().setVisible(backend not in BACKENDS)
         self.sync_language_field()
         self.language_combo.blockSignals(True)
-        stored_lang = settings_manager.get(
-            SettingsKey.LOCAL_ASR_LANGUAGE, SETTING_DEFAULTS[SettingsKey.LOCAL_ASR_LANGUAGE]
-        )
+        stored_lang = SettingsKey.LOCAL_ASR_LANGUAGE.read(settings_manager.load_all_settings())
         self.language_combo.clear()
         for code in language_choices(backend):
             self.language_combo.addItem(LANGUAGE_LABELS[code], code)
@@ -201,8 +199,8 @@ class LocalEngineControls(QWidget):
         backend = getattr(self, "_backend", "local_whisper")
         if backend in BACKENDS:
             settings = settings_manager.load_all_settings()
-            models = dict(settings.get(SettingsKey.LOCAL_ASR_MODELS) or {})
-            devices = dict(settings.get(SettingsKey.LOCAL_ASR_DEVICES) or {})
+            models = dict(SettingsKey.LOCAL_ASR_MODELS.read(settings))
+            devices = dict(SettingsKey.LOCAL_ASR_DEVICES.read(settings))
             models[backend] = self.model_combo.currentData()
             devices[backend] = self.device_combo.currentData()
             lang_code = selected_language(backend, self.language_combo.currentData())
@@ -234,9 +232,9 @@ class LocalEngineControls(QWidget):
             return
         settings = settings_manager.load_all_settings()
         self.set_values(
-            setting_value(SettingsKey.WHISPER_MODEL, settings),
-            setting_value(SettingsKey.WHISPER_DEVICE, settings),
-            setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings),
+            SettingsKey.WHISPER_MODEL.read(settings),
+            SettingsKey.WHISPER_DEVICE.read(settings),
+            SettingsKey.WHISPER_COMPUTE_TYPE.read(settings),
         )
 
     def set_values(self, model: str, device: str, compute: str):

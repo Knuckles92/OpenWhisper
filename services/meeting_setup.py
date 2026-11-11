@@ -29,7 +29,7 @@ _SETUP_MIC_SIGNAL_RMS = 64.0  # About -54 dBFS for int16 PCM.
 
 def setup_complete() -> bool:
     settings = settings_manager.load_all_settings()
-    return settings.get(SettingsKey.MEETING_SETUP_COMPLETE) is True
+    return SettingsKey.MEETING_SETUP_COMPLETE.read(settings)
 
 
 @dataclass(frozen=True)

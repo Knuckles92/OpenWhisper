@@ -781,7 +781,7 @@ def fetch_latest_release(track: Optional[str] = None) -> ReleaseInfo:
 def _api_retry_pending() -> bool:
     try:
         settings = settings_manager.load_all_settings()
-        retry_at = parse_last_check_at(settings.get(SettingsKey.UPDATE_API_RETRY_AT))
+        retry_at = parse_last_check_at(SettingsKey.UPDATE_API_RETRY_AT.read(settings))
         return retry_at is not None and retry_at > datetime.now(timezone.utc)
     except Exception as exc:
         logger.debug("Could not load GitHub API cooldown: %s", exc)

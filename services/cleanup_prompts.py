@@ -65,10 +65,7 @@ def custom_prompt(settings: Mapping) -> str:
     A saved copy of a built-in prompt counts as none: Reset used to store the
     old default, and those installs should get the presets.
     """
-    stored = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_PROMPT)
-    if not isinstance(stored, str):
-        return ""
-    stripped = stored.strip()
+    stripped = SettingsKey.TRANSCRIPT_CLEANUP_PROMPT.read(settings).strip()
     if not stripped or is_built_in(stripped):
         return ""
     return stripped

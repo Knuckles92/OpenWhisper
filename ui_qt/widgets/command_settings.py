@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from services.hotkey_manager import format_hotkey_display
-from services.settings import RecordingTriggerMode, resolve_recording_trigger_mode
+from services.settings import RecordingTriggerMode, SettingsKey, resolve_recording_trigger_mode
 from services.text_transforms import (
     NAME_MAX_CHARS,
     STARTER_TRANSFORMS,
@@ -133,8 +133,7 @@ class CommandShortcutField(QWidget):
     def hotkey(self) -> str:
         hotkeys = self.dialog.current_hotkeys or {}
         if not hotkeys:
-            stored = self.dialog._settings_snapshot().get("hotkeys")
-            hotkeys = stored if isinstance(stored, dict) else {}
+            hotkeys = SettingsKey.HOTKEYS.read(self.dialog._settings_snapshot()) or {}
         value = hotkeys.get(COMMAND_ACTION, "")
         return value if isinstance(value, str) else ""
 

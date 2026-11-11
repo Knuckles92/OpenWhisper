@@ -213,13 +213,9 @@ def _saved_token() -> Optional[str]:
 
 def configured_port(settings: Mapping[str, Any]) -> int:
     """The in-app listener's port, validated the way ``McpRuntime.restore`` does."""
-    from services.agent_mcp.runtime import DEFAULT_PORT
     from services.settings import SettingsKey
 
-    port = settings.get(SettingsKey.MCP_PORT, DEFAULT_PORT)
-    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
-        return DEFAULT_PORT
-    return port
+    return SettingsKey.MCP_PORT.read(settings)
 
 
 def parse_url(url: str) -> Target:
@@ -304,7 +300,7 @@ class AppLink:
             from services.settings import SettingsKey
 
             try:
-                enabled = self._read_settings().get(SettingsKey.MCP_ENABLED, False)
+                enabled = SettingsKey.MCP_ENABLED.read(self._read_settings())
             except Exception:  # unknown: the message names both causes
                 enabled = None
             if enabled is False:

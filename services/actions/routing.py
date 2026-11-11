@@ -855,8 +855,9 @@ ROUTE_HOTKEY_NAME = "route_record"
 
 
 def _route_shortcut(settings: Mapping) -> str:
-    hotkeys = settings.get("hotkeys")
-    value = hotkeys.get(ROUTE_HOTKEY_NAME) if isinstance(hotkeys, Mapping) else ""
+    from services.settings import SettingsKey
+
+    value = (SettingsKey.HOTKEYS.read(settings) or {}).get(ROUTE_HOTKEY_NAME, "")
     return value.strip() if isinstance(value, str) else ""
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
-from services.settings import SETTING_DEFAULTS, SettingsKey
+from services.settings import SettingsKey, resolve_bool_setting
 
 LIVE_EVENTS = SettingsKey.API_LIVE_EVENTS
 RUN_ACTIONS = SettingsKey.API_RUN_ACTIONS
@@ -44,10 +44,7 @@ def granted(settings: Mapping, permission: str) -> bool:
     """True when ``permission`` is on; a missing or malformed value means its default."""
     if permission not in ALL:
         return False
-    value = (settings or {}).get(permission, SETTING_DEFAULTS[permission])
-    if not isinstance(value, bool):
-        value = SETTING_DEFAULTS[permission]
-    return value is True
+    return resolve_bool_setting(permission, settings or {})
 
 
 def require(settings: Mapping, permission: str) -> None:

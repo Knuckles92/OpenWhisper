@@ -1276,12 +1276,12 @@ def _delivery_allowed(saved: Mapping[str, Any], subscription: EventSubscription)
     from services.settings import SettingsKey
 
     return (
-        saved.get(SettingsKey.MCP_ENABLED) is True
+        SettingsKey.MCP_ENABLED.read(saved)
         and _enabled(saved)
         and permissions.granted(saved, permissions.LIVE_EVENTS)
         and (
             subscription.origin == ORIGIN_LOCAL
-            or saved.get(SettingsKey.MCP_TAILSCALE_ENABLED) is True
+            or SettingsKey.MCP_TAILSCALE_ENABLED.read(saved)
         )
     )
 
