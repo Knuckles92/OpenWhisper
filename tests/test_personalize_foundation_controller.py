@@ -50,10 +50,10 @@ def controller(monkeypatch):
 def test_ui_signals_reach_their_ui_methods(controller):
     ui = controller.ui_controller
 
-    controller.scratchpad_toggle_requested.emit()
-    controller.cycle_language_requested.emit()
-    controller.paste_last_original_requested.emit()
-    controller.hands_free_changed.emit(True)
+    controller.hotkey_runtime.scratchpad_toggle_requested.emit()
+    controller.hotkey_runtime.cycle_language_requested.emit()
+    controller.hotkey_runtime.paste_last_original_requested.emit()
+    controller.hotkey_runtime.hands_free_changed.emit(True)
     controller.recording_device_switched.emit("USB mic", "Laptop mic")
     controller.dictionary_term_learned.emit("Kubernetes")
 
@@ -83,7 +83,7 @@ def test_commands_and_transforms_without_a_provider_say_how_to_start(controller,
     monkeypatch.setattr(command_module.text_rewrite, "provider_ready", lambda _settings: False)
     monkeypatch.setattr(command_module.text_rewrite, "provider_readiness", lambda _settings: False)
 
-    controller.transform_requested.emit("polish")
+    controller.hotkey_runtime.transform_requested.emit("polish")
     controller.command_key_pressed(1.0)
 
     assert controller.ui_controller.statuses[-2:] == [

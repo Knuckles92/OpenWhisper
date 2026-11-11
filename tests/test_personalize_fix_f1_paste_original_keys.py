@@ -33,11 +33,6 @@ def _controller():
         hotkey_manager=None,
         recorder=SimpleNamespace(is_recording=False),
         status_update=_Signal(),
-        paste_last_original_requested=_Signal(),
-        scratchpad_toggle_requested=_Signal(),
-        cycle_language_requested=_Signal(),
-        walkthrough_requested=_Signal(),
-        screenshot_requested=_Signal(),
         recording_state_changed=_Signal(),
         toggle_recording=lambda: None,
         toggle_route_recording=lambda: None,
@@ -52,6 +47,11 @@ def _controller():
 @pytest.fixture
 def runtime():
     instance = HotkeyRuntime(_controller())
+    # Recording fakes: these tests check the wait, not Qt's delivery.
+    for name in ("paste_last_original_requested", "scratchpad_toggle_requested",
+                 "cycle_language_requested", "walkthrough_requested",
+                 "screenshot_requested"):
+        setattr(instance, name, _Signal())
     yield instance
     instance.cleanup()
 
@@ -68,7 +68,7 @@ def test_the_shortcut_waits_for_its_modifiers_before_pasting(runtime, monkeypatc
         held_at_paste.append(sorted(held))
         pasted.set()
 
-    runtime.controller.paste_last_original_requested.connect(paste)
+    runtime.paste_last_original_requested.connect(paste)
 
     held.update({"ctrl", "alt"})
     assert manager._handle_keyboard_event(_key_event("down", "o", keypad=False)) is False
@@ -84,7 +84,7 @@ def test_keys_still_held_at_the_deadline_paste_nothing_and_say_why(runtime, monk
 
     runtime._paste_last_original_after_keys_up()
 
-    assert runtime.controller.paste_last_original_requested.emitted == []
+    assert runtime.paste_last_original_requested.emitted == []
     assert runtime.controller.status_update.emitted == [(runtime_module.KEYS_STILL_HELD,)]
 
 
@@ -109,7 +109,7 @@ def test_setup_wires_the_shortcut_through_the_wait(runtime, monkeypatch):
         synthetic_keys, "wait_for_modifiers_released",
         lambda *_a, **_k: calls.append("wait") or True,
     )
-    runtime.controller.paste_last_original_requested.connect(lambda: calls.append("paste"))
+    runtime.paste_last_original_requested.connect(lambda: calls.append("paste"))
 
     runtime.setup_hotkeys()
     runtime.controller.hotkey_manager.callbacks["on_paste_last_original"]()

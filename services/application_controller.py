@@ -121,13 +121,8 @@ class ApplicationController(QObject):
     # single-file path announces this on the caller thread before submitting.
     large_file_detected = pyqtSignal(float)
     status_update = pyqtSignal(str)
-    stt_state_changed = pyqtSignal(bool)
     recording_state_changed = pyqtSignal(bool)
     recording_destination_changed = pyqtSignal(str)
-    profile_record_requested = pyqtSignal(str)
-    # An action's shortcut, emitted from the hotkey dispatcher thread with
-    # the action's id (docs/design/automation/design.md).
-    action_record_requested = pyqtSignal(str)
     # The user's Cancel reached the actions still running; emitted from the
     # hotkey dispatcher thread too, and ActionRuntime works on the Qt thread.
     actions_cancel_requested = pyqtSignal()
@@ -141,19 +136,8 @@ class ApplicationController(QObject):
     # Arm the engine reload's debounce timer (emitted from any thread; hotkeys
     # and transcription workers ask for reloads off the Qt thread).
     reload_debounce_requested = pyqtSignal()
-    # Shortcut actions, emitted from the hotkey dispatcher thread and handled
-    # on the Qt thread. A transform shortcut carries the transform's id.
-    transform_requested = pyqtSignal(str)
-    scratchpad_toggle_requested = pyqtSignal()
-    cycle_language_requested = pyqtSignal()
-    paste_last_original_requested = pyqtSignal()
-    walkthrough_requested = pyqtSignal()
-    screenshot_requested = pyqtSignal()
-    paste_walkthrough_requested = pyqtSignal(object)
     # A shortcut's outcome near the pointer; any thread, shown on the Qt thread.
     notice_requested = pyqtSignal(str, bool)
-    # A push-and-hold recording latched into, or left, hands-free.
-    hands_free_changed = pyqtSignal(bool)
     # (old, new) microphone names after a recording moved to the next one.
     recording_device_switched = pyqtSignal(str, str)
     # A correction the user made after a paste became a dictionary term.
@@ -1208,8 +1192,6 @@ class ApplicationController(QObject):
 
     def _connect_signals(self) -> None:
         self.startup_database_ready.connect(self._on_startup_database_ready)
-        self.profile_record_requested.connect(self.toggle_profile_recording)
-        self.action_record_requested.connect(self.toggle_action_recording)
         self.actions_cancel_requested.connect(self._cancel_actions)
         self.transcription_completed.connect(self._on_transcription_complete)
         self.transcription_failed.connect(self._on_transcription_error)
@@ -1220,29 +1202,13 @@ class ApplicationController(QObject):
         self.large_file_detected.connect(self.ui_controller.show_large_file_state)
         self.models.connect_signals()
         self.remote.connect_signals()
-        self.transform_requested.connect(self.command_runtime.run_transform)
-        # Late-bound, so a UI without one of these fails only when it fires.
-        self.scratchpad_toggle_requested.connect(
-            lambda: self.ui_controller.toggle_scratchpad()
-        )
-        self.cycle_language_requested.connect(
-            lambda: self.ui_controller.cycle_dictation_language()
-        )
-        self.paste_last_original_requested.connect(
-            lambda: self.ui_controller.paste_last_original()
-        )
-        self.walkthrough_requested.connect(lambda: self.walkthrough_runtime.toggle())
-        self.screenshot_requested.connect(lambda: self.walkthrough_runtime.snap())
-        self.paste_walkthrough_requested.connect(self.ui_controller.paste_latest_walkthrough)
+        self.hotkey_runtime.connect_signals()
         self.notice_requested.connect(
             lambda text, done: self.ui_controller.show_notice(text, done=done)
         )
         self.recording_state_changed.connect(self.walkthrough_runtime.on_recording_state_changed)
         self.ui_controller.on_walkthrough = self.walkthrough_runtime.toggle
         self.ui_controller.on_screenshot = self.walkthrough_runtime.snap
-        self.hands_free_changed.connect(
-            lambda on: self.ui_controller.set_hands_free(on)
-        )
         self.recording_device_switched.connect(
             lambda old, new: self.ui_controller.on_recording_device_switched(old, new)
         )
@@ -1266,7 +1232,6 @@ class ApplicationController(QObject):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)
         if hasattr(self.ui_controller, "show_transcription_retry"):
             self.transcription_retry_progress.connect(self.ui_controller.show_transcription_retry)
-        self.stt_state_changed.connect(self.hotkey_runtime.on_stt_state_changed)
         self.recording_state_changed.connect(self._on_recording_state_changed)
         self.recording_destination_changed.connect(
             self.ui_controller.overlay.set_recording_destination

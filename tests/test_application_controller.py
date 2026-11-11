@@ -2149,7 +2149,7 @@ class TestApplicationController:
     def test_profile_shortcut_stops_without_replacing_recording_format(self):
         controller = self._create_controller()
         assert controller.start_profile_recording("support-ticket")
-        controller.profile_record_requested.emit("email")
+        controller.hotkey_runtime.profile_record_requested.emit("email")
         assert not controller.recorder.is_recording
         assert controller.transcription_runtime._recording_profile.id == "support-ticket"
 
