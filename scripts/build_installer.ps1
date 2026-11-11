@@ -12,9 +12,17 @@
         pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
         winget install -e --id JRSoftware.InnoSetup
 
-    Code signing is optional and off by default. To sign, set both:
+    Code signing is optional and off by default. To sign, configure exactly
+    one method (see scripts\windows_signing.py for details):
+        $env:OPENWHISPER_SIGN_CERT_SHA1 = '<thumbprint of a cert in the store>'
+    or
         $env:OPENWHISPER_SIGN_PFX  = 'C:\path\to\cert.pfx'
         $env:OPENWHISPER_SIGN_PASS = '<password>'
+    or, for Azure Trusted Signing,
+        $env:OPENWHISPER_SIGN_DLIB     = '<path>\Azure.CodeSigning.Dlib.dll'
+        $env:OPENWHISPER_SIGN_METADATA = '<path>\metadata.json'
+    The app executables, the uninstaller and the setup exe are then signed
+    and timestamped with SignTool. A partial configuration fails the build.
 
 .PARAMETER SkipInstaller
     Freeze only; do not run Inno Setup.
@@ -201,26 +209,15 @@ Invoke-Native $Python @('scripts/check_release_health.py', '--executable', $ExeP
     '--output', 'build/release-health.json', '--timeout', '45') `
     -ErrorMessage "Frozen lifecycle/performance gate failed"
 
-# Optional code signing
+# Optional code signing. Before the archive and the installer are packed,
+# so both carry the signed executables (and the archive manifest their hashes).
 $HelperInBundle = Join-Path $DistDir 'OpenWhisperUpdater.exe'
-$SignPfx = $env:OPENWHISPER_SIGN_PFX
-if ($SignPfx -and (Test-Path $SignPfx)) {
-    Write-Step "Signing the executables"
-    $SignTool = Get-Command signtool.exe -ErrorAction SilentlyContinue
-    if (-not $SignTool) {
-        throw "OPENWHISPER_SIGN_PFX is set but signtool.exe is not on PATH (install the Windows SDK)"
-    }
-    foreach ($toSign in @($ExePath, $HelperInBundle)) {
-        Invoke-Native $SignTool.Source @(
-            'sign', '/fd', 'SHA256', '/f', $SignPfx, '/p', $env:OPENWHISPER_SIGN_PASS,
-            '/tr', 'http://timestamp.digicert.com', '/td', 'SHA256', $toSign
-        ) -ErrorMessage "Signing $toSign failed"
-    }
-} else {
-    Write-Host ""
-    Write-Host "    Not signed. Windows SmartScreen will warn users on first run." -ForegroundColor Yellow
-    Write-Host "    Set OPENWHISPER_SIGN_PFX and OPENWHISPER_SIGN_PASS to sign." -ForegroundColor Yellow
-}
+Write-Step "Code signing the executables"
+Invoke-Native $Python @('scripts\windows_signing.py', 'sign', $ExePath, $HelperInBundle) `
+    -ErrorMessage "Signing the executables failed"
+# Empty when unsigned; otherwise Inno signs the uninstaller and setup exe.
+$InnoSignArgs = @(& $Python scripts\windows_signing.py inno-args)
+if ($LASTEXITCODE -ne 0) { throw "Could not prepare installer signing" }
 
 # Native update archive from the identical, optionally signed dist tree.
 Write-Step "Packing the native update archive"
@@ -276,20 +273,21 @@ if (-not $Iscc) {
 }
 
 Invoke-Native $Iscc @(
-    "/DAppVersion=$Version",
+    "/DAppVersion=$Version"
+    $InnoSignArgs
     (Join-Path $RepoRoot 'installer\OpenWhisper.iss')
 ) -ErrorMessage "Inno Setup failed"
 
 $SetupPath = Join-Path $RepoRoot "installer\Output\OpenWhisper-Setup-$Version.exe"
 if (-not (Test-Path $SetupPath)) { throw "Installer not found at $SetupPath" }
 
-if ($SignPfx -and (Test-Path $SignPfx)) {
-    Write-Step "Signing the installer"
-    Invoke-Native (Get-Command signtool.exe).Source @(
-        'sign', '/fd', 'SHA256', '/f', $SignPfx, '/p', $env:OPENWHISPER_SIGN_PASS,
-        '/tr', 'http://timestamp.digicert.com', '/td', 'SHA256', $SetupPath
-    ) -ErrorMessage "Signing the installer failed"
-}
+# Every signature must verify, chain to a trusted root and carry a
+# timestamp; an unsigned build must not carry a stray signature either.
+Write-Step "Verifying code signatures"
+Invoke-Native $Python @(
+    'scripts\windows_signing.py', 'verify', '--output', 'build\windows-signing.json',
+    $ExePath, $HelperInBundle, $SetupPath
+) -ErrorMessage "Code signature verification failed"
 
 # Report
 $SetupSize = (Get-Item $SetupPath).Length
