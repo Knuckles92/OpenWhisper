@@ -201,7 +201,7 @@ class RemoteEngineService:
             try:
                 listener(kind)
             except Exception:
-                logger.debug("Remote engine listener raised", exc_info=True)
+                logger.warning("Remote engine listener raised", exc_info=True)
 
     # ---- tailscale ----
 
@@ -399,7 +399,7 @@ class RemoteEngineService:
 
         try:
             return own_fingerprint(self._identity_dir or _default_identity_dir())
-        except Exception:
+        except Exception:  # no identity yet: nothing of this computer's to leave out
             return ""
 
     # ---- host ----

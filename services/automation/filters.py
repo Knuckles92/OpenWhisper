@@ -442,7 +442,7 @@ def _context(job, settings: Mapping) -> tuple[Optional[str], Optional[dict]]:
 
         fields = dictation_pipeline.history_fields(job, None, live=True, settings=settings)
     except Exception:
-        logger.debug("Filter context unavailable", exc_info=True)
+        logger.warning("Filter context unavailable", exc_info=True)
         return None, None
     return fields.get("language") or None, app_from_fields(fields)
 

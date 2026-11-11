@@ -974,7 +974,7 @@ def _save_check_timestamp(key: str, now: Optional[datetime] = None) -> None:
             key, now.isoformat()
         )
     except Exception as exc:
-        logger.warning("Could not persist update check timestamp: %s", exc)
+        logger.warning("Could not persist update check timestamp: %s", exc, exc_info=True)
 
 
 def persist_prompt_choices(*, notify_enabled: bool, check_enabled: bool) -> None:

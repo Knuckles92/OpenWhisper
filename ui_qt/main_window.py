@@ -1021,7 +1021,7 @@ class MainWindow(QMainWindow):
                 tab.set_model_selection(saved_model)
             logger.info(f"Loaded saved model selection: {saved_model}")
         except Exception as e:
-            logger.error(f"Failed to load saved settings: {e}")
+            logger.error(f"Failed to load saved settings: {e}", exc_info=True)
 
     def _on_tab_changed(self, index: int):
         logger.debug(f"Tab changed to index {index}")
@@ -1507,7 +1507,7 @@ class MainWindow(QMainWindow):
             try:
                 settings_manager.save_setting(SettingsKey.COMPACT_MODE, compact)
             except Exception as e:
-                logger.warning(f"Failed to save compact mode: {e}")
+                logger.warning(f"Failed to save compact mode: {e}", exc_info=True)
 
     def _enter_compact_mode(self) -> None:
         if not self._compositor_managed and self.title_bar._is_maximized:
@@ -1568,7 +1568,7 @@ class MainWindow(QMainWindow):
             if SettingsKey.COMPACT_MODE.read(settings_manager.load_all_settings()):
                 self.set_compact_mode(True, persist=False)
         except Exception as e:
-            logger.warning(f"Failed to restore compact mode: {e}")
+            logger.warning(f"Failed to restore compact mode: {e}", exc_info=True)
 
     def _save_compact_geometry(self) -> None:
         if self._compositor_managed:
@@ -1580,7 +1580,7 @@ class MainWindow(QMainWindow):
                 {"x": geo.x(), "y": geo.y()},
             )
         except Exception as e:
-            logger.warning(f"Failed to save compact window geometry: {e}")
+            logger.warning(f"Failed to save compact window geometry: {e}", exc_info=True)
 
     def _restore_compact_geometry(self) -> None:
         if self._compositor_managed:
@@ -1674,14 +1674,14 @@ class MainWindow(QMainWindow):
             try:
                 settings_manager.save_setting(SettingsKey.HOST_MODE, enabled)
             except Exception as e:
-                logger.warning(f"Failed to save host mode: {e}")
+                logger.warning(f"Failed to save host mode: {e}", exc_info=True)
 
     def _restore_host_mode(self) -> None:
         try:
             if SettingsKey.HOST_MODE.read(settings_manager.load_all_settings()):
                 self.set_host_mode(True, persist=False)
         except Exception as e:
-            logger.warning(f"Failed to restore host mode: {e}")
+            logger.warning(f"Failed to restore host mode: {e}", exc_info=True)
 
     def _save_host_geometry(self) -> None:
         if self._compositor_managed:
@@ -1695,7 +1695,7 @@ class MainWindow(QMainWindow):
                 {"x": geo.x(), "y": geo.y(), "width": geo.width(), "height": geo.height()},
             )
         except Exception as e:
-            logger.warning(f"Failed to save host window geometry: {e}")
+            logger.warning(f"Failed to save host window geometry: {e}", exc_info=True)
 
     def _restore_host_geometry(self) -> None:
         if self._compositor_managed:
@@ -2062,7 +2062,7 @@ class MainWindow(QMainWindow):
             settings = settings_manager.load_all_settings()
             minimize_tray = SettingsKey.MINIMIZE_TRAY.read(settings)
         except Exception as e:
-            logger.error(f"Failed to load settings: {e}")
+            logger.error(f"Failed to load settings: {e}", exc_info=True)
             minimize_tray = True  # Default to True on error
 
         if minimize_tray and self._tray_available:
@@ -2071,7 +2071,7 @@ class MainWindow(QMainWindow):
                 self.hide()
                 logger.info("Window hidden to system tray")
             except Exception as e:
-                logger.debug(f"Error hiding window: {e}")
+                logger.warning(f"Error hiding window: {e}", exc_info=True)
                 event.accept()
         else:
             event.accept()
@@ -2279,7 +2279,7 @@ class MainWindow(QMainWindow):
                 },
             )
         except Exception as e:
-            logger.warning(f"Failed to save window geometry: {e}")
+            logger.warning(f"Failed to save window geometry: {e}", exc_info=True)
 
     def _restore_window_geometry(self):
         if self._compositor_managed:
@@ -2295,7 +2295,7 @@ class MainWindow(QMainWindow):
             logger.debug("No valid saved geometry, using default")
             self._center_on_screen()
         except Exception as e:
-            logger.warning(f"Failed to restore window geometry: {e}")
+            logger.warning(f"Failed to restore window geometry: {e}", exc_info=True)
             self._center_on_screen()
 
     def _apply_saved_geometry(self, geo) -> bool:

@@ -55,8 +55,15 @@ def search_history(repository, query, *, semantic=False, exclude_meeting_id=None
         ranked.sort(key=lambda r: r["semantic_score"], reverse=True)
         return {"results": ranked[:limit], "mode": "semantic",
                 "message": LOCAL_SCOPE if judge.is_local else SCOPE}
-    except Exception:
-        logger.debug("Semantic history ranking unavailable; using keyword results")
+    except RuntimeError as exc:
+        # _rank_candidates signals disabled / out of time / judge unavailable.
+        logger.warning("Semantic history ranking unavailable (%s); using keyword results", exc)
+        fallback["message"] = UNAVAILABLE_MESSAGE
+        return fallback
+    except Exception as exc:
+        # Type only: a judge or storage error may quote the query or a passage.
+        logger.warning("Semantic history ranking failed (%s); using keyword results",
+                       type(exc).__name__)
         fallback["message"] = UNAVAILABLE_MESSAGE
         return fallback
 

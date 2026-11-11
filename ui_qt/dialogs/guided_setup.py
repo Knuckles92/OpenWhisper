@@ -9,6 +9,7 @@ startup costs nothing.
 
 from __future__ import annotations
 
+import logging
 import sys
 from collections.abc import Callable
 
@@ -66,6 +67,8 @@ from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.wrapped_label import WrappedLabel
+
+logger = logging.getLogger(__name__)
 
 WELCOME, RECORD, CLEAN_UP, OUTPUT, READY = range(5)
 STEPS = ("Record", "Clean up", "Output")
@@ -1152,6 +1155,7 @@ class GuidedSetupDialog(QDialog):
         try:
             guided_setup.save_state(state, self.manager)
         except Exception as exc:
+            logger.warning("Couldn't save guided setup progress", exc_info=True)
             self.show_error(f"Couldn't save setup progress: {exc}")
             return False
         self.shortcut.cancel_capture()

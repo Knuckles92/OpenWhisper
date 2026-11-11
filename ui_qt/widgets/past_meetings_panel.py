@@ -287,7 +287,7 @@ def _read_meetings(load_meetings, query: str, limit: int, repository):
     try:
         meetings, source_filtered = load_meetings(query, limit, repository)
     except Exception as exc:
-        logger.error("Failed to load past meetings: %s", exc)
+        logger.error("Failed to load past meetings: %s", exc, exc_info=True)
         return [], False, str(exc)
     return meetings, source_filtered, ""
 
@@ -535,7 +535,7 @@ class PastMeetingsPanel(QWidget):
                 )
                 result["items"] = records.list_remote("meeting", query, limit)
             except Exception as exc:
-                logger.debug("Couldn't list the host's meetings: %s", exc)
+                logger.warning("Couldn't list the host's meetings: %s", exc)
             finally:
                 done.set()
 
@@ -547,7 +547,7 @@ class PastMeetingsPanel(QWidget):
             try:
                 host = host or records.status().host_name
             except Exception:
-                pass
+                logger.debug("Could not read the host's name for Past Meetings", exc_info=True)
             combined = []
             for meeting in meetings:
                 if str(meeting.get("id") or "") in result["copies"]:
@@ -687,7 +687,7 @@ class PastMeetingsPanel(QWidget):
                 query, limit, self._repository, self._meeting_provider
             )
         except Exception as exc:
-            logger.error("Failed to load past meetings: %s", exc)
+            logger.error("Failed to load past meetings: %s", exc, exc_info=True)
             self._show_load_failure()
             return
         self._has_more = len(self._meetings) > self.MAX_MEETINGS
@@ -811,7 +811,7 @@ class PastMeetingsPanel(QWidget):
             should_confirm = SettingsKey.CONFIRM_MEETING_DELETE.read(
                 settings_manager.load_all_settings())
         except Exception as exc:
-            logger.warning("Failed to load meeting deletion preference: %s", exc)
+            logger.warning("Failed to load meeting deletion preference: %s", exc, exc_info=True)
             should_confirm = True
 
         if should_confirm is False:
@@ -844,6 +844,7 @@ class PastMeetingsPanel(QWidget):
                 logger.warning(
                     "Failed to save meeting deletion preference: %s",
                     exc,
+                    exc_info=True,
                 )
 
         self.delete_meeting_requested.emit(meeting_id, delete_recordings)
@@ -857,6 +858,7 @@ class PastMeetingsPanel(QWidget):
                 return ""
             host = records.status().host_name or "the host"
         except Exception:
+            logger.debug("Record sync unavailable; no host note for clearing meetings", exc_info=True)
             return ""
         return f"\n\nThis computer's meetings on {host} are deleted too."
 

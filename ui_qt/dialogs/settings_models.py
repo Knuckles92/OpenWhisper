@@ -819,7 +819,7 @@ class ModelAssignments(QObject):
         try:
             settings_manager.save_setting(SettingsKey.MEETING_SPEECH_SEPARATE, separate)
         except Exception as exc:
-            logger.error("Couldn't save the meeting speech engine choice: %s", exc)
+            logger.error("Couldn't save the meeting speech engine choice: %s", exc, exc_info=True)
             self._say(f"Couldn't save the meeting speech engine: {exc}")
             self._load_meeting_settings()
             return
@@ -870,6 +870,7 @@ class ModelAssignments(QObject):
                 message = (f"Ready: {backend.device_info}" if backend.is_available()
                            else backend.last_error or "Remote speech is unavailable.")
             except Exception as exc:
+                logger.warning("Remote meeting speech check failed", exc_info=True)
                 message = str(exc)
             finally:
                 if backend is not None:
@@ -907,7 +908,7 @@ class ModelAssignments(QObject):
                     SettingsKey.MEETING_WHISPER_MODEL: model_name,
                 })
         except Exception as exc:
-            logger.error("Couldn't set meeting Whisper model: %s", exc)
+            logger.error("Couldn't set meeting Whisper model: %s", exc, exc_info=True)
             self._say(f"Couldn't set meeting transcription model: {exc}")
             return
         self._say(f'Meeting transcription model set to "{model_name}"')
@@ -929,6 +930,7 @@ class ModelAssignments(QObject):
             else:
                 settings_manager.save_setting(SettingsKey.SELECTED_MODEL, backend)
         except Exception as exc:
+            logger.warning("Couldn't change voice model", exc_info=True)
             self._say(f"Couldn't change voice model: {exc}")
             self.refresh_engine_selection()
             return
@@ -976,7 +978,7 @@ class ModelAssignments(QObject):
                 ),
             })
         except Exception as exc:
-            logger.error("Couldn't save shared Whisper runtime: %s", exc)
+            logger.error("Couldn't save shared Whisper runtime: %s", exc, exc_info=True)
             self._say(f"Couldn't save device or quant: {exc}")
             return
         if self.on_runtime_settings_changed:
@@ -991,7 +993,7 @@ class ModelAssignments(QObject):
         try:
             settings_manager.save_setting(SettingsKey.MEETING_LANGUAGE, language)
         except Exception as exc:
-            logger.error("Couldn't save meeting language: %s", exc)
+            logger.error("Couldn't save meeting language: %s", exc, exc_info=True)
             self._say(f"Couldn't save spoken language: {exc}")
             return
         self._refresh_rail_values()
@@ -1008,7 +1010,7 @@ class ModelAssignments(QObject):
         try:
             settings_manager.save_setting(SettingsKey.MEETING_AGENT_CORE, core)
         except Exception as exc:
-            logger.error("Couldn't save meeting agent core: %s", exc)
+            logger.error("Couldn't save meeting agent core: %s", exc, exc_info=True)
             self._say(f"Couldn't save who runs AI insights: {exc}")
             return False
         self._refresh_rail_values()
@@ -1021,7 +1023,7 @@ class ModelAssignments(QObject):
                 self.meeting_backup_agent_combo.currentData() or "",
             )
         except Exception as exc:
-            logger.error("Couldn't save the backup agent: %s", exc)
+            logger.error("Couldn't save the backup agent: %s", exc, exc_info=True)
             self._say(f"Couldn't save the backup agent: {exc}")
 
     def _on_meeting_agent_choice(self, choice: str) -> None:
@@ -1060,7 +1062,7 @@ class ModelAssignments(QObject):
 
             settings_manager.mutate_settings(merge)
         except Exception as exc:
-            logger.error("Couldn't save the agent model: %s", exc)
+            logger.error("Couldn't save the agent model: %s", exc, exc_info=True)
             self._say(f"Couldn't save the model: {exc}")
             return
         self.meeting_agent_picker.set_saved_models(
@@ -1120,7 +1122,7 @@ class ModelAssignments(QObject):
         try:
             settings_manager.save_setting(key, level)
         except Exception as exc:
-            logger.error("Couldn't save meeting thinking level: %s", exc)
+            logger.error("Couldn't save meeting thinking level: %s", exc, exc_info=True)
             self._say(f"Couldn't save thinking level: {exc}")
 
     def _refresh_meeting_agent_core_notice(self, core: str) -> None:
@@ -1179,7 +1181,7 @@ class ModelAssignments(QObject):
                 SettingsKey.MEETING_SPEAKER_ID_BACKEND, backend
             )
         except Exception as exc:
-            logger.error("Couldn't save speaker identification: %s", exc)
+            logger.error("Couldn't save speaker identification: %s", exc, exc_info=True)
             self._say(f"Couldn't save speaker identification: {exc}")
         else:
             self._speaker_id_backend_previous = backend
@@ -1196,6 +1198,7 @@ class ModelAssignments(QObject):
         try:
             return settings_manager.load_all_settings()
         except Exception:
+            logger.warning("Could not load settings for the Models page", exc_info=True)
             return {}
 
     def _page_is_loading(self, key: str) -> bool:
@@ -1242,7 +1245,7 @@ class ModelAssignments(QObject):
                 )
             )
         except Exception as exc:
-            logger.error("Couldn't add text endpoint: %s", exc)
+            logger.error("Couldn't add text endpoint: %s", exc, exc_info=True)
             self._say(f"Couldn't add endpoint: {exc}")
             return
         self._refresh_picker_profiles()
@@ -1287,7 +1290,7 @@ class ModelAssignments(QObject):
                     )
                 )
         except Exception as exc:
-            logger.error("Couldn't edit text endpoint: %s", exc)
+            logger.error("Couldn't edit text endpoint: %s", exc, exc_info=True)
             self._say(f"Couldn't save endpoint: {exc}")
             return
         self._invalidate_text_catalog(profile_id)
@@ -1332,7 +1335,7 @@ class ModelAssignments(QObject):
                 lambda stored: remove_custom_profile(stored, profile_id)
             )
         except Exception as exc:
-            logger.error("Couldn't delete text endpoint: %s", exc)
+            logger.error("Couldn't delete text endpoint: %s", exc, exc_info=True)
             self._say(f"Couldn't delete endpoint: {exc}")
             return
         self._refresh_picker_profiles()
@@ -1361,7 +1364,7 @@ class ModelAssignments(QObject):
                 self.text_model_picker.current_sort(),
             )
         except Exception as exc:
-            logger.warning("Couldn't save text model sort: %s", exc)
+            logger.warning("Couldn't save text model sort: %s", exc, exc_info=True)
         self._fetch_catalog_models(provider, picker=self.text_model_picker)
 
     def _on_meeting_sort_changed(self, provider: str) -> None:
@@ -1425,6 +1428,7 @@ class ModelAssignments(QObject):
                 models = list_cleanup_models(provider, sort=sort)
                 error = ""
             except Exception as exc:
+                logger.warning("Couldn't list %s text models", provider, exc_info=True)
                 models = []
                 error = str(exc)
             loaded.emit(provider, sort, models, error, token)
@@ -1568,6 +1572,7 @@ class ModelAssignments(QObject):
 
             settings_manager.mutate_settings(merge)
         except Exception as exc:
+            logger.warning("Couldn't set cleanup agent", exc_info=True)
             self._say(f"Couldn't set cleanup agent: {exc}")
             return
         self._active_text_provider = agent_id
@@ -1601,7 +1606,7 @@ class ModelAssignments(QObject):
                 SettingsKey.CLEANUP_ENDPOINT_PROVIDER: provider,
             })
         except Exception as exc:
-            logger.error("Couldn't activate text model: %s", exc)
+            logger.error("Couldn't activate text model: %s", exc, exc_info=True)
             self._say(f"Couldn't set text model: {exc}")
             return
 
@@ -1633,7 +1638,7 @@ class ModelAssignments(QObject):
                 SettingsKey.MEETING_MODEL_MEMORY: memory,
             })
         except Exception as exc:
-            logger.error("Couldn't activate meeting LLM model: %s", exc)
+            logger.error("Couldn't activate meeting LLM model: %s", exc, exc_info=True)
             self._say(f"Couldn't set meeting model: {exc}")
             return
 
@@ -1652,7 +1657,7 @@ class ModelAssignments(QObject):
                 self.cleanup_reasoning_combo.currentData(),
             )
         except Exception as exc:
-            logger.error("Couldn't save cleanup thinking level: %s", exc)
+            logger.error("Couldn't save cleanup thinking level: %s", exc, exc_info=True)
             self._say(f"Couldn't save thinking level: {exc}")
             return
         self._update_cleanup_reasoning_controls(refill=False)
@@ -1731,6 +1736,8 @@ class ModelAssignments(QObject):
             try:
                 model_value = settings_manager.load_model_selection()
             except Exception:
+                logger.warning("Could not load the voice model selection; showing the default",
+                               exc_info=True)
                 model_value = config.DEFAULT_BACKEND
             blocker = self.engine_combo.blockSignals(True)
             index = self.engine_combo.findData(model_value)
@@ -2166,6 +2173,7 @@ class ModelAssignments(QObject):
         try:
             return load_client_pairing()
         except Exception:
+            logger.warning("Could not load the remote engine pairing", exc_info=True)
             return None
 
     def text_summary(self) -> str:

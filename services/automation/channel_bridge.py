@@ -301,7 +301,7 @@ class AppLink:
 
             try:
                 enabled = SettingsKey.MCP_ENABLED.read(self._read_settings())
-            except Exception:
+            except Exception:  # unknown: the message names both causes
                 enabled = None
             if enabled is False:
                 return "API & MCP is off in OpenWhisper Settings."

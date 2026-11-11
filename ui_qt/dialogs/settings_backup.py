@@ -6,6 +6,7 @@ collects choices, confirms replacement, and renders coordinator signals.
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,8 @@ from ui_qt.widgets import Button, ElidingComboBox, InfoTile, PrimaryButton
 from ui_qt.widgets.backup_calendar import BackupCalendar
 from ui_qt.widgets.buttons import compact_primary_button, neutral_button
 from ui_qt.widgets.eliding_label import ElidingLabel
+
+logger = logging.getLogger(__name__)
 
 
 def _field(info: Any, name: str, default=None):
@@ -375,6 +378,7 @@ class BackupSettingsPage(QWidget):
         try:
             state = self._coordinator.snapshot() or {}
         except Exception as exc:
+            logger.warning("Could not load backup settings", exc_info=True)
             self.status_label.setText(f"Could not load backup settings: {exc}")
             self._update_actions()
             return
@@ -525,6 +529,7 @@ class BackupSettingsPage(QWidget):
         try:
             self._coordinator.set_schedule(frequency, self.retention_spin.value(), destination)
         except Exception as exc:
+            logger.warning("Could not save automatic backup settings", exc_info=True)
             self.status_label.setText(f"Could not save automatic backup settings: {exc}")
             return
         self.status_label.setText(
@@ -539,6 +544,7 @@ class BackupSettingsPage(QWidget):
         try:
             request()
         except Exception as exc:
+            logger.warning("%s failed to start", operation, exc_info=True)
             self.set_busy(False)
             self.status_label.setText(f"{operation} failed: {exc}")
 
@@ -548,6 +554,7 @@ class BackupSettingsPage(QWidget):
         try:
             self._coordinator.cancel()
         except Exception as exc:
+            logger.warning("Could not cancel the backup operation", exc_info=True)
             self.status_label.setText(f"Could not cancel: {exc}")
             return
         self.cancel_button.setEnabled(False)

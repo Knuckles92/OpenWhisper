@@ -370,6 +370,7 @@ def start_review(store, repository):
         threading.Thread(target=run_review, args=(store, repository, run_id),
                          name="meeting-insight-review", daemon=True).start()
     except Exception:
+        logger.exception("Could not start the insight-review worker")
         store.apply("system", "insight-review", [{"op": "review_finish", "run_id": run_id,
                     "status": "failed", "message": "Review could not start. Retry later."}])
         return {"ok": False, "error": "review_start_failed"}

@@ -296,7 +296,7 @@ class HistoryManager:
             return filename
 
         except Exception as e:
-            logger.error(f"Failed to save recording: {e}")
+            logger.error(f"Failed to save recording: {e}", exc_info=True)
             return None
 
     def preserve_recording(self, source_path: str) -> Optional[str]:
@@ -321,10 +321,10 @@ class HistoryManager:
                     db.clear_history_audio_file(rec.filename)
 
                 except Exception as e:
-                    logger.error(f"Failed to remove recording {rec.filename}: {e}")
+                    logger.error(f"Failed to remove recording {rec.filename}: {e}", exc_info=True)
 
         except Exception as e:
-            logger.error(f"Failed to rotate recordings: {e}")
+            logger.error(f"Failed to rotate recordings: {e}", exc_info=True)
 
     def recordings_over_limit(
         self,
@@ -415,7 +415,7 @@ class HistoryManager:
                         parts = filename.replace('recording_', '').replace('.wav', '')
                         dt = datetime.strptime(parts, "%Y%m%d_%H%M%S")
                         timestamp = dt.isoformat()
-                    except Exception:
+                    except ValueError:
                         timestamp = datetime.fromtimestamp(stat.st_mtime).isoformat()
 
                     recordings.append(RecordingInfo(
@@ -428,7 +428,7 @@ class HistoryManager:
             recordings.sort(key=lambda r: r.timestamp, reverse=True)
 
         except Exception as e:
-            logger.error(f"Failed to get recordings: {e}")
+            logger.error(f"Failed to get recordings: {e}", exc_info=True)
 
         return recordings
 
@@ -572,7 +572,7 @@ class HistoryManager:
         for rec in self.get_recordings():
             try:
                 os.remove(rec.file_path)
-            except Exception as e:
+            except OSError as e:
                 logger.error(f"Failed to remove recording {rec.filename}: {e}")
         self._forget_all_dictations()
         db.clear_history()
@@ -640,7 +640,7 @@ def _dictations_move_to_host() -> bool:
             and remote_settings.load_client_pairing() is not None
         )
     except Exception:
-        logger.debug("Could not read where records are kept", exc_info=True)
+        logger.warning("Could not read where records are kept", exc_info=True)
         return False
 
 

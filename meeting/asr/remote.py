@@ -6,8 +6,11 @@ must match its host identity and speech model before any audio is sent.
 from __future__ import annotations
 
 import json
+import logging
 
 from transcriber.remote_backend import RemoteSpeechBackend
+
+logger = logging.getLogger(__name__)
 
 
 class RemoteMeetingUnavailable(RuntimeError):
@@ -62,6 +65,8 @@ def _is_this_computer(fingerprint: str) -> bool:
     try:
         own = own_fingerprint(_default_identity_dir())
     except Exception:
+        # own_fingerprint already absorbs I/O errors; anything else is a bug.
+        logger.warning("Could not read this computer's host fingerprint", exc_info=True)
         return False
     return bool(own) and hmac.compare_digest(own, str(fingerprint).upper())
 

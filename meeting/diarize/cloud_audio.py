@@ -172,7 +172,9 @@ def encode_mp3(
         try:
             stream.layout = "mono"
         except Exception:
-            pass
+            # Older PyAV builds reject the layout name; the channel count is
+            # read back below either way.
+            logger.debug("Could not set a mono MP3 layout", exc_info=True)
         layout = getattr(stream, "layout", None)
         channels = 1
         if layout is not None:

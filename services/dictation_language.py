@@ -67,7 +67,7 @@ def _whisper_is_english_only(model: str) -> bool:
         return True
     try:
         from services.model_catalog import MODEL_CATALOG
-    except Exception:
+    except ImportError:  # No catalog: only the name says the model is English-only.
         return False
     details = MODEL_CATALOG.get(model)
     return details is not None and details.language_support == "English only"

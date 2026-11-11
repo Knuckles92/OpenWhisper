@@ -91,6 +91,10 @@ def past_recall_enabled() -> bool:
 
         return bool(resolve_meeting_past_recall_enabled())
     except Exception:
+        logger.warning(
+            "Could not read the past-meeting recall setting; recall stays off",
+            exc_info=True,
+        )
         return False
 
 

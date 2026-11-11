@@ -173,7 +173,7 @@ def get_listener_class():
     try:
         from pynput._util.darwin import ListenerMixin
     except Exception as exc:
-        logger.warning(f"Could not load macOS pynput listener shim: {exc}")
+        logger.warning("Could not load macOS pynput listener shim: %s", exc, exc_info=True)
         return keyboard_module.Listener
 
     class MacOSHotkeyListener(keyboard_module.Listener):
@@ -356,7 +356,7 @@ def is_accessibility_trusted() -> bool:
 
         return bool(HIServices.AXIsProcessTrusted())
     except Exception as exc:
-        logger.warning(f"Could not query macOS Accessibility trust state: {exc}")
+        logger.warning("Could not query macOS Accessibility trust state: %s", exc, exc_info=True)
         return True
 
 
@@ -379,7 +379,7 @@ def request_accessibility_trust() -> bool:
         logger.info("macOS Accessibility trust request returned %s", trusted)
         return trusted
     except Exception as exc:
-        logger.warning(f"Could not request macOS Accessibility trust: {exc}")
+        logger.warning("Could not request macOS Accessibility trust: %s", exc, exc_info=True)
         return False
 
 
@@ -392,8 +392,8 @@ def _find_containing_app_bundle(path: str) -> Optional[Path]:
         real_path = Path(os.path.realpath(path))
         if real_path != candidates[0]:
             candidates.append(real_path)
-    except Exception:
-        pass
+    except (OSError, ValueError):
+        pass  # Unresolvable path: check the path as given only.
 
     for candidate in candidates:
         for parent in (candidate, *candidate.parents):
@@ -676,6 +676,7 @@ class HotkeyManager:
             logger.warning(
                 "Global hotkeys unavailable; continuing with in-window controls: %s",
                 exc,
+                exc_info=True,
             )
             return
 
@@ -694,7 +695,7 @@ class HotkeyManager:
         try:
             from services import _hotkey_carbon
         except Exception as exc:
-            logger.warning(f"Carbon hotkey backend unavailable, using pynput: {exc}")
+            logger.warning("Carbon hotkey backend unavailable, using pynput: %s", exc, exc_info=True)
             return False
 
         if not _hotkey_carbon.is_available():
@@ -727,7 +728,7 @@ class HotkeyManager:
                 listener.daemon = True
                 listener.start()
             except Exception as exc:
-                logger.warning("Mouse button shortcuts unavailable: %s", exc)
+                logger.warning("Mouse button shortcuts unavailable: %s", exc, exc_info=True)
                 return
             self._mouse_listener = listener
             logger.info("Mouse button listener started")
@@ -741,7 +742,7 @@ class HotkeyManager:
         try:
             listener.stop()
         except Exception as e:
-            logger.error(f"Error stopping the mouse listener: {e}")
+            logger.error("Error stopping the mouse listener: %s", e, exc_info=True)
 
     def _on_click(self, _x, _y, button, pressed) -> None:
         name = _X11_MOUSE_BUTTONS.get(getattr(button, "name", ""))
@@ -1068,7 +1069,7 @@ class HotkeyManager:
         try:
             self.cleanup()
         except Exception as e:
-            logger.warning(f"Error during rehook cleanup: {e}")
+            logger.warning("Error during rehook cleanup: %s", e, exc_info=True)
         try:
             self._setup_keyboard_hook()
             if self.backend_available:
@@ -1078,7 +1079,7 @@ class HotkeyManager:
                     "Keyboard hook remains unavailable: %s", self.backend_error
                 )
         except Exception as e:
-            logger.error(f"Failed to re-register keyboard hook: {e}")
+            logger.error("Failed to re-register keyboard hook: %s", e, exc_info=True)
 
     def update_hotkeys(self, new_hotkeys: Dict[str, str]):
         """Replace configured hotkeys and update OS registrations."""
@@ -1095,14 +1096,14 @@ class HotkeyManager:
             try:
                 self._carbon_registrar.unregister_all()
             except Exception as e:
-                logger.error(f"Error unregistering Carbon hotkeys: {e}")
+                logger.error("Error unregistering Carbon hotkeys: %s", e, exc_info=True)
 
         grabber, self._x11_grabber = self._x11_grabber, None
         if grabber is not None:
             try:
                 grabber.close()
             except Exception as e:
-                logger.error(f"Error releasing X11 shortcut grabs: {e}")
+                logger.error("Error releasing X11 shortcut grabs: %s", e, exc_info=True)
 
         self._stop_mouse_listener()
         listener = self._listener
@@ -1114,7 +1115,7 @@ class HotkeyManager:
         try:
             listener.stop()
         except Exception as e:
-            logger.error(f"Error cleaning up keyboard listener: {e}")
+            logger.error("Error cleaning up keyboard listener: %s", e, exc_info=True)
 
     def set_callbacks(self,
                      on_record_toggle: Callable = None,

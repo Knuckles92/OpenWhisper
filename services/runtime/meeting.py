@@ -691,6 +691,7 @@ class MeetingRuntime(QObject):
         try:
             return engine is not None and engine.is_active()
         except Exception:
+            logger.debug("Meeting engine activity check failed", exc_info=True)
             return False
 
     @property
@@ -889,13 +890,13 @@ class MeetingRuntime(QObject):
             # Before capture opens: the meeting would record History playback.
             stop_playback()
         except Exception:
-            logger.debug("Could not stop playback before a meeting", exc_info=True)
+            logger.warning("Could not stop playback before a meeting", exc_info=True)
         try:
             settings_manager.save_setting(
                 SettingsKey.MEETING_CLOUD_LAST_ENABLED, cloud
             )
         except Exception as exc:
-            logger.warning(f"Could not persist meeting cloud toggle: {exc}")
+            logger.warning(f"Could not persist meeting cloud toggle: {exc}", exc_info=True)
 
         self.controller.meeting_active = False
         with self._lock:
@@ -1050,6 +1051,7 @@ class MeetingRuntime(QObject):
             try:
                 elapsed_s = float(engine.clock.now_s())
             except Exception:
+                logger.debug("Demo clock unavailable; starting at 0s", exc_info=True)
                 elapsed_s = 0.0
         self.meeting_state_changed.emit(
             {"active": True, "paused": False, "status": "active",
@@ -1143,7 +1145,7 @@ class MeetingRuntime(QObject):
         try:
             engine.pause()
         except Exception as exc:
-            logger.error(f"Failed to pause meeting: {exc}")
+            logger.error(f"Failed to pause meeting: {exc}", exc_info=True)
             self.meeting_error.emit(f"Could not pause the meeting: {exc}")
             return
         self.meeting_status_update.emit("Meeting paused")
@@ -1158,7 +1160,7 @@ class MeetingRuntime(QObject):
         try:
             engine.resume()
         except Exception as exc:
-            logger.error(f"Failed to resume meeting: {exc}")
+            logger.error(f"Failed to resume meeting: {exc}", exc_info=True)
             self.meeting_error.emit(f"Could not resume the meeting: {exc}")
             return
         self.meeting_status_update.emit("Meeting in progress")
@@ -1179,7 +1181,7 @@ class MeetingRuntime(QObject):
         try:
             engine.end()
         except Exception as exc:
-            logger.error(f"Failed to end meeting: {exc}")
+            logger.error(f"Failed to end meeting: {exc}", exc_info=True)
             self.meeting_error.emit(f"Could not end the meeting: {exc}")
             return
         self.meeting_status_update.emit(
@@ -1478,6 +1480,7 @@ class MeetingRuntime(QObject):
         try:
             meeting = self._repository().get_meeting(meeting_id)
         except Exception:
+            logger.exception("Could not read meeting %s to publish finalization", meeting_id)
             meeting = None
         if meeting:
             emit["status"] = str(meeting.get("status") or "ended")
@@ -1695,14 +1698,14 @@ class MeetingRuntime(QObject):
                 SettingsKey.MEETING_CLOUD_LAST_ENABLED, enabled
             )
         except Exception as exc:
-            logger.warning(f"Could not persist meeting cloud toggle: {exc}")
+            logger.warning(f"Could not persist meeting cloud toggle: {exc}", exc_info=True)
 
         engine = self._engine
         if engine is not None and self.is_active:
             try:
                 engine.set_cloud_enabled(enabled)
             except Exception as exc:
-                logger.error(f"Failed to apply cloud toggle: {exc}")
+                logger.error(f"Failed to apply cloud toggle: {exc}", exc_info=True)
                 self.meeting_error.emit(
                     f"Could not change AI insights: {exc}"
                 )
@@ -1758,7 +1761,7 @@ class MeetingRuntime(QObject):
                 )
                 follow_up = self._recovered_follow_up_step(meeting, settings)
         except Exception as exc:
-            logger.error(f"Failed to finalize meeting '{meeting_id}': {exc}")
+            logger.error(f"Failed to finalize meeting '{meeting_id}': {exc}", exc_info=True)
             self.meeting_error.emit(
                 f"Could not finalize the meeting: {exc}"
             )
@@ -1884,7 +1887,7 @@ class MeetingRuntime(QObject):
                 self._refresh_past_meetings()
             self.meeting_status_update.emit("Meeting deleted")
         except Exception as exc:
-            logger.error(f"Failed to delete meeting '{meeting_id}': {exc}")
+            logger.error(f"Failed to delete meeting '{meeting_id}': {exc}", exc_info=True)
             self.meeting_error.emit(
                 f"Could not delete the meeting: {exc}"
             )
@@ -1944,7 +1947,7 @@ class MeetingRuntime(QObject):
             else:
                 self.meeting_status_update.emit("Meetings cleared")
         except Exception as exc:
-            logger.error("Failed to clear past meetings: %s", exc)
+            logger.error("Failed to clear past meetings: %s", exc, exc_info=True)
             self.meeting_error.emit(
                 f"Could not clear past meetings: {exc}"
             )
@@ -1974,7 +1977,7 @@ class MeetingRuntime(QObject):
                 "Interrupted meeting discarded"
             )
         except Exception as exc:
-            logger.error(f"Failed to discard meeting '{meeting_id}': {exc}")
+            logger.error(f"Failed to discard meeting '{meeting_id}': {exc}", exc_info=True)
             self.meeting_error.emit(
                 f"Could not discard the meeting: {exc}"
             )
@@ -2071,7 +2074,7 @@ class MeetingRuntime(QObject):
                 return
             getattr(self, handler)(payload)
         except Exception as exc:  # never propagate into engine threads
-            logger.error(f"Error bridging meeting event '{kind}': {exc}")
+            logger.error(f"Error bridging meeting event '{kind}': {exc}", exc_info=True)
 
     def _on_status_event(self, payload: Dict[str, Any]) -> None:
         status = payload.get("status", "")
@@ -2242,7 +2245,7 @@ class MeetingRuntime(QObject):
             try:
                 engine.shutdown()
             except Exception as exc:
-                logger.debug(f"Error shutting down meeting engine: {exc}")
+                logger.warning(f"Error shutting down meeting engine: {exc}", exc_info=True)
 
         if timeout is None:
             shutdown_engine()

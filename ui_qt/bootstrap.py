@@ -97,7 +97,7 @@ def _enable_crash_logging() -> None:
 
         logging.info(f"Faulthandler enabled for crash diagnostics: {crash_log_path}")
     except Exception as exc:
-        logging.warning(f"Failed to enable faulthandler: {exc}")
+        logging.warning(f"Failed to enable faulthandler: {exc}", exc_info=True)
 
 
 def _qt_context_suffix(context) -> str:
@@ -106,7 +106,7 @@ def _qt_context_suffix(context) -> str:
         if context and (context.file or context.function or context.line):
             return f" ({context.file}:{context.line} {context.function})"
     except Exception:
-        pass
+        pass  # Location is optional decoration on a Qt message; never fail the log line.
     return ""
 
 
@@ -119,8 +119,8 @@ def _install_qt_message_handler() -> None:
 
     try:
         from PyQt6.QtCore import QtMsgType, qInstallMessageHandler
-    except Exception as exc:
-        logging.warning(f"Failed to install Qt message handler: {exc}")
+    except ImportError as exc:
+        logging.warning(f"Failed to install Qt message handler: {exc}", exc_info=True)
         return
 
     log_methods = {

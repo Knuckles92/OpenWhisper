@@ -345,7 +345,7 @@ class DatabaseManager:
         except Exception as e:
             # FTS5 is compiled into every mainstream SQLite build; if it is
             # missing, meeting search degrades but nothing else breaks.
-            logger.warning(f"Could not initialize meeting FTS index: {e}")
+            logger.warning(f"Could not initialize meeting FTS index: {e}", exc_info=True)
 
     def _maybe_run_migrations(self) -> None:
         insp = inspect(self.engine)
@@ -408,7 +408,7 @@ class DatabaseManager:
             os.rename(json_path, backup_path)
             logger.info(f"Migrated {len(entries)} history entries from JSON. Backup: {backup_path}")
         except Exception as e:
-            logger.error(f"Failed to migrate history from JSON: {e}")
+            logger.error(f"Failed to migrate history from JSON: {e}", exc_info=True)
 
     def add_history_entry(
         self,

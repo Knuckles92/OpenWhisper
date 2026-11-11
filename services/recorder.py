@@ -190,7 +190,7 @@ class AudioRecorder:
         try:
             return audio_devices.list_input_devices(sd)
         except Exception as e:
-            logger.error(f"Failed to enumerate audio devices: {e}")
+            logger.error("Failed to enumerate audio devices: %s", e, exc_info=True)
             return []
 
     @classmethod
@@ -374,7 +374,7 @@ class AudioRecorder:
 
         except Exception as e:
             self.last_start_error = self._format_start_error(e)
-            logger.error(f"Failed to start recording: {e}")
+            logger.error("Failed to start recording: %s", e, exc_info=True)
             self._unwind_failed_stream()
             self.is_recording = False
             self.clear_recording_data()
@@ -432,6 +432,7 @@ class AudioRecorder:
             try:
                 device = audio_devices.default_input(sd)
             except Exception:
+                logger.debug("Default microphone lookup failed; using PortAudio's default", exc_info=True)
                 device = None
             if device is None:
                 return
@@ -447,7 +448,7 @@ class AudioRecorder:
                 return self._open_stream(device, generation), device
             except Exception as exc:
                 last_error = exc
-                logger.warning("Couldn't open %s: %s", self._describe(device), exc)
+                logger.warning("Couldn't open %s: %s", self._describe(device), exc, exc_info=True)
                 self._mark_failed(device)
         raise last_error or RuntimeError("No audio device available")
 
@@ -486,11 +487,11 @@ class AudioRecorder:
         try:
             stream.abort()
         except Exception:
-            pass
+            pass  # Best effort: the stream may already be aborted or dead.
         try:
             stream.close()
         except Exception:
-            pass
+            pass  # Best effort: the stream may already be closed.
         finally:
             audio_devices.unregister_stream(stream)
 
@@ -514,11 +515,11 @@ class AudioRecorder:
         try:
             self.stream.stop()
         except Exception:
-            pass
+            pass  # Best effort: the failed stream may never have started.
         try:
             self.stream.close()
         except Exception:
-            pass
+            pass  # Best effort: the stream may already be closed.
         audio_devices.unregister_stream(self.stream)
         self.stream = None
 
@@ -552,7 +553,7 @@ class AudioRecorder:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to stop recording: {e}")
+            logger.error("Failed to stop recording: %s", e, exc_info=True)
             return False
 
     @property
@@ -719,6 +720,7 @@ class AudioRecorder:
             if post_roll_end_event.wait(max(0.0, remaining)):
                 reason = self._post_roll_end_reason or "quiet"
         except Exception as e:
+            logger.warning("Audio capture watcher failed", exc_info=True)
             self._fail_capture(f'Audio capture stopped unexpectedly: {e}')
         finally:
             self._close_capture_stream()
@@ -757,7 +759,7 @@ class AudioRecorder:
             stream.close()
             logger.info("Audio stream stopped and closed")
         except Exception as e:
-            logger.error(f"Error closing audio stream: {e}")
+            logger.error("Error closing audio stream: %s", e, exc_info=True)
         finally:
             audio_devices.unregister_stream(stream)
         self.stream = None
@@ -818,7 +820,7 @@ class AudioRecorder:
                 new_device = device
                 break
             except Exception as exc:
-                logger.warning("Couldn't switch to %s: %s", self._describe(device), exc)
+                logger.warning("Couldn't switch to %s: %s", self._describe(device), exc, exc_info=True)
                 self._mark_failed(device)
         ended = stop_event.is_set() or self._capture_canceled
         if ended or new_stream is None:
@@ -971,7 +973,7 @@ class AudioRecorder:
                 raise
 
         except Exception as e:
-            logger.error(f"Failed to save audio to {filename}: {e}")
+            logger.error(f"Failed to save audio to {filename}: {e}", exc_info=True)
             return False
 
     def _capture_saveable(self, journal, allow_incomplete: bool) -> bool:
@@ -1121,7 +1123,7 @@ class AudioRecorder:
                     self.stream.stop()
                     self.stream.close()
                 except Exception:
-                    pass
+                    pass  # Best effort during cleanup: the stream may already be closed.
                 audio_devices.unregister_stream(self.stream)
                 self.stream = None
 
@@ -1132,4 +1134,4 @@ class AudioRecorder:
             logger.info("Audio recorder cleaned up")
 
         except Exception as e:
-            logger.debug(f"Error during audio recorder cleanup: {e}")
+            logger.warning("Error during audio recorder cleanup: %s", e, exc_info=True)

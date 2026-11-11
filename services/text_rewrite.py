@@ -206,7 +206,7 @@ def _provider_ready(settings: Mapping, *, wait: bool) -> Optional[bool]:
             return False
         return not profile.api_key_env or bool(lookup_env_value(profile.api_key_env))
     except Exception:
-        logger.debug("Couldn't read the cleanup provider", exc_info=True)
+        logger.warning("Couldn't read the cleanup provider", exc_info=True)
         return False
 
 
@@ -233,7 +233,7 @@ def dictionary_block(settings: Mapping) -> str:
 
         return dictionary.prompt_block(dictionary.load_dictionary(settings or {})) or ""
     except Exception:
-        logger.debug("Dictionary prompt block unavailable", exc_info=True)
+        logger.warning("Dictionary prompt block unavailable", exc_info=True)
         return ""
 
 
@@ -253,7 +253,7 @@ def rewrite_standalone(
     try:
         configure_cleaner(cleaner, settings)
     except Exception:
-        logger.debug("Couldn't configure the rewrite client", exc_info=True)
+        logger.warning("Couldn't configure the rewrite client", exc_info=True)
         return "", NO_PROVIDER_MESSAGE
     if not cleaner.is_available():
         return "", NO_PROVIDER_MESSAGE

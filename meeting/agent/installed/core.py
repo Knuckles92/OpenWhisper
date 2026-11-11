@@ -167,7 +167,7 @@ class InstalledAgentCore:
             try:
                 driver.close()
             except Exception:
-                logger.debug("Could not close the agent driver", exc_info=True)
+                logger.warning("Could not close the agent driver", exc_info=True)
             server.stop()
             raise
         self._server = server
@@ -208,7 +208,7 @@ class InstalledAgentCore:
             try:
                 driver.close()
             except Exception:
-                logger.debug("Agent driver close failed", exc_info=True)
+                logger.warning("Agent driver close failed", exc_info=True)
         if server is not None:
             server.stop()
         self._initialized = False
@@ -299,7 +299,12 @@ class InstalledAgentCore:
             try:
                 progress(detail)
             except Exception:
-                logger.debug("Progress callback failed", exc_info=True)
+                # Called per streamed event: warn once, then stay quiet.
+                if not getattr(self, "_progress_cb_warned", False):
+                    self._progress_cb_warned = True
+                    logger.warning("Progress callback failed", exc_info=True)
+                else:
+                    logger.debug("Progress callback failed", exc_info=True)
         activity_cb = self._activity_cb
         if callable(activity_cb):
             try:
@@ -308,7 +313,12 @@ class InstalledAgentCore:
                     pass_kind=pass_kind, ts=datetime.now(timezone.utc).isoformat(),
                 ))
             except Exception:
-                logger.debug("Activity callback failed", exc_info=True)
+                # Called per streamed token: warn once, then stay quiet.
+                if not getattr(self, "_activity_cb_warned", False):
+                    self._activity_cb_warned = True
+                    logger.warning("Activity callback failed", exc_info=True)
+                else:
+                    logger.debug("Activity callback failed", exc_info=True)
 
 
 def run_agent_task(agent_id: str, *, model: str, system_prompt: str,

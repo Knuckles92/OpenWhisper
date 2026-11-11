@@ -6,6 +6,7 @@ is cancelled.
 """
 from __future__ import annotations
 
+import logging
 from typing import Callable
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
@@ -13,6 +14,8 @@ from PyQt6.QtWidgets import QProgressBar, QVBoxLayout, QWidget
 
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.wrapped_label import WrappedLabel
+
+logger = logging.getLogger(__name__)
 
 LISTEN_MS = 15_000
 #: How long silence lasts before the verdict says nothing was heard.
@@ -81,6 +84,7 @@ class MicrophoneCheck(QWidget):
             started = recorder.start_recording()
             reason = "" if started else getattr(recorder, "last_start_error", "") or ""
         except Exception as exc:  # a missing or busy device must not break setup
+            logger.warning("Could not open the microphone for the microphone check", exc_info=True)
             started, reason = False, str(exc)
         if not started:
             self._release()
@@ -106,7 +110,7 @@ class MicrophoneCheck(QWidget):
         try:
             self._recorder.cancel_recording()
         except Exception:
-            pass
+            logger.debug("Could not cancel the microphone check recording", exc_info=True)
         self._release()
         self.bar.setValue(0)
         if not self._heard:
@@ -123,7 +127,7 @@ class MicrophoneCheck(QWidget):
             try:
                 recorder.cleanup()
             except Exception:
-                pass
+                logger.debug("Could not clean up the microphone check recorder", exc_info=True)
 
     def _say(self, text: str, tone: str = "") -> None:
         self.status.setText(text)

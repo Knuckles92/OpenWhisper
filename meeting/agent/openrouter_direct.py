@@ -215,7 +215,8 @@ class DirectOpenRouterAgent:
             if fallback:
                 return fallback
         except Exception:
-            pass
+            logger.debug("No provider default model; using the built-in default",
+                         exc_info=True)
         if cfg.provider not in _DEFAULT_MODELS:
             raise ValueError("Choose a meeting text model first.")
         return _DEFAULT_MODELS[cfg.provider]
@@ -260,7 +261,7 @@ class DirectOpenRouterAgent:
         except Exception as exc:
             logger.warning(
                 "Tool-call capability probe failed (%s); using JSON-mode "
-                "fallback", exc,
+                "fallback", exc, exc_info=True,
             )
             self._json_mode = True
             self._note_error(exc)
@@ -415,6 +416,10 @@ class DirectOpenRouterAgent:
                     temperature=_TEMPERATURE,
                 )
             except Exception as exc:
+                if self._cancel_event.is_set():
+                    logger.debug("Agent LLM request ended by cancel", exc_info=True)
+                else:
+                    logger.warning("Agent LLM request failed", exc_info=True)
                 self._note_error(exc)
                 return AgentResult(
                     ok=False, op_results=op_results, error=self._failure_text(exc), usage=usage,
@@ -478,7 +483,7 @@ class DirectOpenRouterAgent:
             })
         except Exception as exc:
             logger.warning(
-                "Tool call %s failed: %s", call.function.name, exc,
+                "Tool call %s failed: %s", call.function.name, exc, exc_info=True,
             )
             return json.dumps({"error": str(exc)})
 
@@ -509,6 +514,10 @@ class DirectOpenRouterAgent:
                                     client.with_options(timeout=remaining), self._profile,
                                     cancel_event=self._cancel_event, **kwargs)
             except Exception as exc:
+                if self._cancel_event.is_set():
+                    logger.debug("Agent LLM request ended by cancel", exc_info=True)
+                else:
+                    logger.warning("Agent LLM request failed", exc_info=True)
                 if self._drop_response_format_after(exc):
                     continue
                 return AgentResult(ok=False, error=self._failure_text(exc), usage=usage)

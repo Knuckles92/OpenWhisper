@@ -168,4 +168,4 @@ def _persist_meeting_mode_intro_seen() -> None:
     try:
         settings_manager.save_setting(SettingsKey.MEETING_MODE_INTRO_SEEN, True)
     except Exception as exc:
-        logger.warning("Could not persist Meeting Mode intro: %s", exc)
+        logger.warning("Could not persist Meeting Mode intro: %s", exc, exc_info=True)

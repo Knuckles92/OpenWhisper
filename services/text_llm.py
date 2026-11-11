@@ -299,7 +299,7 @@ def _decoded_mapping(raw: Any) -> Optional[Dict[str, Any]]:
             import json
 
             raw = json.loads(raw)
-        except Exception:
+        except (ValueError, RecursionError):
             return None
     if not isinstance(raw, dict):
         return None
@@ -371,6 +371,7 @@ def _load_settings(settings: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
         return settings_manager.load_all_settings()
     except Exception:
+        logger.warning("Could not load settings for text model profiles", exc_info=True)
         return {}
 
 

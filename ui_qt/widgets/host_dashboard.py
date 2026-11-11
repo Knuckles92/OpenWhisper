@@ -1525,7 +1525,7 @@ class HostDashboard(QWidget):
             try:
                 models = service.host_models()
             except Exception:
-                logger.debug("Could not list this computer's ready models", exc_info=True)
+                logger.warning("Could not list this computer's ready models", exc_info=True)
                 models = []
             loaded.emit(token, list(models or []))
 
@@ -1646,7 +1646,7 @@ class HostDashboard(QWidget):
             status = server.status()
             token = server.token() if status.state == "running" else ""
         except Exception:
-            logger.debug("Could not read the MCP access token", exc_info=True)
+            logger.warning("Could not read the MCP access token", exc_info=True)
             self.mcp_copy_token.setEnabled(False)
             return
         if not token:
@@ -1664,7 +1664,7 @@ class HostDashboard(QWidget):
             status = server.status()
             token = server.token() if status.state == "running" else ""
         except Exception:
-            logger.debug("Could not read the MCP server's status", exc_info=True)
+            logger.warning("Could not read the MCP server's status", exc_info=True)
             self.mcp_copy_prompt.setEnabled(False)
             return
         if status.state != "running":
@@ -1684,7 +1684,7 @@ class HostDashboard(QWidget):
         try:
             turn_on = server.status().state in ("stopped", "error")
         except Exception:
-            logger.debug("Could not read the MCP server's status", exc_info=True)
+            logger.warning("Could not read the MCP server's status", exc_info=True)
             return
         try:
             # The same setting Settings → MCP saves; the server starts with

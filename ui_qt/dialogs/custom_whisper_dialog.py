@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import itertools
+import logging
 import threading
 from typing import Optional
 
@@ -28,6 +29,8 @@ from services.whisper_sources import (
     hub_source,
 )
 from ui_qt.widgets import Button, PrimaryButton
+
+logger = logging.getLogger(__name__)
 
 
 class _DiscoveryRelay(QObject):
@@ -141,6 +144,7 @@ class CustomWhisperDialog(QDialog):
             try:
                 models, error = operation(), ""
             except Exception as exc:
+                logger.warning("Custom Whisper model discovery failed", exc_info=True)
                 models, error = [], str(exc)
             found.emit(generation, models, error)
 
@@ -223,6 +227,7 @@ def add_custom_models(parent, settings_manager, cached: dict) -> list[str]:
     try:
         settings_manager.mutate_settings(register)
     except Exception as exc:
+        logger.warning("Couldn't save custom Whisper models", exc_info=True)
         QMessageBox.warning(parent, "Couldn't add custom models", str(exc))
         return []
     return dialog.selected_models

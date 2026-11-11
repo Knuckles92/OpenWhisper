@@ -382,6 +382,8 @@ def _exchange(client: httpx.Client, url: str, body: bytes, headers: Mapping[str,
     except httpx.TransportError as exc:
         return result(ok=False, status=status, error=_transport_copy(exc), retryable=True)
     except Exception as exc:
+        # Type only: a message or traceback could carry the URL or the payload.
+        logger.warning("A hook request failed unexpectedly: %s", type(exc).__name__)
         return result(ok=False, status=status,
                       error=f"The request failed ({type(exc).__name__})")
     finally:
@@ -462,6 +464,7 @@ def post_signed(url: str, payload: dict, secret: str, *, timeout_s: float = TIME
         return _post_signed(url, payload, secret, timeout_s=timeout_s, read_limit=0,
                             msg_id=msg_id, headers=headers)[0]
     except Exception as exc:
+        logger.warning("A signed POST failed: %s", type(exc).__name__)
         return DeliveryRecord(msg_id or "", "", _iso_now(), False, None, 0,
                               f"The request failed ({type(exc).__name__}).", 1)
 
@@ -485,6 +488,7 @@ def post_signed_reply(url: str, payload: dict, secret: str, *, timeout_s: float 
         return _post_signed(url, payload, secret, timeout_s=timeout_s, read_limit=limit,
                             msg_id=msg_id, headers=headers)
     except Exception as exc:
+        logger.warning("A signed POST for a reply failed: %s", type(exc).__name__)
         return DeliveryRecord(msg_id or "", "", _iso_now(), False, None, 0,
                               f"The request failed ({type(exc).__name__}).", 1), None
 
@@ -741,7 +745,7 @@ class _Engine:
         for client in clients.values():
             try:
                 client.close()
-            except Exception:
+            except Exception:  # closing a finished lane's client is best effort
                 pass
 
 
@@ -812,6 +816,7 @@ def send_test(hook_id: str) -> Future:
         try:
             record = _send_test(hook_id)
         except Exception as exc:
+            logger.warning("A webhook test couldn't run: %s", type(exc).__name__)
             record = DeliveryRecord("", TEST_EVENT_TYPE, _iso_now(), False, None, 0,
                                     f"The test couldn't run ({type(exc).__name__}).", 1)
         future.set_result(record)

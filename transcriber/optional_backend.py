@@ -253,7 +253,7 @@ class LocalSpeechBackend(TranscriptionBackend):
             if superseded:
                 logger.info("%s warmup stopped by a reload or cancel", self.name)
             else:
-                logger.warning("%s warmup failed (non-fatal): %s", self.name, exc)
+                logger.warning("%s warmup failed (non-fatal): %s", self.name, exc, exc_info=True)
             return False
         finally:
             self._decode_lock.release()

@@ -593,7 +593,7 @@ def _reread(identity, pasted_text: str, before_cleanup: Optional[str] = None) ->
             identity, lambda context: _on_reread(context, pasted_text, before_cleanup)
         )
     except Exception:
-        logger.debug("Dictionary learning could not read the field again", exc_info=True)
+        logger.warning("Dictionary learning could not read the field again", exc_info=True)
 
 
 def _on_reread(context, pasted_text: str, before_cleanup: Optional[str] = None) -> None:
@@ -619,7 +619,7 @@ def _on_reread(context, pasted_text: str, before_cleanup: Optional[str] = None) 
             _sightings.pop(key, None)
         _run_later(0, _learn, word)
     except Exception:
-        logger.debug("Dictionary learning failed", exc_info=True)
+        logger.warning("Dictionary learning failed", exc_info=True)
 
 
 def _learn(word: str, protected: bool = False) -> None:
@@ -638,4 +638,4 @@ def _learn(word: str, protected: bool = False) -> None:
         try:
             callback(learned.term)
         except Exception:
-            logger.debug("Learned-word listener raised", exc_info=True)
+            logger.warning("Learned-word listener raised", exc_info=True)

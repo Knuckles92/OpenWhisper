@@ -8,6 +8,7 @@ can be chosen.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import Callable, Mapping, Optional
 
@@ -44,6 +45,8 @@ from ui_qt.widgets.buttons import Button, compact_primary_button, neutral_button
 from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.setting_tile import InfoTile
 from ui_qt.widgets.settings_switch import SettingsSwitch
+
+logger = logging.getLogger(__name__)
 
 TITLE = "Agent hotkey"
 INVITE = "Press a shortcut, say what you need, and your coding agent takes it from there."
@@ -252,6 +255,7 @@ class AgentHotkeyCard(InfoTile):
             self.show_message(str(exc), "error")
             return False
         except Exception as exc:  # The settings file couldn't be written.
+            logger.warning("Could not save the agent hotkey", exc_info=True)
             self.show_message(f"Couldn't save the agent hotkey: {exc}", "error")
             return False
         self._action = action
@@ -331,6 +335,7 @@ class AgentHotkeyCard(InfoTile):
         try:
             self.manager.mutate_settings(lambda settings: delete_action(settings, AGENT_ACTION_ID))
         except Exception as exc:
+            logger.warning("Could not remove the agent hotkey", exc_info=True)
             self.show_message(f"Couldn't remove the agent hotkey: {exc}", "error")
             return
         self.shortcut.cancel_capture()

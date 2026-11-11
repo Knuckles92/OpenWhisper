@@ -574,7 +574,7 @@ class WsHub:
                 "participant": current or participant,
             })
         except Exception:
-            logger.debug("Presence 'left' broadcast failed", exc_info=True)
+            logger.warning("Presence 'left' broadcast failed", exc_info=True)
 
     def _join_guest(self, guest_id: Optional[str],
                     name: str) -> Optional[Dict[str, Any]]:
@@ -644,6 +644,8 @@ class WsHub:
         try:
             return (store.snapshot().get("participants") or {}).get(participant_id)
         except Exception:
+            logger.warning("Could not read participant from the state snapshot",
+                           exc_info=True)
             return None
 
     async def _receive_loop(self, websocket: WebSocket,
@@ -673,7 +675,7 @@ class WsHub:
                 continue
             try:
                 parsed = json.loads(raw)
-            except Exception:
+            except (ValueError, RecursionError):  # malformed or absurdly nested
                 await self._send(websocket, {
                     "type": "error", "code": "bad_json",
                     "message": "Message was not valid JSON.",

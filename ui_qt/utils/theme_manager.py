@@ -66,7 +66,7 @@ class ThemeManager(QObject):
             )
             return self._template
         except Exception as e:
-            logger.error(f"Error loading stylesheet from {theme_path}: {e}")
+            logger.error(f"Error loading stylesheet from {theme_path}: {e}", exc_info=True)
 
         return None
 

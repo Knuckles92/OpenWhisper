@@ -469,7 +469,7 @@ class HistoryEntryDialog(QDialog):
             self.copied.emit()
             logger.info("Copied history entry transcript from dialog")
         except Exception as exc:
-            logger.error("Failed to copy transcript from dialog: %s", exc)
+            logger.error("Failed to copy transcript from dialog: %s", exc, exc_info=True)
 
     def _copy_raw_text(self) -> None:
         """Copy the raw ASR transcript to the clipboard."""
@@ -480,7 +480,7 @@ class HistoryEntryDialog(QDialog):
             self.copied.emit()
             logger.info("Copied raw history entry transcript from dialog")
         except Exception as exc:
-            logger.error("Failed to copy raw transcript from dialog: %s", exc)
+            logger.error("Failed to copy raw transcript from dialog: %s", exc, exc_info=True)
 
     def done(self, result: int) -> None:
         self.playback.stop()

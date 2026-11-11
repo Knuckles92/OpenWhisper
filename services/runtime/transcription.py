@@ -513,7 +513,7 @@ class TranscriptionRuntime:
                 settings = settings_manager.load_all_settings()
             return dictation_pipeline.begin_job(mode, settings, selection=selection, **context)
         except Exception:
-            logger.debug("Dictation job context unavailable", exc_info=True)
+            logger.warning("Dictation job context unavailable; using a bare job", exc_info=True)
             return dictation_pipeline.DictationJob(
                 mode=mode,
                 **{k: v for k, v in context.items() if k != "include_selection"},
@@ -541,7 +541,8 @@ class TranscriptionRuntime:
                     and resolve_voice_routing_on_dictation(settings)):
                 return "auto"
         except Exception:
-            logger.debug("Routing setting unavailable", exc_info=True)
+            logger.warning("Routing setting unavailable; spoken routing off for this dictation",
+                           exc_info=True)
         return ""
 
     def _start_recording(self, profile_id: str, mode: str = JobMode.DICTATION,
@@ -559,7 +560,7 @@ class TranscriptionRuntime:
             # The output device and a recording would fight over audio.
             audio_player.stop_playback()
         except Exception:
-            logger.debug("Could not stop playback before recording", exc_info=True)
+            logger.warning("Could not stop playback before recording", exc_info=True)
         backend = self.controller.current_backend
         if getattr(backend, "is_remote", False) is True:
             try:
@@ -748,6 +749,7 @@ class TranscriptionRuntime:
         try:
             duration = self.controller.recorder.get_recording_duration()
         except Exception:
+            logger.warning("Recording duration unavailable", exc_info=True)
             duration = None
         self._end_preview()
         publish_event(
@@ -840,7 +842,7 @@ class TranscriptionRuntime:
             )
             self._run_transcription_job(config.RECORDED_AUDIO_FILE)
         except Exception as exc:
-            logger.error(f"Failed to start transcription: {exc}")
+            logger.error(f"Failed to start transcription: {exc}", exc_info=True)
             self.controller.transcription_failed.emit(_start_failure_message(exc))
 
     def _saved_recording_size(self, stop_completed: bool) -> Optional[int]:
@@ -911,7 +913,7 @@ class TranscriptionRuntime:
             self._raise_if_canceled()
             self.transcribe_audio_file(audio_path)
         except Exception as exc:
-            logger.error("Failed to start transcription: %s", exc)
+            logger.error("Failed to start transcription: %s", exc, exc_info=True)
             self.controller.transcription_failed.emit(_start_failure_message(exc))
 
     def _retry_remote_for_recording(self, backend) -> None:
@@ -1077,7 +1079,7 @@ class TranscriptionRuntime:
             else:
                 self._submit_transcription_job(audio_path)
         except Exception as exc:
-            logger.error(f"Failed to start re-transcription: {exc}")
+            logger.error(f"Failed to start re-transcription: {exc}", exc_info=True)
             self.on_transcription_error(_start_failure_message(exc))
 
     def recover_walkthrough(self, folder) -> None:
@@ -1120,6 +1122,7 @@ class TranscriptionRuntime:
         try:
             self._submit_transcription_job(str(audio))
         except Exception as exc:
+            logger.error("Failed to start walkthrough recovery: %s", exc, exc_info=True)
             self.on_transcription_error(_start_failure_message(exc))
 
     def upload_audio_file(
@@ -1156,7 +1159,7 @@ class TranscriptionRuntime:
             self.controller._pending_audio_duration = duration_seconds
             self._submit_transcription_job(audio_path)
         except Exception as exc:
-            logger.error(f"Failed to process uploaded audio: {exc}")
+            logger.error(f"Failed to process uploaded audio: {exc}", exc_info=True)
             self.on_transcription_error(_start_failure_message(exc))
 
     def upload_audio_files(self, request: BatchUploadRequest) -> None:
@@ -1209,7 +1212,7 @@ class TranscriptionRuntime:
             self._require_backend_ready()
             self.controller.executor.submit(self.transcribe_batch, request)
         except Exception as exc:
-            logger.error(f"Failed to process uploaded audio files: {exc}")
+            logger.error(f"Failed to process uploaded audio files: {exc}", exc_info=True)
             self.on_transcription_error(_start_failure_message(exc))
 
     def transcribe_batch(self, request: BatchUploadRequest) -> None:
@@ -1239,7 +1242,7 @@ class TranscriptionRuntime:
                         # One missing part invalidates a stitched transcript.
                         raise
                     logger.error(
-                        "Batch file %s failed: %s", item.source_name, exc
+                        "Batch file %s failed: %s", item.source_name, exc, exc_info=True
                     )
                     results.append(
                         BatchItemResult(
@@ -1330,7 +1333,7 @@ class TranscriptionRuntime:
                 )
             self.controller.batch_completed.emit(result)
         except Exception as exc:
-            logger.error(f"Batch transcription failed: {exc}")
+            logger.error(f"Batch transcription failed: {exc}", exc_info=True)
             self.controller.transcription_failed.emit(str(exc))
 
     @staticmethod
@@ -1615,7 +1618,7 @@ class TranscriptionRuntime:
         except CommandRefused as exc:
             self._refuse(str(exc))
         except Exception as exc:
-            logger.error(f"Transcription failed: {exc}")
+            logger.error(f"Transcription failed: {exc}", exc_info=True)
             self.controller.transcription_failed.emit(str(exc))
 
     def _with_final_recognition(self, job: Optional[dictation_pipeline.DictationJob]):
@@ -1763,7 +1766,7 @@ class TranscriptionRuntime:
                 )
             except Exception as exc:
                 # Whatever stopped it, the walkthrough as spoken is still copied.
-                logger.warning("Walkthrough write-up failed: %s", exc)
+                logger.warning("Walkthrough write-up failed: %s", exc, exc_info=True)
                 written = dataclasses.replace(result, write_up_error=str(exc) or "failed")
             self.controller.walkthrough_written_up.emit(written)
 
@@ -1827,7 +1830,8 @@ class TranscriptionRuntime:
                 job, settings_manager.load_all_settings()
             )
         except Exception:
-            logger.debug("Recognition context unavailable", exc_info=True)
+            logger.warning("Recognition context unavailable; using the engine's own settings",
+                           exc_info=True)
             return None
 
     def _complete_command(self, raw: str, job):
@@ -1914,8 +1918,9 @@ class TranscriptionRuntime:
         """
         try:
             outcome = run(text, job)
-        except Exception:
-            logger.warning("Text filters failed; keeping the text")
+        except Exception as exc:
+            # Type only: a filter's error may quote the dictated text.
+            logger.warning("Text filters failed (%s); keeping the text", type(exc).__name__)
             return job, text
         filtered = outcome.text if isinstance(outcome.text, str) else text
         emptied = bool((text or "").strip()) and not filtered.strip()
@@ -1942,8 +1947,10 @@ class TranscriptionRuntime:
 
         try:
             decision = routing.decide(text, job, settings, cancel=self._cancel_requested)
-        except Exception:
-            logger.warning("Spoken routing failed; pasting the dictation")
+        except Exception as exc:
+            # Type only: the judge's error may quote the dictated text.
+            logger.warning("Spoken routing failed (%s); pasting the dictation",
+                           type(exc).__name__)
             decision = None
         if decision is not None and decision.failure:
             with self._job_lock:
@@ -2025,6 +2032,7 @@ class TranscriptionRuntime:
         try:
             action = find_action(settings_manager.load_all_settings(), job.action_id)
         except Exception:
+            logger.warning("Action name unavailable for History", exc_info=True)
             action = None
         return f"Action · {action.name}" if action is not None else "Action"
 
@@ -2526,7 +2534,7 @@ class TranscriptionRuntime:
                 job, cleanup_info, live=live, settings=settings
             )
         except Exception:
-            logger.debug("History context unavailable", exc_info=True)
+            logger.warning("History context unavailable; saving without it", exc_info=True)
             return {}
 
     def _queue_history(self, entries: list[dict]) -> None:
@@ -2538,6 +2546,7 @@ class TranscriptionRuntime:
         try:
             self.controller.persistence_executor.submit(self._persist_history, entries)
         except Exception as exc:
+            logger.error("Could not queue the history save", exc_info=True)
             self.on_history_persisted(dict(error=f'History could not be saved: {exc}'))
 
     def _persist_history(self, entries: list[dict]) -> None:
@@ -2568,7 +2577,7 @@ class TranscriptionRuntime:
                     # saved entry or the status.
                     dictation_pipeline.record_stats(fields, entry)
                 except Exception:
-                    logger.debug("Could not record dictation stats", exc_info=True)
+                    logger.warning("Could not record dictation stats", exc_info=True)
                 source = fields.get('source_audio_path')
                 if source and os.path.isfile(source):
                     if not getattr(entry, 'audio_file', None):
@@ -2708,7 +2717,7 @@ class TranscriptionRuntime:
             send_paste()
             logger.info("Transcription auto-pasted")
         except Exception as exc:
-            logger.error(f"Failed to auto-paste: {exc}")
+            logger.error(f"Failed to auto-paste: {exc}", exc_info=True)
             if not self.controller.ui_controller.commit_transcript_clipboard(
                 stage, transcript
             ):
@@ -2806,7 +2815,7 @@ class TranscriptionRuntime:
         try:
             self.controller.executor.submit(self._run_rewrite, work)
         except Exception as exc:
-            logger.error("Could not start the rewrite: %s", exc)
+            logger.error("Could not start the rewrite: %s", exc, exc_info=True)
             self.on_transcription_error(f"Could not start the rewrite: {exc}")
 
     def _run_rewrite(self, work) -> None:
@@ -2818,7 +2827,7 @@ class TranscriptionRuntime:
         except CommandRefused as exc:
             self._refuse(str(exc))
         except Exception as exc:
-            logger.error("Rewrite failed: %s", exc)
+            logger.error("Rewrite failed: %s", exc, exc_info=True)
             self.controller.transcription_failed.emit(str(exc))
 
     def abandon_rewrite_job(self, status: str) -> None:

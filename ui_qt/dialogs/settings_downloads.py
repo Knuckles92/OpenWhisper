@@ -12,6 +12,7 @@ font scale never squeezes the rows below the point where a name or a size is
 still readable.
 """
 import itertools
+import logging
 import threading
 import math
 from dataclasses import dataclass
@@ -68,6 +69,8 @@ from ui_qt.widgets.component_row_widget import ComponentRowWidget
 from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.model_row_widget import ModelRowWidget
+
+logger = logging.getLogger(__name__)
 from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.speech_backend_picker import (
     backend_picker_label,
@@ -1678,4 +1681,5 @@ class DownloadsPage(QWidget):
         try:
             return settings_manager.load_all_settings()
         except Exception:
+            logger.warning("Could not load settings for the Downloads page", exc_info=True)
             return {}

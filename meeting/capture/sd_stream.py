@@ -108,6 +108,8 @@ class SdCaptureSource:
         try:
             return bool(self._stream.active)
         except Exception:
+            logger.debug("Stream state unreadable (%s); treating it as inactive",
+                         self.channel, exc_info=True)
             return False
 
     def _callback(self, indata, frames, time_info, status) -> None:

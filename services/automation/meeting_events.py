@@ -111,4 +111,4 @@ def forward(kind: str, payload: Mapping[str, Any], *, meeting_id: str = "") -> N
     try:
         _forward(kind, payload if isinstance(payload, Mapping) else {}, str(meeting_id or ""))
     except Exception as exc:
-        logger.debug("Could not publish meeting event %s: %s", kind, type(exc).__name__)
+        logger.warning("Could not publish meeting event %s: %s", kind, type(exc).__name__)

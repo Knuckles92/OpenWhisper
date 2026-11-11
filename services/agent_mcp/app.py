@@ -129,7 +129,9 @@ async def _control_call(method, *args):
         return await asyncio.to_thread(method, *args)
     except ControlError as exc:
         raise ToolError(str(exc)) from None
-    except Exception:
+    except Exception as exc:
+        # Never echo the exception: it may carry SQL, dictated text or paths.
+        logger.warning("An MCP control call failed: %s", type(exc).__name__)
         raise ToolError(
             "storage_unavailable: Could not save or read the requested data. Retry the request."
         ) from None

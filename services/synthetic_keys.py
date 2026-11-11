@@ -71,7 +71,7 @@ def _catalog_surface(identity) -> str:
 
         style = app_styles.style_for(FocusSnapshot(identity=identity), {})
     except Exception:
-        logger.debug("App catalogue unavailable", exc_info=True)
+        logger.warning("App catalogue unavailable", exc_info=True)
         return ""
     surface = getattr(style, "surface", "")
     return surface if isinstance(surface, str) else ""
@@ -106,7 +106,7 @@ def copies_line_without_selection(identity) -> bool:
 
         return _catalog_surface(identity) == Surface.CODE
     except Exception:
-        logger.debug("Editor check failed", exc_info=True)
+        logger.warning("Editor check failed", exc_info=True)
         return False
 
 

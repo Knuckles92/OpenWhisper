@@ -130,7 +130,7 @@ class OpenAIBackend(TranscriptionBackend):
                 self._failed_connection = None
                 logger.info("%s transcription client initialized", endpoint.name)
             except Exception as e:
-                logger.error(f"Failed to initialize the {endpoint.name} client: {e}")
+                logger.error(f"Failed to initialize the {endpoint.name} client: {e}", exc_info=True)
                 self._failed_connection = connection
 
     def _get_api_model_name(self) -> str:
@@ -296,7 +296,7 @@ class OpenAIBackend(TranscriptionBackend):
             try:
                 audio_processor.cleanup_temp_files()
             except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup temp files: {cleanup_error}")
+                logger.warning(f"Failed to cleanup temp files: {cleanup_error}", exc_info=True)
 
     def _transcribe_chunks(
         self, chunk_files: List[str], endpoint: SpeechEndpoint, api_model: str, **extra,

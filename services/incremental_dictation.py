@@ -152,6 +152,7 @@ class DictationSession:
             while self.poll():
                 self._stop.wait(self._poll_sec)
         except Exception as exc:
+            logger.warning("Incremental dictation polling failed", exc_info=True)
             self._invalidate(f"{type(exc).__name__}: {exc}")
 
     def poll(self) -> bool:
