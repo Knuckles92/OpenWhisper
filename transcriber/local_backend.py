@@ -138,7 +138,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             logger.debug(f"Supported compute types for {device}: {supported}")
             return set(supported)
         except Exception as e:
-            logger.warning(f"Could not query supported compute types: {e}")
+            logger.warning(f"Could not query supported compute types: {e}", exc_info=True)
             return {"float32"}
 
     def _select_best_compute_type(self, device: str, preferred: str) -> str:
@@ -299,7 +299,7 @@ class LocalWhisperBackend(TranscriptionBackend):
             logger.info("Faster-whisper model loaded successfully")
 
         except Exception as e:
-            logger.error(f"Failed to load faster-whisper model: {e}")
+            logger.error(f"Failed to load faster-whisper model: {e}", exc_info=True)
             if self.model is not None and hasattr(self.model, "close"):
                 self.model.close()
             self.model = None

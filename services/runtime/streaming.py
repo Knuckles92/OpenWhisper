@@ -178,7 +178,7 @@ class StreamingRuntime:
         try:
             return finalize()
         except Exception as exc:
-            logger.warning(f"Could not finish the live preview text: {exc}")
+            logger.warning(f"Could not finish the live preview text: {exc}", exc_info=True)
             return None
 
     def cancel_streaming_session(self) -> None:
@@ -216,7 +216,7 @@ class StreamingRuntime:
             else:
                 self._use_window_stream(streaming_backend, settings)
         except Exception as exc:
-            logger.error(f"Failed to setup streaming: {exc}")
+            logger.error(f"Failed to setup streaming: {exc}", exc_info=True)
             self.controller._streaming_enabled = False
             if not initial_setup:
                 self.controller.ui_controller.set_status("Failed to reconfigure streaming")
@@ -349,7 +349,7 @@ class StreamingRuntime:
             backend.stream_audio("dictation-preview-warmup", silence, "auto", finish=True)
             logger.info("Native streaming preview warmed up")
         except Exception as exc:
-            logger.warning(f"Native streaming warmup failed (non-fatal): {exc}")
+            logger.warning(f"Native streaming warmup failed (non-fatal): {exc}", exc_info=True)
 
     def _warmup_streaming_backend(self, backend) -> None:
         try:
@@ -372,7 +372,7 @@ class StreamingRuntime:
             list(segments)
             logger.info("Streaming preview model warmed up")
         except Exception as exc:
-            logger.warning(f"Streaming warmup failed (non-fatal): {exc}")
+            logger.warning(f"Streaming warmup failed (non-fatal): {exc}", exc_info=True)
 
     def _cleanup_streaming_resources(self) -> None:
         self._configured_for = None
@@ -381,7 +381,7 @@ class StreamingRuntime:
                 self.controller.streaming_transcriber.cleanup()
                 logger.info("Cleaned up existing streaming transcriber")
             except Exception as exc:
-                logger.warning(f"Error cleaning up streaming transcriber: {exc}")
+                logger.warning(f"Error cleaning up streaming transcriber: {exc}", exc_info=True)
             self.controller.streaming_transcriber = None
 
         if self.controller._streaming_backend:
@@ -390,5 +390,5 @@ class StreamingRuntime:
                 self.controller._streaming_backend.cleanup()
                 logger.info("Cleaned up dedicated streaming backend")
             except Exception as exc:
-                logger.warning(f"Error cleaning up streaming backend: {exc}")
+                logger.warning(f"Error cleaning up streaming backend: {exc}", exc_info=True)
             self.controller._streaming_backend = None

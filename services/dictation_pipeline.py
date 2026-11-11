@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import secrets
-from concurrent.futures import Future
+from concurrent.futures import CancelledError, Future
 from dataclasses import dataclass, field
 from typing import Final, Mapping, Optional
 
@@ -69,7 +69,11 @@ def _resolved(future: Optional[Future], timeout: float):
         if timeout <= 0:
             return future.result(timeout=0) if future.done() else None
         return future.result(timeout=timeout)
+    except (TimeoutError, CancelledError):
+        # Not ready in time, or abandoned: the caller goes on without it.
+        return None
     except Exception:
+        logger.debug("Focus capture result unavailable", exc_info=True)
         return None
 
 
@@ -240,7 +244,7 @@ def _focus_requests(mode: str, settings: Mapping, *, source: str, route: str,
             # DictationJob.target).
             target = focus_context.get_service().request(include_text=False)
     except Exception:
-        logger.debug("Focus capture could not start", exc_info=True)
+        logger.warning("Focus capture could not start", exc_info=True)
     return focus, target
 
 
@@ -257,7 +261,7 @@ def recognition_for(job: Optional[DictationJob], settings: Mapping) -> Recogniti
             phrases=phrases,
         )
     except Exception:
-        logger.debug("Recognition context unavailable", exc_info=True)
+        logger.warning("Recognition context unavailable; using defaults", exc_info=True)
         return RecognitionContext()
 
 
@@ -269,7 +273,7 @@ def prepare_text(raw: str, job: Optional[DictationJob], settings: Mapping) -> Pr
     try:
         text = dictionary.apply_replacements(text, dictionary.load_dictionary(settings))
     except Exception:
-        logger.debug("Dictionary replacements failed", exc_info=True)
+        logger.warning("Dictionary replacements failed; keeping the words as heard", exc_info=True)
         text = original
     plan = SnippetPlan(text)
     if (
@@ -280,7 +284,7 @@ def prepare_text(raw: str, job: Optional[DictationJob], settings: Mapping) -> Pr
         try:
             plan = snippets.plan_expansion(text, snippets.load_snippets(settings))
         except Exception:
-            logger.debug("Snippet planning failed", exc_info=True)
+            logger.warning("Snippet planning failed; no snippets expanded", exc_info=True)
             plan = SnippetPlan(text)
     return PreparedText(
         original=original,
@@ -295,7 +299,7 @@ def _block(name: str, build) -> str:
     try:
         return build() or ""
     except Exception:
-        logger.debug("Cleanup prompt block %s failed", name, exc_info=True)
+        logger.warning("Cleanup prompt block %s failed; left out", name, exc_info=True)
         return ""
 
 
@@ -308,7 +312,7 @@ def _base_cleanup_prompt(settings: Mapping, profile, rules: list[str]) -> str:
             settings, cleanup_prompts.resolve_level(settings)
         )
     except Exception:
-        logger.debug("Cleanup preset unavailable", exc_info=True)
+        logger.warning("Cleanup preset unavailable; using the saved prompt", exc_info=True)
         base = resolve_transcript_cleanup_prompt(settings)
     return compose_transcript_cleanup_prompt(base, rules)
 
@@ -317,7 +321,7 @@ def _app_style(snapshot, settings: Mapping):
     try:
         return app_styles.style_for(snapshot, settings)
     except Exception:
-        logger.debug("App style unavailable", exc_info=True)
+        logger.warning("App style unavailable", exc_info=True)
         return None
 
 
@@ -397,7 +401,7 @@ def _expand(text: str, plan: SnippetPlan) -> Optional[tuple[str, str, bool]]:
         plain, html, ok = snippets.expand(text, plan)
         return plain, html or "", bool(ok)
     except Exception:
-        logger.debug("Snippet expansion failed", exc_info=True)
+        logger.warning("Snippet expansion failed", exc_info=True)
         return None
 
 
@@ -440,7 +444,7 @@ def text_for_paste(text: str, job: Optional[DictationJob]) -> str:
     try:
         return focus_context.join_with_context(text, context)
     except Exception:
-        logger.debug("Joining with the text before the caret failed", exc_info=True)
+        logger.warning("Joining with the text before the caret failed", exc_info=True)
         return text
 
 
@@ -456,7 +460,7 @@ def html_for_paste(html: str, text: str, job: Optional[DictationJob]) -> str:
     try:
         return focus_context.join_html_with_context(html, text, context)
     except Exception:
-        logger.debug("Joining rich text with the text before the caret failed", exc_info=True)
+        logger.warning("Joining rich text with the text before the caret failed", exc_info=True)
         return html
 
 
@@ -488,7 +492,7 @@ def paste_target(job: Optional[DictationJob]) -> str:
     try:
         current = focus_context.get_service().identity_now(PASTE_CHECK_TIMEOUT_S)
     except Exception:
-        logger.debug("Current focus unavailable", exc_info=True)
+        logger.warning("Current focus unavailable", exc_info=True)
         return PasteTarget.UNKNOWN
     if current is None:
         return PasteTarget.UNKNOWN
@@ -518,7 +522,7 @@ def after_paste(
     try:
         dictionary.schedule_learning(job, pasted_text, before_cleanup)
     except Exception:
-        logger.debug("Dictionary learning could not be scheduled", exc_info=True)
+        logger.warning("Dictionary learning could not be scheduled", exc_info=True)
 
 
 def history_fields(
@@ -552,7 +556,7 @@ def history_fields(
             # Not style_for: stats keep the category with styles turned off.
             fields["app_category"] = app_styles.category_for(snapshot, settings or {})
         except Exception:
-            logger.debug("App category unavailable", exc_info=True)
+            logger.warning("App category unavailable", exc_info=True)
     fields["cleanup_level"] = getattr(info, "level", "") if info is not None else ""
     recognition = job.recognition if job is not None else None
     fields["language"] = recognition.language if recognition is not None else ""
@@ -578,7 +582,7 @@ def stats_counts(prepared: PreparedText) -> dict:
         }
         return {key: value for key, value in counts.items() if value}
     except Exception:
-        logger.debug("Could not count snippets and corrections", exc_info=True)
+        logger.warning("Could not count snippets and corrections", exc_info=True)
         return {}
 
 
@@ -589,4 +593,4 @@ def record_stats(entry_fields: dict, row) -> None:
 
         record(entry_fields, row)
     except Exception:
-        logger.debug("Could not record dictation stats", exc_info=True)
+        logger.warning("Could not record dictation stats", exc_info=True)
