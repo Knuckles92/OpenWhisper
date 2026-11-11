@@ -177,13 +177,10 @@ def test_archive_adapter_serves_an_authenticated_session(tmp_path, repo):
 def test_runtime_reuses_dashboard_and_opens_selected_history():
     from services.runtime.meeting import MeetingRuntime
 
-    controller = type("Controller", (), {
-        "meeting_active": False,
-        "meeting_status_update": FakeSignal(),
-        "meeting_error": FakeSignal(),
-        "meeting_state_changed": FakeSignal(),
-    })()
+    controller = type("Controller", (), {"meeting_active": False})()
     runtime = MeetingRuntime(controller)
+    for name in ("meeting_status_update", "meeting_error", "meeting_state_changed"):
+        setattr(runtime, name, FakeSignal())
     runtime._repo = type("Repository", (), {
         "get_meeting": lambda self, meeting_id: {"id": meeting_id},
     })()
@@ -195,8 +192,8 @@ def test_runtime_reuses_dashboard_and_opens_selected_history():
     browser_open.assert_called_once_with(
         "http://127.0.0.1:9000/m/host-token?history=m_selected"
     )
-    assert controller.meeting_error.values == []
-    assert controller.meeting_status_update.values == ["Opening past meeting"]
+    assert runtime.meeting_error.values == []
+    assert runtime.meeting_status_update.values == ["Opening past meeting"]
 
 
 def test_history_target_preserves_existing_query_and_capability_path():
@@ -231,13 +228,10 @@ def test_history_target_can_focus_report_view():
 def test_runtime_opens_report_view_on_history_url():
     from services.runtime.meeting import MeetingRuntime
 
-    controller = type("Controller", (), {
-        "meeting_active": False,
-        "meeting_status_update": FakeSignal(),
-        "meeting_error": FakeSignal(),
-        "meeting_state_changed": FakeSignal(),
-    })()
+    controller = type("Controller", (), {"meeting_active": False})()
     runtime = MeetingRuntime(controller)
+    for name in ("meeting_status_update", "meeting_error", "meeting_state_changed"):
+        setattr(runtime, name, FakeSignal())
     runtime._repo = type("Repository", (), {
         "get_meeting": lambda self, meeting_id: {"id": meeting_id},
     })()
@@ -249,4 +243,4 @@ def test_runtime_opens_report_view_on_history_url():
     browser_open.assert_called_once_with(
         "http://127.0.0.1:9000/m/host-token?history=m_selected&view=report"
     )
-    assert controller.meeting_status_update.values == ["Opening meeting report"]
+    assert runtime.meeting_status_update.values == ["Opening meeting report"]

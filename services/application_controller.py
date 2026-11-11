@@ -31,7 +31,6 @@ from services.runtime.walkthrough import WalkthroughRuntime
 from services.actions.runtime import ActionRuntime
 from services.dictation_pipeline import JobMode
 from services.settings import (
-    SettingsKey,
     seed_new_install_settings,
     settings_manager,
 )
@@ -148,25 +147,6 @@ class ApplicationController(QObject):
     reload_debounce_requested = pyqtSignal()
     # Hop streaming setup onto the Qt main thread after the first local load.
     streaming_setup_requested = pyqtSignal()
-    # Meeting Mode signals may originate from engine worker threads.
-    meeting_engine_event = pyqtSignal(object, str, object)
-    meeting_state_changed = pyqtSignal(object)
-    meeting_status_update = pyqtSignal(str)
-    meeting_error = pyqtSignal(str)
-    meeting_server_started = pyqtSignal(object)
-    meeting_recovery_found = pyqtSignal(object)
-    meeting_recovery_scan_failed = pyqtSignal(str)
-    # One-time cloud-intelligence consent; the connected slot shows the
-    # consent dialog on the Qt main thread and routes the result back into
-    # MeetingRuntime.on_consent_result (mirrors hf_consent_requested).
-    meeting_consent_requested = pyqtSignal()
-    # Unsupported-platform acknowledgement before a hotkey start; hops to
-    # the Qt main thread the same way meeting_consent_requested does.
-    meeting_platform_ack_requested = pyqtSignal()
-    # Guest URL ready for clipboard copy (clipboard access is main-thread only).
-    meeting_guest_link_ready = pyqtSignal(str)
-    # Past Meetings sidebar rebuild; always hop to the Qt GUI thread.
-    past_meetings_refresh_requested = pyqtSignal()
     # Shortcut actions, emitted from the hotkey dispatcher thread and handled
     # on the Qt thread. A transform shortcut carries the transform's id.
     transform_requested = pyqtSignal(str)
@@ -1168,10 +1148,7 @@ class ApplicationController(QObject):
 
     def toggle_meeting_mode(self) -> None:
         """Start or end Meeting Mode from its optional global hotkey."""
-        if self.meeting_runtime.is_active:
-            self.meeting_runtime.end_meeting()
-        elif not self.meeting_runtime.is_claimed:
-            self.meeting_platform_ack_requested.emit()
+        self.meeting_runtime.toggle_from_hotkey()
 
     def transcribe_clip(self, audio_path: str) -> str:
         """Transcribe a short audio clip outside the main recording flow.
@@ -1234,58 +1211,6 @@ class ApplicationController(QObject):
     def update_status_with_auto_hide(self, status: str) -> None:
         self.hotkey_runtime.update_status_with_auto_hide(status)
 
-    def _on_meeting_platform_ack_requested(self) -> None:
-        """Run Meeting Mode readiness gates, then start if allowed."""
-        policy = None
-        try:
-            policy = self.ui_controller.ensure_meeting_start_readiness()
-        except Exception as exc:
-            logger.error(f"Meeting start readiness failed: {exc}")
-        if policy is not None:
-            self.meeting_runtime.start_meeting(system_audio_policy=policy)
-
-    def _on_meeting_consent_requested(self) -> None:
-        """Show the meeting cloud-consent dialog and act on it (Qt main thread).
-
-        Mirrors the HF consent round-trip: the runtime emitted the request
-        (possibly holding a pending start or toggle), this slot shows the
-        dialog, persists a granted consent, and hands the outcome back to the
-        runtime's continuation.
-        """
-        granted = False
-        try:
-            granted = self.ui_controller.show_meeting_consent_dialog()
-        except Exception as exc:
-            logger.error(f"Meeting consent dialog failed: {exc}")
-
-        if granted:
-            try:
-                settings_manager.save_setting(
-                    SettingsKey.MEETING_CLOUD_CONSENT_GIVEN, True
-                )
-            except Exception as exc:
-                logger.warning(f"Could not persist meeting cloud consent: {exc}")
-
-        self.meeting_runtime.on_consent_result(granted)
-
-    def _on_meeting_recovery_found(self, meetings) -> None:
-        try:
-            self.ui_controller.show_meeting_recovery_dialog(
-                list(meetings),
-                on_finalize=self.meeting_runtime.finalize_recovered,
-                on_discard=self.meeting_runtime.discard_recovered,
-            )
-        except Exception as exc:
-            logger.error(f"Meeting recovery dialog failed: {exc}")
-
-    def _on_meeting_recovery_scan_failed(self, message: str) -> None:
-        try:
-            self.ui_controller.show_meeting_recovery_scan_error(
-                message, on_retry=self.meeting_runtime.retry_recovery_scan,
-            )
-        except Exception:
-            logger.exception("Could not show meeting recovery scan failure")
-
     def _connect_signals(self) -> None:
         self.startup_database_ready.connect(self._on_startup_database_ready)
         self.profile_record_requested.connect(self.toggle_profile_recording)
@@ -1340,29 +1265,7 @@ class ApplicationController(QObject):
         self.engine_busy_changed.connect(self.remote.on_engine_busy)
         self.streaming_setup_requested.connect(self.streaming_runtime.setup_streaming)
         self.components.connect_signals()
-        self.meeting_engine_event.connect(self.meeting_runtime._route_engine_event)
-        self.meeting_state_changed.connect(
-            self.ui_controller.on_meeting_state_changed
-        )
-        self.meeting_status_update.connect(self.ui_controller.set_meeting_status)
-        self.meeting_error.connect(self.ui_controller.on_meeting_error)
-        self.meeting_server_started.connect(
-            self.ui_controller.on_meeting_server_started
-        )
-        self.meeting_recovery_found.connect(self._on_meeting_recovery_found)
-        self.meeting_recovery_scan_failed.connect(
-            self._on_meeting_recovery_scan_failed
-        )
-        self.meeting_consent_requested.connect(self._on_meeting_consent_requested)
-        self.meeting_platform_ack_requested.connect(
-            self._on_meeting_platform_ack_requested
-        )
-        self.meeting_guest_link_ready.connect(
-            self.ui_controller.copy_meeting_guest_link
-        )
-        self.past_meetings_refresh_requested.connect(
-            self.ui_controller.main_window.refresh_past_meetings
-        )
+        self.meeting_runtime.connect_signals()
         self.updater.connect_signals()
         if hasattr(self.ui_controller, "set_overlay_state"):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)

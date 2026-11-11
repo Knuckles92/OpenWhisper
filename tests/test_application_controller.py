@@ -3618,7 +3618,7 @@ class TestApplicationController:
         controller = self._create_controller()
         retried = []
         controller.meeting_runtime.retry_recovery_scan = lambda: retried.append(True)
-        controller.meeting_recovery_scan_failed.emit("database unavailable")
+        controller.meeting_runtime.meeting_recovery_scan_failed.emit("database unavailable")
         message, retry = controller.ui_controller.meeting_recovery_scan_errors[-1]
         assert "database unavailable" in message
         retry()

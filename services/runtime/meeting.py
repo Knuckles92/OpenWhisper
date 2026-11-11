@@ -17,6 +17,8 @@ import webbrowser
 from typing import TYPE_CHECKING, Any, Dict, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from PyQt6.QtCore import QObject, pyqtSignal
+
 from config import config
 from services.components import (
     ensure_speaker_model,
@@ -132,10 +134,32 @@ class _FinalizationRetry:
         self.publish_engine = engine
 
 
-class MeetingRuntime:
+class MeetingRuntime(QObject):
     """Owns Meeting Mode lifecycle and engine-to-Qt signal bridging."""
 
+    # Meeting Mode signals may originate from engine worker threads; this
+    # object is created on the Qt thread, so their slots run there.
+    meeting_engine_event = pyqtSignal(object, str, object)
+    meeting_state_changed = pyqtSignal(object)
+    meeting_status_update = pyqtSignal(str)
+    meeting_error = pyqtSignal(str)
+    meeting_server_started = pyqtSignal(object)
+    meeting_recovery_found = pyqtSignal(object)
+    meeting_recovery_scan_failed = pyqtSignal(str)
+    # One-time cloud-intelligence consent; the connected slot shows the
+    # consent dialog on the Qt main thread and routes the result back into
+    # on_consent_result (mirrors ModelRuntime.hf_consent_requested).
+    meeting_consent_requested = pyqtSignal()
+    # Unsupported-platform acknowledgement before a hotkey start; hops to
+    # the Qt main thread the same way meeting_consent_requested does.
+    meeting_platform_ack_requested = pyqtSignal()
+    # Guest URL ready for clipboard copy (clipboard access is main-thread only).
+    meeting_guest_link_ready = pyqtSignal(str)
+    # Past Meetings sidebar rebuild; always hop to the Qt GUI thread.
+    past_meetings_refresh_requested = pyqtSignal()
+
     def __init__(self, controller: "ApplicationController"):
+        super().__init__()
         self.controller = controller
         self._lock = threading.RLock()
         self._engine: Optional["MeetingEngine"] = None
@@ -167,7 +191,7 @@ class MeetingRuntime:
         # Consent round-trip state: what to do when the consent dialog
         # resolves ("start" continues start_meeting, "toggle" applies the
         # cloud toggle). Mirrors the hf_consent_requested request/continuation
-        # pattern in ApplicationController.
+        # pattern in ModelRuntime.
         self._consent_pending_kind: Optional[str] = None
         self._pending_system_audio_policy: str = "auto"
         #: The brief typed on the Meeting Mode tab for the start now in
@@ -175,6 +199,79 @@ class MeetingRuntime:
         #: start between the click and ``_build_options``. Every start
         #: rewrites it, so an abandoned one cannot leak into the next.
         self._pending_intent: str = ""
+
+    def connect_signals(self) -> None:
+        ui = self.controller.ui_controller
+        self.meeting_engine_event.connect(self._route_engine_event)
+        self.meeting_state_changed.connect(ui.on_meeting_state_changed)
+        self.meeting_status_update.connect(ui.set_meeting_status)
+        self.meeting_error.connect(ui.on_meeting_error)
+        self.meeting_server_started.connect(ui.on_meeting_server_started)
+        self.meeting_recovery_found.connect(self._on_recovery_found)
+        self.meeting_recovery_scan_failed.connect(self._on_recovery_scan_failed)
+        self.meeting_consent_requested.connect(self._on_consent_requested)
+        self.meeting_platform_ack_requested.connect(self._on_platform_ack_requested)
+        self.meeting_guest_link_ready.connect(ui.copy_meeting_guest_link)
+        self.past_meetings_refresh_requested.connect(ui.main_window.refresh_past_meetings)
+
+    def toggle_from_hotkey(self) -> None:
+        """Start or end Meeting Mode from its optional global hotkey; any thread."""
+        if self.is_active:
+            self.end_meeting()
+        elif not self.is_claimed:
+            self.meeting_platform_ack_requested.emit()
+
+    def _on_platform_ack_requested(self) -> None:
+        """Run Meeting Mode readiness gates, then start if allowed."""
+        policy = None
+        try:
+            policy = self.controller.ui_controller.ensure_meeting_start_readiness()
+        except Exception as exc:
+            logger.error(f"Meeting start readiness failed: {exc}")
+        if policy is not None:
+            self.start_meeting(system_audio_policy=policy)
+
+    def _on_consent_requested(self) -> None:
+        """Show the meeting cloud-consent dialog and act on it (Qt main thread).
+
+        Mirrors the HF consent round-trip: the runtime emitted the request
+        (possibly holding a pending start or toggle), this slot shows the
+        dialog, persists a granted consent, and hands the outcome back to the
+        runtime's continuation.
+        """
+        granted = False
+        try:
+            granted = self.controller.ui_controller.show_meeting_consent_dialog()
+        except Exception as exc:
+            logger.error(f"Meeting consent dialog failed: {exc}")
+
+        if granted:
+            try:
+                settings_manager.save_setting(
+                    SettingsKey.MEETING_CLOUD_CONSENT_GIVEN, True
+                )
+            except Exception as exc:
+                logger.warning(f"Could not persist meeting cloud consent: {exc}")
+
+        self.on_consent_result(granted)
+
+    def _on_recovery_found(self, meetings) -> None:
+        try:
+            self.controller.ui_controller.show_meeting_recovery_dialog(
+                list(meetings),
+                on_finalize=self.finalize_recovered,
+                on_discard=self.discard_recovered,
+            )
+        except Exception as exc:
+            logger.error(f"Meeting recovery dialog failed: {exc}")
+
+    def _on_recovery_scan_failed(self, message: str) -> None:
+        try:
+            self.controller.ui_controller.show_meeting_recovery_scan_error(
+                message, on_retry=self.retry_recovery_scan,
+            )
+        except Exception:
+            logger.exception("Could not show meeting recovery scan failure")
 
     def setup(self) -> None:
         """Kick off the startup crash-recovery scan for interrupted meetings.
@@ -199,7 +296,7 @@ class MeetingRuntime:
             from meeting.recovery import find_recoverable_meetings
         except Exception:
             logger.exception("Meeting recovery module unavailable")
-            self.controller.meeting_recovery_scan_failed.emit(
+            self.meeting_recovery_scan_failed.emit(
                 "Recovery could not check saved meetings. Retry the scan; "
                 "your meeting files have not been removed."
             )
@@ -209,7 +306,7 @@ class MeetingRuntime:
             meetings = find_recoverable_meetings(self._repository())
         except Exception as exc:
             logger.exception("Meeting recovery scan failed")
-            self.controller.meeting_recovery_scan_failed.emit(
+            self.meeting_recovery_scan_failed.emit(
                 "Recovery could not check saved meetings. Retry the scan; "
                 "your meeting files have not been removed. "
                 f"Details: {exc}"
@@ -218,7 +315,7 @@ class MeetingRuntime:
 
         if meetings:
             logger.info(f"Found {len(meetings)} interrupted meeting(s)")
-            self.controller.meeting_recovery_found.emit(list(meetings))
+            self.meeting_recovery_found.emit(list(meetings))
 
     def retry_recovery_scan(self) -> None:
         """Retry the inventory off Qt after a visible startup scan failure."""
@@ -292,7 +389,7 @@ class MeetingRuntime:
             "finalization": payload,
         }
         emit.update(self._meeting_identity_fields(meeting, payload))
-        self.controller.meeting_state_changed.emit(emit)
+        self.meeting_state_changed.emit(emit)
         return True
 
     def _meeting_identity_fields(
@@ -374,7 +471,7 @@ class MeetingRuntime:
         with self._lock:
             self._finalization = None
             self._card_meeting_id = None
-        self.controller.meeting_state_changed.emit({
+        self.meeting_state_changed.emit({
             "active": False,
             "finalization": None,
             "meeting_id": None,
@@ -383,7 +480,7 @@ class MeetingRuntime:
 
     def _refresh_past_meetings(self) -> None:
         try:
-            self.controller.past_meetings_refresh_requested.emit()
+            self.past_meetings_refresh_requested.emit()
         except Exception:
             logger.exception("Could not request a Past Meetings refresh")
 
@@ -460,7 +557,7 @@ class MeetingRuntime:
             ):
                 return False
             if not self._persist_card_deferred(meeting_id, True):
-                self.controller.meeting_error.emit(
+                self.meeting_error.emit(
                     "Could not move this meeting to the background"
                 )
                 return False
@@ -473,7 +570,7 @@ class MeetingRuntime:
             self._finalizing = False
             self._background_ready = False
             self._hide_finalization_card()
-            self.controller.meeting_state_changed.emit({
+            self.meeting_state_changed.emit({
                 "background_available": False,
                 "dashboard_available": False,
                 "background_message": self._background_message(),
@@ -519,7 +616,7 @@ class MeetingRuntime:
                 self._background_engines.pop(meeting_id, None)
                 self._background_workers.pop(meeting_id, None)
                 self._background_host_urls.pop(meeting_id, None)
-                self.controller.meeting_state_changed.emit({
+                self.meeting_state_changed.emit({
                     "background_message": self._background_message(outcome),
                 })
             self._refresh_past_meetings()
@@ -545,12 +642,12 @@ class MeetingRuntime:
                 or self.is_active
             )
         if finalizing or status == "running":
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 "Final insights are still being prepared."
             )
             return False
         if busy:
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 "A meeting is already in progress"
             )
             return False
@@ -558,17 +655,17 @@ class MeetingRuntime:
             logger.warning("Cannot defer finalization card: no meeting selected")
             return False
         if not self._persist_card_deferred(meeting_id, True):
-            self.controller.meeting_error.emit(
+            self.meeting_error.emit(
                 "Could not save this meeting for later"
             )
             return False
         self._hide_finalization_card()
         if status in {"completed", "disabled"}:
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 "Meeting saved. Open it from Past Meetings."
             )
         else:
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 "Meeting saved for later. Open it from Past Meetings when you "
                 "want to continue."
             )
@@ -666,18 +763,18 @@ class MeetingRuntime:
             busy = self._starting or self.controller.meeting_active or self.is_active
             update_active = getattr(self.controller, "host_update_active", None)
             if callable(update_active) and update_active() is True:
-                self.controller.meeting_status_update.emit("OpenWhisper is preparing an update. Try again shortly.")
+                self.meeting_status_update.emit("OpenWhisper is preparing an update. Try again shortly.")
                 return
             if getattr(self.controller, "_backup_in_progress", False) is True:
-                self.controller.meeting_status_update.emit("Wait for backup or restore preparation to finish")
+                self.meeting_status_update.emit("Wait for backup or restore preparation to finish")
                 return
         if finalizing:
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 "Final insights are still being prepared."
             )
             return
         if busy:
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 "A meeting is already in progress"
             )
             return
@@ -685,14 +782,14 @@ class MeetingRuntime:
         message = (loading() if callable(loading)
                    and resolve_meeting_asr_source() != "remote" else None)
         if message:
-            self.controller.meeting_status_update.emit(message)
+            self.meeting_status_update.emit(message)
             return
         # File the leftover card before claiming start — defer refuses while
         # ``_starting`` is True.
         self._file_leftover_card()
         with self._lock:
             if getattr(self.controller, "_backup_in_progress", False) is True:
-                self.controller.meeting_status_update.emit("Wait for backup or restore preparation to finish")
+                self.meeting_status_update.emit("Wait for backup or restore preparation to finish")
                 return
             if (
                 self._starting
@@ -700,7 +797,7 @@ class MeetingRuntime:
                 or self.is_active
                 or self._finalizing
             ):
-                self.controller.meeting_status_update.emit(
+                self.meeting_status_update.emit(
                     "A meeting is already in progress"
                 )
                 return
@@ -732,7 +829,7 @@ class MeetingRuntime:
             # machine; the controller shows the dialog on the Qt main thread
             # and calls back into on_consent_result.
             self._consent_pending_kind = "start_demo" if demo else "start"
-            self.controller.meeting_consent_requested.emit()
+            self.meeting_consent_requested.emit()
             return
 
         self._launch(
@@ -767,10 +864,10 @@ class MeetingRuntime:
                 # cannot claim cloud is on while it is off (and re-prompt on
                 # the next start). set_meeting_state blocks the checkbox's
                 # signals, so this cannot loop back into toggle_cloud.
-                self.controller.meeting_state_changed.emit(
+                self.meeting_state_changed.emit(
                     {"cloud_enabled": False}
                 )
-                self.controller.meeting_status_update.emit(
+                self.meeting_status_update.emit(
                     "AI insights stay off"
                 )
         else:
@@ -812,10 +909,10 @@ class MeetingRuntime:
             self._finalization = None
             self._card_meeting_id = None
             self._deferred_start_errors = []
-        self.controller.meeting_status_update.emit(
+        self.meeting_status_update.emit(
             "Starting demo meeting..." if demo else "Starting meeting..."
         )
-        self.controller.meeting_state_changed.emit(
+        self.meeting_state_changed.emit(
             {"active": False, "paused": False, "status": "starting",
              "cloud_enabled": cloud, "finalization": None}
         )
@@ -879,7 +976,7 @@ class MeetingRuntime:
             return
         self._announce_started(engine, result, cloud=cloud, demo=demo)
         for message in deferred_errors:
-            self.controller.meeting_error.emit(message)
+            self.meeting_error.emit(message)
 
     def _start_failed(self, engine, exc: Exception) -> None:
         """Undo a start that raised; called from its ``except`` block."""
@@ -906,10 +1003,10 @@ class MeetingRuntime:
                 "System audio became unavailable while starting. "
                 "Retry detection or continue microphone-only."
             )
-        self.controller.meeting_error.emit(
+        self.meeting_error.emit(
             f"Could not start the meeting: {message}"
         )
-        self.controller.meeting_state_changed.emit(
+        self.meeting_state_changed.emit(
             {
                 "active": False,
                 "paused": False,
@@ -948,7 +1045,7 @@ class MeetingRuntime:
         # No meeting_server_started emit here: the engine's own server_started
         # event already carried the URLs to the UI, and a second emit opens a
         # second dashboard tab.
-        self.controller.meeting_status_update.emit(
+        self.meeting_status_update.emit(
             "Demo meeting loaded — End to test cleanup and the report"
             if demo else "Meeting in progress"
         )
@@ -959,7 +1056,7 @@ class MeetingRuntime:
                 elapsed_s = float(engine.clock.now_s())
             except Exception:
                 elapsed_s = 0.0
-        self.controller.meeting_state_changed.emit(
+        self.meeting_state_changed.emit(
             {"active": True, "paused": False, "status": "active",
              "cloud_enabled": cloud, "elapsed_s": elapsed_s}
         )
@@ -1052,10 +1149,10 @@ class MeetingRuntime:
             engine.pause()
         except Exception as exc:
             logger.error(f"Failed to pause meeting: {exc}")
-            self.controller.meeting_error.emit(f"Could not pause the meeting: {exc}")
+            self.meeting_error.emit(f"Could not pause the meeting: {exc}")
             return
-        self.controller.meeting_status_update.emit("Meeting paused")
-        self.controller.meeting_state_changed.emit(
+        self.meeting_status_update.emit("Meeting paused")
+        self.meeting_state_changed.emit(
             {"active": True, "paused": True, "status": "paused"}
         )
 
@@ -1067,10 +1164,10 @@ class MeetingRuntime:
             engine.resume()
         except Exception as exc:
             logger.error(f"Failed to resume meeting: {exc}")
-            self.controller.meeting_error.emit(f"Could not resume the meeting: {exc}")
+            self.meeting_error.emit(f"Could not resume the meeting: {exc}")
             return
-        self.controller.meeting_status_update.emit("Meeting in progress")
-        self.controller.meeting_state_changed.emit(
+        self.meeting_status_update.emit("Meeting in progress")
+        self.meeting_state_changed.emit(
             {"active": True, "paused": False, "status": "active"}
         )
 
@@ -1088,12 +1185,12 @@ class MeetingRuntime:
             engine.end()
         except Exception as exc:
             logger.error(f"Failed to end meeting: {exc}")
-            self.controller.meeting_error.emit(f"Could not end the meeting: {exc}")
+            self.meeting_error.emit(f"Could not end the meeting: {exc}")
             return
-        self.controller.meeting_status_update.emit(
+        self.meeting_status_update.emit(
             "Ending meeting — finishing transcription..."
         )
-        self.controller.meeting_state_changed.emit(
+        self.meeting_state_changed.emit(
             {"active": True, "paused": False, "status": "ending"}
         )
 
@@ -1128,7 +1225,7 @@ class MeetingRuntime:
                 except Exception:
                     logger.exception("Could not ensure the local Whisper model")
 
-        self.controller.meeting_status_update.emit("Retrying post-meeting steps…")
+        self.meeting_status_update.emit("Retrying post-meeting steps…")
         threading.Thread(
             target=self._retry_worker, args=(retry,),
             name="meeting-retry-finalization", daemon=True,
@@ -1137,7 +1234,7 @@ class MeetingRuntime:
     def _retry_refused(self, step_key: str) -> bool:
         """Whether a retry can't start now; the status line says why."""
         if getattr(self.controller, "_backup_in_progress", False) is True:
-            self.controller.meeting_status_update.emit("Wait for backup or restore preparation to finish")
+            self.meeting_status_update.emit("Wait for backup or restore preparation to finish")
             return True
         if step_key == "speaker_id":
             # The retry skips a refused speaker pass anyway; refusing here
@@ -1145,7 +1242,7 @@ class MeetingRuntime:
             reason = self._speaker_rerun_fields()["speaker_rerun_reason"]
             if reason:
                 logger.info("Speaker re-run refused: %s", reason)
-                self.controller.meeting_status_update.emit(reason)
+                self.meeting_status_update.emit(reason)
                 return True
         return False
 
@@ -1179,20 +1276,20 @@ class MeetingRuntime:
                 logger.warning("Cannot retry finalization: no meeting found")
                 return None
             if meeting_id in self._background_engines:
-                self.controller.meeting_status_update.emit(
+                self.meeting_status_update.emit(
                     "This meeting is still finishing in the background."
                 )
                 return None
             if is_running(meeting_id):
                 # The dashboard (or recovery) holds the one-run claim; a
                 # second run would only fail and overwrite its progress.
-                self.controller.meeting_status_update.emit(RETRY_BUSY_MESSAGE)
+                self.meeting_status_update.emit(RETRY_BUSY_MESSAGE)
                 return None
             self._card_meeting_id = meeting_id
             self._retry_generation += 1
             self._retry_meeting_id = meeting_id
             self._background_ready = False
-            self.controller.meeting_state_changed.emit({"background_available": False})
+            self.meeting_state_changed.emit({"background_available": False})
             self._finalizing = True
             self._finalization = {
                 "status": "running",
@@ -1429,7 +1526,7 @@ class MeetingRuntime:
         if not target_id:
             return
         if self.is_active or self.controller.meeting_active:
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 "Finish the current meeting first."
             )
             return
@@ -1475,7 +1572,7 @@ class MeetingRuntime:
             return
         with self._lock:
             if self._archive_starting:
-                self.controller.meeting_status_update.emit(
+                self.meeting_status_update.emit(
                     "Opening a past meeting..."
                 )
                 return
@@ -1501,7 +1598,7 @@ class MeetingRuntime:
                 if background_url:
                     webbrowser.open(background_url)
                 else:
-                    self.controller.meeting_status_update.emit(
+                    self.meeting_status_update.emit(
                         "This meeting is still finishing in the background."
                     )
                 return
@@ -1564,7 +1661,7 @@ class MeetingRuntime:
                 "Opening past meeting dashboard: %s",
                 redact_meeting_url(history_url),
             )
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 "Opening meeting report" if view == "report"
                 else "Opening past meeting"
             )
@@ -1579,21 +1676,21 @@ class MeetingRuntime:
                 self._archive_starting = False
 
     def _report_dashboard_error(self, message: str) -> None:
-        self.controller.meeting_error.emit(str(message))
+        self.meeting_error.emit(str(message))
 
     def copy_guest_link(self) -> None:
         """Emit the guest URL so the Qt thread can copy it."""
         url = self._guest_url
         if not url:
-            self.controller.meeting_status_update.emit("No guest link available yet")
+            self.meeting_status_update.emit("No guest link available yet")
             return
-        self.controller.meeting_guest_link_ready.emit(url)
+        self.meeting_guest_link_ready.emit(url)
 
     def toggle_cloud(self, enabled: bool) -> None:
         enabled = bool(enabled)
         if enabled and not self._cloud_consent_given():
             self._consent_pending_kind = "toggle"
-            self.controller.meeting_consent_requested.emit()
+            self.meeting_consent_requested.emit()
             return
         self._apply_cloud(enabled)
 
@@ -1611,13 +1708,13 @@ class MeetingRuntime:
                 engine.set_cloud_enabled(enabled)
             except Exception as exc:
                 logger.error(f"Failed to apply cloud toggle: {exc}")
-                self.controller.meeting_error.emit(
+                self.meeting_error.emit(
                     f"Could not change AI insights: {exc}"
                 )
                 return
 
-        self.controller.meeting_state_changed.emit({"cloud_enabled": enabled})
-        self.controller.meeting_status_update.emit(
+        self.meeting_state_changed.emit({"cloud_enabled": enabled})
+        self.meeting_status_update.emit(
             "AI insights on" if enabled
             else "AI insights off"
         )
@@ -1652,26 +1749,26 @@ class MeetingRuntime:
                 asr_language=resolve_meeting_language(settings),
                 model_lease=self._model_lease(),
             ):
-                self.controller.meeting_error.emit(
+                self.meeting_error.emit(
                     "Could not finalize the meeting — "
                     "transcription may still be pending"
                 )
                 return
             recovered = repository.get_meeting(meeting_id) or meeting
             if str(recovered.get("status") or "") == "failed":
-                self.controller.meeting_status_update.emit(
+                self.meeting_status_update.emit(
                     "Meeting transcription finished; captured audio remains "
                     "incomplete. Review the partial meeting in History."
                 )
                 follow_up = None
             else:
-                self.controller.meeting_status_update.emit(
+                self.meeting_status_update.emit(
                     "Interrupted meeting finalized"
                 )
                 follow_up = self._recovered_follow_up_step(meeting, settings)
         except Exception as exc:
             logger.error(f"Failed to finalize meeting '{meeting_id}': {exc}")
-            self.controller.meeting_error.emit(
+            self.meeting_error.emit(
                 f"Could not finalize the meeting: {exc}"
             )
             return
@@ -1713,7 +1810,7 @@ class MeetingRuntime:
             repo = self._repository()
             meeting = repo.get_meeting(target_id)
             if meeting is None:
-                self.controller.meeting_status_update.emit(
+                self.meeting_status_update.emit(
                     "That meeting no longer exists"
                 )
                 return None
@@ -1722,12 +1819,12 @@ class MeetingRuntime:
             state = stored_state_dict(meeting)
             segments = list(repo.get_segments(target_id) or [])
             if not any(str(segment.get("text") or "").strip() for segment in segments):
-                self.controller.meeting_status_update.emit("No transcript to copy")
+                self.meeting_status_update.emit("No transcript to copy")
                 return None
             return export_transcript_txt(meeting, state, segments)
         except Exception as exc:
             logger.exception("Could not copy transcript for meeting %s", target_id)
-            self.controller.meeting_error.emit(
+            self.meeting_error.emit(
                 f"Could not copy the transcript: {exc}"
             )
             return None
@@ -1747,7 +1844,7 @@ class MeetingRuntime:
             return
         live_id = getattr(self._engine, "meeting_id", None)
         if target_id in self._background_engines:
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 "This meeting is still finishing in the background."
             )
             return
@@ -1755,13 +1852,13 @@ class MeetingRuntime:
             (self.is_active or self.controller.meeting_active)
             and live_id == target_id
         ):
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 "Finish the current meeting first."
             )
             return
         if self.meeting_busy(target_id):
             # Finishing in the foreground, or its post-meeting steps re-running.
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 "Wait for this meeting's post-meeting steps to finish."
             )
             return
@@ -1794,10 +1891,10 @@ class MeetingRuntime:
                 self._hide_finalization_card()
             else:
                 self._refresh_past_meetings()
-            self.controller.meeting_status_update.emit("Meeting deleted")
+            self.meeting_status_update.emit("Meeting deleted")
         except Exception as exc:
             logger.error(f"Failed to delete meeting '{meeting_id}': {exc}")
-            self.controller.meeting_error.emit(
+            self.meeting_error.emit(
                 f"Could not delete the meeting: {exc}"
             )
 
@@ -1850,14 +1947,14 @@ class MeetingRuntime:
             else:
                 self._refresh_past_meetings()
             if delete_recordings:
-                self.controller.meeting_status_update.emit(
+                self.meeting_status_update.emit(
                     "Meetings and recordings cleared"
                 )
             else:
-                self.controller.meeting_status_update.emit("Meetings cleared")
+                self.meeting_status_update.emit("Meetings cleared")
         except Exception as exc:
             logger.error("Failed to clear past meetings: %s", exc)
-            self.controller.meeting_error.emit(
+            self.meeting_error.emit(
                 f"Could not clear past meetings: {exc}"
             )
 
@@ -1882,12 +1979,12 @@ class MeetingRuntime:
                 self._hide_finalization_card()
             else:
                 self._refresh_past_meetings()
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 "Interrupted meeting discarded"
             )
         except Exception as exc:
             logger.error(f"Failed to discard meeting '{meeting_id}': {exc}")
-            self.controller.meeting_error.emit(
+            self.meeting_error.emit(
                 f"Could not discard the meeting: {exc}"
             )
 
@@ -1903,7 +2000,7 @@ class MeetingRuntime:
         queued["_retry_generation"] = generation
         if claim is not None:
             queued["_finalization_claim"] = claim
-        self.controller.meeting_engine_event.emit(engine, kind, queued)
+        self.meeting_engine_event.emit(engine, kind, queued)
 
     def _route_engine_event(
         self, engine: Any, kind: str, payload: Dict[str, Any]
@@ -1932,9 +2029,9 @@ class MeetingRuntime:
                 self._apply_finalization(
                     emit["finalization"], emit, meeting_id=emit["meeting_id"],
                 )
-                self.controller.meeting_state_changed.emit(emit)
+                self.meeting_state_changed.emit(emit)
             elif kind == "retry_status":
-                self.controller.meeting_status_update.emit(str(payload["message"]))
+                self.meeting_status_update.emit(str(payload["message"]))
             elif engine is self._engine:
                 self._on_engine_event(kind, payload)
                 self._forward_public_event(engine, kind, payload)
@@ -2000,7 +2097,7 @@ class MeetingRuntime:
             # Prefer human notes when present; otherwise keep the short
             # lifecycle status for the status line.
             note = payload.get("note")
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 str(note or status)
             )
         if isinstance(finalization, dict):
@@ -2017,13 +2114,13 @@ class MeetingRuntime:
                 # After end, keep active=False while finalization updates.
                 if self.controller.meeting_active is False:
                     state_payload.setdefault("active", False)
-            self.controller.meeting_state_changed.emit(state_payload)
+            self.meeting_state_changed.emit(state_payload)
 
     def _on_server_started_event(self, payload: Dict[str, Any]) -> None:
         with self._lock:
             self._host_url = payload.get("host_url") or self._host_url
             self._guest_url = payload.get("guest_url") or self._guest_url
-        self.controller.meeting_server_started.emit(dict(payload))
+        self.meeting_server_started.emit(dict(payload))
 
     def _on_error_event(self, payload: Dict[str, Any]) -> None:
         message = payload.get("message") or str(payload)
@@ -2031,13 +2128,13 @@ class MeetingRuntime:
             if self._starting:
                 self._deferred_start_errors.append(str(message))
                 return
-        self.controller.meeting_error.emit(str(message))
+        self.meeting_error.emit(str(message))
 
     def _on_background_ready_event(self, payload: Dict[str, Any]) -> None:
         with self._lock:
             self._background_ready = True
         self.controller.restore_local_engine()
-        self.controller.meeting_state_changed.emit({
+        self.meeting_state_changed.emit({
             "background_available": True,
         })
 
@@ -2052,19 +2149,19 @@ class MeetingRuntime:
         with self._lock:
             finalization = dict(self._finalization or {})
             finalizing = self._finalizing
-        self.controller.meeting_status_update.emit(
+        self.meeting_status_update.emit(
             _ended_message(payload, status, finalizing=finalizing)
         )
         state_payload = {"active": False, "status": status}
         if finalization:
             state_payload["finalization"] = finalization
-        self.controller.meeting_state_changed.emit(state_payload)
+        self.meeting_state_changed.emit(state_payload)
 
     def _on_intelligence_event(self, payload: Dict[str, Any]) -> None:
         online = bool(
             payload.get("online", payload.get("intelligence_online", False))
         )
-        self.controller.meeting_status_update.emit(
+        self.meeting_status_update.emit(
             "Meeting intelligence online" if online
             else "Meeting intelligence offline — transcript-only"
         )
@@ -2098,12 +2195,12 @@ class MeetingRuntime:
                 self._card_meeting_id = meeting_id
         state_payload["finalization"] = normalized
         if status == "running":
-            self.controller.meeting_status_update.emit(
+            self.meeting_status_update.emit(
                 message or "Preparing final insights…"
             )
         elif terminal and message:
             # Persistent non-modal feedback; never a meeting_error dialog.
-            self.controller.meeting_status_update.emit(message)
+            self.meeting_status_update.emit(message)
         if finished_now and meeting_id:
             # Queued again in case the storage location changed during the
             # meeting; a no-op while it stays on this computer.
