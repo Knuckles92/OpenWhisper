@@ -20,6 +20,10 @@ from services.update_contract import HEALTH_ARG, PARENT_PID_ARG, TRANSACTION_ARG
 
 BUNDLE_ID = "tech.fiorilabs.openwhisper"
 
+# The macOS updater checks the volume with os.statvfs and stops the app with
+# SIGKILL; neither exists on Windows, where this code never runs.
+posix_only = pytest.mark.skipif(sys.platform == "win32", reason="macOS updater uses os.statvfs and SIGKILL")
+
 
 def make_bundle(path: Path, version: str, bundle_id: str = BUNDLE_ID) -> Path:
     contents = path / "Contents"
@@ -88,6 +92,7 @@ def test_running_bundle_finds_the_app_around_its_executable(installed, tmp_path)
     assert mac.running_bundle(str(loose)) is None
 
 
+@posix_only
 def test_blockers_send_unreplaceable_copies_to_a_manual_install(installed, monkeypatch):
     assert mac.in_place_blocker(str(installed)) is None
     assert "not an installed app" in mac.in_place_blocker(None)
@@ -115,6 +120,7 @@ def test_candidate_must_be_this_app_at_the_release_version(tmp_path, monkeypatch
         mac.verify_candidate(str(good), version="2.7.0", bundle_id=BUNDLE_ID, team_id=None)
 
 
+@posix_only
 def test_prepare_stages_a_verified_copy_beside_the_app(tmp_path, installed, image, signed):
     appdata = str(tmp_path / "data")
     handoff = mac.prepare_in_place_update(
@@ -141,6 +147,7 @@ def test_prepare_returns_the_image_when_the_app_cannot_replace_itself(tmp_path, 
     ) == "/tmp/update.dmg"
 
 
+@posix_only
 def test_prepare_leaves_nothing_behind_when_verification_fails(tmp_path, installed, image, monkeypatch):
     monkeypatch.setattr(mac, "signature_intact", lambda bundle: False)
     monkeypatch.setattr(mac, "team_identifier", lambda bundle: None)
@@ -151,6 +158,7 @@ def test_prepare_leaves_nothing_behind_when_verification_fails(tmp_path, install
     assert not any(Path(mac.transactions_root(str(tmp_path / "data"))).iterdir())
 
 
+@posix_only
 def test_prepare_stops_when_canceled(tmp_path, installed, image, signed):
     cancel = threading.Event()
     cancel.set()
@@ -222,6 +230,7 @@ def helper_args(journal):
     return [TRANSACTION_ARG, journal.transaction_id, PARENT_PID_ARG, str(journal.parent_pid)]
 
 
+@posix_only
 def test_helper_swaps_in_the_new_version_and_drops_the_old_one_once_healthy(
         tmp_path, installed, image, signed):
     appdata, journal = staged(tmp_path, installed, image, parent_pid=999_999_999)
@@ -242,6 +251,7 @@ def test_helper_swaps_in_the_new_version_and_drops_the_old_one_once_healthy(
     assert not Path(mac.transaction_dir(journal.transaction_id, appdata)).exists()
 
 
+@posix_only
 def test_helper_rolls_back_when_the_new_version_does_not_start(tmp_path, installed, image, signed):
     appdata, journal = staged(tmp_path, installed, image, parent_pid=999_999_999)
     launches = []
@@ -262,6 +272,7 @@ def test_helper_rolls_back_when_the_new_version_does_not_start(tmp_path, install
     assert "2.7.0 did not start correctly" in message and "2.6.13 was restored" in message
 
 
+@posix_only
 def test_helper_stops_a_new_version_that_never_reports_healthy(tmp_path, installed, image, signed):
     appdata, journal = staged(tmp_path, installed, image, parent_pid=999_999_999)
     hung = FakeProcess()
@@ -291,6 +302,7 @@ def test_versions_start_through_launch_services(monkeypatch):
     assert isinstance(watched, mac._OpenedApp)
 
 
+@posix_only
 def test_stopping_a_watched_version_signals_the_app_not_open(monkeypatch):
     app = "/Apps/Open Whisper.app/Contents/MacOS/OpenWhisper"
     token = "b" * 32
@@ -319,6 +331,7 @@ def test_stopping_a_version_that_never_started_stops_open(monkeypatch):
     assert signals == [4242]
 
 
+@posix_only
 def test_helper_installs_nothing_while_the_app_is_still_running(tmp_path, installed, image, signed):
     appdata, journal = staged(tmp_path, installed, image, parent_pid=os.getpid())
     launch = MagicMock()
@@ -332,6 +345,7 @@ def test_helper_installs_nothing_while_the_app_is_still_running(tmp_path, instal
     assert mac.load_journal(journal.transaction_id, appdata).state == mac.State.ABANDONED
 
 
+@posix_only
 def test_helper_refuses_a_transaction_for_another_parent(tmp_path, installed, image, signed):
     appdata, journal = staged(tmp_path, installed, image, parent_pid=999_999_999)
     swap = MagicMock()
@@ -340,6 +354,7 @@ def test_helper_refuses_a_transaction_for_another_parent(tmp_path, installed, im
     swap.assert_not_called()
 
 
+@posix_only
 def test_health_acknowledgement_requires_the_matching_swapped_install(tmp_path, installed, image, signed):
     appdata, journal = staged(tmp_path, installed, image, parent_pid=999_999_999)
     token = journal.health_token
@@ -351,6 +366,7 @@ def test_health_acknowledgement_requires_the_matching_swapped_install(tmp_path, 
     assert mac.write_health_acknowledgement(token, appdata, bundle=str(installed))
 
 
+@posix_only
 def test_startup_prune_finishes_interrupted_and_finished_transactions(tmp_path, installed, image, signed):
     appdata, fresh = staged(tmp_path, installed, image, parent_pid=0)
     _, swapped = staged(tmp_path, installed, image, parent_pid=0)
