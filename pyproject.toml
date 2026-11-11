@@ -212,6 +212,7 @@ files = [
     "services/remote_asr/model_management.py",
     "services/remote_asr/runtime.py",
     "services/remote_asr/settings.py",
+    "services/runtime/components.py",
     "services/snippets.py",
     "services/speech_endpoints.py",
     "services/text_transforms.py",
@@ -220,6 +221,7 @@ files = [
     "transcriber/local_backend.py",
     "transcriber/optional_backend.py",
     "ui_qt/dialogs/settings_commands.py",
+    "ui_qt/dialogs/settings_fast_judgments.py",
     "ui_qt/widgets/tabbed_content.py",
 ]
 follow_imports = "silent"

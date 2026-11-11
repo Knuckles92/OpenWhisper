@@ -220,8 +220,8 @@ class MeetingAfterSection(QObject):
 
     def load(self, settings: dict) -> None:
         review_on = (
-            settings.get(SettingsKey.MEETING_INSIGHT_REVIEW) is True
-            and settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == INSIGHT_REVIEW_CONSENT
+            SettingsKey.MEETING_INSIGHT_REVIEW.read(settings)
+            and SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT.read(settings) == INSIGHT_REVIEW_CONSENT
         )
         self.meeting_review_check.setChecked(review_on)
         self.meeting_end_report_check.setChecked(resolve_meeting_end_report(settings))

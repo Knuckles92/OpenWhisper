@@ -497,7 +497,7 @@ def _save_engine_device(controller, name: str, family: str, model: str, target_d
         settings_manager.update_settings({SettingsKey.WHISPER_DEVICE: target_device,
                                           SettingsKey.WHISPER_COMPUTE_TYPE: "auto"})
     else:
-        devices = dict(settings_manager.get(SettingsKey.LOCAL_ASR_DEVICES, {}) or {})
+        devices = dict(SettingsKey.LOCAL_ASR_DEVICES.read(settings_manager.load_all_settings()))
         devices[family] = target_device
         settings_manager.save_setting(SettingsKey.LOCAL_ASR_DEVICES, devices)
     return None
@@ -508,7 +508,7 @@ def _save_engine_model(family: str, model: str) -> Optional[str]:
     from services.local_asr.catalog import BACKENDS, MODELS, WHISPER_BACKEND
 
     if family in BACKENDS and model in MODELS and MODELS[model].backend == family:
-        models = dict(settings_manager.load_all_settings().get(SettingsKey.LOCAL_ASR_MODELS) or {})
+        models = dict(SettingsKey.LOCAL_ASR_MODELS.read(settings_manager.load_all_settings()))
         models[family] = model
         settings_manager.save_setting(SettingsKey.LOCAL_ASR_MODELS, models)
         return MODELS[model].label

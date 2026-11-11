@@ -35,6 +35,7 @@ from services.audio_devices import display_name
 from services.credentials import resolve_credential
 from services.format_utils import format_size_bytes
 from services.settings import (
+    SETTINGS_BY_KEY,
     SettingsKey,
     UiFontScale,
     UiTheme,
@@ -49,7 +50,6 @@ from services.settings import (
     resolve_update_check_enabled,
     resolve_update_notify_enabled,
     resolve_update_restart_prompt_enabled,
-    setting_value,
 )
 from services.text_llm import get_profile, profile_display_name
 from ui_qt import whats_new
@@ -367,7 +367,7 @@ class HomePage(QWidget):
 
     def bind(self, control, destination, attribute, key, resolver=None):
         """Show a setting in ``control`` and save edits through a page's own control."""
-        resolver = resolver or (lambda settings: setting_value(key, settings))
+        resolver = resolver or SETTINGS_BY_KEY[str(key)].read
         self.controls[key] = control
         self._bindings.append((control, resolver))
         signal = (

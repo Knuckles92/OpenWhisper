@@ -31,10 +31,8 @@ from services.hf_access import (
     resolve_model_repo,
 )
 from services.settings import (
-    SETTING_DEFAULTS,
     HuggingFaceAccessPolicy,
     SettingsKey,
-    setting_value,
     settings_manager,
 )
 from transcriber import GpuFallbackCause, LocalWhisperBackend
@@ -399,9 +397,7 @@ class ModelRuntime(QObject):
         if backend is None or not getattr(backend, "gpu_fallback_note", None):
             return
 
-        device = settings_manager.get(
-            SettingsKey.WHISPER_DEVICE, SETTING_DEFAULTS[SettingsKey.WHISPER_DEVICE]
-        )
+        device = SettingsKey.WHISPER_DEVICE.read(settings_manager.load_all_settings())
         if device != "cpu":
             logger.info(
                 f"GPU fallback: reverting whisper device setting "
@@ -419,10 +415,8 @@ class ModelRuntime(QObject):
             and backend is self.controller.transcription_backends.get("local_whisper")
             and getattr(backend, "gpu_fallback_cause", None) == GpuFallbackCause.MISSING_LIBRARIES
             and ComponentId.GPU_ACCEL in available_component_ids()
-            and not settings_manager.get(
-                SettingsKey.WHISPER_GPU_OFFER_DECLINED,
-                SETTING_DEFAULTS[SettingsKey.WHISPER_GPU_OFFER_DECLINED],
-            )
+            and not SettingsKey.WHISPER_GPU_OFFER_DECLINED.read(
+                settings_manager.load_all_settings())
         )
 
     def _offer_gpu_setup(self, backend) -> None:
@@ -548,7 +542,7 @@ class ModelRuntime(QObject):
         if not is_model_cached("tiny.en"):
             return
         settings = settings_manager.load_all_settings()
-        if setting_value(SettingsKey.STREAMING_ENABLED, settings):
+        if SettingsKey.STREAMING_ENABLED.read(settings):
             controller.streaming_runtime.reconfigure_streaming()
 
     def _start_hf_model_task(self, model_name: str, load_into_engine: bool = True) -> None:

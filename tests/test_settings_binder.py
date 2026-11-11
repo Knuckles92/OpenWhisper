@@ -104,7 +104,10 @@ _BOUND_CHECKS = [
     (lambda d: d.update_beta_check, SettingsKey.UPDATE_BETA_TRACK_ENABLED, True, True),
     (lambda d: d.meeting_past_recall_check, SettingsKey.MEETING_PAST_RECALL_ENABLED, True, True),
     (lambda d: d.meeting_context_folder_check, SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED, True, True),
-    (lambda d: d.typesafe_topic_shift_check, SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, "yes", False),
+    # Not a real true/false: the page shows the default (on), which is what the
+    # meeting itself uses for such a value. It used to show off while the
+    # meeting ran with topic shifts on.
+    (lambda d: d.typesafe_topic_shift_check, SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, "yes", True),
     (lambda d: d.typesafe_voice_commands_check, SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, True, True),
     (lambda d: _feature_check(d, "citations"), SettingsKey.TYPESAFE_CITATIONS_ENABLED, True, True),
     (lambda d: _feature_check(d, "highlights"), SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED, True, True),

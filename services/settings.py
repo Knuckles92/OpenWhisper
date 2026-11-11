@@ -1424,9 +1424,9 @@ SETTINGS_BY_KEY: Final[Mapping[str, Setting[Any]]] = MappingProxyType({
 def setting_value(key: str, settings: Optional[Mapping[str, Any]] = None) -> Any:
     """Return the stored value of ``key``, or its default when unset.
 
-    Unvalidated, like ``settings.get(key, default)``. Prefer
-    ``SettingsKey.X.read(settings)``, which validates and is typed; this
-    remains for call sites not yet migrated.
+    Unvalidated, like ``settings.get(key, default)``. Read a setting with
+    ``SettingsKey.X.read(settings)``, which validates and is typed; this is
+    the raw lookup the resolvers in this module are built on.
     ``settings`` is a loaded mapping; None reads the settings file.
     """
     if settings is None:

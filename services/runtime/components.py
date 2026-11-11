@@ -23,7 +23,7 @@ from services.components import (
     install_component,
     uninstall_component,
 )
-from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
+from services.settings import SettingsKey, settings_manager
 
 if TYPE_CHECKING:
     from services.application_controller import ApplicationController
@@ -205,9 +205,7 @@ class ComponentRuntime(QObject):
         if not gpu_runtime_available():
             return  # activation failed; the restart message already covers it
 
-        device = settings_manager.get(
-            SettingsKey.WHISPER_DEVICE, SETTING_DEFAULTS[SettingsKey.WHISPER_DEVICE]
-        )
+        device = SettingsKey.WHISPER_DEVICE.read(settings_manager.load_all_settings())
         if device == "cpu":
             logger.info(
                 "GPU component installed — moving whisper device setting "

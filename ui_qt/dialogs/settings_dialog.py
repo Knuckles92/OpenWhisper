@@ -79,7 +79,6 @@ from services.settings import (
     resolve_update_check_enabled,
     resolve_update_notify_enabled,
     resolve_update_restart_prompt_enabled,
-    setting_value,
     settings_manager,
 )
 from services.text_llm import (
@@ -368,9 +367,9 @@ def _select_combo_data(combo, value) -> None:
 
 
 def _general_rail_value(settings: dict) -> str:
-    if setting_value(SettingsKey.AUTO_PASTE, settings):
+    if SettingsKey.AUTO_PASTE.read(settings):
         return "Auto-paste on"
-    if setting_value(SettingsKey.COPY_CLIPBOARD, settings):
+    if SettingsKey.COPY_CLIPBOARD.read(settings):
         return "Clipboard"
     return "Manual"
 
@@ -1402,24 +1401,24 @@ class SettingsDialog(QDialog):
         self._bindings.checkbox(
             self.auto_paste_check,
             SettingsKey.AUTO_PASTE,
-            lambda settings: setting_value(SettingsKey.AUTO_PASTE, settings),
+            SettingsKey.AUTO_PASTE.read,
         )
         self._bindings.checkbox(
             self.restore_clipboard_check,
             SettingsKey.RESTORE_CLIPBOARD,
-            lambda settings: setting_value(SettingsKey.RESTORE_CLIPBOARD, settings),
+            SettingsKey.RESTORE_CLIPBOARD.read,
         )
         self._bindings.checkbox(
             self.copy_clipboard_check,
             SettingsKey.COPY_CLIPBOARD,
-            lambda settings: setting_value(SettingsKey.COPY_CLIPBOARD, settings),
+            SettingsKey.COPY_CLIPBOARD.read,
         )
         self._bindings.checkbox(
             self.minimize_tray_check,
             SettingsKey.MINIMIZE_TRAY,
             lambda settings: (
                 self._tray_available
-                and setting_value(SettingsKey.MINIMIZE_TRAY, settings)
+                and SettingsKey.MINIMIZE_TRAY.read(settings)
             ),
         )
         self.update_check_check.toggled.connect(self._on_update_check_toggled)
@@ -3129,6 +3128,8 @@ class SettingsDialog(QDialog):
         if self._loading:
             return False
         try:
+            # Deliberately the raw stored value: this asks whether the file
+            # already holds exactly ``value``, not what the setting means.
             if settings_manager.get(key, object()) == value:
                 self._refresh_rail_values()
                 return True
@@ -3278,7 +3279,7 @@ class SettingsDialog(QDialog):
             logger.warning("Couldn't list components for the overview; showing none",
                            exc_info=True)
             components = []
-        policy = settings.get(SettingsKey.HF_ACCESS_POLICY, HuggingFaceAccessPolicy.ASK)
+        policy = SettingsKey.HF_ACCESS_POLICY.read(settings)
         self.home.update_summary(HomeSummary(
             local_items=local_items,
             cloud_items=cloud_items,
@@ -3436,23 +3437,13 @@ class SettingsDialog(QDialog):
         return reply == QMessageBox.StandardButton.Yes
 
     def _load_retention_settings(self, settings: dict) -> None:
-        retention_mode = setting_value(SettingsKey.RECORDING_RETENTION_MODE, settings)
-        retention_index = self.recording_retention_combo.findData(retention_mode)
-        if retention_index < 0:
-            retention_index = self.recording_retention_combo.findData(
-                RecordingRetentionMode.CUSTOM
-            )
+        # Each read is already valid: a known mode, and whole numbers of at least 1.
+        retention_index = self.recording_retention_combo.findData(
+            SettingsKey.RECORDING_RETENTION_MODE.read(settings))
         self.recording_retention_combo.setCurrentIndex(max(0, retention_index))
-        max_recordings = setting_value(SettingsKey.MAX_SAVED_RECORDINGS, settings)
-        try:
-            self.max_recordings_spinbox.setValue(max(1, int(max_recordings)))
-        except (TypeError, ValueError):
-            self.max_recordings_spinbox.setValue(config.MAX_SAVED_RECORDINGS)
-        max_recordings_mb = setting_value(SettingsKey.MAX_SAVED_RECORDINGS_MB, settings)
-        try:
-            self.max_recordings_mb_spinbox.setValue(int(max_recordings_mb))
-        except (TypeError, ValueError):
-            self.max_recordings_mb_spinbox.setValue(config.MAX_SAVED_RECORDINGS_MB)
+        self.max_recordings_spinbox.setValue(SettingsKey.MAX_SAVED_RECORDINGS.read(settings))
+        self.max_recordings_mb_spinbox.setValue(
+            SettingsKey.MAX_SAVED_RECORDINGS_MB.read(settings))
         self._update_recording_retention_ui()
         self._refresh_recordings_usage()
 
@@ -4064,7 +4055,7 @@ class SettingsDialog(QDialog):
             self.update_notify_tile.setEnabled(self.update_check_check.isChecked())
         if self._page_is_loading(RECORDING):
             self._load_retention_settings(settings)
-            self.streaming_enabled_check.setChecked(setting_value(SettingsKey.STREAMING_ENABLED, settings))
+            self.streaming_enabled_check.setChecked(SettingsKey.STREAMING_ENABLED.read(settings))
             self._microphones.load(settings)
         if self._page_is_loading(APPEARANCE):
             self._load_appearance_settings(settings)
@@ -4085,7 +4076,7 @@ class SettingsDialog(QDialog):
 
     def _load_cleanup_pages(self, settings: dict) -> None:
         if self._page_is_loading(CLEANUP):
-            self.transcript_cleanup_check.setChecked(setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings))
+            self.transcript_cleanup_check.setChecked(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED.read(settings))
             # Empty unless a real custom prompt is saved; the preset shows
             # as the placeholder.
             prompt = cleanup_prompts.custom_prompt(settings)
