@@ -56,8 +56,19 @@ def _reader_process(data_dir: Path) -> subprocess.Popen:
 
 
 def _stop(process: subprocess.Popen) -> None:
+    """End the helper so that its lease is released before this returns.
+
+    Closing stdin lets it leave its ``with DataLease`` block and unlock the
+    file itself. Killing it leaves the unlock to the operating system, and
+    Windows releases a dead process's file locks some time after it exits,
+    so the next acquire could still find the data in use.
+    """
     if process.poll() is None:
-        process.terminate()
+        try:
+            process.stdin.close()
+            process.wait(timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            process.terminate()
     process.wait(timeout=10)
     for stream in (process.stdin, process.stdout, process.stderr):
         if stream is not None:
