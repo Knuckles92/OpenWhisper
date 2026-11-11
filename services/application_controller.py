@@ -3,41 +3,17 @@
 from __future__ import annotations
 
 import logging
-import socket
-import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
 from config import config
-from services.component_runtime import activate_component
-from services.components import (
-    ComponentCanceled,
-    ComponentError,
-    ComponentId,
-    available_component_ids,
-    component_coordinator,
-    gpu_runtime_available,
-    install_component,
-    uninstall_component,
-)
+from services.components import component_coordinator
 from services.database import db
-from services.hf_access import (
-    AccessDecision,
-    ConsentAction,
-    delete_model_from_cache,
-    describe_model_download_error,
-    download_model_files,
-    hf_access_coordinator,
-    is_hf_hub_offline_env_set,
-    is_model_cached,
-    resolve_model_repo,
-)
 from services import dictionary
 from services.recorder import AudioRecorder
 from services.runtime import (
@@ -47,19 +23,18 @@ from services.runtime import (
     TranscriptionRuntime,
 )
 from services.runtime.command import CommandRuntime
+from services.runtime.components import ComponentRuntime
+from services.runtime.models import ModelRuntime
+from services.runtime.remote import RemoteRuntime
+from services.runtime.updater import UpdaterRuntime
 from services.runtime.walkthrough import WalkthroughRuntime
 from services.actions.runtime import ActionRuntime
 from services.dictation_pipeline import JobMode
 from services.settings import (
-    SETTING_DEFAULTS,
-    HuggingFaceAccessPolicy,
-    SettingsKey,
     seed_new_install_settings,
-    setting_value,
     settings_manager,
 )
 from transcriber import (
-    GpuFallbackCause,
     LocalWhisperBackend,
     OpenAIBackend,
     TranscriptionBackend,
@@ -67,18 +42,8 @@ from transcriber import (
 
 logger = logging.getLogger(__name__)
 
-#: How often the Remote engine's watch reads its connection. Reading sends
-#: nothing; websockets keeps the socket's state current on its own thread.
-REMOTE_WATCH_INTERVAL_MS = 1000
-#: Seconds before each automatic reconnect to an unreachable host; the last
-#: repeats until it answers.
-REMOTE_RETRY_DELAYS_S = (2, 5, 15, 30, 60)
 #: What the user's Cancel says when it found nothing to cancel.
 NOTHING_TO_CANCEL = "Nothing to cancel"
-#: Least wait after an update check before the next one, whatever the stored
-#: times say: a copy that cannot save them must not ask GitHub again at once.
-UPDATE_RECHECK_FLOOR_MS = 60 * 60 * 1000
-
 
 def _import_openai_sdk() -> None:
     """Warm-up target: a later client build then only constructs the client."""
@@ -86,20 +51,6 @@ def _import_openai_sdk() -> None:
         import openai  # noqa: F401
     except Exception:
         logger.debug("openai SDK warm-up failed", exc_info=True)
-
-
-@dataclass
-class _ClientModelSwitch:
-    """A paired computer's model choice, answered on the Qt thread."""
-
-    family: str
-    model: str
-    device_name: str
-    runtime: Optional[dict] = None
-    target_device: Optional[str] = None
-    #: Why the switch can't happen now; empty once it is queued.
-    error: Optional[str] = None
-    done: threading.Event = field(default_factory=threading.Event)
 
 
 class PreviewEvents:
@@ -157,7 +108,6 @@ class ApplicationController(QObject):
     recording_capture_failed = pyqtSignal(str)
     history_persisted = pyqtSignal(object)
     startup_database_ready = pyqtSignal(str)
-    remote_catalog_received = pyqtSignal(object, object, object)
     # Multi-file upload, emitted from the batch worker thread.
     # (1-based position, total, source name) as each file starts
     batch_progress = pyqtSignal(int, int, str)
@@ -192,83 +142,11 @@ class ApplicationController(QObject):
     # (readout, engine is loaded and usable)
     device_info_update = pyqtSignal(str, bool)
     engine_busy_changed = pyqtSignal(bool)
-    # The Remote engine's link may read differently (emitted from any thread;
-    # the slot takes a fresh RemoteLink on the Qt thread).
-    remote_link_poke = pyqtSignal()
-    # The Remote engine settled: a background reconnect's restore_link()
-    # outcome, or "reload" when a reload of it finished.
-    remote_settled = pyqtSignal(str)
-    # Reconnect now (emitted from any thread; hotkeys start recordings off it).
-    remote_retry_requested = pyqtSignal()
-    remote_job_retry_requested = pyqtSignal(object)  # the waiting worker's event
     # Arm the engine reload's debounce timer (emitted from any thread; hotkeys
     # and transcription workers ask for reloads off the Qt thread).
     reload_debounce_requested = pyqtSignal()
-    # Host: the paired computers connected now, as connected_clients() lists them.
-    remote_clients_changed = pyqtSignal(list)
     # Hop streaming setup onto the Qt main thread after the first local load.
     streaming_setup_requested = pyqtSignal()
-    # Consent for Hugging Face model downloads: emitted (possibly from worker
-    # threads) with (model_name, env_blocked, load_into_engine); the connected
-    # slot shows the consent dialog on the Qt main thread. load_into_engine is
-    # True for the selected-model flow (download + load) and False for
-    # Settings → Downloads fetch-only downloads.
-    hf_consent_requested = pyqtSignal(str, bool, bool)
-    runtime_consent_requested = pyqtSignal(str)
-    model_download_started = pyqtSignal(str)
-    model_download_progress = pyqtSignal(str, int, int)
-    model_download_finished = pyqtSignal(str, bool)
-    model_deleted = pyqtSignal(str, bool, str)
-    model_cache_changed = pyqtSignal()
-    # Batched fetch-only downloads (Settings → Downloads): the approved plan up
-    # front, then started/finished per model, then (completed, planned).
-    batch_download_planned = pyqtSignal(list)
-    batch_download_finished = pyqtSignal(int, int)
-    # Downloadable components (emitted possibly from worker threads).
-    # (component_id, phase, done_units, total_units); throttled in the worker
-    # so a multi-gigabyte download cannot flood the Qt event queue.
-    component_progress = pyqtSignal(str, str, int, int)
-    component_install_started = pyqtSignal(str)
-    # (component_id, success, message). Unlike model downloads there are many
-    # distinct user-facing failure causes, so the message is carried along.
-    component_install_finished = pyqtSignal(str, bool, str)
-    component_state_changed = pyqtSignal()
-    # A local model load ended in a GPU→CPU fallback (emitted possibly from
-    # worker threads); the connected slot reverts the persisted device setting
-    # and raises a cause-specific warning on the Qt main thread.
-    gpu_fallback_detected = pyqtSignal()
-    # Meeting Mode signals may originate from engine worker threads.
-    meeting_engine_event = pyqtSignal(object, str, object)
-    meeting_state_changed = pyqtSignal(object)
-    meeting_status_update = pyqtSignal(str)
-    meeting_error = pyqtSignal(str)
-    meeting_server_started = pyqtSignal(object)
-    meeting_recovery_found = pyqtSignal(object)
-    meeting_recovery_scan_failed = pyqtSignal(str)
-    # One-time cloud-intelligence consent; the connected slot shows the
-    # consent dialog on the Qt main thread and routes the result back into
-    # MeetingRuntime.on_consent_result (mirrors hf_consent_requested).
-    meeting_consent_requested = pyqtSignal()
-    # Unsupported-platform acknowledgement before a hotkey start; hops to
-    # the Qt main thread the same way meeting_consent_requested does.
-    meeting_platform_ack_requested = pyqtSignal()
-    # Guest URL ready for clipboard copy (clipboard access is main-thread only).
-    meeting_guest_link_ready = pyqtSignal(str)
-    # Past Meetings sidebar rebuild; always hop to the Qt GUI thread.
-    past_meetings_refresh_requested = pyqtSignal()
-    # App updater: (result_or_none, error, manual).
-    update_check_finished = pyqtSignal(object, str, bool)
-    update_download_progress = pyqtSignal(object, str, int, int)
-    update_download_finished = pyqtSignal(object, object, str)
-    # The Remote engine's pairing changed (emitted from the pairing worker).
-    remote_pairing_changed = pyqtSignal()
-    # This computer's owner renamed the paired host; same pairing, new name.
-    remote_host_renamed = pyqtSignal()
-    # Records moved between this computer and its paired host, either way.
-    records_changed = pyqtSignal()
-    # A paired computer chose one of this computer's models (emitted from its
-    # connection thread with a _ClientModelSwitch the slot answers).
-    client_model_switch_requested = pyqtSignal(object)
     # Shortcut actions, emitted from the hotkey dispatcher thread and handled
     # on the Qt thread. A transform shortcut carries the transform's id.
     transform_requested = pyqtSignal(str)
@@ -327,15 +205,6 @@ class ApplicationController(QObject):
         self.hotkey_manager = None
         self.streaming_transcriber = None
         self._streaming_backend = None
-        # Set from the Qt thread, read in the batch download worker; a plain
-        # bool flag is enough because stopping is only checked between models.
-        self._batch_stop_requested = False
-        self._runtime_prompted = set()
-        # The "Use this GPU" offer: None until shown, then "shown" while it is
-        # open and "answered" after. A missing model's download consent waits
-        # for it, since the answer decides which model and device to fetch for.
-        self._gpu_offer_state: Optional[str] = None
-
         self.transcription_backends: Dict[str, TranscriptionBackend] = {}
         self.current_backend: Optional[TranscriptionBackend] = None
         self._current_model_name = config.DEFAULT_BACKEND
@@ -380,32 +249,6 @@ class ApplicationController(QObject):
         # such as which model a remote engine switch is loading.
         self._reload_note = ""
 
-        # The Remote engine's watch: a tick that reads the socket's state
-        # (nothing is sent) while Remote is selected, and a backed-off quiet
-        # reconnect when the host drops or can't be reached.
-        self._remote_watch = QTimer()
-        self._remote_watch.setInterval(REMOTE_WATCH_INTERVAL_MS)
-        self._remote_watch.timeout.connect(self._on_remote_watch)
-        self._remote_retry_timer = QTimer()
-        self._remote_retry_timer.setSingleShot(True)
-        self._remote_retry_timer.timeout.connect(self._retry_remote)
-        self._remote_retry_step = 0
-        self._remote_retry_at: Optional[float] = None
-        self._remote_restoring = False
-        self._remote_job_retry: Optional[threading.Event] = None
-        self._remote_link = None
-        # device_info the watch last reported, so repeat failures stay quiet.
-        self._remote_reported = ""
-
-        self._update_check_timer = QTimer()
-        self._update_check_timer.setSingleShot(True)
-        self._update_check_timer.timeout.connect(self._maybe_start_update_check)
-        # A launch asks GitHub without waiting out the interval since the
-        # last successful check; that interval only spaces a running app's.
-        self._launch_update_check_pending = False
-        self._update_cancel = threading.Event()
-        self._update_attempt = None
-        self._update_download_lock = threading.Lock()
         self.update_readiness_error = ""
 
         # Exclusive mode: True while a meeting session runs; dictation start
@@ -420,6 +263,10 @@ class ApplicationController(QObject):
         self.walkthrough_runtime = WalkthroughRuntime(self)
         self._preview_events = PreviewEvents(self.transcription_runtime.publish_preview)
         self.meeting_runtime = MeetingRuntime(self)
+        self.remote = RemoteRuntime(self)
+        self.models = ModelRuntime(self)
+        self.components = ComponentRuntime(self)
+        self.updater = UpdaterRuntime(self)
 
         self._setup_transcription_backends(local_backend=local_backend)
         self._setup_ui_callbacks()
@@ -450,20 +297,20 @@ class ApplicationController(QObject):
             self.transcription_backends[key] = LocalSpeechBackend(key)
         from transcriber.remote_backend import REMOTE_BACKEND, RemoteSpeechBackend
         remote = RemoteSpeechBackend()
-        remote.on_link_changed = self.remote_link_poke.emit
+        remote.on_link_changed = self.remote.remote_link_poke.emit
         self.transcription_backends[REMOTE_BACKEND] = remote
         from services.remote_asr.service import RemoteEngineService
         # Serves whichever engine is selected here, when sharing is on, and
         # lets paired computers switch it to another model ready here.
         self.remote_engine = RemoteEngineService(
             lambda: self.current_backend,
-            on_client_changed=self.remote_pairing_changed.emit,
-            on_host_catalog=self.remote_catalog_received.emit,
-            switch_engine=self._switch_engine_for_client,
-            configure_engine=self._configure_engine_for_client,
+            on_client_changed=self.remote.remote_pairing_changed.emit,
+            on_host_catalog=self.remote.remote_catalog_received.emit,
+            switch_engine=self.remote.switch_engine_for_client,
+            configure_engine=self.remote.configure_engine_for_client,
             engine_settled=self._engine_settled,
         )
-        self.remote_engine.add_listener(self._on_remote_host_event)
+        self.remote_engine.add_listener(self.remote.on_host_event)
         self.ui_controller.remote_engine = self.remote_engine
         from services.remote_records.sync import record_sync
         # Where this computer's records go while paired; waits on the meeting
@@ -473,7 +320,7 @@ class ApplicationController(QObject):
         if meetings is not None:
             meetings.busy = self.meeting_runtime.meeting_busy
             meetings.in_use_check = self.meeting_runtime.meeting_in_use
-        record_sync.add_listener(self._on_record_sync_event)
+        record_sync.add_listener(self.remote.on_record_sync_event)
         self.ui_controller.record_sync = record_sync
         saved_model = settings_manager.load_model_selection()
         self._current_model_name = saved_model
@@ -505,30 +352,30 @@ class ApplicationController(QObject):
         self.ui_controller.on_whisper_settings_changed = self._on_local_engine_settings_changed
         self.ui_controller.on_audio_device_changed = self.change_audio_device
         self.ui_controller.on_streaming_settings_changed = self.reconfigure_streaming
-        self.ui_controller.on_hf_policy_changed = self.on_hf_policy_changed
-        self.ui_controller.on_model_download_requested = self.request_model_download
-        self.ui_controller.on_model_delete_requested = self.request_model_delete
+        self.ui_controller.on_hf_policy_changed = self.models.on_hf_policy_changed
+        self.ui_controller.on_model_download_requested = self.models.request_model_download
+        self.ui_controller.on_model_delete_requested = self.models.request_model_delete
         self.ui_controller.on_model_batch_download = (
-            self.request_model_batch_download
+            self.models.request_model_batch_download
         )
-        self.ui_controller.on_model_batch_stop = self.cancel_model_batch_download
-        self.ui_controller.get_loaded_local_model = self.get_loaded_local_model
-        self.ui_controller.get_remote_models = self.remote_models
-        self.ui_controller.on_remote_model_selected = self.select_remote_model
-        self.ui_controller.on_host_model_selected = self.select_host_model
-        self.ui_controller.on_remote_runtime_selected = self.select_remote_runtime
-        self.ui_controller.get_missing_local_runtime = self.get_missing_local_runtime
+        self.ui_controller.on_model_batch_stop = self.models.cancel_model_batch_download
+        self.ui_controller.get_loaded_local_model = self.models.get_loaded_local_model
+        self.ui_controller.get_remote_models = self.remote.remote_models
+        self.ui_controller.on_remote_model_selected = self.remote.select_remote_model
+        self.ui_controller.on_host_model_selected = self.remote.select_host_model
+        self.ui_controller.on_remote_runtime_selected = self.remote.select_remote_runtime
+        self.ui_controller.get_missing_local_runtime = self.models.get_missing_local_runtime
         self.ui_controller.on_dictation_transcribe = self.transcribe_clip
         self.ui_controller.get_meeting_active = self.is_meeting_active
-        self.ui_controller.on_component_install = self.request_component_install
-        self.ui_controller.on_component_cancel = self.cancel_component_install
-        self.ui_controller.on_component_remove = self.request_component_uninstall
+        self.ui_controller.on_component_install = self.components.request_install
+        self.ui_controller.on_component_cancel = self.components.cancel_install
+        self.ui_controller.on_component_remove = self.components.request_uninstall
         self.ui_controller.on_check_for_updates = (
-            lambda: self.request_update_check(manual=True)
+            lambda: self.updater.request_check(manual=True)
         )
-        self.ui_controller.on_update_download = self.request_update_download
-        self.ui_controller.on_update_cancel = self.cancel_update_download
-        self.ui_controller.on_update_abandon = self.discard_update_handoff
+        self.ui_controller.on_update_download = self.updater.request_download
+        self.ui_controller.on_update_cancel = self.updater.cancel_download
+        self.ui_controller.on_update_abandon = self.updater.discard_handoff
         self.ui_controller.get_transcribing = self.is_transcribing
         self.ui_controller.get_current_backend = lambda: self.current_backend
         self.ui_controller.on_paste_text_now = self.transcription_runtime.paste_text_now
@@ -604,7 +451,7 @@ class ApplicationController(QObject):
             automation_service.reload(kind)
         if kind == "updates":
             # Turning automatic checks back on checks once it is due.
-            self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)
+            self.updater.schedule_check()
 
     def reload_whisper_model(self) -> None:
         """Schedule a debounced, background reload of the local whisper model.
@@ -734,7 +581,7 @@ class ApplicationController(QObject):
         # A remote engine that can't connect has no local runtime to install.
         remote = getattr(selected, "is_remote", False)
         if unloaded and not selected.is_model_missing and not leased and not remote:
-            self.runtime_consent_requested.emit(selected.model_name)
+            self.models.runtime_consent_requested.emit(selected.model_name)
         # The preview shares this worker, so it can only be set up
         # once the load has settled. A remote engine is whatever the host
         # runs now, so its preview is checked again after every reload.
@@ -743,7 +590,7 @@ class ApplicationController(QObject):
         self._flush_pending_streaming_setup()
         if remote and selected is self.current_backend:
             # Starts the link watch, and retries a host that didn't answer.
-            self.remote_settled.emit("reload")
+            self.remote.remote_settled.emit("reload")
 
     def _reload_whisper_worker(self) -> None:
         """Reload the local backend off the UI thread; report results via signals.
@@ -775,7 +622,7 @@ class ApplicationController(QObject):
                     logger.info(f"Whisper reloaded: {info}")
                 # After the ready status, so the warning is what remains visible.
                 if getattr(local_backend, "gpu_fallback_note", None):
-                    self.gpu_fallback_detected.emit()
+                    self.models.gpu_fallback_detected.emit()
             else:
                 logger.warning("Local whisper backend not found")
                 self.status_update.emit("Ready")
@@ -886,159 +733,12 @@ class ApplicationController(QObject):
             return "The selected API transcription engine needs a valid API key"
         return "The selected transcription engine is unavailable"
 
-    def request_update_check(self, manual: bool = True) -> None:
-        """Run a GitHub latest-release check on a worker thread."""
-        self.executor.submit(self._update_check_worker, manual)
-
-    def _maybe_start_update_check(self) -> None:
-        """Run the automatic check if it is due, else wait until it is."""
-        wait_ms = self._update_check_wait_ms(
-            interval_s=0 if self._launch_update_check_pending else None
-        )
-        if wait_ms == 0:
-            self._launch_update_check_pending = False
-            self.request_update_check(manual=False)
-        elif wait_ms is not None:
-            self._update_check_timer.start(wait_ms)
-
-    def _update_check_wait_ms(self, interval_s: Optional[int] = None) -> Optional[int]:
-        """Milliseconds until the automatic check is due; None when it is off.
-
-        ``interval_s`` replaces the usual wait since the last successful check.
-        """
-        from services.app_update import seconds_until_auto_check
-
-        try:
-            wait_s = seconds_until_auto_check(interval_s=interval_s)
-        except Exception as exc:
-            logger.warning("Could not read the update-check schedule: %s", exc)
-            return None
-        return None if wait_s is None else int(wait_s * 1000)
-
-    def _update_check_worker(self, manual: bool) -> None:
-        from services.app_update import AppUpdateError, check_for_update
-
-        try:
-            result = check_for_update()
-        except Exception as exc:
-            logger.warning("Update check failed: %s", exc)
-            message = str(exc) if isinstance(exc, AppUpdateError) else (
-                "Could not check for updates."
-            )
-            self.update_check_finished.emit(None, message, manual)
-            return
-        self.update_check_finished.emit(result, "", manual)
-
-    def _on_update_check_finished(self, result, error: str, manual: bool) -> None:
-        # The check saved its time, success or failure; wait from there.
-        wait_ms = self._update_check_wait_ms()
-        if wait_ms is not None:
-            self._update_check_timer.start(max(wait_ms, UPDATE_RECHECK_FLOOR_MS))
-        if error and not manual:
-            from services.app_update import update_check_failure_status
-
-            # Background news: offline, it used to land two seconds after
-            # "Model download failed" and hide the reason the app can't work.
-            show = getattr(self.ui_controller, "set_ambient_status", None)
-            if show is not None:
-                show(update_check_failure_status(error))
-        handler = getattr(self.ui_controller, "on_update_check_finished", None)
-        if handler:
-            handler(result, error, manual)
-
-    def request_update_download(self, result, force_setup: bool = False) -> None:
-        """Download and prepare one verified update attempt on the worker."""
-        # Never clear and reuse a prior token: a quick retry must not revive a
-        # canceled worker that has not unwound yet.
-        self._update_cancel.set()
-        cancel = threading.Event()
-        attempt = object()
-        self._update_cancel = cancel
-        self._update_attempt = attempt
-        self.component_executor.submit(
-            self._update_download_worker,
-            result,
-            force_setup,
-            cancel,
-            attempt,
-        )
-
-    def cancel_update_download(self) -> None:
-        self._update_cancel.set()
-
     def is_transcribing(self) -> bool:
         runtime = getattr(self, "transcription_runtime", None)
         if runtime is not None and runtime.has_active_job:
             return True
         backend = getattr(self, "current_backend", None)
         return bool(backend and getattr(backend, "is_transcribing", False))
-
-    def _update_download_worker(
-        self,
-        result,
-        force_setup: bool = False,
-        cancel: Optional[threading.Event] = None,
-        attempt=None,
-    ) -> None:
-        token = cancel if cancel is not None else self._update_cancel
-
-        def is_current() -> bool:
-            return attempt is None or self._update_attempt is attempt
-
-        release = getattr(result, "release", None)
-        if release is None:
-            if is_current():
-                self.update_download_finished.emit(attempt, None, "No installer is available.")
-            return
-
-        def progress(phase: str, done: int, total: int) -> None:
-            if is_current() and not token.is_set():
-                self.update_download_progress.emit(attempt, phase, done, total)
-
-        from services.app_update import apply_update
-
-        try:
-            with self._update_download_lock:
-                handoff = apply_update(
-                    result,
-                    progress=progress,
-                    cancel=token,
-                    force_setup=force_setup,
-                )
-        except Exception as exc:
-            logger.warning("Update download failed: %s", exc)
-            message = str(exc) if str(exc) else "The download failed."
-            if is_current():
-                self.update_download_finished.emit(attempt, None, message)
-            return
-        if token.is_set() or not is_current():
-            from services.app_update import discard_prepared_result
-
-            discard_prepared_result(handoff)
-            if is_current():
-                self.update_download_finished.emit(attempt, None, "The download was canceled.")
-            return
-        self.update_download_finished.emit(attempt, handoff, "")
-
-    def discard_update_handoff(self, handoff: str) -> None:
-        from services.app_update import discard_prepared_result
-
-        self.component_executor.submit(discard_prepared_result, handoff)
-
-    def _on_update_download_progress(self, attempt, phase, done, total) -> None:
-        if attempt is self._update_attempt and not self._update_cancel.is_set():
-            self.ui_controller.on_update_download_progress(phase, done, total)
-
-    def _on_update_download_finished(self, attempt, handoff, error) -> None:
-        if attempt is not self._update_attempt or self._update_cancel.is_set():
-            if handoff:
-                self.discard_update_handoff(handoff)
-            if attempt is self._update_attempt:
-                self.ui_controller.on_update_download_finished(
-                    None, "The update was canceled."
-                )
-            return
-        self.ui_controller.on_update_download_finished(handoff, error)
 
     def setup_backup(self) -> None:
         from services.backup_manager import BackupCoordinator
@@ -1074,7 +774,8 @@ class ApplicationController(QObject):
                     or meeting._archive_starting or meeting._retry_meeting_id):
                 return "Finish the meeting and its processing before backing up or restoring."
             dialog = getattr(self.ui_controller, "_settings_dialog", None)
-            if dialog is not None and getattr(dialog, "_rule_dictation_state", "idle") != "idle":
+            rules = getattr(dialog, "cleanup_rules", None) if dialog is not None else None
+            if getattr(rules, "dictation_state", "idle") != "idle":
                 return "Finish dictating the cleanup rule before backing up or restoring."
             self._backup_in_progress = True
         central = self.ui_controller.main_window.centralWidget()
@@ -1157,7 +858,7 @@ class ApplicationController(QObject):
             else:
                 QTimer.singleShot(0, self.ensure_local_model_available)
                 if backend is not None and getattr(backend, "gpu_fallback_note", None):
-                    self.gpu_fallback_detected.emit()
+                    self.models.gpu_fallback_detected.emit()
                 QTimer.singleShot(0, self.streaming_runtime.setup_streaming)
         else:
             QTimer.singleShot(0, self.streaming_runtime.setup_streaming)
@@ -1167,15 +868,14 @@ class ApplicationController(QObject):
         if not self._startup_database_requested:
             self._startup_database_requested = True
             self._startup_executor.submit(self._initialize_startup_database)
-        self.component_executor.submit(self._prune_update_leftovers)
+        self.component_executor.submit(self.updater.prune_leftovers)
         # Measures every installed runtime (a walk of ~30k files for Qwen)
         # and probes the system GPU runtime, both remembered, so Settings'
         # first open doesn't do it on the Qt thread.
         self.component_executor.submit(component_coordinator.list_components)
         # The GitHub metadata check waits out startup; after it, the timer
         # re-arms itself for as long as the app runs.
-        self._launch_update_check_pending = True
-        self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)
+        self.updater.schedule_check(launch=True)
         # Share this computer's engine if Settings says so. Its own thread:
         # a first run creates the TLS certificate, and the two executors can
         # be busy for minutes with model loads and installs.
@@ -1239,167 +939,7 @@ class ApplicationController(QObject):
         except Exception:
             logger.debug("Could not start the openai SDK warm-up", exc_info=True)
 
-    # ---- remote engine: choosing the paired computer's model ----
-
-    def remote_models(self):
-        """What the Remote engine's Model field shows (a ``RemoteModels``)."""
-        remote = self.transcription_backends.get("remote")
-        return remote.model_choices() if remote is not None else None
-
-    def select_remote_model(self, family: str, model: str) -> None:
-        """Client: switch the paired computer to one of its models.
-
-        The choice rides on the next reload, which asks the host to load it
-        and reconnects to what the host then runs, so the Model field's
-        switch shows the same busy state as any other engine change.
-        """
-        remote = self.transcription_backends.get("remote")
-        if remote is None or self.current_backend is not remote:
-            return
-        current = remote.current_model
-        if current is not None and current.key == (family, model):
-            return
-        refusal = None
-        if self.is_meeting_active():
-            refusal = "End the meeting before changing the engine"
-        elif self.recorder.is_recording or self.is_transcribing():
-            refusal = "Finish recording before changing the engine"
-        if refusal:
-            self.status_update.emit(refusal)
-            self.ui_controller.refresh_remote_models()
-            return
-        choice = remote.request_model(family, model)
-        host = remote.host_name or "the remote computer"
-        self._reload_note = f"Switching {host} to {choice.label}..."
-        self.reload_whisper_model()
-
-    def _switch_engine_for_client(
-        self, family: str, model: str, device_name: str, device: Optional[str] = None
-    ) -> None:
-        """Host: switch to a model a paired computer chose, and wait for the answer.
-
-        Called on that computer's connection thread. The switch itself runs
-        on the Qt thread, like any engine change; this raises RuntimeError
-        with the reason when it can't happen now.
-        """
-        request = _ClientModelSwitch(family, model, device_name, target_device=device)
-        self.client_model_switch_requested.emit(request)
-        if not request.done.wait(10.0):
-            raise RuntimeError(f"{socket.gethostname()} didn't respond. Try again in a moment.")
-        if request.error:
-            raise RuntimeError(request.error)
-
-    def select_remote_runtime(self, family: str, model: str, changes: dict) -> None:
-        remote = self._selected_remote()
-        if remote is None:
-            return
-        if (self.is_meeting_active() or self.recorder.is_recording or self.is_transcribing()
-                or self._reload_in_flight or self._reload_pending):
-            self.status_update.emit("Finish the current activity before changing the remote runtime")
-            self.ui_controller.refresh_remote_models()
-            return
-        try:
-            remote.request_runtime(family, model, changes)
-        except ValueError as exc:
-            self.status_update.emit(str(exc))
-            self.ui_controller.refresh_remote_models()
-            return
-        self._reload_note = f"Updating the runtime on {remote.host_name or 'the remote computer'}..."
-        self.reload_whisper_model()
-
-    def _configure_engine_for_client(self, family: str, model: str, changes: dict, device_name: str) -> None:
-        request = _ClientModelSwitch(family, model, device_name, runtime=changes)
-        self.client_model_switch_requested.emit(request)
-        if not request.done.wait(10.0):
-            raise RuntimeError(f"{socket.gethostname()} didn't respond. Try again in a moment.")
-        if request.error:
-            raise RuntimeError(request.error)
-
-    def _on_client_model_switch(self, request: "_ClientModelSwitch") -> None:
-        try:
-            if request.target_device is not None:
-                request.error = self._switch_engine_to(request.family, request.model, request.device_name,
-                                                      target_device=request.target_device)
-            elif request.runtime is None:
-                request.error = self._switch_engine_to(request.family, request.model, request.device_name)
-            else:
-                request.error = self._switch_engine_to(request.family, request.model, request.device_name,
-                                                      runtime=request.runtime)
-        except Exception as exc:
-            logger.exception("Switching models for a paired computer failed")
-            request.error = f"{socket.gethostname()} couldn't switch models: {exc}"
-        finally:
-            request.done.set()
-
-    def select_host_model(self, family: str, model: str) -> Optional[str]:
-        """Host Mode's engine picker: serve another model ready on this computer.
-
-        Switches the way a paired computer's request does, so every view
-        follows. Returns why it can't, or None once the switch is under way.
-        """
-        try:
-            return self._switch_engine_to(family, model, None)
-        except Exception as exc:
-            logger.exception("Switching the served model failed")
-            return f"Couldn't switch models: {exc}"
-
-    def _switch_engine_to(self, family: str, model: str, device_name: Optional[str], *,
-                          runtime: Optional[dict] = None,
-                          target_device: Optional[str] = None) -> Optional[str]:
-        """Select a model here as the user would; returns why not, or None once queued.
-
-        Persists the model the way the engine fields do, selects its backend
-        through the main window so every view follows, and queues the reload
-        whose end ``_engine_settled`` reports. ``device_name`` is the paired
-        computer that asked, or None when it was asked for on this computer.
-        """
-        name = socket.gethostname() if device_name else "This computer"
-        refusal = _engine_switch_refusal(self, name)
-        if refusal is not None:
-            return refusal
-        refusal = _apply_engine_overrides(self, name, family, model, runtime, target_device)
-        if refusal is not None:
-            return refusal
-        label = _save_engine_model(family, model)
-        if label is None:
-            return f"{name} can't run {model}."
-        if device_name:
-            logger.info("Paired computer %s switched this computer to %s", device_name, label)
-        else:
-            logger.info("Host Mode switched this computer to %s", label)
-        if not _select_backend_family(self, family):
-            return f"{name} couldn't switch to {label} right now."
-        if runtime is None and target_device is None and _whisper_already_serves(self, family, model):
-            return None  # Selecting the backend was all it took.
-        self._reload_note = (f"Switching to {label} for {device_name}..." if device_name
-                             else f"Switching to {label}...")
-        self.reload_whisper_model()
-        return None
-
-    def _on_remote_pairing_changed(self) -> None:
-        """Reconnect the Remote engine after pairing or forgetting a host."""
-        self.record_sync.wake(now=True)
-        self.records_changed.emit()
-        if self._current_model_name == "remote":
-            self._cancel_remote_retry()
-            self.reload_whisper_model()
-            return
-        remote = self.transcription_backends.get("remote")
-        if remote is not None:
-            remote.cleanup()
-
-    def _on_remote_host_renamed(self) -> None:
-        """Call the paired host its new name everywhere, without reconnecting."""
-        remote = self.transcription_backends.get("remote")
-        pairing = self.remote_engine.client_pairing()
-        if remote is not None and pairing is not None:
-            remote.host_renamed(pairing)
-        selected = self._selected_remote()
-        if selected is not None:
-            self._remote_reported = selected.device_info
-            self.device_info_update.emit(selected.device_info, selected.is_available())
-        self.ui_controller.refresh_remote_models()
-        self.records_changed.emit()
+    # ---- the selected engine ----
 
     def _on_local_engine_settings_changed(self) -> None:
         """A local engine's model, device or quantization changed in Settings."""
@@ -1408,1014 +948,14 @@ class ApplicationController(QObject):
             return
         self.reload_whisper_model()
 
-    # ---- remote engine: watching the connection ----
-
     def _selected_remote(self):
         """The Remote engine while it is the selected one, else None."""
         backend = self.current_backend
         return backend if getattr(backend, "is_remote", False) else None
 
-    def _watch_remote(self) -> None:
-        """Start the link watch while Remote is selected; its tick stops it after."""
-        if self._selected_remote() is not None and not self._remote_watch.isActive():
-            self._remote_watch.start()
-        self._publish_remote_link()
-
-    def _on_remote_watch(self) -> None:
-        remote = self._selected_remote()
-        if remote is None:
-            self._remote_watch.stop()
-            self._cancel_remote_retry()
-            self._remote_link = None
-            return
-        if remote.check_link():
-            # Closed between requests: say so now, not at the next recording.
-            self.device_info_update.emit(remote.device_info, False)
-        if not remote.is_available():
-            self._schedule_remote_retry()
-        self._publish_remote_link()
-
-    def _publish_remote_link(self) -> None:
-        """Hand the engine card a fresh RemoteLink when it reads differently."""
-        remote = self._selected_remote()
-        if remote is None:
-            return
-        from dataclasses import replace
-
-        link = replace(remote.link(), retry_at=self._remote_retry_at)
-        if link != self._remote_link:
-            self._remote_link = link
-            self.ui_controller.set_remote_link(link)
-
-    def _schedule_remote_retry(self) -> None:
-        """Try the host again after the next backoff delay, unless already due."""
-        remote = self._selected_remote()
-        if (remote is None or remote.is_available() or self._remote_restoring
-                or self._remote_retry_timer.isActive()):
-            return
-        if remote.link().state == "unpaired":
-            return
-        delays = REMOTE_RETRY_DELAYS_S
-        delay = delays[min(self._remote_retry_step, len(delays) - 1)]
-        self._remote_retry_step += 1
-        self._remote_retry_at = time.monotonic() + delay
-        self._remote_retry_timer.start(int(delay * 1000))
-        self._watch_remote()
-
-    def _cancel_remote_retry(self) -> None:
-        self._remote_retry_timer.stop()
-        self._remote_retry_at = None
-        self._remote_retry_step = 0
-
-    def retry_remote_now(self) -> None:
-        """Reconnect to the paired computer now. Safe from any thread."""
-        self.remote_retry_requested.emit()
-
-    def retry_remote_for_transcription(self, settled: threading.Event) -> None:
-        """Ask Qt to start or join a reconnect and signal when it settles."""
-        self.remote_job_retry_requested.emit(settled)
-
-    def _retry_remote_for_transcription(self, settled: threading.Event) -> None:
-        remote = self._selected_remote()
-        if remote is None or remote.is_available():
-            settled.set()
-            return
-        self._remote_job_retry = settled
-        self._retry_remote()
-
-    def _retry_remote(self) -> None:
-        remote = self._selected_remote()
-        if (remote is None or self._remote_restoring or self._reload_in_flight
-                or (self._reload_pending and self._remote_job_retry is None)):
-            return
-        self._remote_retry_timer.stop()
-        self._remote_retry_at = None
-        if remote.is_available():
-            self._cancel_remote_retry()
-            self._publish_remote_link()
-            return
-        self._remote_restoring = True
-        self._publish_remote_link()
-        threading.Thread(
-            target=self._remote_restore_worker, args=(remote,),
-            name="remote-reconnect", daemon=True,
-        ).start()
-
-    def _remote_restore_worker(self, remote) -> None:
-        try:
-            outcome = remote.restore_link()
-        except Exception:
-            logger.exception("Remote engine reconnect failed")
-            outcome = "offline"
-        self.remote_settled.emit(outcome)
-
-    def _on_remote_settled(self, outcome: str) -> None:
-        """A reconnect attempt or a reload of the Remote engine ended (Qt thread)."""
-        if outcome != "reload":
-            self._remote_restoring = False
-        remote = self._selected_remote()
-        if self._remote_job_retry is not None:
-            self._remote_job_retry.set()
-            self._remote_job_retry = None
-        if remote is None:
-            return
-        available = remote.is_available()
-        if outcome != "reload" and (available or outcome == "changed"
-                                    or remote.device_info != self._remote_reported):
-            # A reload reports its own result; a quiet retry only when it
-            # changed something, so a host that stays away doesn't clear the
-            # status line every minute.
-            self.device_info_update.emit(remote.device_info, available)
-        self._remote_reported = remote.device_info
-        if available:
-            self._cancel_remote_retry()
-            if outcome != "reload":
-                # The preview may be waiting for a first connection, or be
-                # built for another engine than the host runs now.
-                self._pending_streaming_setup = True
-                self._flush_pending_streaming_setup()
-        elif outcome != "unpaired":
-            self._schedule_remote_retry()
-        self._watch_remote()
-
-    def _on_engine_busy_for_host(self, busy: bool) -> None:
-        """A load settled: paired computers learn if the shared engine changed."""
-        remote_engine = getattr(self, "remote_engine", None)
-        if not busy and remote_engine is not None:
-            remote_engine.engine_changed()
-
-    def _on_remote_host_event(self, kind: str) -> None:
-        """Host: which paired computers are connected, and busy (any thread)."""
-        if kind in ("clients", "activity", "state"):
-            self.remote_clients_changed.emit(self.remote_engine.connected_clients())
-        if kind == "models":
-            self.model_cache_changed.emit()
-        if kind == "components":
-            self.component_state_changed.emit()
-            self.model_cache_changed.emit()
-        if kind == "records":
-            # A paired computer stored or removed a record here.
-            self.records_changed.emit()
-        if kind == "host_renamed":
-            self.remote_host_renamed.emit()
-
-    def _on_record_sync_event(self, kind: str) -> None:
-        """Client: a record moved to, or came back from, the paired host (any thread)."""
-        if kind == "records":
-            self.records_changed.emit()
-
-    def _on_records_changed(self) -> None:
-        self.ui_controller.main_window.refresh_history()
-        self.ui_controller.main_window.refresh_past_meetings()
-
-    def _on_remote_catalog(self, pairing, ready: dict, catalog: dict) -> None:
-        remote = self.transcription_backends.get("remote")
-        if remote is not None and remote.refresh_host_catalog(pairing, ready, catalog):
-            self.ui_controller.refresh_remote_models()
-
-    def _prune_update_leftovers(self) -> None:
-        """Collect the downloads and transactions an earlier update left behind."""
-        from services.app_update import prune_stale_downloads
-        from services.app_update_apply import prune_abandoned_transactions
-
-        try:
-            removed = prune_stale_downloads()
-        except Exception:
-            logger.exception("Could not prune finished update downloads")
-        else:
-            if removed:
-                logger.info(
-                    "Removed finished update downloads: %s", ", ".join(removed)
-                )
-        if sys.platform == "darwin":
-            from services.app_update_macos import prune_transactions
-
-            try:
-                removed = prune_transactions()
-            except Exception:
-                logger.exception("Could not prune Mac update transactions")
-            else:
-                if removed:
-                    logger.info("Removed Mac update transactions: %s", ", ".join(removed))
-        try:
-            transactions = prune_abandoned_transactions()
-            from services.setup_update import cleanup_setup_backup
-            from services.app_update_apply import running_app_dir
-            cleanup_setup_backup(running_app_dir())
-        except Exception:
-            logger.exception("Could not prune abandoned update transactions")
-            return
-        if transactions:
-            logger.info(
-                "Removed abandoned update transactions: %s", ", ".join(transactions)
-            )
-
-    def on_hf_policy_changed(self, policy: str) -> None:
-        """React to a Hugging Face access-policy change from Settings.
-
-        Switching to ``always`` authorizes downloads without prompting, so a
-        missing selected model can be fetched right away. Other policies take
-        effect on the next model request without further action.
-        """
-        from transcriber.optional_backend import LocalSpeechBackend
-        if policy == HuggingFaceAccessPolicy.ALWAYS and isinstance(
-            self.current_backend, (LocalWhisperBackend, LocalSpeechBackend)
-        ):
-            self.ensure_local_model_available()
-
-    def _local_model_backend(self):
-        """The engine whose local model is in play; Whisper while the API engine is selected."""
-        if self._current_model_name != "api":
-            return self.current_backend
-        return self.transcription_backends.get("local_whisper")
-
     def ensure_local_model_available(self) -> None:
-        """Make sure the local Whisper model is loaded, requesting consent if needed.
-
-        Safe to call from any thread: consent dialogs are raised on the Qt
-        main thread via ``hf_consent_requested``, and downloads run on the
-        executor. Concurrent calls for the same model are deduplicated by the
-        access coordinator so at most one dialog and one download exist.
-        """
-        backend = self._local_model_backend()
-        if backend is None or backend.is_available():
-            return
-        if not getattr(backend, "is_model_missing", False):
-            # Load failed for another reason (hardware, corrupt install);
-            # downloading would not help.
-            return
-        if self._gpu_offer_waiting(backend):
-            # Asked after "Use this GPU" is answered: it may pick another
-            # model, and accepting grants this download itself. The offer
-            # (idempotent) is what shows; declining it calls back here.
-            self.gpu_fallback_detected.emit()
-            return
-
-        model_name = backend.model_name
-        if not hf_access_coordinator.begin_request(model_name):
-            return  # consent dialog or download already in flight
-
-        try:
-            # Advisory check only — the download worker performs the
-            # authoritative (grant-consuming) evaluation before any network.
-            decision = hf_access_coordinator.evaluate_access(
-                model_name, consume_grant=False
-            )
-        except Exception:
-            hf_access_coordinator.end_request(model_name)
-            raise
-
-        if decision in (AccessDecision.LOAD_CACHED, AccessDecision.DOWNLOAD_ALLOWED):
-            self._start_hf_model_task(model_name)
-        elif decision == AccessDecision.BLOCKED_BY_ENV:
-            self.hf_consent_requested.emit(model_name, True, True)
-        else:  # NEEDS_CONSENT
-            self.hf_consent_requested.emit(model_name, False, True)
-
-    def get_missing_local_runtime(self) -> Optional[str]:
-        """Use the runtime resolved by the backend, including auto's CPU fallback."""
-        from services.components import is_installed
-        from transcriber.optional_backend import LocalSpeechBackend
-
-        backend = self.current_backend
-        if isinstance(backend, LocalSpeechBackend):
-            component_id = backend.runtime_component
-            if component_id and not is_installed(component_id):
-                return component_id
-        return None
-
-    def get_loaded_local_model(self) -> Optional[str]:
-        """Return the loaded model so its memory-mapped files cannot be deleted."""
-        backend = self._local_model_backend()
-        if backend is not None and backend.is_available():
-            return getattr(backend, "last_loaded_model", None)
-        return None
-
-    def request_model_download(self, model_name: str) -> None:
-        """Fetch a model into the local cache via the consent flow (Settings → Downloads).
-
-        Fetch-only: the download never changes the active model selection or
-        touches the loaded engine (unless the model happens to be the missing
-        selected one, in which case the worker also loads it). Routes through
-        the same coordinator policy/grant/dedup machinery as
-        ``ensure_local_model_available``.
-
-        """
-        from services.local_asr.catalog import missing_runtime
-
-        self._runtime_prompted.discard(missing_runtime(model_name, settings_manager.load_all_settings()))
-        if not hf_access_coordinator.begin_request(model_name):
-            return
-
-        try:
-            decision = hf_access_coordinator.evaluate_access(
-                model_name, consume_grant=False
-            )
-        except Exception:
-            hf_access_coordinator.end_request(model_name)
-            raise
-
-        if decision == AccessDecision.LOAD_CACHED:
-            # The manager's row was stale — files are already present.
-            hf_access_coordinator.end_request(model_name)
-            self.model_cache_changed.emit()
-            self.runtime_consent_requested.emit(model_name)
-        elif decision == AccessDecision.DOWNLOAD_ALLOWED:
-            self._start_hf_model_task(model_name, load_into_engine=False)
-        elif decision == AccessDecision.BLOCKED_BY_ENV:
-            self.hf_consent_requested.emit(model_name, True, False)
-        else:  # NEEDS_CONSENT
-            self.hf_consent_requested.emit(model_name, False, False)
-
-    def request_model_batch_download(self, model_names: List[str]) -> None:
-        """Fetch several models back-to-back via Settings → Downloads.
-
-        The window's confirmation dialog acts as consent for every listed
-        model, so no per-model consent dialogs appear; the worker grants
-        each model immediately before fetching it. Runs strictly
-        sequentially on the shared executor — parallel multi-gigabyte
-        extractions thrash disk and network without finishing sooner.
-        """
-        if is_hf_hub_offline_env_set():
-            self.status_update.emit("Downloads are disabled by HF_HUB_OFFLINE")
-            return
-        if hf_access_coordinator.requests_in_flight:
-            # Keep the app's one-download-at-a-time invariant even when the
-            # request came from somewhere else (e.g. a single-model download).
-            self.status_update.emit(
-                "Another model request is in progress — try again when it finishes"
-            )
-            return
-        pending = hf_access_coordinator.claim_batch(model_names)
-        if not pending:
-            # Everything requested is already cached or in flight; rescan so
-            # stale rows correct themselves.
-            self.model_cache_changed.emit()
-            return
-        self._batch_stop_requested = False
-        self.batch_download_planned.emit(pending)
-        self.executor.submit(self._hf_batch_worker, pending)
-
-    def cancel_model_batch_download(self) -> None:
-        """Stop the queue once the model currently downloading finishes."""
-        self._batch_stop_requested = True
-
-    def request_model_delete(self, model_name: str) -> None:
-        """Delete a model's files from the local HF cache (Settings → Downloads).
-
-        Refuses to delete the currently loaded model: ctranslate2 memory-maps
-        the files, so removal would fail (Windows) or yank data out from under
-        the engine. The coordinator's request slot also guards against a
-        concurrent download of the same model.
-
-        """
-        from services.local_asr.catalog import MODELS
-        if model_name in MODELS and self.is_meeting_active():
-            self.model_deleted.emit(model_name, False, "End the meeting before removing speech models")
-            return
-        backend = (self.transcription_backends.get(MODELS[model_name].backend)
-                   if model_name in MODELS else self.transcription_backends.get("local_whisper"))
-        if backend is not None and backend.is_available():
-            loaded = getattr(backend, "last_loaded_model", None)
-            if loaded and resolve_model_repo(loaded) == resolve_model_repo(model_name):
-                self.model_deleted.emit(
-                    model_name, False, "Model is in use — switch models first"
-                )
-                return
-
-        if not hf_access_coordinator.begin_request(model_name):
-            self.model_deleted.emit(
-                model_name, False, "A download for this model is in progress"
-            )
-            return
-
-        self.executor.submit(self._model_delete_worker, model_name)
-
-    def _model_delete_worker(self, model_name: str) -> None:
-        try:
-            with self._engine_lock:
-                from services.local_asr.catalog import MODELS
-                if model_name in MODELS:
-                    backend = self.transcription_backends.get(MODELS[model_name].backend)
-                    if self.is_meeting_active() or (
-                        backend and backend.is_available() and backend.last_loaded_model == model_name
-                    ):
-                        raise RuntimeError("Model is in use — switch models first")
-                delete_model_from_cache(model_name)
-        except (PermissionError, OSError) as exc:
-            logger.error(f"Model delete failed for '{model_name}': {exc}")
-            self.model_deleted.emit(
-                model_name, False, "Files are in use by another process"
-            )
-        except Exception as exc:
-            logger.error(f"Model delete failed for '{model_name}': {exc}")
-            self.model_deleted.emit(model_name, False, str(exc))
-        else:
-            self.status_update.emit(f"Model '{model_name}' deleted")
-            self.model_deleted.emit(model_name, True, "")
-            self.model_cache_changed.emit()
-        finally:
-            hf_access_coordinator.end_request(model_name)
-
-    def _on_hf_consent_requested(
-        self, model_name: str, env_blocked: bool, load_into_engine: bool
-    ) -> None:
-        """Show the consent dialog and act on the result (Qt main thread).
-
-        The request slot claimed by the requester is either handed to the
-        download worker or released here.
-        """
-        policy = hf_access_coordinator.get_policy()
-        try:
-            action = self.ui_controller.show_hf_consent_dialog(
-                model_name, policy, env_blocked
-            )
-        except Exception:
-            hf_access_coordinator.end_request(model_name)
-            raise
-
-        if env_blocked:
-            hf_access_coordinator.end_request(model_name)
-            self.status_update.emit(
-                f"Model '{model_name}' unavailable — downloads disabled by HF_HUB_OFFLINE"
-            )
-            return
-
-        if action == ConsentAction.DOWNLOAD_ONCE:
-            hf_access_coordinator.grant_once(model_name)
-            self._start_hf_model_task(model_name, load_into_engine)
-        elif action == ConsentAction.ALWAYS_ALLOW:
-            hf_access_coordinator.set_policy(HuggingFaceAccessPolicy.ALWAYS)
-            self._start_hf_model_task(model_name, load_into_engine)
-        elif action == ConsentAction.OPEN_SETTINGS:
-            hf_access_coordinator.end_request(model_name)
-            self.ui_controller.open_settings_dialog(focus_hf_policy=True)
-        else:  # canceled: no network activity
-            hf_access_coordinator.end_request(model_name)
-            self.status_update.emit(
-                f"Model '{model_name}' is unavailable — download declined"
-            )
-            if load_into_engine:
-                # A declined Downloads-page download must not touch the
-                # selected model.
-                self._revert_declined_model_selection(model_name)
-
-    def _revert_declined_model_selection(self, declined_model: str) -> None:
-        """Roll the whisper-model selection back to the last loaded model.
-
-        Declining a download would otherwise leave the settings (and the
-        engine combos) pointing at a model that was never downloaded, with no
-        usable engine. Reverting to the previously loaded model — still in the
-        local cache — keeps the selection aligned with what can actually run.
-        Runs on the Qt main thread (called from the consent slot).
-        """
-        from services.local_asr.catalog import MODELS
-        if declined_model in MODELS:
-            return
-        backend = self.transcription_backends.get("local_whisper")
-        if backend is None or backend.is_available():
-            return
-
-        last_loaded = getattr(backend, "last_loaded_model", None)
-        if not last_loaded or last_loaded == declined_model:
-            # Nothing ever loaded (e.g. fresh install) — leave the selection
-            # alone; the status message already reports it as unavailable.
-            return
-
-        logger.info(
-            f"Reverting whisper model selection from '{declined_model}' "
-            f"to '{last_loaded}' after declined download"
-        )
-        settings_manager.save_setting(SettingsKey.WHISPER_MODEL, last_loaded)
-        # Background reload picks the reverted model up from settings; it is
-        # cached, so this never re-enters the consent flow.
-        self.reload_whisper_model()
-
-    def request_component_install(self, component_id: str) -> None:
-        """Start an install unless the same component is already in flight."""
-        from services.local_asr.catalog import RUNTIME_IDS
-        from transcriber.optional_backend import LocalSpeechBackend
-        if component_id in RUNTIME_IDS:
-            if (self.is_meeting_active() or self.recorder.is_recording
-                    or self.is_transcribing() or self._reload_in_flight):
-                self.status_update.emit("Finish the current speech job before installing its runtime")
-                return
-            for backend in self.transcription_backends.values():
-                if isinstance(backend, LocalSpeechBackend) and backend.runtime_component == component_id:
-                    backend.cleanup()
-        cancel_event = component_coordinator.begin_install(component_id)
-        if cancel_event is None:
-            return
-
-        self.component_install_started.emit(component_id)
-        self.component_executor.submit(
-            self._component_install_worker, component_id, cancel_event
-        )
-
-    def cancel_component_install(self, component_id: str) -> None:
-        component_coordinator.cancel_install(component_id)
-
-    def request_component_uninstall(self, component_id: str) -> None:
-        from services.local_asr.catalog import RUNTIME_IDS
-        if component_id in RUNTIME_IDS:
-            if (self.is_meeting_active() or self.recorder.is_recording
-                    or self.is_transcribing() or self._reload_in_flight):
-                self.status_update.emit("Finish the current speech job before removing its runtime")
-                return
-            self.component_executor.submit(self._component_uninstall_worker, component_id)
-        else:
-            self._component_uninstall_worker(component_id)
-
-    def _component_uninstall_worker(self, component_id: str) -> None:
-        try:
-            from services.local_asr.catalog import RUNTIME_IDS
-            from transcriber.optional_backend import LocalSpeechBackend
-            with self._engine_lock:
-                if component_id in RUNTIME_IDS:
-                    if (self.is_meeting_active() or self.recorder.is_recording
-                            or self.is_transcribing() or self._reload_in_flight):
-                        raise RuntimeError("Finish the current speech job before removing its runtime")
-                    for backend in self.transcription_backends.values():
-                        if isinstance(backend, LocalSpeechBackend) and backend.runtime_component == component_id:
-                            backend.cleanup()
-                            self.device_info_update.emit(backend.device_info, False)
-                uninstall_component(component_id)
-            self.status_update.emit("Component removed")
-        except Exception as exc:
-            logger.error("Failed to remove component '%s': %s", component_id, exc)
-            self.status_update.emit(f"Could not remove the component: {exc}")
-        finally:
-            self.component_state_changed.emit()
-
-    def _component_install_worker(
-        self, component_id: str, cancel_event
-    ) -> None:
-        """Download and install a component off the Qt thread.
-
-        Progress is emitted at most ~10 times per second: a 2 GB download in
-        1 MiB chunks would otherwise queue thousands of cross-thread events
-        and visibly stall the UI.
-
-        """
-        last_emit = [0.0]
-        last_percent = [-1]
-
-        def progress(phase: str, done: int, total: int) -> None:
-            now = time.monotonic()
-            percent = int(done * 100 / total) if total > 0 else -1
-            is_final = total > 0 and done >= total
-            if (now - last_emit[0] < 0.1
-                    and percent == last_percent[0]
-                    and not is_final):
-                return
-            last_emit[0] = now
-            last_percent[0] = percent
-            self.component_progress.emit(component_id, phase, done, total)
-
-        success, message = False, ""
-        try:
-            entry = component_coordinator.catalog_entry(component_id)
-            if entry is None:
-                raise ComponentError(
-                    "Could not reach the download server. Check your internet "
-                    "connection and try again."
-                )
-
-            install_component(component_id, entry, progress, cancel_event)
-            success = True
-            # Activate in the running process so the component works without a
-            # restart: Windows resolves DLL names fresh on every load attempt,
-            # so registering the new directory now is enough. The engine reload
-            # that actually picks the GPU up happens on the main thread, in
-            # _on_component_install_finished.
-            activated, activation_reason = activate_component(component_id)
-            if activated:
-                message = "Installed and ready to use — no restart needed."
-            else:
-                logger.warning(
-                    f"Component '{component_id}' installed but could not be "
-                    f"activated in this session: {activation_reason}"
-                )
-                message = "Restart OpenWhisper to enable this component."
-        except ComponentCanceled:
-            message = "Installation canceled."
-            logger.info(f"Install of '{component_id}' was canceled")
-        except ComponentError as exc:
-            message = str(exc)
-            logger.error(f"Install of '{component_id}' failed: {exc}")
-        except Exception as exc:
-            message = f"Installation failed: {exc}"
-            logger.error(f"Install of '{component_id}' failed", exc_info=True)
-        finally:
-            component_coordinator.end_install(component_id)
-            self.component_install_finished.emit(component_id, success, message)
-            self.component_state_changed.emit()
-
-    def _on_component_install_finished(
-        self, component_id: str, success: bool, _message: str
-    ) -> None:
-        """Put a freshly installed GPU component to use (Qt main thread).
-
-        A persisted device of "cpu" is moved back to "auto" first: it is
-        either the residue of an earlier GPU fallback (see
-        ``_on_gpu_fallback``) or a pre-existing choice the install supersedes —
-        nobody downloads a ~1 GB CUDA runtime to keep transcribing on the CPU.
-        "auto" rather than "cuda" so machines without a usable GPU degrade
-        silently instead of falling back again.
-        """
-        from transcriber.optional_backend import LocalSpeechBackend
-        from services.local_asr.catalog import RUNTIME_IDS
-        # A remote engine runs on the host, so nothing installed here changes it.
-        remote = self._selected_remote() is not None
-        if success and component_id in RUNTIME_IDS and isinstance(self.current_backend, LocalSpeechBackend):
-            if not remote:
-                self.reload_whisper_model()
-            return
-        if not success or component_id != ComponentId.GPU_ACCEL:
-            return
-        if not gpu_runtime_available():
-            return  # activation failed; the restart message already covers it
-
-        device = settings_manager.get(
-            SettingsKey.WHISPER_DEVICE, SETTING_DEFAULTS[SettingsKey.WHISPER_DEVICE]
-        )
-        if device == "cpu":
-            logger.info(
-                "GPU component installed — moving whisper device setting "
-                "from 'cpu' back to 'auto'"
-            )
-            settings_manager.save_setting(SettingsKey.WHISPER_DEVICE, "auto")
-
-        backend = self.transcription_backends.get("local_whisper")
-        if (
-            backend is not None
-            and backend.is_available()
-            and getattr(backend, "device", None) == "cuda"
-        ):
-            return  # already on the GPU (e.g. a component update)
-        if remote:
-            return  # Local Whisper picks the GPU up when it next loads
-
-        self.reload_whisper_model()
-
-    def _on_gpu_fallback(self) -> None:
-        """Reflect a GPU→CPU fallback in settings and the UI (Qt main thread).
-
-        Persists the device the engine actually uses, so the Device combo does
-        not claim CUDA while transcription runs on the CPU, and raises a
-        status message that names the fix instead of just the symptom.
-        """
-        backend = self.transcription_backends.get("local_whisper")
-        if backend is None or not getattr(backend, "gpu_fallback_note", None):
-            return
-
-        device = settings_manager.get(
-            SettingsKey.WHISPER_DEVICE, SETTING_DEFAULTS[SettingsKey.WHISPER_DEVICE]
-        )
-        if device != "cpu":
-            logger.info(
-                f"GPU fallback: reverting whisper device setting "
-                f"from '{device}' to 'cpu'"
-            )
-            settings_manager.save_setting(SettingsKey.WHISPER_DEVICE, "cpu")
-
-        self.status_update.emit(self._describe_gpu_fallback(backend))
-        self._offer_gpu_setup(backend)
-
-    # ---- "Use this GPU" ----
-
-    def _gpu_offer_waiting(self, backend) -> bool:
-        """The offer is due or open for this backend. Cheap; any thread."""
-        return (
-            self._gpu_offer_state != "answered"
-            and backend is self.transcription_backends.get("local_whisper")
-            and getattr(backend, "gpu_fallback_cause", None) == GpuFallbackCause.MISSING_LIBRARIES
-            and ComponentId.GPU_ACCEL in available_component_ids()
-            and not settings_manager.get(
-                SettingsKey.WHISPER_GPU_OFFER_DECLINED,
-                SETTING_DEFAULTS[SettingsKey.WHISPER_GPU_OFFER_DECLINED],
-            )
-        )
-
-    def _offer_gpu_setup(self, backend) -> None:
-        """Offer one action for the GPU the libraries are missing for (Qt thread).
-
-        Shown once: "Keep using the CPU" is remembered, and GPU
-        Acceleration stays in Downloads either way. A model download that
-        waited on the answer carries on after "Keep using the CPU".
-        """
-        if self._gpu_offer_state is not None or not self._gpu_offer_waiting(backend):
-            return
-        if self.is_meeting_active() or self.recorder.is_recording or self.is_transcribing():
-            return  # asked at the next load instead
-        from services.gpu_setup import plan_gpu_setup
-
-        supported = getattr(backend, "_get_supported_compute_types", None)
-        try:
-            plan = plan_gpu_setup(
-                settings_manager.load_all_settings(), supported("cuda")
-            ) if supported is not None else None
-        except Exception:
-            logger.warning("Could not plan GPU setup", exc_info=True)
-            plan = None
-        if plan is None or (plan.model_download_bytes and is_hf_hub_offline_env_set()):
-            self._gpu_offer_state = "answered"
-            self.ensure_local_model_available()
-            return
-        self._gpu_offer_state = "shown"
-        try:
-            accepted = self.ui_controller.show_use_gpu_dialog(plan)
-        finally:
-            self._gpu_offer_state = "answered"
-        if accepted:
-            self._start_gpu_setup(plan)
-        else:
-            settings_manager.save_setting(SettingsKey.WHISPER_GPU_OFFER_DECLINED, True)
-            self.ensure_local_model_available()
-
-    def _start_gpu_setup(self, plan) -> None:
-        """Carry out an accepted "Use this GPU" (Qt thread).
-
-        The dialog is the consent for the model download too. With the CUDA
-        libraries missing, installing them comes first, and
-        ``_on_component_install_finished`` reloads the engine when it lands;
-        the reload then finds the model missing and downloads it on this
-        grant, and loads it on the GPU.
-        """
-        logger.info(
-            "Setting up Local Whisper on the GPU: %s at %s (install CUDA: %s, download: %s)",
-            plan.model, plan.compute_type, plan.install_component, bool(plan.model_download_bytes),
-        )
-        settings_manager.save_setting(SettingsKey.WHISPER_DEVICE, "auto")
-        if plan.switches_model:
-            settings_manager.save_setting(SettingsKey.WHISPER_MODEL, plan.model_setting)
-        if plan.model_download_bytes:
-            hf_access_coordinator.grant_once(plan.model)
-        if plan.install_component:
-            self.status_update.emit("Installing GPU Acceleration...")
-            self.request_component_install(ComponentId.GPU_ACCEL)
-        else:
-            self.reload_whisper_model()
-
-    @staticmethod
-    def _describe_gpu_fallback(backend) -> str:
-        cause = getattr(backend, "gpu_fallback_cause", None)
-        if cause == GpuFallbackCause.OUT_OF_MEMORY:
-            return (
-                "GPU out of memory — using CPU. Pick a smaller model or int8 "
-                "quantization, then set the device back to auto."
-            )
-        if (
-            cause == GpuFallbackCause.MISSING_LIBRARIES
-            and ComponentId.GPU_ACCEL in available_component_ids()
-        ):
-            return (
-                "GPU found, but CUDA is not installed — using CPU. Install "
-                "GPU Acceleration from Downloads to enable it."
-            )
-        if cause == GpuFallbackCause.MISSING_LIBRARIES:
-            return (
-                "GPU found, but its CUDA libraries are missing — using CPU. "
-                "Install requirements-gpu.txt to enable GPU acceleration."
-            )
-        return "GPU failed to load — using CPU. See openwhisper.log for details."
-
-    def _hf_download_progress(self, model_name: str):
-        """Return a throttled byte-progress callback for one model download."""
-        last_emit = [0.0]
-        last_percent = [-1]
-
-        def progress(done: int, total: int) -> None:
-            now = time.monotonic()
-            percent = int(done * 100 / total) if total > 0 else -1
-            is_final = total > 0 and done >= total
-            if (
-                now - last_emit[0] < 0.1
-                and percent == last_percent[0]
-                and not is_final
-            ):
-                return
-            last_emit[0] = now
-            last_percent[0] = percent
-            self.model_download_progress.emit(model_name, done, total)
-
-        return progress
-
-    def _on_model_download_finished(self, model_name: str, success: bool) -> None:
-        """Load a downloaded optional model, or activate the tiny.en preview."""
-        from transcriber.optional_backend import LocalSpeechBackend
-        if success:
-            self._prompt_for_model_runtime(model_name)
-        if success and isinstance(self.current_backend, LocalSpeechBackend):
-            # A remote engine's model_name is the host's, and downloading the
-            # same model here doesn't change what the host runs.
-            if self.current_backend.model_name == model_name and self._selected_remote() is None:
-                self.reload_whisper_model()
-            return
-        if not success or model_name != "tiny.en":
-            return
-        if not is_model_cached("tiny.en"):
-            return
-        settings = settings_manager.load_all_settings()
-        if setting_value(SettingsKey.STREAMING_ENABLED, settings):
-            self.streaming_runtime.reconfigure_streaming()
-
-    def _start_hf_model_task(self, model_name: str, load_into_engine: bool = True) -> None:
-        """Run an approved load or fetch-only download on a worker."""
-        from services.local_asr.catalog import MODELS
-        if model_name in MODELS:
-            load_into_engine = False
-            self.runtime_consent_requested.emit(model_name)
-        if load_into_engine:
-            self.engine_busy_changed.emit(True)
-        self.model_download_started.emit(model_name)
-        self.executor.submit(self._hf_model_worker, model_name, load_into_engine)
-
-    def _prompt_for_model_runtime(self, model_name: str) -> None:
-        """Ask once per runtime per session, on the Qt thread.
-
-        On Auto with no runtime yet, an NVIDIA GPU that can run the model is
-        offered first, with the CPU runtime Auto falls back to as the
-        alternative. Installing either ends the question.
-        """
-        from services.local_asr.catalog import gpu_runtime_offer, missing_runtime
-
-        if (is_hf_hub_offline_env_set() or self._reload_in_flight
-                or self.is_meeting_active() or self.recorder.is_recording or self.is_transcribing()):
-            return
-        settings = settings_manager.load_all_settings()
-        component = missing_runtime(model_name, settings)
-        if not component or component in self._runtime_prompted or component_coordinator.is_installing(component):
-            return
-        gpu_component = gpu_runtime_offer(model_name, settings)
-        if gpu_component and component_coordinator.is_installing(gpu_component):
-            return
-        self._runtime_prompted.add(component)
-        if gpu_component:
-            chosen = self.ui_controller.show_gpu_runtime_dialog(model_name, gpu_component, component)
-        else:
-            chosen = component if self.ui_controller.show_required_runtime_dialog(model_name, component) else None
-        if chosen:
-            self.ui_controller.open_downloads(component_id=chosen)
-            self.request_component_install(chosen)
-
-    def _hf_model_worker(self, model_name: str, load_into_engine: bool = True) -> None:
-        from services.local_asr.catalog import MODELS
-        requested_load = load_into_engine
-        load_into_engine = load_into_engine and model_name not in MODELS
-        backend = self.transcription_backends.get("local_whisper")
-        success = False
-        downloaded = False
-        try:
-            if self._shutdown_cancel.is_set():
-                return
-            if not load_into_engine:
-                success = self._download_model_to_cache(model_name)
-                return
-            if self._refuse_engine_load_during_meeting():
-                return
-            if not self._fetch_model_for_engine(model_name):
-                return
-            downloaded = success = True
-            # A download can finish after the user switched engines or started
-            # a meeting. Only the selected engine may acquire resident weights.
-            with self._engine_lock:
-                if (self._shutting_down or self._refuse_engine_load_during_meeting()
-                        or self.current_backend is not backend):
-                    return
-                backend.reload_model(model_name)
-                success = backend.is_available()
-                self.device_info_update.emit(backend.device_info, success)
-                self.status_update.emit("Whisper engine ready" if success else "Model failed to load")
-                if getattr(backend, "gpu_fallback_note", None):
-                    self.gpu_fallback_detected.emit()
-        except Exception as exc:
-            logger.error("Model download/load failed for '%s': %s", model_name, exc)
-            self.status_update.emit(
-                f"Model '{model_name}' failed to load (details in openwhisper.log)."
-                if downloaded else describe_model_download_error(model_name, exc)
-            )
-        finally:
-            hf_access_coordinator.end_request(model_name)
-            self.model_download_finished.emit(model_name, success)
-            if success:
-                self.model_cache_changed.emit()
-            if requested_load:
-                self.engine_busy_changed.emit(False)
-
-    def _fetch_model_for_engine(self, model_name: str) -> bool:
-        """Download ``model_name`` if access allows; False when it is unavailable."""
-        decision = hf_access_coordinator.evaluate_access(model_name)
-        if decision == AccessDecision.DOWNLOAD_ALLOWED:
-            self.status_update.emit(f"Downloading model '{model_name}'...")
-            download_model_files(model_name, progress_callback=self._hf_download_progress(model_name),
-                                 cancel=self._shutdown_cancel)
-        elif decision != AccessDecision.LOAD_CACHED:
-            self.status_update.emit(f"Model '{model_name}' is unavailable")
-            return False
-        return True
-
-    def _download_model_to_cache(self, model_name: str) -> bool:
-        """Fetch-only worker body shared by single and batched downloads.
-
-        The caller owns the coordinator request slot and the
-        started/finished signals; this only evaluates access (consuming any
-        grant), downloads, and bridges the engine revival when the fetched
-        model happens to be the missing selected one. Returns True when the
-        files are present afterwards.
-        """
-        if self._shutdown_cancel.is_set():
-            return False
-        backend = self.transcription_backends.get("local_whisper")
-        decision = hf_access_coordinator.evaluate_access(model_name)
-        if decision not in (
-            AccessDecision.LOAD_CACHED,
-            AccessDecision.DOWNLOAD_ALLOWED,
-        ):
-            logger.warning(
-                f"Fetch of '{model_name}' aborted: access decision {decision}"
-            )
-            self.status_update.emit(f"Model '{model_name}' is unavailable")
-            return False
-        if decision == AccessDecision.DOWNLOAD_ALLOWED:
-            self.status_update.emit(
-                f"Downloading model '{model_name}' from Hugging Face..."
-            )
-            download_model_files(
-                model_name,
-                progress_callback=self._hf_download_progress(model_name),
-                cancel=self._shutdown_cancel,
-            )
-            self.status_update.emit(f"Model '{model_name}' downloaded")
-        # Bridge: fetching the currently-missing selected model also
-        # revives the engine (now a pure cache hit, no consent re-entry).
-        if (
-            backend is not None
-            and self.current_backend is backend
-            and getattr(backend, "is_model_missing", False)
-            and backend.model_name == model_name
-        ):
-            # The download itself succeeded, so this still reports True; only
-            # reviving the engine waits for the meeting to end.
-            if self._refuse_engine_load_during_meeting():
-                return True
-            with self._engine_lock:
-                if self._shutting_down or self.is_meeting_active() or self.current_backend is not backend:
-                    return True
-                backend.reload_model(model_name)
-            if backend.is_available():
-                self.device_info_update.emit(backend.device_info, True)
-                self.status_update.emit("Whisper engine ready")
-            if getattr(backend, "gpu_fallback_note", None):
-                self.gpu_fallback_detected.emit()
-        return True
-
-    def _hf_batch_worker(self, model_names: List[str]) -> None:
-        """Download a confirmed queue of models strictly sequentially.
-
-        Each model is granted and announced right before its own download;
-        stopping between models releases the remaining slots so no consent
-        or request claim outlives the queue.
-        """
-        processed = 0
-        succeeded = 0
-        try:
-            for model_name in model_names:
-                if self._batch_stop_requested or self._shutdown_cancel.is_set():
-                    break
-                hf_access_coordinator.grant_once(model_name)
-                self.model_download_started.emit(model_name)
-                success = False
-                try:
-                    success = self._download_model_to_cache(model_name)
-                except Exception as exc:
-                    logger.error(f"Model download failed for '{model_name}': {exc}")
-                    self.status_update.emit(
-                        describe_model_download_error(model_name, exc)
-                    )
-                finally:
-                    # ``claim_batch`` transfers ownership of one coordinator
-                    # slot per model to this worker.  Release processed models
-                    # here; the outer ``finally`` only owns models the queue
-                    # never reached (for example after Stop was requested).
-                    hf_access_coordinator.end_request(model_name)
-                    self.model_download_finished.emit(model_name, success)
-                    if success:
-                        self.model_cache_changed.emit()
-                processed += 1
-                if success:
-                    succeeded += 1
-        finally:
-            stopped = self._batch_stop_requested
-            self._batch_stop_requested = False
-            for model_name in model_names[processed:]:
-                hf_access_coordinator.end_request(model_name)
-            if stopped:
-                logger.info(
-                    f"Batch download stopped after {succeeded} of "
-                    f"{len(model_names)} models"
-                )
-            self.batch_download_finished.emit(succeeded, len(model_names))
+        """Make sure the selected local model is loaded; any thread (see ModelRuntime)."""
+        self.models.ensure_local_model_available()
 
     def change_audio_device(self, _choice=None) -> None:
         """Rebuild the recorder after Settings saved a new microphone order."""
@@ -2609,10 +1149,7 @@ class ApplicationController(QObject):
 
     def toggle_meeting_mode(self) -> None:
         """Start or end Meeting Mode from its optional global hotkey."""
-        if self.meeting_runtime.is_active:
-            self.meeting_runtime.end_meeting()
-        elif not self.meeting_runtime.is_claimed:
-            self.meeting_platform_ack_requested.emit()
+        self.meeting_runtime.toggle_from_hotkey()
 
     def transcribe_clip(self, audio_path: str) -> str:
         """Transcribe a short audio clip outside the main recording flow.
@@ -2669,63 +1206,11 @@ class ApplicationController(QObject):
             self.status_update.emit("Finish recording or transcription before changing engines")
             return
         if not self._refuse_dictation_during_meeting():
-            self._runtime_prompted.clear()
+            self.models.forget_runtime_prompts()
             self.transcription_runtime.on_model_changed(model_name)
 
     def update_status_with_auto_hide(self, status: str) -> None:
         self.hotkey_runtime.update_status_with_auto_hide(status)
-
-    def _on_meeting_platform_ack_requested(self) -> None:
-        """Run Meeting Mode readiness gates, then start if allowed."""
-        policy = None
-        try:
-            policy = self.ui_controller.ensure_meeting_start_readiness()
-        except Exception as exc:
-            logger.error(f"Meeting start readiness failed: {exc}")
-        if policy is not None:
-            self.meeting_runtime.start_meeting(system_audio_policy=policy)
-
-    def _on_meeting_consent_requested(self) -> None:
-        """Show the meeting cloud-consent dialog and act on it (Qt main thread).
-
-        Mirrors the HF consent round-trip: the runtime emitted the request
-        (possibly holding a pending start or toggle), this slot shows the
-        dialog, persists a granted consent, and hands the outcome back to the
-        runtime's continuation.
-        """
-        granted = False
-        try:
-            granted = self.ui_controller.show_meeting_consent_dialog()
-        except Exception as exc:
-            logger.error(f"Meeting consent dialog failed: {exc}")
-
-        if granted:
-            try:
-                settings_manager.save_setting(
-                    SettingsKey.MEETING_CLOUD_CONSENT_GIVEN, True
-                )
-            except Exception as exc:
-                logger.warning(f"Could not persist meeting cloud consent: {exc}")
-
-        self.meeting_runtime.on_consent_result(granted)
-
-    def _on_meeting_recovery_found(self, meetings) -> None:
-        try:
-            self.ui_controller.show_meeting_recovery_dialog(
-                list(meetings),
-                on_finalize=self.meeting_runtime.finalize_recovered,
-                on_discard=self.meeting_runtime.discard_recovered,
-            )
-        except Exception as exc:
-            logger.error(f"Meeting recovery dialog failed: {exc}")
-
-    def _on_meeting_recovery_scan_failed(self, message: str) -> None:
-        try:
-            self.ui_controller.show_meeting_recovery_scan_error(
-                message, on_retry=self.meeting_runtime.retry_recovery_scan,
-            )
-        except Exception:
-            logger.exception("Could not show meeting recovery scan failure")
 
     def _connect_signals(self) -> None:
         self.startup_database_ready.connect(self._on_startup_database_ready)
@@ -2739,12 +1224,8 @@ class ApplicationController(QObject):
         self.batch_progress.connect(self.ui_controller.set_batch_progress)
         self.batch_item_finished.connect(self.ui_controller.set_batch_item_finished)
         self.large_file_detected.connect(self.ui_controller.show_large_file_state)
-        self.hf_consent_requested.connect(self._on_hf_consent_requested)
-        self.runtime_consent_requested.connect(self._prompt_for_model_runtime)
-        self.remote_pairing_changed.connect(self._on_remote_pairing_changed)
-        self.remote_host_renamed.connect(self._on_remote_host_renamed)
-        self.records_changed.connect(self._on_records_changed)
-        self.client_model_switch_requested.connect(self._on_client_model_switch)
+        self.models.connect_signals()
+        self.remote.connect_signals()
         self.transform_requested.connect(self.command_runtime.run_transform)
         # Late-bound, so a UI without one of these fails only when it fires.
         self.scratchpad_toggle_requested.connect(
@@ -2777,80 +1258,16 @@ class ApplicationController(QObject):
         # Learning saves from a worker thread; the queued signal brings the
         # notice to the Qt thread.
         dictionary.set_learned_callback(self.dictionary_term_learned.emit)
-        self.remote_link_poke.connect(self._publish_remote_link)
-        self.remote_catalog_received.connect(self._on_remote_catalog)
-        self.remote_settled.connect(self._on_remote_settled)
-        self.remote_retry_requested.connect(self._retry_remote)
-        self.remote_job_retry_requested.connect(self._retry_remote_for_transcription)
-        self.remote_clients_changed.connect(self.ui_controller.set_remote_clients)
-        self.ui_controller.on_remote_retry = self.retry_remote_now
         self.status_update.connect(self.ui_controller.set_status)
         self.recording_capture_failed.connect(self.transcription_runtime.on_capture_error)
         self.history_persisted.connect(self.transcription_runtime.on_history_persisted)
         self.device_info_update.connect(self.ui_controller.set_device_info)
         self.engine_busy_changed.connect(self.ui_controller.set_engine_busy)
-        self.engine_busy_changed.connect(self._on_engine_busy_for_host)
+        self.engine_busy_changed.connect(self.remote.on_engine_busy)
         self.streaming_setup_requested.connect(self.streaming_runtime.setup_streaming)
-        self.model_download_started.connect(
-            self.ui_controller.on_model_download_started
-        )
-        self.model_download_progress.connect(
-            self.ui_controller.on_model_download_progress
-        )
-        self.model_download_finished.connect(
-            self.ui_controller.on_model_download_finished
-        )
-        self.batch_download_planned.connect(
-            self.ui_controller.on_model_batch_planned
-        )
-        self.batch_download_finished.connect(
-            self.ui_controller.on_model_batch_finished
-        )
-        self.model_download_finished.connect(self._on_model_download_finished)
-        self.model_deleted.connect(self.ui_controller.on_model_deleted)
-        self.model_cache_changed.connect(self.ui_controller.refresh_model_views)
-        self.component_progress.connect(self.ui_controller.on_component_progress)
-        self.component_install_started.connect(
-            lambda _component_id: self.ui_controller.on_component_state_changed()
-        )
-        self.component_install_finished.connect(
-            self.ui_controller.on_component_install_finished
-        )
-        self.component_install_finished.connect(self._on_component_install_finished)
-        self.gpu_fallback_detected.connect(self._on_gpu_fallback)
-        self.component_state_changed.connect(
-            self.ui_controller.on_component_state_changed
-        )
-        self.meeting_engine_event.connect(self.meeting_runtime._route_engine_event)
-        self.meeting_state_changed.connect(
-            self.ui_controller.on_meeting_state_changed
-        )
-        self.meeting_status_update.connect(self.ui_controller.set_meeting_status)
-        self.meeting_error.connect(self.ui_controller.on_meeting_error)
-        self.meeting_server_started.connect(
-            self.ui_controller.on_meeting_server_started
-        )
-        self.meeting_recovery_found.connect(self._on_meeting_recovery_found)
-        self.meeting_recovery_scan_failed.connect(
-            self._on_meeting_recovery_scan_failed
-        )
-        self.meeting_consent_requested.connect(self._on_meeting_consent_requested)
-        self.meeting_platform_ack_requested.connect(
-            self._on_meeting_platform_ack_requested
-        )
-        self.meeting_guest_link_ready.connect(
-            self.ui_controller.copy_meeting_guest_link
-        )
-        self.past_meetings_refresh_requested.connect(
-            self.ui_controller.main_window.refresh_past_meetings
-        )
-        self.update_check_finished.connect(self._on_update_check_finished)
-        self.update_download_progress.connect(
-            self._on_update_download_progress
-        )
-        self.update_download_finished.connect(
-            self._on_update_download_finished
-        )
+        self.components.connect_signals()
+        self.meeting_runtime.connect_signals()
+        self.updater.connect_signals()
         if hasattr(self.ui_controller, "set_overlay_state"):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)
         if hasattr(self.ui_controller, "show_transcription_retry"):
@@ -2905,7 +1322,7 @@ class ApplicationController(QObject):
         self._startup_executor.shutdown(wait=True, cancel_futures=True)
         if hasattr(self, "_shutdown_cancel"):
             self._shutdown_cancel.set()
-        self._batch_stop_requested = True
+        self.models.cancel_model_batch_download()
         _attempt(lambda: self.walkthrough_runtime.cleanup(), "Error stopping Auto Mode")
         self.transcription_runtime.begin_shutdown()
         cancel_library = getattr(self.ui_controller, "cancel_walkthrough_library", None)
@@ -2970,12 +1387,15 @@ class ApplicationController(QObject):
     def _stop_timers(self) -> None:
         for name in (
             "_watchdog_timer", "_reload_timer", "_periodic_refresh_timer",
-            "_update_check_timer", "_remote_watch", "_remote_retry_timer",
         ):
             if hasattr(self, name) and getattr(self, name):
                 getattr(self, name).stop()
-        if hasattr(self, "_update_cancel"):
-            self._update_cancel.set()
+        remote = getattr(self, "remote", None)
+        if remote is not None:
+            remote.stop_timers()
+        updater = getattr(self, "updater", None)
+        if updater is not None:
+            updater.stop()
 
     def _interrupt_backends(self) -> None:
         for name, backend in self.transcription_backends.items():
@@ -3090,84 +1510,8 @@ def _speech_engine_readiness_message(controller, backend) -> Optional[str]:
 def _remote_engine_readiness_message(controller, backend) -> str:
     # The host may be back (woke up, came into range): try now
     # rather than at the next scheduled retry.
-    controller.retry_remote_now()
+    controller.remote.retry_now()
     host = backend.host_name or "the remote engine"
-    if controller._remote_restoring or not backend.last_error:
+    if controller.remote.restoring or not backend.last_error:
         return f"Connecting to {host}..."
     return f"{backend.last_error} Trying again..."
-
-
-def _engine_switch_refusal(controller, name: str) -> Optional[str]:
-    if controller.is_meeting_active():
-        return f"{name} is running a meeting. Change its model after the meeting ends."
-    if controller.recorder.is_recording or controller.is_transcribing():
-        return f"{name} is transcribing right now. Try again in a moment."
-    return None
-
-
-def _apply_engine_overrides(controller, name: str, family: str, model: str, runtime: Optional[dict],
-                            target_device: Optional[str]) -> Optional[str]:
-    """Save a requested device and runtime settings; returns why not, or None."""
-    if target_device is not None:
-        refusal = _save_engine_device(controller, name, family, model, target_device)
-        if refusal is not None:
-            return refusal
-    if runtime is not None:
-        from services.remote_asr.engines import host_engine_for
-        from services.remote_asr.runtime import validate_runtime
-
-        if controller._reload_in_flight or controller._reload_pending:
-            return f"{name} is loading its engine. Try again in a moment."
-        description = host_engine_for(controller.current_backend).describe()
-        updates = validate_runtime(description, family, model, runtime)
-        settings_manager.update_settings(updates)
-    return None
-
-
-def _save_engine_device(controller, name: str, family: str, model: str, target_device: str) -> Optional[str]:
-    from services.local_asr.catalog import WHISPER_BACKEND
-    from services.remote_asr.dependencies import validate_model_device
-
-    if controller._reload_in_flight or controller._reload_pending:
-        return f"{name} is loading its engine. Try again in a moment."
-    validate_model_device(family, model, target_device)
-    if family == WHISPER_BACKEND:
-        settings_manager.update_settings({SettingsKey.WHISPER_DEVICE: target_device,
-                                          SettingsKey.WHISPER_COMPUTE_TYPE: "auto"})
-    else:
-        devices = dict(settings_manager.get(SettingsKey.LOCAL_ASR_DEVICES, {}) or {})
-        devices[family] = target_device
-        settings_manager.save_setting(SettingsKey.LOCAL_ASR_DEVICES, devices)
-    return None
-
-
-def _save_engine_model(family: str, model: str) -> Optional[str]:
-    """Persist ``model`` as ``family``'s model; returns its label, or None if it can't run it."""
-    from services.local_asr.catalog import BACKENDS, MODELS, WHISPER_BACKEND
-
-    if family in BACKENDS and model in MODELS and MODELS[model].backend == family:
-        models = dict(settings_manager.load_all_settings().get(SettingsKey.LOCAL_ASR_MODELS) or {})
-        models[family] = model
-        settings_manager.save_setting(SettingsKey.LOCAL_ASR_MODELS, models)
-        return MODELS[model].label
-    if family == WHISPER_BACKEND and model in config.WHISPER_MODEL_CHOICES and model != "auto":
-        settings_manager.save_setting(SettingsKey.WHISPER_MODEL, model)
-        return f"Whisper {model}"
-    return None
-
-
-def _select_backend_family(controller, family: str) -> bool:
-    """Select ``family``'s backend through the main window; False when it didn't take."""
-    if controller._current_model_name == family:
-        return True
-    display = next(key for key, value in config.MODEL_VALUE_MAP.items() if value == family)
-    controller.ui_controller.select_transcription_backend(display)
-    return controller._current_model_name == family
-
-
-def _whisper_already_serves(controller, family: str, model: str) -> bool:
-    from services.local_asr.catalog import WHISPER_BACKEND
-
-    whisper = controller.transcription_backends.get(WHISPER_BACKEND)
-    return (family == WHISPER_BACKEND and whisper is not None and whisper.is_available()
-            and whisper.last_loaded_model == model and not controller._reload_pending)

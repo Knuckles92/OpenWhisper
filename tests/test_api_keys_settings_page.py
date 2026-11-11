@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QApplication, QLineEdit, QMessageBox
 from services import credentials
 from services.settings import SettingsManager
 from services.text_llm import upsert_custom_profile
+from ui_qt.dialogs import settings_api_keys
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs.settings_dialog import API_KEYS, SettingsDialog
 
@@ -109,7 +110,7 @@ class TestApiKeysSettingsPage(unittest.TestCase):
             self.dialog.api_key_uses_caption.text(),
             "Sent as the API key to Speaches for API transcription.",
         )
-        self.assertEqual(self.dialog._api_key_profile("SPEACHES_API_KEY").base_url, "http://gpu-box:8000/v1")
+        self.assertEqual(self.dialog.api_keys.profile_for("SPEACHES_API_KEY").base_url, "http://gpu-box:8000/v1")
         self.assertEqual(self.dialog.rail.value(API_KEYS), "0 of 7 set")
         self.assertIn("No key set", self.dialog.api_key_status.text())
 
@@ -129,7 +130,7 @@ class TestApiKeysSettingsPage(unittest.TestCase):
         self.assertTrue(self.dialog.api_key_save_button.isEnabled())
         self.dialog.api_key_show_button.setChecked(True)
 
-        self.dialog._save_api_key()
+        self.dialog.api_keys.save_key()
 
         self.assertEqual(credentials.store().get("OPENAI_API_KEY"), SECRET)
         self.assertEqual(self.dialog.api_key_edit.text(), "")
@@ -151,7 +152,7 @@ class TestApiKeysSettingsPage(unittest.TestCase):
     def test_invalid_key_is_rejected_before_storage(self):
         self._select("OPENAI_API_KEY")
         self.dialog.api_key_edit.setText("sk-has a space")
-        self.dialog._save_api_key()
+        self.dialog.api_keys.save_key()
         self.assertIsNone(credentials.store().get("OPENAI_API_KEY"))
         self.assertIn("space", self.dialog.message_label.text())
         self.assertEqual(self.changes, [])
@@ -168,7 +169,7 @@ class TestApiKeysSettingsPage(unittest.TestCase):
         self.assertTrue(self.dialog.api_key_test_button.isEnabled())
 
         self.dialog.api_key_edit.setText(SECRET)
-        self.dialog._save_api_key()
+        self.dialog.api_keys.save_key()
         status = self.dialog.api_key_status.text()
         self.assertIn("••••wxyz", status)
         self.assertIn("ignored while a key is saved here", status)
@@ -176,7 +177,7 @@ class TestApiKeysSettingsPage(unittest.TestCase):
         with patch.object(
             QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
         ):
-            self.dialog._remove_api_key()
+            self.dialog.api_keys.remove_key()
         self.assertIsNone(credentials.store().get("OPENROUTER_API_KEY"))
         self.assertIn(
             "OPENROUTER_API_KEY environment variable",
@@ -192,7 +193,7 @@ class TestApiKeysSettingsPage(unittest.TestCase):
         with patch.object(
             QMessageBox, "question", return_value=QMessageBox.StandardButton.No
         ):
-            self.dialog._remove_api_key()
+            self.dialog.api_keys.remove_key()
         self.assertEqual(credentials.store().get("OPENAI_API_KEY"), SECRET)
         self.assertEqual(self.changes, [])
 
@@ -219,9 +220,9 @@ class TestApiKeysSettingsPage(unittest.TestCase):
 
     def test_store_caption_tells_mac_users_to_always_allow(self):
         with patch.object(settings_dialog_module.sys, "platform", "darwin"):
-            self.assertIn("Always Allow", SettingsDialog._api_key_store_copy())
+            self.assertIn("Always Allow", settings_api_keys.store_copy())
         with patch.object(settings_dialog_module.sys, "platform", "win32"):
-            self.assertNotIn("Always Allow", SettingsDialog._api_key_store_copy())
+            self.assertNotIn("Always Allow", settings_api_keys.store_copy())
 
     def test_test_button_reports_verdict_without_echoing_key(self):
         self._select("OPENAI_API_KEY")
@@ -233,16 +234,16 @@ class TestApiKeysSettingsPage(unittest.TestCase):
             seen["key"] = key
             return False, "api.openai.com rejected the key (HTTP 401)."
 
-        with patch.object(settings_dialog_module, "verify_api_key", fake_verify):
-            self.dialog._test_api_key()
-            self.assertTrue(self.dialog._api_key_testing)
+        with patch.object(settings_api_keys, "verify_api_key", fake_verify):
+            self.dialog.api_keys.test_key()
+            self.assertTrue(self.dialog.api_keys.testing)
             self.assertFalse(self.dialog.api_key_save_button.isEnabled())
             deadline = time.monotonic() + 5
-            while self.dialog._api_key_testing and time.monotonic() < deadline:
+            while self.dialog.api_keys.testing and time.monotonic() < deadline:
                 self.app.processEvents()
                 time.sleep(0.01)
 
-        self.assertFalse(self.dialog._api_key_testing)
+        self.assertFalse(self.dialog.api_keys.testing)
         self.assertEqual(seen, {"profile": "openai", "key": SECRET})
         message = self.dialog.message_label.text()
         self.assertEqual(message, "OpenAI API key failed: api.openai.com rejected the key (HTTP 401).")

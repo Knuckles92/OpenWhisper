@@ -143,18 +143,18 @@ def test_demo_cancelled_by_platform_ack_starts_nothing(qapp):
 
 
 def test_hotkey_controller_uses_readiness_once(qapp):
-    from services import application_controller as mod
+    from services.runtime.meeting import MeetingRuntime
     from tests.test_application_controller import DummyUIController
 
     ui = DummyUIController()
     ui.platform_ack_result = True
-    ctrl = SimpleNamespace(
-        ui_controller=ui,
-        meeting_runtime=SimpleNamespace(start_meeting=MagicMock()),
+    runtime = SimpleNamespace(
+        controller=SimpleNamespace(ui_controller=ui),
+        start_meeting=MagicMock(),
     )
-    mod.ApplicationController._on_meeting_platform_ack_requested(ctrl)
+    MeetingRuntime._on_platform_ack_requested(runtime)
     assert ui.platform_ack_requests == 1
-    ctrl.meeting_runtime.start_meeting.assert_called_once_with(
+    runtime.start_meeting.assert_called_once_with(
         system_audio_policy="auto"
     )
 

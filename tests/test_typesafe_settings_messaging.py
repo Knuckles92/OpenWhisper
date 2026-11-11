@@ -16,12 +16,13 @@ from PyQt6.QtWidgets import QApplication
 
 from services import credentials
 from services.settings import SettingsKey, SettingsManager
+from ui_qt.dialogs import settings_api_keys
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
+from services.typesafe import CREDENTIAL_ENV as TYPESAFE_CREDENTIAL_ENV
 from services.typesafe import OPENROUTER_ROUTE
 from ui_qt.dialogs.settings_dialog import (
     MEETING_FAST,
     SettingsDialog,
-    TYPESAFE_CREDENTIAL_ENV,
 )
 
 TYPESAFE_KEY = "ts-live-0123456789abcdefghij"
@@ -96,7 +97,7 @@ class TestFastJudgmentsNotice(TypeSafeMessagingTestCase):
         self.assertFalse(dialog.typesafe_key_notice.isHidden())
         dialog.focus_api_keys(TYPESAFE_CREDENTIAL_ENV)
         dialog.api_key_edit.setText(TYPESAFE_KEY)
-        dialog._save_api_key()
+        dialog.api_keys.save_key()
         self.assertTrue(dialog.typesafe_key_notice.isHidden())
 
     def test_the_notice_button_opens_the_typesafe_credential(self):
@@ -164,7 +165,7 @@ class TestFastJudgmentsRailBadge(TypeSafeMessagingTestCase):
             settings_dialog_module.QMessageBox, "question",
             return_value=settings_dialog_module.QMessageBox.StandardButton.Yes,
         ):
-            dialog._remove_api_key()
+            dialog.api_keys.remove_key()
         self.assertEqual(dialog.rail.value(MEETING_FAST), "No key")
         self.assertFalse(dialog.typesafe_key_notice.isHidden())
 
@@ -204,12 +205,12 @@ class TestTypeSafeKeyTesting(TypeSafeMessagingTestCase):
         dialog.focus_api_keys(TYPESAFE_CREDENTIAL_ENV)
         dialog.api_key_edit.setText(TYPESAFE_KEY)
         with patch.object(
-            settings_dialog_module, "typesafe_verify_key",
+            settings_api_keys, "typesafe_verify_key",
             return_value=(True, "api.typesafe.ai accepted the key."),
         ) as verify, patch.object(
             settings_dialog_module.threading, "Thread"
         ) as thread:
-            dialog._test_api_key()
+            dialog.api_keys.test_key()
             thread.assert_called_once()
             thread.call_args.kwargs["target"]()
         verify.assert_called_once_with(TYPESAFE_KEY)
@@ -221,10 +222,10 @@ class TestTypeSafeKeyTesting(TypeSafeMessagingTestCase):
         dialog.focus_api_keys(TYPESAFE_CREDENTIAL_ENV)
         dialog.api_key_edit.setText(TYPESAFE_KEY)
         with patch.object(
-            settings_dialog_module, "typesafe_verify_key",
+            settings_api_keys, "typesafe_verify_key",
             return_value=(False, "api.typesafe.ai rejected the key (HTTP 401)."),
         ), patch.object(settings_dialog_module.threading, "Thread") as thread:
-            dialog._test_api_key()
+            dialog.api_keys.test_key()
             thread.call_args.kwargs["target"]()
         self.app.processEvents()
         message = dialog.message_label.text()
@@ -236,13 +237,13 @@ class TestTypeSafeKeyTesting(TypeSafeMessagingTestCase):
         dialog.focus_api_keys("OPENAI_API_KEY")
         dialog.api_key_edit.setText("sk-proj-abcdefghijklmnopqrstuvwxyz")
         with patch.object(
-            settings_dialog_module, "verify_api_key", return_value=(True, "ok"),
+            settings_api_keys, "verify_api_key", return_value=(True, "ok"),
         ) as verify, patch.object(
-            settings_dialog_module, "typesafe_verify_key",
+            settings_api_keys, "typesafe_verify_key",
         ) as typesafe_verify, patch.object(
             settings_dialog_module.threading, "Thread"
         ) as thread:
-            dialog._test_api_key()
+            dialog.api_keys.test_key()
             thread.call_args.kwargs["target"]()
         verify.assert_called_once()
         typesafe_verify.assert_not_called()
@@ -313,7 +314,7 @@ class TestJevConnection(TypeSafeMessagingTestCase):
         self.assertFalse(dialog.typesafe_key_notice.isHidden())
         dialog.focus_api_keys(OPENROUTER_ENV)
         dialog.api_key_edit.setText(OPENROUTER_KEY)
-        dialog._save_api_key()
+        dialog.api_keys.save_key()
         self.assertTrue(dialog.typesafe_key_notice.isHidden())
         self.assertEqual(dialog.typesafe_route_bar.buttons[1]._detail.text(),
                          "Same model · key set")

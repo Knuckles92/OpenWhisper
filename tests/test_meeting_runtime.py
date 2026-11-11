@@ -27,18 +27,8 @@ _RUNTIME_GLOBALS = MeetingRuntime.__init__.__globals__
 
 
 class _Controller(QObject):
-    """Minimal ApplicationController stand-in with meeting signals."""
+    """Minimal ApplicationController stand-in for MeetingRuntime."""
 
-    meeting_status_update = pyqtSignal(str)
-    meeting_engine_event = pyqtSignal(object, str, object)
-    meeting_state_changed = pyqtSignal(object)
-    meeting_error = pyqtSignal(str)
-    meeting_server_started = pyqtSignal(object)
-    meeting_guest_link_ready = pyqtSignal(str)
-    meeting_consent_requested = pyqtSignal()
-    meeting_recovery_found = pyqtSignal(object)
-    meeting_recovery_scan_failed = pyqtSignal(str)
-    past_meetings_refresh_requested = pyqtSignal()
     status_update = pyqtSignal(str)
 
     def __init__(self):
@@ -75,7 +65,7 @@ def runtime(qapp, monkeypatch):
     )
     controller = _Controller()
     rt = MeetingRuntime(controller)
-    controller.meeting_engine_event.connect(rt._route_engine_event)
+    rt.meeting_engine_event.connect(rt._route_engine_event)
     return rt, controller
 
 
@@ -120,7 +110,7 @@ def test_off_backend_skips_speaker_model_download(runtime, monkeypatch):
 def test_launch_reports_starting_without_claiming_active(runtime, monkeypatch):
     rt, controller = runtime
     states = []
-    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    rt.meeting_state_changed.connect(lambda p: states.append(dict(p)))
     worker = MagicMock()
     monkeypatch.setattr(
         _RUNTIME_GLOBALS["threading"],
@@ -155,7 +145,7 @@ def test_build_options_defers_missing_speaker_download(runtime, monkeypatch):
 def test_completed_start_does_not_reactivate_a_cancelled_engine(runtime, monkeypatch):
     rt, controller = runtime
     states = []
-    controller.meeting_state_changed.connect(lambda payload: states.append(dict(payload)))
+    rt.meeting_state_changed.connect(lambda payload: states.append(dict(payload)))
 
     class EndedEngine:
         def __init__(self, *args, **kwargs):
@@ -181,8 +171,8 @@ def test_start_worker_failure_rolls_back_active_state(runtime, monkeypatch):
     rt, controller = runtime
     states = []
     errors = []
-    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
-    controller.meeting_error.connect(errors.append)
+    rt.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    rt.meeting_error.connect(errors.append)
 
     class FailingEngine:
         def __init__(self, *args, **kwargs):
@@ -289,7 +279,7 @@ def test_remote_meeting_does_not_wait_for_unrelated_local_whisper_load(runtime, 
 def test_remote_connection_status_reaches_desktop(runtime):
     rt, controller = runtime
     payloads = []
-    controller.meeting_state_changed.connect(payloads.append)
+    rt.meeting_state_changed.connect(payloads.append)
     speech = {"source": "remote", "host": "devbox", "model": "base", "connected": False,
               "message": "Host offline; audio saved locally."}
     rt._on_engine_event("status", {"status": "active", "speech": speech})
@@ -299,7 +289,7 @@ def test_remote_connection_status_reaches_desktop(runtime):
 def test_nonfatal_engine_error_is_deferred_during_start(runtime):
     rt, controller = runtime
     errors = []
-    controller.meeting_error.connect(errors.append)
+    rt.meeting_error.connect(errors.append)
     rt._starting = True
 
     rt._on_engine_event(
@@ -315,8 +305,8 @@ def test_open_dashboard_without_url_surfaces_error(runtime):
     rt, controller = runtime
     errors = []
     statuses = []
-    controller.meeting_error.connect(errors.append)
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_error.connect(errors.append)
+    rt.meeting_status_update.connect(statuses.append)
 
     rt.open_dashboard()
 
@@ -341,7 +331,7 @@ def test_open_dashboard_for_retained_card_uses_archive_path(runtime, monkeypatch
 def test_finalization_running_blocks_second_meeting_not_claim(runtime):
     rt, controller = runtime
     statuses = []
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_status_update.connect(statuses.append)
 
     rt._finalizing = True
     rt._finalization = {"status": "running", "message": "Preparing…"}
@@ -358,7 +348,7 @@ def test_finalization_running_blocks_second_meeting_not_claim(runtime):
 def test_start_demo_meeting_blocked_while_finalizing(runtime):
     rt, controller = runtime
     statuses = []
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_status_update.connect(statuses.append)
 
     rt._finalizing = True
     rt.start_demo_meeting(cloud_enabled=True)
@@ -369,7 +359,7 @@ def test_start_demo_meeting_blocked_while_finalizing(runtime):
 def test_start_meeting_blocked_while_whisper_loading(runtime, monkeypatch):
     rt, controller = runtime
     statuses = []
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_status_update.connect(statuses.append)
     controller.local_whisper_loading_message = (
         lambda: "Whisper engine is still loading..."
     )
@@ -384,7 +374,7 @@ def test_start_meeting_blocked_while_whisper_loading(runtime, monkeypatch):
 def test_ended_unlocks_active_while_retaining_dashboard(runtime):
     rt, controller = runtime
     states = []
-    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    rt.meeting_state_changed.connect(lambda p: states.append(dict(p)))
 
     rt._host_url = "http://127.0.0.1:8765/host"
     rt._finalizing = True
@@ -408,8 +398,8 @@ def test_terminal_finalization_clears_guard_without_modal(runtime):
     rt, controller = runtime
     errors = []
     states = []
-    controller.meeting_error.connect(errors.append)
-    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    rt.meeting_error.connect(errors.append)
+    rt.meeting_state_changed.connect(lambda p: states.append(dict(p)))
 
     rt._finalizing = True
     rt._finalization = {"status": "running", "message": "…"}
@@ -435,7 +425,7 @@ def test_terminal_finalization_clears_guard_without_modal(runtime):
 def test_engine_pause_status_mirrors_onto_the_tab(runtime):
     rt, controller = runtime
     states = []
-    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    rt.meeting_state_changed.connect(lambda p: states.append(dict(p)))
 
     rt._on_engine_event("status", {"status": "paused"})
     rt._on_engine_event("status", {"status": "active"})
@@ -449,7 +439,7 @@ def test_engine_pause_status_mirrors_onto_the_tab(runtime):
 def test_failed_finalization_is_non_modal(runtime):
     rt, controller = runtime
     errors = []
-    controller.meeting_error.connect(errors.append)
+    rt.meeting_error.connect(errors.append)
 
     rt._on_engine_event("status", {
         "status": "ended",
@@ -543,7 +533,7 @@ def test_retry_waits_for_a_run_already_holding_the_meeting(runtime, monkeypatch)
     )
     monkeypatch.setattr(refinalize, "_running_meetings", {"m_busy"})
     notes = []
-    controller.meeting_status_update.connect(notes.append)
+    rt.meeting_status_update.connect(notes.append)
 
     rt.retry_insights()
 
@@ -648,7 +638,7 @@ def _ended_meeting(meeting_id, *, deferred=False, status="failed", started_at="2
 def test_restore_deferred_latest_leaves_idle_and_does_not_hydrate_older(runtime):
     rt, controller = runtime
     states = []
-    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    rt.meeting_state_changed.connect(lambda p: states.append(dict(p)))
     fake_repo = MagicMock()
     fake_repo.list_meetings.return_value = [
         _ended_meeting("m_new", deferred=True),
@@ -666,7 +656,7 @@ def test_restore_deferred_latest_leaves_idle_and_does_not_hydrate_older(runtime)
 def test_restore_all_deferred_leaves_idle(runtime):
     rt, controller = runtime
     states = []
-    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    rt.meeting_state_changed.connect(lambda p: states.append(dict(p)))
     fake_repo = MagicMock()
     fake_repo.list_meetings.return_value = [
         _ended_meeting("m_a", deferred=True),
@@ -706,7 +696,7 @@ def test_defer_persists_flag_and_hides_card(runtime):
 
     rt, controller = runtime
     states = []
-    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    rt.meeting_state_changed.connect(lambda p: states.append(dict(p)))
     meeting = _ended_meeting("m_card")
     fake_repo = MagicMock()
     fake_repo.get_meeting.return_value = meeting
@@ -733,7 +723,7 @@ def test_defer_persists_flag_and_hides_card(runtime):
 def test_defer_completed_card_uses_saved_status(runtime):
     rt, controller = runtime
     statuses = []
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_status_update.connect(statuses.append)
     meeting = _ended_meeting("m_done", status="completed")
     fake_repo = MagicMock()
     fake_repo.get_meeting.return_value = meeting
@@ -780,7 +770,7 @@ def test_begin_start_files_leftover_card(runtime, monkeypatch):
 def test_defer_refused_while_finalizing(runtime):
     rt, controller = runtime
     statuses = []
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_status_update.connect(statuses.append)
     fake_repo = MagicMock()
     rt._repo = fake_repo
     rt._finalizing = True
@@ -798,7 +788,7 @@ def test_refresh_past_meetings_from_worker_uses_signal(runtime):
 
     rt, controller = runtime
     refreshed = []
-    controller.past_meetings_refresh_requested.connect(lambda: refreshed.append(True))
+    rt.past_meetings_refresh_requested.connect(lambda: refreshed.append(True))
 
     def worker():
         rt._refresh_past_meetings()
@@ -826,7 +816,7 @@ def test_retry_finalization_from_worker_uses_signal(runtime, monkeypatch):
     fake_repo.get_meeting.return_value = {"id": "m_card", "asr_model": "base"}
     rt._repo = fake_repo
     refreshed = []
-    controller.past_meetings_refresh_requested.connect(lambda: refreshed.append(True))
+    rt.past_meetings_refresh_requested.connect(lambda: refreshed.append(True))
 
     def fake_rerun(repository, meeting_id, **kwargs):
         return {
@@ -928,7 +918,7 @@ def test_desktop_speaker_retry_never_uploads_when_ineligible(
         lambda *args, **kwargs: uploads.append(kwargs) or {"ok": True},
     )
     notes = []
-    controller.meeting_status_update.connect(notes.append)
+    rt.meeting_status_update.connect(notes.append)
 
     # The Re-run speakers button refuses before starting anything.
     rt.retry_speakers()
@@ -1022,7 +1012,7 @@ def test_rerun_options_hand_over_the_key_only_when_eligible(monkeypatch):
 def test_show_past_meeting_hydrates_without_opening_browser(runtime, monkeypatch):
     rt, controller = runtime
     states = []
-    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    rt.meeting_state_changed.connect(lambda p: states.append(dict(p)))
     meeting = _ended_meeting("m_saved", deferred=True)
     meeting["title"] = ""
     meeting["started_at"] = "2025-01-02T09:30:00"
@@ -1065,7 +1055,7 @@ def test_open_report_targets_history_report_view(runtime, monkeypatch):
 def test_show_past_meeting_refuses_while_live(runtime, monkeypatch):
     rt, controller = runtime
     statuses = []
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_status_update.connect(statuses.append)
     controller.meeting_active = True
     fake_repo = MagicMock()
     rt._repo = fake_repo
@@ -1085,7 +1075,7 @@ def test_show_past_meeting_refuses_while_live(runtime, monkeypatch):
 def test_open_past_meeting_reveals_without_persisting_deferral(runtime):
     rt, controller = runtime
     states = []
-    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    rt.meeting_state_changed.connect(lambda p: states.append(dict(p)))
     meeting = _ended_meeting("m_saved", deferred=True)
     fake_repo = MagicMock()
     fake_repo.get_meeting.return_value = meeting
@@ -1105,7 +1095,7 @@ def test_cloud_start_without_consent_emits_and_does_not_launch(runtime, monkeypa
     rt, controller = runtime
     launched = _record_launch(rt, monkeypatch)
     consents = []
-    controller.meeting_consent_requested.connect(lambda: consents.append(True))
+    rt.meeting_consent_requested.connect(lambda: consents.append(True))
     monkeypatch.setattr(rt, "_cloud_consent_given", lambda: False)
 
     rt.start_meeting(cloud_enabled=True)
@@ -1192,7 +1182,7 @@ def test_start_without_cloud_skips_consent(runtime, monkeypatch):
     rt, controller = runtime
     launched = _record_launch(rt, monkeypatch)
     consents = []
-    controller.meeting_consent_requested.connect(lambda: consents.append(True))
+    rt.meeting_consent_requested.connect(lambda: consents.append(True))
 
     rt.start_meeting(cloud_enabled=False)
 
@@ -1205,7 +1195,7 @@ def test_start_with_consent_already_given_launches_cloud(runtime, monkeypatch):
     rt, controller = runtime
     launched = _record_launch(rt, monkeypatch)
     consents = []
-    controller.meeting_consent_requested.connect(lambda: consents.append(True))
+    rt.meeting_consent_requested.connect(lambda: consents.append(True))
     monkeypatch.setattr(rt, "_cloud_consent_given", lambda: True)
 
     rt.start_meeting(cloud_enabled=True)
@@ -1218,7 +1208,7 @@ def test_remembered_cloud_on_prompts_when_consent_missing(runtime, monkeypatch):
     rt, controller = runtime
     launched = _record_launch(rt, monkeypatch)
     consents = []
-    controller.meeting_consent_requested.connect(lambda: consents.append(True))
+    rt.meeting_consent_requested.connect(lambda: consents.append(True))
 
     def fake_get(key, default=False):
         return key == SettingsKey.MEETING_CLOUD_LAST_ENABLED
@@ -1240,7 +1230,7 @@ def test_second_start_during_consent_is_blocked(runtime, monkeypatch):
     rt.start_meeting(cloud_enabled=True)
 
     statuses = []
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_status_update.connect(statuses.append)
     rt.start_meeting(cloud_enabled=False)
 
     assert launched == []
@@ -1252,8 +1242,8 @@ def test_toggle_cloud_without_consent_reprompts(runtime, monkeypatch):
     rt, controller = runtime
     consents = []
     states = []
-    controller.meeting_consent_requested.connect(lambda: consents.append(True))
-    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    rt.meeting_consent_requested.connect(lambda: consents.append(True))
+    rt.meeting_state_changed.connect(lambda p: states.append(dict(p)))
     monkeypatch.setattr(rt, "_cloud_consent_given", lambda: False)
 
     rt.toggle_cloud(True)
@@ -1266,7 +1256,7 @@ def test_toggle_cloud_without_consent_reprompts(runtime, monkeypatch):
 def test_toggle_cloud_with_consent_applies(runtime, monkeypatch):
     rt, controller = runtime
     states = []
-    controller.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    rt.meeting_state_changed.connect(lambda p: states.append(dict(p)))
     monkeypatch.setattr(rt, "_cloud_consent_given", lambda: True)
 
     rt.toggle_cloud(True)
@@ -1278,7 +1268,7 @@ def test_toggle_cloud_with_consent_applies(runtime, monkeypatch):
 def test_recovery_scan_emits_dead_sessions(runtime, monkeypatch):
     rt, controller = runtime
     found = []
-    controller.meeting_recovery_found.connect(found.append)
+    rt.meeting_recovery_found.connect(found.append)
     meetings = [{"id": "m_dead", "status": "active"}]
     monkeypatch.setattr(rt, "_repository", lambda: object())
     monkeypatch.setattr(
@@ -1295,8 +1285,8 @@ def test_recovery_scan_silent_when_none(runtime, monkeypatch):
     rt, controller = runtime
     found = []
     failures = []
-    controller.meeting_recovery_found.connect(found.append)
-    controller.meeting_recovery_scan_failed.connect(failures.append)
+    rt.meeting_recovery_found.connect(found.append)
+    rt.meeting_recovery_scan_failed.connect(failures.append)
     monkeypatch.setattr(rt, "_repository", lambda: object())
     monkeypatch.setattr(
         "meeting.recovery.find_recoverable_meetings",
@@ -1312,8 +1302,8 @@ def test_recovery_scan_silent_when_none(runtime, monkeypatch):
 def test_recovery_scan_failure_is_visible_and_retryable(runtime, monkeypatch, qapp):
     rt, controller = runtime
     found, failures = [], []
-    controller.meeting_recovery_found.connect(found.append)
-    controller.meeting_recovery_scan_failed.connect(failures.append)
+    rt.meeting_recovery_found.connect(found.append)
+    rt.meeting_recovery_scan_failed.connect(failures.append)
     monkeypatch.setattr(rt, "_repository", lambda: object())
 
     def fail(_repository):
@@ -1341,8 +1331,8 @@ def test_finalize_recovered_passes_meeting_dict(runtime, monkeypatch):
     rt, controller = runtime
     statuses = []
     errors = []
-    controller.meeting_status_update.connect(statuses.append)
-    controller.meeting_error.connect(errors.append)
+    rt.meeting_status_update.connect(statuses.append)
+    rt.meeting_error.connect(errors.append)
     meeting = {"id": "m_dead"}
     repo = SimpleNamespace(get_meeting=lambda meeting_id: meeting)
     called = []
@@ -1415,7 +1405,7 @@ def test_finalize_recovered_keeps_incomplete_capture_warning(runtime, monkeypatc
         "meeting.recovery.finalize_meeting", finish_transcription,
     )
     statuses, retried = [], []
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_status_update.connect(statuses.append)
     monkeypatch.setattr(
         rt, "retry_finalization",
         lambda *args, **kwargs: retried.append((args, kwargs)),
@@ -1453,7 +1443,7 @@ def test_recovered_follow_up_matches_live_end_settings(
 def test_finalize_recovered_reports_failure(runtime, monkeypatch):
     rt, controller = runtime
     errors = []
-    controller.meeting_error.connect(errors.append)
+    rt.meeting_error.connect(errors.append)
     repo = SimpleNamespace(get_meeting=lambda meeting_id: {"id": meeting_id})
     monkeypatch.setattr(rt, "_repository", lambda: repo)
     monkeypatch.setattr(
@@ -1470,7 +1460,7 @@ def test_finalize_recovered_reports_failure(runtime, monkeypatch):
 def test_discard_recovered_deletes_meeting_data(runtime, monkeypatch):
     rt, controller = runtime
     statuses = []
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_status_update.connect(statuses.append)
     repo = object()
     deleted = []
 
@@ -1492,7 +1482,7 @@ def test_discard_recovered_deletes_meeting_data(runtime, monkeypatch):
 def test_copy_past_meeting_transcript_exports_text(runtime, monkeypatch):
     rt, controller = runtime
     statuses = []
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_status_update.connect(statuses.append)
     meeting = {
         "id": "m_copy",
         "title": "Planning",
@@ -1516,7 +1506,7 @@ def test_copy_past_meeting_transcript_exports_text(runtime, monkeypatch):
 def test_copy_past_meeting_transcript_empty(runtime, monkeypatch):
     rt, controller = runtime
     statuses = []
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_status_update.connect(statuses.append)
     repo = SimpleNamespace(
         get_meeting=lambda meeting_id: {"id": meeting_id, "state_json": "{}"},
         get_segments=lambda meeting_id: [],
@@ -1530,7 +1520,7 @@ def test_copy_past_meeting_transcript_empty(runtime, monkeypatch):
 def test_delete_past_meeting_refuses_while_live(runtime):
     rt, controller = runtime
     statuses = []
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_status_update.connect(statuses.append)
     controller.meeting_active = True
     rt._engine = SimpleNamespace(meeting_id="m_live")
 
@@ -1543,8 +1533,8 @@ def test_delete_past_meeting_hides_card_and_deletes(runtime, monkeypatch):
     rt, controller = runtime
     statuses = []
     refreshed = []
-    controller.meeting_status_update.connect(statuses.append)
-    controller.past_meetings_refresh_requested.connect(lambda: refreshed.append(True))
+    rt.meeting_status_update.connect(statuses.append)
+    rt.past_meetings_refresh_requested.connect(lambda: refreshed.append(True))
     deleted = []
 
     def fake_delete(repository, meeting_id, root, *, delete_spool=True):
@@ -1584,7 +1574,7 @@ def test_clear_past_meetings_skips_live_id_and_hides_card(runtime, monkeypatch):
     rt, controller = runtime
     statuses = []
     cleared = []
-    controller.meeting_status_update.connect(statuses.append)
+    rt.meeting_status_update.connect(statuses.append)
     controller.meeting_active = True
     rt._engine = SimpleNamespace(meeting_id="m_live")
     rt._card_meeting_id = "m_old"
@@ -1608,8 +1598,8 @@ def test_clear_past_meetings_with_recordings_status(runtime, monkeypatch):
     rt, controller = runtime
     statuses = []
     refreshed = []
-    controller.meeting_status_update.connect(statuses.append)
-    controller.past_meetings_refresh_requested.connect(
+    rt.meeting_status_update.connect(statuses.append)
+    rt.past_meetings_refresh_requested.connect(
         lambda: refreshed.append(True)
     )
 
@@ -1662,7 +1652,7 @@ def test_background_handoff_keeps_work_running_and_allows_start(
     rt, controller, engine, _ = background_meeting
     launched = _record_launch(rt, monkeypatch)
     states = []
-    controller.meeting_state_changed.connect(states.append)
+    rt.meeting_state_changed.connect(states.append)
 
     assert rt.continue_in_background() is True
     assert rt.continue_in_background() is False
@@ -1717,9 +1707,9 @@ def test_background_outcome_does_not_replace_new_meeting(
     rt._engine = current
     controller.meeting_active = True
     states, errors, urls = [], [], []
-    controller.meeting_state_changed.connect(states.append)
-    controller.meeting_error.connect(errors.append)
-    controller.meeting_server_started.connect(urls.append)
+    rt.meeting_state_changed.connect(states.append)
+    rt.meeting_error.connect(errors.append)
+    rt.meeting_server_started.connect(urls.append)
     for kind, payload in [
         ("status", {"status": "ended", "finalization": {"status": "failed"}}),
         ("ended", {"status": "ended"}),
@@ -1773,7 +1763,7 @@ def test_events_queued_before_background_handoff_are_discarded(
     import threading
 
     rt, controller, old, _ = background_meeting
-    queued = threading.Thread(target=lambda: controller.meeting_engine_event.emit(
+    queued = threading.Thread(target=lambda: rt.meeting_engine_event.emit(
         old, "ended", {"status": "ended"}
     ))
     queued.start()
@@ -1784,7 +1774,7 @@ def test_events_queued_before_background_handoff_are_discarded(
     rt._engine = current
     controller.meeting_active = True
     states = []
-    controller.meeting_state_changed.connect(states.append)
+    rt.meeting_state_changed.connect(states.append)
     qapp.processEvents()
     assert controller.meeting_active is True
     assert states == []
@@ -1816,9 +1806,9 @@ def test_voice_feedback_reaches_no_desktop_surface(runtime, caplog):
     current = object()
     rt._engine = current
     states, statuses, errors = [], [], []
-    controller.meeting_state_changed.connect(states.append)
-    controller.meeting_status_update.connect(statuses.append)
-    controller.meeting_error.connect(errors.append)
+    rt.meeting_state_changed.connect(states.append)
+    rt.meeting_status_update.connect(statuses.append)
+    rt.meeting_error.connect(errors.append)
     feedback = {"seq": 1, "phase": "heard", "message": "Heard you"}
     with caplog.at_level(logging.DEBUG):
         rt._route_engine_event(current, "voice_feedback", feedback)
@@ -1850,8 +1840,8 @@ def retry_publication(runtime, monkeypatch):
     releases = []
     states = []
     notes = []
-    controller.meeting_state_changed.connect(lambda payload: states.append(dict(payload)))
-    controller.meeting_status_update.connect(notes.append)
+    rt.meeting_state_changed.connect(lambda payload: states.append(dict(payload)))
+    rt.meeting_status_update.connect(notes.append)
 
     def publish(snapshot):
         rt._queue_engine_event(engine, "status", {
