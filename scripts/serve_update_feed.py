@@ -13,6 +13,10 @@ Then, in a second shell, start the *installed* app with the feed override::
 
 Help -> Check for Updates now offers the served build. Digests, manifests,
 and the commit itself run exactly as they do against GitHub.
+
+``--prerelease`` serves the build as a GitHub prerelease, to soak the beta
+release track: only a copy with Settings -> General -> Get beta updates on
+may install it; any other copy is told about it but offered no download.
 """
 
 from __future__ import annotations
@@ -62,7 +66,14 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
-def build_payload(directory: Path, version: str, base_url: str, notes: str) -> dict:
+def build_payload(
+    directory: Path,
+    version: str,
+    base_url: str,
+    notes: str,
+    *,
+    prerelease: bool = False,
+) -> dict:
     assets = []
     for name in (setup_asset_name(version), archive_asset_name(version)):
         path = directory / name
@@ -85,7 +96,7 @@ def build_payload(directory: Path, version: str, base_url: str, notes: str) -> d
         "html_url": f"{base_url}/releases/tag/v{version}",
         "body": notes,
         "draft": False,
-        "prerelease": False,
+        "prerelease": prerelease,
         "assets": assets,
     }
 
@@ -145,12 +156,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--notes", default="Local soak build.", help="release body shown in the prompt")
+    parser.add_argument(
+        "--prerelease",
+        action="store_true",
+        help="serve the build as a prerelease (installable on the beta release track only)",
+    )
     args = parser.parse_args(argv)
 
     directory = Path(args.dir).resolve()
     version = args.version or discover_version(directory)
     base_url = f"http://{args.host}:{args.port}"
-    _Handler.payload = build_payload(directory, version, base_url, args.notes)
+    _Handler.payload = build_payload(
+        directory, version, base_url, args.notes, prerelease=args.prerelease
+    )
     _Handler.directory = directory
 
     server = ThreadingHTTPServer((args.host, args.port), _Handler)

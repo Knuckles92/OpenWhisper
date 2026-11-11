@@ -101,6 +101,7 @@ _BOUND_CHECKS = [
     (lambda d: d.restore_clipboard_check, SettingsKey.RESTORE_CLIPBOARD, False, False),
     (lambda d: d.copy_clipboard_check, SettingsKey.COPY_CLIPBOARD, False, False),
     (lambda d: d.update_notify_check, SettingsKey.UPDATE_NOTIFY_ENABLED, False, False),
+    (lambda d: d.update_beta_check, SettingsKey.UPDATE_BETA_TRACK_ENABLED, True, True),
     (lambda d: d.meeting_past_recall_check, SettingsKey.MEETING_PAST_RECALL_ENABLED, True, True),
     (lambda d: d.meeting_context_folder_check, SettingsKey.MEETING_CONTEXT_FOLDER_ENABLED, True, True),
     (lambda d: d.typesafe_topic_shift_check, SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, "yes", False),
@@ -213,3 +214,20 @@ def test_plain_text_passing_focus_through_keeps_a_change_made_elsewhere(app):
     QApplication.sendEvent(edit, QFocusEvent(QEvent.Type.FocusOut))
 
     assert persist.saved == []
+
+
+def test_beta_track_toggle_makes_the_next_update_check_due(isolated_dialog):
+    dialog, manager, stored = isolated_dialog
+    manager.save_all_settings({
+        **stored,
+        SettingsKey.UPDATE_LAST_CHECK_AT: "2026-11-11T00:00:00+00:00",
+        SettingsKey.UPDATE_API_RETRY_AT: "2026-11-11T01:00:00+00:00",
+    })
+    changed = []
+    with patch.object(dialog, "notify_changed", side_effect=changed.append):
+        dialog.update_beta_check.setChecked(False)
+    settings = manager.load_all_settings()
+    assert settings[SettingsKey.UPDATE_BETA_TRACK_ENABLED] is False
+    assert SettingsKey.UPDATE_LAST_CHECK_AT not in settings
+    assert SettingsKey.UPDATE_API_RETRY_AT in settings
+    assert "updates" in changed

@@ -109,6 +109,7 @@ from services.settings import (
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
     resolve_transcript_cleanup_rules,
+    resolve_update_beta_track_enabled,
     resolve_update_check_enabled,
     resolve_update_notify_enabled,
     resolve_update_restart_prompt_enabled,
@@ -1480,6 +1481,17 @@ class SettingsDialog(QDialog):
         self.update_restart_prompt_check = self.update_restart_prompt_tile.checkbox
         self.update_restart_prompt_check.setObjectName("updateRestartPromptCheck")
 
+        self.update_beta_tile = SettingTile(
+            "Get beta updates",
+            "Also offers test releases a few days before everyone else gets "
+            "them. They are verified like any release but may have rough "
+            "edges. Turning this off never downgrades: you keep the beta "
+            "until a newer regular release is out.",
+            design_icon("stack-purple.svg"),
+        )
+        self.update_beta_check = self.update_beta_tile.checkbox
+        self.update_beta_check.setObjectName("updateBetaTrackCheck")
+
         self._tile_group(
             layout,
             "Output",
@@ -1506,6 +1518,7 @@ class SettingsDialog(QDialog):
                 self.update_check_tile,
                 self.update_notify_tile,
                 self.update_restart_prompt_tile,
+                self.update_beta_tile,
             ],
         )
 
@@ -1544,6 +1557,12 @@ class SettingsDialog(QDialog):
             SettingsKey.UPDATE_RESTART_PROMPT_ENABLED,
             resolve_update_restart_prompt_enabled,
         )
+        self._bindings.checkbox(
+            self.update_beta_check,
+            SettingsKey.UPDATE_BETA_TRACK_ENABLED,
+            resolve_update_beta_track_enabled,
+        )
+        self.update_beta_check.toggled.connect(self._on_update_beta_toggled)
 
     def _build_walkthroughs_page(self, layout: QVBoxLayout) -> None:
         """Everything about walkthroughs: shortcuts, the document, the write-up.
@@ -4199,6 +4218,15 @@ class SettingsDialog(QDialog):
     def _on_update_notify_toggled(self, _checked: bool) -> None:
         # The binding connected first, so the choice is already saved.
         if not self._loading:
+            self.notify_changed("updates")
+
+    def _on_update_beta_toggled(self, _checked: bool) -> None:
+        # The binding connected first, so the choice is already saved. Check
+        # again soon, so the offer matches the track just chosen.
+        if not self._loading:
+            from services.app_update import release_track_changed
+
+            release_track_changed(settings_manager)
             self.notify_changed("updates")
 
     def _on_audio_device_changed(self, _index: int = 0) -> None:

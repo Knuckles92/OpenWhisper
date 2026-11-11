@@ -315,10 +315,10 @@ class AppUpdateDialog(QDialog):
         if self._result is None:
             return "Could not check for updates"
         if self._result.status == UpdateStatus.UPDATE_AVAILABLE:
-            latest = (
-                self._result.release.version if self._result.release else "a new version"
-            )
-            return f"OpenWhisper {latest} is available"
+            release = self._result.release
+            latest = release.version if release else "a new version"
+            beta = " beta" if release is not None and release.prerelease else ""
+            return f"OpenWhisper {latest}{beta} is available"
         if self._result.status == UpdateStatus.DEVELOPMENT:
             return "This is a development build"
         return "OpenWhisper is up to date"
