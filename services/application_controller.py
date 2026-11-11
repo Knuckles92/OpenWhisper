@@ -3,20 +3,16 @@
 from __future__ import annotations
 
 import logging
-import socket
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
 from config import config
-from services.components import (
-    component_coordinator,
-)
+from services.components import component_coordinator
 from services.database import db
 from services import dictionary
 from services.recorder import AudioRecorder
@@ -29,6 +25,7 @@ from services.runtime import (
 from services.runtime.command import CommandRuntime
 from services.runtime.components import ComponentRuntime
 from services.runtime.models import ModelRuntime
+from services.runtime.remote import RemoteRuntime
 from services.runtime.updater import UpdaterRuntime
 from services.runtime.walkthrough import WalkthroughRuntime
 from services.actions.runtime import ActionRuntime
@@ -46,12 +43,6 @@ from transcriber import (
 
 logger = logging.getLogger(__name__)
 
-#: How often the Remote engine's watch reads its connection. Reading sends
-#: nothing; websockets keeps the socket's state current on its own thread.
-REMOTE_WATCH_INTERVAL_MS = 1000
-#: Seconds before each automatic reconnect to an unreachable host; the last
-#: repeats until it answers.
-REMOTE_RETRY_DELAYS_S = (2, 5, 15, 30, 60)
 #: What the user's Cancel says when it found nothing to cancel.
 NOTHING_TO_CANCEL = "Nothing to cancel"
 
@@ -61,20 +52,6 @@ def _import_openai_sdk() -> None:
         import openai  # noqa: F401
     except Exception:
         logger.debug("openai SDK warm-up failed", exc_info=True)
-
-
-@dataclass
-class _ClientModelSwitch:
-    """A paired computer's model choice, answered on the Qt thread."""
-
-    family: str
-    model: str
-    device_name: str
-    runtime: Optional[dict] = None
-    target_device: Optional[str] = None
-    #: Why the switch can't happen now; empty once it is queued.
-    error: Optional[str] = None
-    done: threading.Event = field(default_factory=threading.Event)
 
 
 class PreviewEvents:
@@ -132,7 +109,6 @@ class ApplicationController(QObject):
     recording_capture_failed = pyqtSignal(str)
     history_persisted = pyqtSignal(object)
     startup_database_ready = pyqtSignal(str)
-    remote_catalog_received = pyqtSignal(object, object, object)
     # Multi-file upload, emitted from the batch worker thread.
     # (1-based position, total, source name) as each file starts
     batch_progress = pyqtSignal(int, int, str)
@@ -167,20 +143,9 @@ class ApplicationController(QObject):
     # (readout, engine is loaded and usable)
     device_info_update = pyqtSignal(str, bool)
     engine_busy_changed = pyqtSignal(bool)
-    # The Remote engine's link may read differently (emitted from any thread;
-    # the slot takes a fresh RemoteLink on the Qt thread).
-    remote_link_poke = pyqtSignal()
-    # The Remote engine settled: a background reconnect's restore_link()
-    # outcome, or "reload" when a reload of it finished.
-    remote_settled = pyqtSignal(str)
-    # Reconnect now (emitted from any thread; hotkeys start recordings off it).
-    remote_retry_requested = pyqtSignal()
-    remote_job_retry_requested = pyqtSignal(object)  # the waiting worker's event
     # Arm the engine reload's debounce timer (emitted from any thread; hotkeys
     # and transcription workers ask for reloads off the Qt thread).
     reload_debounce_requested = pyqtSignal()
-    # Host: the paired computers connected now, as connected_clients() lists them.
-    remote_clients_changed = pyqtSignal(list)
     # Hop streaming setup onto the Qt main thread after the first local load.
     streaming_setup_requested = pyqtSignal()
     # Meeting Mode signals may originate from engine worker threads.
@@ -202,15 +167,6 @@ class ApplicationController(QObject):
     meeting_guest_link_ready = pyqtSignal(str)
     # Past Meetings sidebar rebuild; always hop to the Qt GUI thread.
     past_meetings_refresh_requested = pyqtSignal()
-    # The Remote engine's pairing changed (emitted from the pairing worker).
-    remote_pairing_changed = pyqtSignal()
-    # This computer's owner renamed the paired host; same pairing, new name.
-    remote_host_renamed = pyqtSignal()
-    # Records moved between this computer and its paired host, either way.
-    records_changed = pyqtSignal()
-    # A paired computer chose one of this computer's models (emitted from its
-    # connection thread with a _ClientModelSwitch the slot answers).
-    client_model_switch_requested = pyqtSignal(object)
     # Shortcut actions, emitted from the hotkey dispatcher thread and handled
     # on the Qt thread. A transform shortcut carries the transform's id.
     transform_requested = pyqtSignal(str)
@@ -313,23 +269,6 @@ class ApplicationController(QObject):
         # such as which model a remote engine switch is loading.
         self._reload_note = ""
 
-        # The Remote engine's watch: a tick that reads the socket's state
-        # (nothing is sent) while Remote is selected, and a backed-off quiet
-        # reconnect when the host drops or can't be reached.
-        self._remote_watch = QTimer()
-        self._remote_watch.setInterval(REMOTE_WATCH_INTERVAL_MS)
-        self._remote_watch.timeout.connect(self._on_remote_watch)
-        self._remote_retry_timer = QTimer()
-        self._remote_retry_timer.setSingleShot(True)
-        self._remote_retry_timer.timeout.connect(self._retry_remote)
-        self._remote_retry_step = 0
-        self._remote_retry_at: Optional[float] = None
-        self._remote_restoring = False
-        self._remote_job_retry: Optional[threading.Event] = None
-        self._remote_link = None
-        # device_info the watch last reported, so repeat failures stay quiet.
-        self._remote_reported = ""
-
         self.update_readiness_error = ""
 
         # Exclusive mode: True while a meeting session runs; dictation start
@@ -344,6 +283,7 @@ class ApplicationController(QObject):
         self.walkthrough_runtime = WalkthroughRuntime(self)
         self._preview_events = PreviewEvents(self.transcription_runtime.publish_preview)
         self.meeting_runtime = MeetingRuntime(self)
+        self.remote = RemoteRuntime(self)
         self.models = ModelRuntime(self)
         self.components = ComponentRuntime(self)
         self.updater = UpdaterRuntime(self)
@@ -377,20 +317,20 @@ class ApplicationController(QObject):
             self.transcription_backends[key] = LocalSpeechBackend(key)
         from transcriber.remote_backend import REMOTE_BACKEND, RemoteSpeechBackend
         remote = RemoteSpeechBackend()
-        remote.on_link_changed = self.remote_link_poke.emit
+        remote.on_link_changed = self.remote.remote_link_poke.emit
         self.transcription_backends[REMOTE_BACKEND] = remote
         from services.remote_asr.service import RemoteEngineService
         # Serves whichever engine is selected here, when sharing is on, and
         # lets paired computers switch it to another model ready here.
         self.remote_engine = RemoteEngineService(
             lambda: self.current_backend,
-            on_client_changed=self.remote_pairing_changed.emit,
-            on_host_catalog=self.remote_catalog_received.emit,
-            switch_engine=self._switch_engine_for_client,
-            configure_engine=self._configure_engine_for_client,
+            on_client_changed=self.remote.remote_pairing_changed.emit,
+            on_host_catalog=self.remote.remote_catalog_received.emit,
+            switch_engine=self.remote.switch_engine_for_client,
+            configure_engine=self.remote.configure_engine_for_client,
             engine_settled=self._engine_settled,
         )
-        self.remote_engine.add_listener(self._on_remote_host_event)
+        self.remote_engine.add_listener(self.remote.on_host_event)
         self.ui_controller.remote_engine = self.remote_engine
         from services.remote_records.sync import record_sync
         # Where this computer's records go while paired; waits on the meeting
@@ -400,7 +340,7 @@ class ApplicationController(QObject):
         if meetings is not None:
             meetings.busy = self.meeting_runtime.meeting_busy
             meetings.in_use_check = self.meeting_runtime.meeting_in_use
-        record_sync.add_listener(self._on_record_sync_event)
+        record_sync.add_listener(self.remote.on_record_sync_event)
         self.ui_controller.record_sync = record_sync
         saved_model = settings_manager.load_model_selection()
         self._current_model_name = saved_model
@@ -440,10 +380,10 @@ class ApplicationController(QObject):
         )
         self.ui_controller.on_model_batch_stop = self.models.cancel_model_batch_download
         self.ui_controller.get_loaded_local_model = self.models.get_loaded_local_model
-        self.ui_controller.get_remote_models = self.remote_models
-        self.ui_controller.on_remote_model_selected = self.select_remote_model
-        self.ui_controller.on_host_model_selected = self.select_host_model
-        self.ui_controller.on_remote_runtime_selected = self.select_remote_runtime
+        self.ui_controller.get_remote_models = self.remote.remote_models
+        self.ui_controller.on_remote_model_selected = self.remote.select_remote_model
+        self.ui_controller.on_host_model_selected = self.remote.select_host_model
+        self.ui_controller.on_remote_runtime_selected = self.remote.select_remote_runtime
         self.ui_controller.get_missing_local_runtime = self.models.get_missing_local_runtime
         self.ui_controller.on_dictation_transcribe = self.transcribe_clip
         self.ui_controller.get_meeting_active = self.is_meeting_active
@@ -670,7 +610,7 @@ class ApplicationController(QObject):
         self._flush_pending_streaming_setup()
         if remote and selected is self.current_backend:
             # Starts the link watch, and retries a host that didn't answer.
-            self.remote_settled.emit("reload")
+            self.remote.remote_settled.emit("reload")
 
     def _reload_whisper_worker(self) -> None:
         """Reload the local backend off the UI thread; report results via signals.
@@ -1018,167 +958,7 @@ class ApplicationController(QObject):
         except Exception:
             logger.debug("Could not start the openai SDK warm-up", exc_info=True)
 
-    # ---- remote engine: choosing the paired computer's model ----
-
-    def remote_models(self):
-        """What the Remote engine's Model field shows (a ``RemoteModels``)."""
-        remote = self.transcription_backends.get("remote")
-        return remote.model_choices() if remote is not None else None
-
-    def select_remote_model(self, family: str, model: str) -> None:
-        """Client: switch the paired computer to one of its models.
-
-        The choice rides on the next reload, which asks the host to load it
-        and reconnects to what the host then runs, so the Model field's
-        switch shows the same busy state as any other engine change.
-        """
-        remote = self.transcription_backends.get("remote")
-        if remote is None or self.current_backend is not remote:
-            return
-        current = remote.current_model
-        if current is not None and current.key == (family, model):
-            return
-        refusal = None
-        if self.is_meeting_active():
-            refusal = "End the meeting before changing the engine"
-        elif self.recorder.is_recording or self.is_transcribing():
-            refusal = "Finish recording before changing the engine"
-        if refusal:
-            self.status_update.emit(refusal)
-            self.ui_controller.refresh_remote_models()
-            return
-        choice = remote.request_model(family, model)
-        host = remote.host_name or "the remote computer"
-        self._reload_note = f"Switching {host} to {choice.label}..."
-        self.reload_whisper_model()
-
-    def _switch_engine_for_client(
-        self, family: str, model: str, device_name: str, device: Optional[str] = None
-    ) -> None:
-        """Host: switch to a model a paired computer chose, and wait for the answer.
-
-        Called on that computer's connection thread. The switch itself runs
-        on the Qt thread, like any engine change; this raises RuntimeError
-        with the reason when it can't happen now.
-        """
-        request = _ClientModelSwitch(family, model, device_name, target_device=device)
-        self.client_model_switch_requested.emit(request)
-        if not request.done.wait(10.0):
-            raise RuntimeError(f"{socket.gethostname()} didn't respond. Try again in a moment.")
-        if request.error:
-            raise RuntimeError(request.error)
-
-    def select_remote_runtime(self, family: str, model: str, changes: dict) -> None:
-        remote = self._selected_remote()
-        if remote is None:
-            return
-        if (self.is_meeting_active() or self.recorder.is_recording or self.is_transcribing()
-                or self._reload_in_flight or self._reload_pending):
-            self.status_update.emit("Finish the current activity before changing the remote runtime")
-            self.ui_controller.refresh_remote_models()
-            return
-        try:
-            remote.request_runtime(family, model, changes)
-        except ValueError as exc:
-            self.status_update.emit(str(exc))
-            self.ui_controller.refresh_remote_models()
-            return
-        self._reload_note = f"Updating the runtime on {remote.host_name or 'the remote computer'}..."
-        self.reload_whisper_model()
-
-    def _configure_engine_for_client(self, family: str, model: str, changes: dict, device_name: str) -> None:
-        request = _ClientModelSwitch(family, model, device_name, runtime=changes)
-        self.client_model_switch_requested.emit(request)
-        if not request.done.wait(10.0):
-            raise RuntimeError(f"{socket.gethostname()} didn't respond. Try again in a moment.")
-        if request.error:
-            raise RuntimeError(request.error)
-
-    def _on_client_model_switch(self, request: "_ClientModelSwitch") -> None:
-        try:
-            if request.target_device is not None:
-                request.error = self._switch_engine_to(request.family, request.model, request.device_name,
-                                                      target_device=request.target_device)
-            elif request.runtime is None:
-                request.error = self._switch_engine_to(request.family, request.model, request.device_name)
-            else:
-                request.error = self._switch_engine_to(request.family, request.model, request.device_name,
-                                                      runtime=request.runtime)
-        except Exception as exc:
-            logger.exception("Switching models for a paired computer failed")
-            request.error = f"{socket.gethostname()} couldn't switch models: {exc}"
-        finally:
-            request.done.set()
-
-    def select_host_model(self, family: str, model: str) -> Optional[str]:
-        """Host Mode's engine picker: serve another model ready on this computer.
-
-        Switches the way a paired computer's request does, so every view
-        follows. Returns why it can't, or None once the switch is under way.
-        """
-        try:
-            return self._switch_engine_to(family, model, None)
-        except Exception as exc:
-            logger.exception("Switching the served model failed")
-            return f"Couldn't switch models: {exc}"
-
-    def _switch_engine_to(self, family: str, model: str, device_name: Optional[str], *,
-                          runtime: Optional[dict] = None,
-                          target_device: Optional[str] = None) -> Optional[str]:
-        """Select a model here as the user would; returns why not, or None once queued.
-
-        Persists the model the way the engine fields do, selects its backend
-        through the main window so every view follows, and queues the reload
-        whose end ``_engine_settled`` reports. ``device_name`` is the paired
-        computer that asked, or None when it was asked for on this computer.
-        """
-        name = socket.gethostname() if device_name else "This computer"
-        refusal = _engine_switch_refusal(self, name)
-        if refusal is not None:
-            return refusal
-        refusal = _apply_engine_overrides(self, name, family, model, runtime, target_device)
-        if refusal is not None:
-            return refusal
-        label = _save_engine_model(family, model)
-        if label is None:
-            return f"{name} can't run {model}."
-        if device_name:
-            logger.info("Paired computer %s switched this computer to %s", device_name, label)
-        else:
-            logger.info("Host Mode switched this computer to %s", label)
-        if not _select_backend_family(self, family):
-            return f"{name} couldn't switch to {label} right now."
-        if runtime is None and target_device is None and _whisper_already_serves(self, family, model):
-            return None  # Selecting the backend was all it took.
-        self._reload_note = (f"Switching to {label} for {device_name}..." if device_name
-                             else f"Switching to {label}...")
-        self.reload_whisper_model()
-        return None
-
-    def _on_remote_pairing_changed(self) -> None:
-        """Reconnect the Remote engine after pairing or forgetting a host."""
-        self.record_sync.wake(now=True)
-        self.records_changed.emit()
-        if self._current_model_name == "remote":
-            self._cancel_remote_retry()
-            self.reload_whisper_model()
-            return
-        remote = self.transcription_backends.get("remote")
-        if remote is not None:
-            remote.cleanup()
-
-    def _on_remote_host_renamed(self) -> None:
-        """Call the paired host its new name everywhere, without reconnecting."""
-        remote = self.transcription_backends.get("remote")
-        pairing = self.remote_engine.client_pairing()
-        if remote is not None and pairing is not None:
-            remote.host_renamed(pairing)
-        selected = self._selected_remote()
-        if selected is not None:
-            self._remote_reported = selected.device_info
-            self.device_info_update.emit(selected.device_info, selected.is_available())
-        self.ui_controller.refresh_remote_models()
-        self.records_changed.emit()
+    # ---- the selected engine ----
 
     def _on_local_engine_settings_changed(self) -> None:
         """A local engine's model, device or quantization changed in Settings."""
@@ -1187,170 +967,10 @@ class ApplicationController(QObject):
             return
         self.reload_whisper_model()
 
-    # ---- remote engine: watching the connection ----
-
     def _selected_remote(self):
         """The Remote engine while it is the selected one, else None."""
         backend = self.current_backend
         return backend if getattr(backend, "is_remote", False) else None
-
-    def _watch_remote(self) -> None:
-        """Start the link watch while Remote is selected; its tick stops it after."""
-        if self._selected_remote() is not None and not self._remote_watch.isActive():
-            self._remote_watch.start()
-        self._publish_remote_link()
-
-    def _on_remote_watch(self) -> None:
-        remote = self._selected_remote()
-        if remote is None:
-            self._remote_watch.stop()
-            self._cancel_remote_retry()
-            self._remote_link = None
-            return
-        if remote.check_link():
-            # Closed between requests: say so now, not at the next recording.
-            self.device_info_update.emit(remote.device_info, False)
-        if not remote.is_available():
-            self._schedule_remote_retry()
-        self._publish_remote_link()
-
-    def _publish_remote_link(self) -> None:
-        """Hand the engine card a fresh RemoteLink when it reads differently."""
-        remote = self._selected_remote()
-        if remote is None:
-            return
-        from dataclasses import replace
-
-        link = replace(remote.link(), retry_at=self._remote_retry_at)
-        if link != self._remote_link:
-            self._remote_link = link
-            self.ui_controller.set_remote_link(link)
-
-    def _schedule_remote_retry(self) -> None:
-        """Try the host again after the next backoff delay, unless already due."""
-        remote = self._selected_remote()
-        if (remote is None or remote.is_available() or self._remote_restoring
-                or self._remote_retry_timer.isActive()):
-            return
-        if remote.link().state == "unpaired":
-            return
-        delays = REMOTE_RETRY_DELAYS_S
-        delay = delays[min(self._remote_retry_step, len(delays) - 1)]
-        self._remote_retry_step += 1
-        self._remote_retry_at = time.monotonic() + delay
-        self._remote_retry_timer.start(int(delay * 1000))
-        self._watch_remote()
-
-    def _cancel_remote_retry(self) -> None:
-        self._remote_retry_timer.stop()
-        self._remote_retry_at = None
-        self._remote_retry_step = 0
-
-    def retry_remote_now(self) -> None:
-        """Reconnect to the paired computer now. Safe from any thread."""
-        self.remote_retry_requested.emit()
-
-    def retry_remote_for_transcription(self, settled: threading.Event) -> None:
-        """Ask Qt to start or join a reconnect and signal when it settles."""
-        self.remote_job_retry_requested.emit(settled)
-
-    def _retry_remote_for_transcription(self, settled: threading.Event) -> None:
-        remote = self._selected_remote()
-        if remote is None or remote.is_available():
-            settled.set()
-            return
-        self._remote_job_retry = settled
-        self._retry_remote()
-
-    def _retry_remote(self) -> None:
-        remote = self._selected_remote()
-        if (remote is None or self._remote_restoring or self._reload_in_flight
-                or (self._reload_pending and self._remote_job_retry is None)):
-            return
-        self._remote_retry_timer.stop()
-        self._remote_retry_at = None
-        if remote.is_available():
-            self._cancel_remote_retry()
-            self._publish_remote_link()
-            return
-        self._remote_restoring = True
-        self._publish_remote_link()
-        threading.Thread(
-            target=self._remote_restore_worker, args=(remote,),
-            name="remote-reconnect", daemon=True,
-        ).start()
-
-    def _remote_restore_worker(self, remote) -> None:
-        try:
-            outcome = remote.restore_link()
-        except Exception:
-            logger.exception("Remote engine reconnect failed")
-            outcome = "offline"
-        self.remote_settled.emit(outcome)
-
-    def _on_remote_settled(self, outcome: str) -> None:
-        """A reconnect attempt or a reload of the Remote engine ended (Qt thread)."""
-        if outcome != "reload":
-            self._remote_restoring = False
-        remote = self._selected_remote()
-        if self._remote_job_retry is not None:
-            self._remote_job_retry.set()
-            self._remote_job_retry = None
-        if remote is None:
-            return
-        available = remote.is_available()
-        if outcome != "reload" and (available or outcome == "changed"
-                                    or remote.device_info != self._remote_reported):
-            # A reload reports its own result; a quiet retry only when it
-            # changed something, so a host that stays away doesn't clear the
-            # status line every minute.
-            self.device_info_update.emit(remote.device_info, available)
-        self._remote_reported = remote.device_info
-        if available:
-            self._cancel_remote_retry()
-            if outcome != "reload":
-                # The preview may be waiting for a first connection, or be
-                # built for another engine than the host runs now.
-                self._pending_streaming_setup = True
-                self._flush_pending_streaming_setup()
-        elif outcome != "unpaired":
-            self._schedule_remote_retry()
-        self._watch_remote()
-
-    def _on_engine_busy_for_host(self, busy: bool) -> None:
-        """A load settled: paired computers learn if the shared engine changed."""
-        remote_engine = getattr(self, "remote_engine", None)
-        if not busy and remote_engine is not None:
-            remote_engine.engine_changed()
-
-    def _on_remote_host_event(self, kind: str) -> None:
-        """Host: which paired computers are connected, and busy (any thread)."""
-        if kind in ("clients", "activity", "state"):
-            self.remote_clients_changed.emit(self.remote_engine.connected_clients())
-        if kind == "models":
-            self.models.model_cache_changed.emit()
-        if kind == "components":
-            self.components.component_state_changed.emit()
-            self.models.model_cache_changed.emit()
-        if kind == "records":
-            # A paired computer stored or removed a record here.
-            self.records_changed.emit()
-        if kind == "host_renamed":
-            self.remote_host_renamed.emit()
-
-    def _on_record_sync_event(self, kind: str) -> None:
-        """Client: a record moved to, or came back from, the paired host (any thread)."""
-        if kind == "records":
-            self.records_changed.emit()
-
-    def _on_records_changed(self) -> None:
-        self.ui_controller.main_window.refresh_history()
-        self.ui_controller.main_window.refresh_past_meetings()
-
-    def _on_remote_catalog(self, pairing, ready: dict, catalog: dict) -> None:
-        remote = self.transcription_backends.get("remote")
-        if remote is not None and remote.refresh_host_catalog(pairing, ready, catalog):
-            self.ui_controller.refresh_remote_models()
 
     def ensure_local_model_available(self) -> None:
         """Make sure the selected local model is loaded; any thread (see ModelRuntime)."""
@@ -1679,10 +1299,7 @@ class ApplicationController(QObject):
         self.batch_item_finished.connect(self.ui_controller.set_batch_item_finished)
         self.large_file_detected.connect(self.ui_controller.show_large_file_state)
         self.models.connect_signals()
-        self.remote_pairing_changed.connect(self._on_remote_pairing_changed)
-        self.remote_host_renamed.connect(self._on_remote_host_renamed)
-        self.records_changed.connect(self._on_records_changed)
-        self.client_model_switch_requested.connect(self._on_client_model_switch)
+        self.remote.connect_signals()
         self.transform_requested.connect(self.command_runtime.run_transform)
         # Late-bound, so a UI without one of these fails only when it fires.
         self.scratchpad_toggle_requested.connect(
@@ -1715,19 +1332,12 @@ class ApplicationController(QObject):
         # Learning saves from a worker thread; the queued signal brings the
         # notice to the Qt thread.
         dictionary.set_learned_callback(self.dictionary_term_learned.emit)
-        self.remote_link_poke.connect(self._publish_remote_link)
-        self.remote_catalog_received.connect(self._on_remote_catalog)
-        self.remote_settled.connect(self._on_remote_settled)
-        self.remote_retry_requested.connect(self._retry_remote)
-        self.remote_job_retry_requested.connect(self._retry_remote_for_transcription)
-        self.remote_clients_changed.connect(self.ui_controller.set_remote_clients)
-        self.ui_controller.on_remote_retry = self.retry_remote_now
         self.status_update.connect(self.ui_controller.set_status)
         self.recording_capture_failed.connect(self.transcription_runtime.on_capture_error)
         self.history_persisted.connect(self.transcription_runtime.on_history_persisted)
         self.device_info_update.connect(self.ui_controller.set_device_info)
         self.engine_busy_changed.connect(self.ui_controller.set_engine_busy)
-        self.engine_busy_changed.connect(self._on_engine_busy_for_host)
+        self.engine_busy_changed.connect(self.remote.on_engine_busy)
         self.streaming_setup_requested.connect(self.streaming_runtime.setup_streaming)
         self.components.connect_signals()
         self.meeting_engine_event.connect(self.meeting_runtime._route_engine_event)
@@ -1873,10 +1483,12 @@ class ApplicationController(QObject):
     def _stop_timers(self) -> None:
         for name in (
             "_watchdog_timer", "_reload_timer", "_periodic_refresh_timer",
-            "_remote_watch", "_remote_retry_timer",
         ):
             if hasattr(self, name) and getattr(self, name):
                 getattr(self, name).stop()
+        remote = getattr(self, "remote", None)
+        if remote is not None:
+            remote.stop_timers()
         updater = getattr(self, "updater", None)
         if updater is not None:
             updater.stop()
@@ -1994,84 +1606,8 @@ def _speech_engine_readiness_message(controller, backend) -> Optional[str]:
 def _remote_engine_readiness_message(controller, backend) -> str:
     # The host may be back (woke up, came into range): try now
     # rather than at the next scheduled retry.
-    controller.retry_remote_now()
+    controller.remote.retry_now()
     host = backend.host_name or "the remote engine"
-    if controller._remote_restoring or not backend.last_error:
+    if controller.remote.restoring or not backend.last_error:
         return f"Connecting to {host}..."
     return f"{backend.last_error} Trying again..."
-
-
-def _engine_switch_refusal(controller, name: str) -> Optional[str]:
-    if controller.is_meeting_active():
-        return f"{name} is running a meeting. Change its model after the meeting ends."
-    if controller.recorder.is_recording or controller.is_transcribing():
-        return f"{name} is transcribing right now. Try again in a moment."
-    return None
-
-
-def _apply_engine_overrides(controller, name: str, family: str, model: str, runtime: Optional[dict],
-                            target_device: Optional[str]) -> Optional[str]:
-    """Save a requested device and runtime settings; returns why not, or None."""
-    if target_device is not None:
-        refusal = _save_engine_device(controller, name, family, model, target_device)
-        if refusal is not None:
-            return refusal
-    if runtime is not None:
-        from services.remote_asr.engines import host_engine_for
-        from services.remote_asr.runtime import validate_runtime
-
-        if controller._reload_in_flight or controller._reload_pending:
-            return f"{name} is loading its engine. Try again in a moment."
-        description = host_engine_for(controller.current_backend).describe()
-        updates = validate_runtime(description, family, model, runtime)
-        settings_manager.update_settings(updates)
-    return None
-
-
-def _save_engine_device(controller, name: str, family: str, model: str, target_device: str) -> Optional[str]:
-    from services.local_asr.catalog import WHISPER_BACKEND
-    from services.remote_asr.dependencies import validate_model_device
-
-    if controller._reload_in_flight or controller._reload_pending:
-        return f"{name} is loading its engine. Try again in a moment."
-    validate_model_device(family, model, target_device)
-    if family == WHISPER_BACKEND:
-        settings_manager.update_settings({SettingsKey.WHISPER_DEVICE: target_device,
-                                          SettingsKey.WHISPER_COMPUTE_TYPE: "auto"})
-    else:
-        devices = dict(settings_manager.get(SettingsKey.LOCAL_ASR_DEVICES, {}) or {})
-        devices[family] = target_device
-        settings_manager.save_setting(SettingsKey.LOCAL_ASR_DEVICES, devices)
-    return None
-
-
-def _save_engine_model(family: str, model: str) -> Optional[str]:
-    """Persist ``model`` as ``family``'s model; returns its label, or None if it can't run it."""
-    from services.local_asr.catalog import BACKENDS, MODELS, WHISPER_BACKEND
-
-    if family in BACKENDS and model in MODELS and MODELS[model].backend == family:
-        models = dict(settings_manager.load_all_settings().get(SettingsKey.LOCAL_ASR_MODELS) or {})
-        models[family] = model
-        settings_manager.save_setting(SettingsKey.LOCAL_ASR_MODELS, models)
-        return MODELS[model].label
-    if family == WHISPER_BACKEND and model in config.WHISPER_MODEL_CHOICES and model != "auto":
-        settings_manager.save_setting(SettingsKey.WHISPER_MODEL, model)
-        return f"Whisper {model}"
-    return None
-
-
-def _select_backend_family(controller, family: str) -> bool:
-    """Select ``family``'s backend through the main window; False when it didn't take."""
-    if controller._current_model_name == family:
-        return True
-    display = next(key for key, value in config.MODEL_VALUE_MAP.items() if value == family)
-    controller.ui_controller.select_transcription_backend(display)
-    return controller._current_model_name == family
-
-
-def _whisper_already_serves(controller, family: str, model: str) -> bool:
-    from services.local_asr.catalog import WHISPER_BACKEND
-
-    whisper = controller.transcription_backends.get(WHISPER_BACKEND)
-    return (family == WHISPER_BACKEND and whisper is not None and whisper.is_available()
-            and whisper.last_loaded_model == model and not controller._reload_pending)

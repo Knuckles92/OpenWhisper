@@ -948,6 +948,7 @@ class TestApplicationController:
                 "services.runtime.updater",
                 "services.runtime.models",
                 "services.runtime.components",
+                "services.runtime.remote",
                 "services.application_controller",
             ]:
                 sys.modules.pop(module_name, None)
@@ -1121,11 +1122,11 @@ class TestApplicationController:
         controller.ui_controller.select_transcription_backend = controller.on_model_changed
         controller.meeting_active = True
         with pytest.raises(RuntimeError, match="running a meeting"):
-            controller._switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
+            controller.remote.switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
         assert controller._current_model_name == "local_whisper"
         controller.meeting_active = False
 
-        controller._switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
+        controller.remote.switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
         assert controller._current_model_name == "nemotron"
         assert self.settings.saved_model_selection == "nemotron"
         assert self.settings.all_settings["local_asr_models"] == {"nemotron": "nemotron-3.5"}
@@ -1741,7 +1742,7 @@ class TestApplicationController:
             elif outcome != "timeout":
                 settled.set()
 
-        controller.retry_remote_for_transcription = Mock(side_effect=reconnect)
+        controller.remote.retry_for_transcription = Mock(side_effect=reconnect)
         runtime.transcribe_audio_file = Mock(
             side_effect=lambda path: controller._on_transcription_complete("recovered words")
         )
@@ -1749,7 +1750,7 @@ class TestApplicationController:
         runtime._run_transcription_job(str(source))
 
         attempts = {"reconnected": 2, "offline": 3, "canceled": 1, "timeout": 1}[outcome]
-        assert controller.retry_remote_for_transcription.call_count == attempts
+        assert controller.remote.retry_for_transcription.call_count == attempts
         assert progress == [f"Retrying connection ({n}/3)..." for n in range(1, attempts + 1)]
         assert not controller.ui_controller.copied
         if outcome == "reconnected":
@@ -1825,11 +1826,11 @@ class TestApplicationController:
         source.write_bytes(b"RIFF")
         assert runtime._claim_job()
         controller._pending_audio_path = str(source)
-        controller.retry_remote_for_transcription = Mock(side_effect=reconnect)
+        controller.remote.retry_for_transcription = Mock(side_effect=reconnect)
 
         runtime._run_transcription_job(str(source))
 
-        controller.retry_remote_for_transcription.assert_called_once()
+        controller.remote.retry_for_transcription.assert_called_once()
         assert backend.transcribe.call_count == 2
         assert self.history_manager.entries[0]["text"] == "recovered words"
         assert not controller.ui_controller.copied
