@@ -87,7 +87,7 @@ def arm_handoff_watchdog(grace_s: float = HANDOFF_EXIT_GRACE_S) -> threading.Tim
             )
             logging.shutdown()
         except Exception:
-            pass
+            pass  # Logging is best-effort here; the hard exit below must still run.
         _hard_exit()
 
     timer = threading.Timer(grace_s, _fire)
@@ -198,6 +198,7 @@ def _native_helper_command(controller, transaction_id: str, path: str):
         exe = helper_exe_for(journal)
         args = helper_argv(journal)
     except Exception as exc:
+        logger.warning("Could not prepare the updater helper", exc_info=True)
         _abandon_update(controller, path)
         message = str(exc) or "The updater helper could not be prepared."
         _fail_update(controller, message, offer_setup=True)
@@ -2230,7 +2231,7 @@ class UIController(QObject):
             destination = consent_destination(profile)
             remote = destination_is_remote(profile)
         except Exception:
-            logger.debug(
+            logger.warning(
                 "Could not resolve meeting endpoint for consent copy",
                 exc_info=True,
             )
@@ -2777,7 +2778,7 @@ class UIController(QObject):
         try:
             self._temporary_clipboard.cleanup()
         except Exception as e:
-            logger.debug(f"Error restoring clipboard during cleanup: {e}")
+            logger.warning(f"Error restoring clipboard during cleanup: {e}", exc_info=True)
 
         try:
             self._code_change_timer.stop()

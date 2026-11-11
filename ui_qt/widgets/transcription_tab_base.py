@@ -476,7 +476,7 @@ class TranscriptionTabBase(QWidget):
                 remove=LEGACY_STREAMING_KEYS,
             )
         except Exception as exc:
-            logger.error("Couldn't save live preview setting: %s", exc)
+            logger.error("Couldn't save live preview setting: %s", exc, exc_info=True)
             self.load_live_preview_setting()
             return
         self._live_preview_wanted = bool(checked)

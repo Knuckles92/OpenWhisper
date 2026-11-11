@@ -233,7 +233,7 @@ class TabbedContentWidget(QWidget):
                 finally:
                     self._programmatic_tab_change = False
         except Exception as e:
-            logger.warning(f"Failed to restore last tab: {e}")
+            logger.warning(f"Failed to restore last tab: {e}", exc_info=True)
 
     def _on_tab_changed(self, index: int):
         if (
@@ -282,7 +282,7 @@ class TabbedContentWidget(QWidget):
             settings_manager.save_setting(SettingsKey.LAST_TAB_INDEX, self.SAVED_TAB_IDS[index])
             self._last_saved_tab_index = index
         except Exception as e:
-            logger.warning(f"Failed to save tab selection: {e}")
+            logger.warning(f"Failed to save tab selection: {e}", exc_info=True)
 
     def flush_pending_tab_selection(self) -> None:
         """Synchronously persist any queued tab selection."""

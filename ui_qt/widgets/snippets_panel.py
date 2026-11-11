@@ -1,5 +1,7 @@
 """The snippet library and editor on Settings → Personalize → Snippets."""
 
+import logging
+
 from PyQt6.QtCore import QRect, QSignalBlocker, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QFontMetrics
 from PyQt6.QtWidgets import (
@@ -40,6 +42,8 @@ from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.buttons import Button, compact_primary_button, fit_compact_button, neutral_button
 from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.wrapped_label import WrappedLabel
+
+logger = logging.getLogger(__name__)
 
 #: Library column width at 100%; Duplicate and Delete fit side by side.
 LIBRARY_WIDTH = 220
@@ -316,6 +320,7 @@ class SnippetsPanel(QWidget):
         try:
             return self.manager.load_all_settings()
         except Exception:
+            logger.warning("Could not load settings for the snippet library", exc_info=True)
             return {}
 
     def _draft(self) -> Snippet:
@@ -499,6 +504,7 @@ class SnippetsPanel(QWidget):
             self._set_message(str(exc), error=True)
             return False
         except Exception as exc:
+            logger.warning("Could not save the snippet", exc_info=True)
             self._set_message(f"Couldn't save the snippet: {exc}", error=True)
             return False
         self._saved = draft
@@ -523,6 +529,7 @@ class SnippetsPanel(QWidget):
         try:
             self.manager.mutate_settings(lambda settings: delete_snippet(settings, snippet.id))
         except Exception as exc:
+            logger.warning("Could not delete the snippet", exc_info=True)
             self._set_message(f"Couldn't delete the snippet: {exc}", error=True)
             return
         self.refresh("")

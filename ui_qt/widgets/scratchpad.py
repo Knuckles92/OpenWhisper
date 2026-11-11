@@ -462,7 +462,7 @@ class ScratchpadWindow(QWidget):
             if settings_manager.get(SettingsKey.SCRATCHPAD_GEOMETRY) != value:
                 settings_manager.save_setting(SettingsKey.SCRATCHPAD_GEOMETRY, value)
         except Exception:
-            logger.warning("Couldn't save the Scratchpad position")
+            logger.warning("Couldn't save the Scratchpad position", exc_info=True)
 
     def moveEvent(self, event):
         super().moveEvent(event)
@@ -493,7 +493,7 @@ class ScratchpadWindow(QWidget):
         try:
             settings_manager.save_setting(SettingsKey.SCRATCHPAD_ALWAYS_ON_TOP, on)
         except Exception:
-            logger.warning("Couldn't save the Scratchpad's on-top choice")
+            logger.warning("Couldn't save the Scratchpad's on-top choice", exc_info=True)
         if self._compositor:
             return
         if self.on_top_button is not None and self.on_top_button.isChecked() != on:
@@ -579,7 +579,7 @@ class ScratchpadWindow(QWidget):
         try:
             joined = join_with_context(text, context)
         except Exception:
-            logger.debug("Couldn't join the dictation to the Scratchpad text", exc_info=True)
+            logger.warning("Couldn't join the dictation to the Scratchpad text", exc_info=True)
             joined = text
         cursor.insertText(_spaced(joined, before, after))
         self.editor.setTextCursor(cursor)

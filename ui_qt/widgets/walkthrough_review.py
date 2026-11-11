@@ -12,6 +12,7 @@ off the UI thread; copying and opening wait until edits are saved.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from datetime import date, datetime
 from pathlib import Path
@@ -62,6 +63,8 @@ from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.walkthrough_copy_tips import set_copy_tip
 from ui_qt.widgets.walkthrough_icons import paint_icon
 from ui_qt.widgets.walkthrough_ready import FileChip
+
+logger = logging.getLogger(__name__)
 
 #: The largest a screenshot shows beside its words, in logical pixels; it
 #: grows toward this with the room its row has.
@@ -1300,6 +1303,8 @@ class WalkthroughReview(QWidget):
                     raise RuntimeError("canceled")
                 result = operation()
             except Exception as exc:
+                if not self._cancel.is_set():
+                    logger.warning("Walkthrough review operation failed", exc_info=True)
                 error = str(exc)
             self._finished.emit(result, error)
         try:
@@ -1308,6 +1313,7 @@ class WalkthroughReview(QWidget):
             else:
                 threading.Thread(target=work, name="walkthrough-review", daemon=True).start()
         except Exception as exc:
+            logger.warning("Could not start the walkthrough review operation", exc_info=True)
             self._done(None, str(exc))
 
     def _done(self, result, error):

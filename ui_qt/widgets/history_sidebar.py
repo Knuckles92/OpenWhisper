@@ -100,6 +100,7 @@ def _cleanup_provider(entry: HistoryEntry, settings=None) -> str:
                 provider_id, settings if settings is not None else settings_manager.load_all_settings()
             ) or provider_id
         except Exception:
+            logger.debug("Could not resolve the cleanup provider's name; showing its id", exc_info=True)
             provider = provider_id
     return provider or ""
 
@@ -204,7 +205,7 @@ def _read_local_history(query: str, limit: int):
         else:
             entries = history_manager.get_history(limit=limit)
     except Exception as exc:
-        logger.error("Failed to load transcription history: %s", exc)
+        logger.error("Failed to load transcription history: %s", exc, exc_info=True)
         error = str(exc)
     return entries, error
 
@@ -1225,6 +1226,7 @@ class HistorySidebar(QWidget):
                 result["copies"] = records.copies_on_host("dictation", [e.id for e in entries])
                 result["items"] = records.list_remote("dictation", query, limit)
             except Exception as exc:
+                logger.warning("Could not list host-kept History entries: %s", exc)
                 result["notice"] = str(exc)
             finally:
                 done.set()
@@ -1239,7 +1241,7 @@ class HistorySidebar(QWidget):
             try:
                 host = host or records.status().host_name
             except Exception:
-                pass
+                logger.debug("Could not read the host's name for History", exc_info=True)
             for entry in entries:
                 if entry.id in result["copies"]:
                     entry.also_on = host or "the host"
@@ -1362,7 +1364,7 @@ class HistorySidebar(QWidget):
                 self.entry_copied.emit(entry_id)
                 logger.info(f"Copied entry to clipboard: {entry_id[:8]}...")
             except Exception as e:
-                logger.error(f"Failed to copy to clipboard: {e}")
+                logger.error(f"Failed to copy to clipboard: {e}", exc_info=True)
 
     def _on_copy_raw_requested(self, entry_id: str):
         entry = self.entry_for(entry_id)
@@ -1373,7 +1375,7 @@ class HistorySidebar(QWidget):
                 self.entry_copied.emit(entry_id)
                 logger.info(f"Copied raw entry to clipboard: {entry_id[:8]}...")
             except Exception as e:
-                logger.error(f"Failed to copy raw text to clipboard: {e}")
+                logger.error(f"Failed to copy raw text to clipboard: {e}", exc_info=True)
 
     def _on_version_requested(self, entry_id: str, version: str) -> None:
         if history_manager.use_version(entry_id, version) is not None:
@@ -1409,7 +1411,7 @@ class HistorySidebar(QWidget):
                 SETTING_DEFAULTS[SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE],
             )
         except Exception as exc:
-            logger.warning("Failed to load history deletion preference: %s", exc)
+            logger.warning("Failed to load history deletion preference: %s", exc, exc_info=True)
             return True
 
     def _confirm_delete(self, entry_id: str, remote, also_on) -> bool | None:
@@ -1454,6 +1456,7 @@ class HistorySidebar(QWidget):
                 logger.warning(
                     "Failed to save history deletion preference: %s",
                     exc,
+                    exc_info=True,
                 )
         return delete_audio_file
 
@@ -1529,6 +1532,7 @@ class HistorySidebar(QWidget):
                 return ""
             host = records.status().host_name or "the host"
         except Exception:
+            logger.debug("Record sync unavailable; no host note for clearing History", exc_info=True)
             return ""
         return f"\n\nThis computer's entries on {host} are deleted too."
 

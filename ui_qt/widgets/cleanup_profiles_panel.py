@@ -1,5 +1,6 @@
 """A reusable library and editor for on-demand cleanup profiles."""
 
+import logging
 from dataclasses import replace
 from uuid import uuid4
 
@@ -40,6 +41,7 @@ from ui_qt.widgets.buttons import (
 from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
 from ui_qt.widgets.wrapped_label import WrappedLabel
 
+logger = logging.getLogger(__name__)
 
 #: Wide enough for Duplicate and Delete to sit side by side at every font scale.
 LIBRARY_WIDTH = 210
@@ -375,6 +377,8 @@ class CleanupProfilesPanel(QWidget):
                 lambda settings: save_cleanup_profile(settings, profile)
             )
         except Exception as exc:
+            if not isinstance(exc, ValueError):  # ValueError is a validation message.
+                logger.warning("Could not save the cleanup profile", exc_info=True)
             self.message.setText(str(exc))
             return False
         self._saved = profile
@@ -398,6 +402,7 @@ class CleanupProfilesPanel(QWidget):
                 lambda settings: delete_cleanup_profile(settings, self._profile_id)
             )
         except Exception as exc:
+            logger.warning("Could not delete the cleanup profile", exc_info=True)
             self.message.setText(str(exc))
             return
         self.refresh("")

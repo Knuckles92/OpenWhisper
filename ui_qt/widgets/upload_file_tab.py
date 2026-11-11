@@ -1425,7 +1425,7 @@ class UploadFileTab(TranscriptionTabBase):
         try:
             settings_manager.save_setting(key, value)
         except Exception as exc:
-            logger.warning("Could not save %s: %s", key, exc)
+            logger.warning("Could not save %s: %s", key, exc, exc_info=True)
 
     @property
     def relation(self) -> str:

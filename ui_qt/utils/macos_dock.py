@@ -73,5 +73,5 @@ def install_dock_icon_sync(app: QApplication) -> DockIconSync | None:
     try:
         return DockIconSync(app)
     except Exception as e:
-        logger.warning(f"Could not sync the Dock icon with window visibility: {e}")
+        logger.warning(f"Could not sync the Dock icon with window visibility: {e}", exc_info=True)
         return None
