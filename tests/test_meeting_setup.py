@@ -236,6 +236,18 @@ def test_cancelled_audio_check_does_not_open_devices(monkeypatch):
     find.assert_not_called()
 
 
+def _wait_until_idle(dialog, timeout_ms=5000):
+    """Wait for the dialog's background step (the model check it starts when
+    it opens, or an audio check) to finish and its result to be shown. Check
+    audio is disabled while one runs, so a fixed short wait can click it too
+    early on a busy machine and the click is ignored."""
+    waited = 0
+    while not dialog.audio_button.isEnabled() and waited < timeout_ms:
+        QTest.qWait(10)
+        waited += 10
+    assert dialog.audio_button.isEnabled()
+
+
 @pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("mode", ["classic", "omarchy"])
 @pytest.mark.parametrize("font_percent", [100, 130])
@@ -250,7 +262,8 @@ def test_setup_fits_narrow_windows(monkeypatch, tmp_path, mode, font_percent):
     try:
         dialog.show()
         dialog.resize(460, dialog.sizeHint().height())
-        QTest.qWait(150)
+        _wait_until_idle(dialog)
+        QTest.qWait(50)  # let the layout follow the model check's text
         assert dialog.width() <= 460
         for button in dialog.findChildren(QAbstractButton):
             if button.isVisible():
@@ -275,9 +288,9 @@ def test_macos_permission_denial_still_checks_mic(monkeypatch):
     monkeypatch.setattr(ui, "check_audio", check)
     dialog = ui.MeetingSetupDialog(starting=True)
     request.assert_not_called()
-    QTest.qWait(150)
+    _wait_until_idle(dialog)
     dialog.audio_button.click()
-    QTest.qWait(150)
+    _wait_until_idle(dialog)
     request.assert_called_once_with()
     assert check.call_args.kwargs["system_audio_allowed"] is False
     assert not dialog.audio_settings.isHidden()
