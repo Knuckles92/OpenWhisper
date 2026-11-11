@@ -6,6 +6,7 @@ settings copy. Results say where they live ("Dictation › Voice model"), which
 makes the question "which part of the app owns this?" irrelevant.
 """
 import html
+import logging
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 
@@ -27,6 +28,8 @@ from PyQt6.QtWidgets import (
 from ui_qt.utils.icons import tabler_icon
 from ui_qt.utils.palette import token_color
 from ui_qt.widgets.setting_tile import TileBase
+
+logger = logging.getLogger(__name__)
 
 SETTING = "setting"
 MODEL = "model"
@@ -259,6 +262,8 @@ def _catalog_entries(downloads) -> list[SearchEntry]:
             info = component_coordinator.describe(component_id)
             title, summary, usable = info.display_name, info.summary, info.is_usable
         except Exception:
+            logger.debug("Could not describe component %s for search; using its row label",
+                         component_id, exc_info=True)
             title, summary, usable = row.name_label.text(), "", False
         entries.append(SearchEntry(
             MODEL, title, f"Downloads › Components · {summary}".rstrip(" ·"),

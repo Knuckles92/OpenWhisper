@@ -463,7 +463,7 @@ class AppUpdateDialog(QDialog):
                 check_enabled=not self.dont_check_check.isChecked(),
             )
         except Exception as exc:
-            logger.warning("Could not persist update preferences: %s", exc)
+            logger.warning("Could not persist update preferences: %s", exc, exc_info=True)
 
     def _set_downloading(self) -> None:
         self._busy = True

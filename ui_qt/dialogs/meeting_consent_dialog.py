@@ -30,7 +30,7 @@ def _chosen_agent() -> str:
 
         core = resolve_meeting_agent_core(settings_manager.load_all_settings())
     except Exception:
-        logger.debug("Could not read who runs AI insights", exc_info=True)
+        logger.warning("Could not read who runs AI insights", exc_info=True)
         return ""
     return core if core in MeetingAgentCore.INSTALLED else ""
 
@@ -43,7 +43,7 @@ def _backup_agent_name() -> str:
 
         backup = resolve_meeting_backup_agent(settings_manager.load_all_settings())
     except Exception:
-        logger.debug("Could not read the backup agent", exc_info=True)
+        logger.warning("Could not read the backup agent", exc_info=True)
         return ""
     return AGENT_SPECS[backup].name if backup else ""
 
@@ -63,7 +63,7 @@ def _fast_judgments_elsewhere() -> str:
             return ""
         route = route_from_settings(settings)
     except Exception:
-        logger.debug("Could not read the Fast judgments route", exc_info=True)
+        logger.warning("Could not read the Fast judgments route", exc_info=True)
         return ""
     return "" if route.is_local else f"{route.name} ({route.host})"
 
@@ -151,6 +151,8 @@ class MeetingConsentDialog(QDialog):
             if remote is None:
                 remote = destination_is_remote(profile)
         except Exception:
+            logger.warning("Could not read the meeting text endpoint; assuming it is remote",
+                           exc_info=True)
             destination = destination or "the selected text endpoint"
             remote = True if remote is None else remote
         return destination, bool(remote)

@@ -3,6 +3,7 @@ and this computer's live API, MCP Events and Claude Code channel."""
 
 import html
 import itertools
+import logging
 import threading
 from typing import Optional
 
@@ -48,6 +49,8 @@ from ui_qt.widgets import (
 from ui_qt.widgets.engine_field import EngineStatus, StatusDot
 from ui_qt.widgets.setting_tile import TileBase
 from ui_qt.widgets.segmented_bar import SegmentedBar
+
+logger = logging.getLogger(__name__)
 
 # Stands in for the access token in the on-screen preview; copies get the real one.
 _HIDDEN_TOKEN = "•" * 12
@@ -675,6 +678,7 @@ class McpSettingsPage(QWidget):
         try:
             self.settings.save_setting(SettingsKey.MCP_ENABLED, checked)
         except Exception:
+            logger.warning("Could not save the MCP setting", exc_info=True)
             self._notice = "Could not save the MCP setting. Try again."
         else:
             self._notice = ""
@@ -699,6 +703,7 @@ class McpSettingsPage(QWidget):
                 self._remote_index if checked else self._local_index
             )
         except Exception:
+            logger.warning("Could not save MCP Tailscale access", exc_info=True)
             self._notice = "Could not save Tailscale access. Try again."
         self.refresh()
 
@@ -707,6 +712,7 @@ class McpSettingsPage(QWidget):
             self.settings.save_setting(key, checked)
             self._notice = ""
         except Exception:
+            logger.warning("Could not save the MCP agent permission", exc_info=True)
             self._notice = "Could not save the agent permission. Try again."
         self.refresh()
 
@@ -721,6 +727,7 @@ class McpSettingsPage(QWidget):
             self.settings.mutate_settings(commit)
             self._notice = ""
         except Exception:
+            logger.warning("Could not save the MCP setting permission", exc_info=True)
             self._notice = "Could not save the setting permission. Try again."
         self.refresh()
 
@@ -729,6 +736,7 @@ class McpSettingsPage(QWidget):
             self.settings.save_setting(SettingsKey.MCP_PORT, value)
             self._notice = ""
         except Exception:
+            logger.warning("Could not save the MCP port", exc_info=True)
             self._notice = "Could not save the MCP port. Try again."
             self.port.blockSignals(True)
             self.port.setValue(self.settings.get(SettingsKey.MCP_PORT, DEFAULT_PORT))
@@ -1280,6 +1288,7 @@ class LiveAutomationSection(QWidget):
         try:
             preferences = self.settings.load_all_settings()
         except Exception:
+            logger.warning("Could not load settings for the API permissions", exc_info=True)
             preferences = {}
         from services.automation import permissions
 
@@ -1324,6 +1333,8 @@ class LiveAutomationSection(QWidget):
         try:
             count = int(events_ext.subscription_count())
         except Exception:
+            # Polled every 500 ms; keep it out of the default log.
+            logger.debug("Could not count MCP Events subscriptions", exc_info=True)
             count = 0
         enabled = self.mcp_events_switch.isChecked()
         text = (
@@ -1361,6 +1372,7 @@ class LiveAutomationSection(QWidget):
         try:
             self._write(key, bool(checked))
         except Exception:
+            logger.warning("Could not save the API permission", exc_info=True)
             self._show_notice("Couldn't save that permission. Try again.")
             self.refresh()
             return
@@ -1370,6 +1382,7 @@ class LiveAutomationSection(QWidget):
         try:
             self._write(SettingsKey.MCP_EVENTS_ENABLED, bool(checked))
         except Exception:
+            logger.warning("Could not save MCP Events", exc_info=True)
             self._show_notice("Couldn't save MCP Events. Try again.")
             self.refresh()
             return
@@ -1391,6 +1404,7 @@ class LiveAutomationSection(QWidget):
             try:
                 result = clear()
             except Exception as exc:
+                logger.warning("Could not clear MCP Events subscriptions", exc_info=True)
                 answered.emit(token, None, str(exc) or type(exc).__name__)
             else:
                 answered.emit(token, result, None)

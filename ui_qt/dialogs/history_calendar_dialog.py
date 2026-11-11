@@ -287,6 +287,7 @@ def _python_first_weekday() -> int:
     try:
         return (QLocale().firstDayOfWeek().value - 1) % 7
     except Exception:
+        logger.debug("Locale first weekday unavailable; using Sunday", exc_info=True)
         return calendar.SUNDAY
 
 
@@ -330,7 +331,7 @@ def _load_all(source: CalendarSource, relay: _CalendarRelay, generation: int,
     try:
         marks = source.load_index()
     except Exception as exc:
-        logger.error("Couldn't read the History calendar: %s", exc)
+        logger.error("Couldn't read the History calendar: %s", exc, exc_info=True)
         relay.index_loaded.emit(generation, None, "History could not be loaded.")
         return
     relay.index_loaded.emit(generation, marks, "")
@@ -350,7 +351,8 @@ def _load_months(source: CalendarSource, relay: _CalendarRelay, generation: int,
         try:
             items = source.load_month(*key)
         except Exception as exc:
-            logger.error("Couldn't read %s for the History calendar: %s", _month_title(key), exc)
+            logger.error("Couldn't read %s for the History calendar: %s", _month_title(key), exc,
+                         exc_info=True)
             items = []
         relay.month_loaded.emit(generation, key[0], key[1], items)
 
@@ -1014,7 +1016,7 @@ class HistoryCalendarDialog(QDialog):
         try:
             QApplication.clipboard().setText(getattr(item.source, "text", "") or "")
         except Exception as exc:
-            logger.error("Couldn't copy a calendar entry: %s", exc)
+            logger.error("Couldn't copy a calendar entry: %s", exc, exc_info=True)
             return
         self.entry_copied.emit(item.record_id)
 
@@ -1040,7 +1042,7 @@ class HistoryCalendarDialog(QDialog):
             try:
                 record_sync.check_out("meeting", meeting_id, progress)
             except Exception as exc:
-                logger.warning("Couldn't get a meeting from the host: %s", exc)
+                logger.warning("Couldn't get a meeting from the host: %s", exc, exc_info=True)
                 done.emit(token, meeting_id, str(exc) or type(exc).__name__)
                 return
             done.emit(token, meeting_id, "")
