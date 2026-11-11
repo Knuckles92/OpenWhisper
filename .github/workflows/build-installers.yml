@@ -46,23 +46,6 @@ jobs:
     needs: [source, qualification]
     runs-on: windows-2022
     timeout-minutes: 90
-    env:
-      # Optional, one method at a time. With either set the executables, the
-      # uninstaller and the setup exe are Authenticode signed, timestamped
-      # and verified; with neither they stay unsigned and the run says so.
-      # docs/windows-signing.md lists what each secret holds.
-      # Method 1: an OV/EV code-signing certificate exported as a PFX.
-      WINDOWS_CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
-      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      # Method 2: Azure Trusted Signing (an app registration with the
-      # "Trusted Signing Certificate Profile Signer" role).
-      AZURE_TRUSTED_SIGNING_TENANT_ID: ${{ secrets.AZURE_TRUSTED_SIGNING_TENANT_ID }}
-      AZURE_TRUSTED_SIGNING_CLIENT_ID: ${{ secrets.AZURE_TRUSTED_SIGNING_CLIENT_ID }}
-      AZURE_TRUSTED_SIGNING_CLIENT_SECRET: ${{ secrets.AZURE_TRUSTED_SIGNING_CLIENT_SECRET }}
-      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-      AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-      AZURE_TRUSTED_SIGNING_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
-      TRUSTED_SIGNING_CLIENT_VERSION: "1.0.53"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -100,7 +83,26 @@ jobs:
           . .\venv\Scripts\Activate.ps1
           python -m pytest tests/test_app_update.py tests/test_app_update_rate_limit.py tests/test_app_update_apply.py tests/test_app_update_dialog.py tests/test_app_update_handoff.py tests/test_updater_helper.py tests/test_update_startup_gate.py tests/test_update_resilience.py tests/test_application_controller.py tests/test_bootstrap.py -q
       - name: Configure Windows code signing
+        # Optional, one method at a time. With either set the executables, the
+        # uninstaller and the setup exe are Authenticode signed, timestamped
+        # and verified; with neither they stay unsigned and the run says so.
+        # docs/windows-signing.md lists what each secret holds. The secrets
+        # are scoped to the steps that use them, not to the whole job, so
+        # dependency installs and tests never see them.
         shell: pwsh
+        env:
+          # Method 1: an OV/EV code-signing certificate exported as a PFX.
+          WINDOWS_CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          # Method 2: Azure Trusted Signing (an app registration with the
+          # "Trusted Signing Certificate Profile Signer" role).
+          AZURE_TRUSTED_SIGNING_TENANT_ID: ${{ secrets.AZURE_TRUSTED_SIGNING_TENANT_ID }}
+          AZURE_TRUSTED_SIGNING_CLIENT_ID: ${{ secrets.AZURE_TRUSTED_SIGNING_CLIENT_ID }}
+          AZURE_TRUSTED_SIGNING_CLIENT_SECRET: ${{ secrets.AZURE_TRUSTED_SIGNING_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          AZURE_TRUSTED_SIGNING_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+          TRUSTED_SIGNING_CLIENT_VERSION: "1.0.53"
         run: |
           # An unset secret arrives as an empty or missing variable.
           $pfx = -not [string]::IsNullOrEmpty($env:WINDOWS_CERTIFICATE_PFX)

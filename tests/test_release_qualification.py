@@ -105,6 +105,9 @@ def test_release_workflows_require_ci_and_checksums_without_manual_report():
     upload = next(i for i, s in enumerate(commands) if "gh release upload" in s)
     assert validate < upload
     assert "--expected-commit" in commands[validate] and "--expected-run" in commands[validate]
+    # The check's output is piped to tee; the default shell has no pipefail,
+    # so without this a failed qualification would pass the step.
+    assert commands[validate].index("set -o pipefail") < commands[validate].index("| tee")
     assert commands[upload].index("draft-assets.json") < commands[upload].index("gh release upload")
     assert "uploaded=True" in commands[upload]
     assert not any(s.get("continue-on-error") for s in qualification)
@@ -147,13 +150,19 @@ def test_windows_signing_is_optional_verified_and_recorded():
     build = yaml.load((root / ".github/workflows/build-installers.yml").read_text(encoding="utf-8"),
                       Loader=yaml.BaseLoader)["jobs"]
     windows = build["windows"]
+    names = [step.get("name", "") for step in windows["steps"]]
+    configure = windows["steps"][names.index("Configure Windows code signing")]
     for secret in ("WINDOWS_CERTIFICATE_PFX", "WINDOWS_CERTIFICATE_PASSWORD",
                    "AZURE_TRUSTED_SIGNING_TENANT_ID", "AZURE_TRUSTED_SIGNING_CLIENT_ID",
                    "AZURE_TRUSTED_SIGNING_CLIENT_SECRET", "AZURE_TRUSTED_SIGNING_ENDPOINT",
                    "AZURE_TRUSTED_SIGNING_ACCOUNT", "AZURE_TRUSTED_SIGNING_PROFILE"):
-        assert windows["env"][secret] == "${{ secrets.%s }}" % secret
-    names = [step.get("name", "") for step in windows["steps"]]
-    configure = windows["steps"][names.index("Configure Windows code signing")]
+        assert configure["env"][secret] == "${{ secrets.%s }}" % secret
+    # Only the steps that sign may see a secret: dependency installs and the
+    # test run in the same job must not.
+    assert "secrets." not in str(windows.get("env", {}))
+    with_secrets = {step.get("name", "") for step in windows["steps"]
+                    if "secrets." in str(step.get("env", {}))}
+    assert with_secrets == {"Configure Windows code signing", "Build and verify"}
     assert "unsigned" in configure["run"] and "::notice" in configure["run"]
     assert names.index("Configure Windows code signing") < names.index("Build and verify")
     report = next(s for s in windows["steps"] if s.get("with", {}).get("name") == "windows-signing")

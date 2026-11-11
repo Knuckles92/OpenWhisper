@@ -64,12 +64,14 @@ jobs:
           CANDIDATE_RUN: ${{ inputs.candidate_run_id }}
           REQUIRE_WINDOWS_SIGNED: ${{ inputs.require_windows_signed }}
         run: |
+          # Without pipefail, tee's success would hide a failed qualification.
+          set -o pipefail
           require=()
           if [[ "$REQUIRE_WINDOWS_SIGNED" == "true" ]]; then require=(--require-windows-signed); fi
           python3 scripts/check_release_qualification.py --candidate release \
             --expected-commit "$(git rev-parse HEAD)" \
             --expected-run "$CANDIDATE_RUN" "${require[@]}" | tee qualification.txt
-          echo "::notice title=Release qualification::$(tail -n 1 qualification.txt)"
+          echo "::notice title=Windows signing::$(grep -m 1 '^Windows executables and installer:' qualification.txt)"
       - name: Upload verified artifacts to existing draft
         env:
           GH_TOKEN: ${{ github.token }}
