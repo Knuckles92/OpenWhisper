@@ -3,6 +3,8 @@ import json
 
 import pytest
 
+from tests.helpers import patch_setting_defaults
+
 from services import settings as module
 from services.settings import (
     SettingsKey,
@@ -18,12 +20,11 @@ from services.settings import (
 @pytest.fixture
 def whisper_fallback(monkeypatch):
     """A platform whose default meeting model is Whisper auto, whatever runs this."""
-    defaults = dict(module.SETTING_DEFAULTS, **{
+    patch_setting_defaults(monkeypatch, {
         SettingsKey.MEETING_ASR_MODEL: "",
         SettingsKey.MEETING_WHISPER_MODEL: "auto",
         SettingsKey.SELECTED_MODEL: "parakeet",
     })
-    monkeypatch.setattr(module, "SETTING_DEFAULTS", defaults)
 
 
 def test_a_meeting_follows_a_catalog_engine_and_its_model(whisper_fallback):

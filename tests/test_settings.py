@@ -1,4 +1,6 @@
 import pytest
+
+from tests.helpers import patch_setting_defaults
 import tempfile
 import os
 import json
@@ -824,8 +826,7 @@ def linux_parakeet_default(monkeypatch):
 
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(config, "DEFAULT_BACKEND", "parakeet")
-    defaults = dict(module.SETTING_DEFAULTS, **{SettingsKey.SELECTED_MODEL: "parakeet"})
-    monkeypatch.setattr(module, "SETTING_DEFAULTS", defaults)
+    patch_setting_defaults(monkeypatch, {SettingsKey.SELECTED_MODEL: "parakeet"})
 
 
 def test_a_new_install_keeps_the_default_it_started_with(tmp_path, linux_parakeet_default):
@@ -989,12 +990,10 @@ def test_mlx_meeting_default_preserves_explicit_selections(monkeypatch):
     from services import settings as module
     from services.settings import own_meeting_speech, resolve_meeting_whisper_model
 
-    defaults = {
-        **module.SETTING_DEFAULTS,
+    patch_setting_defaults(monkeypatch, {
         SettingsKey.SELECTED_MODEL: "parakeet_mlx",
         SettingsKey.MEETING_ASR_MODEL: "parakeet-v3-mlx",
-    }
-    monkeypatch.setattr(module, "SETTING_DEFAULTS", defaults)
+    })
 
     def own(settings):
         return own_meeting_speech(settings).model
@@ -1010,8 +1009,7 @@ def test_a_separate_meeting_engine_with_no_model_saved_takes_dictation_parakeet(
     from services import settings as module
 
     monkeypatch.setattr("config.parakeet_default_supported", lambda: True)
-    defaults = {**module.SETTING_DEFAULTS, SettingsKey.SELECTED_MODEL: "parakeet"}
-    monkeypatch.setattr(module, "SETTING_DEFAULTS", defaults)
+    patch_setting_defaults(monkeypatch, {SettingsKey.SELECTED_MODEL: "parakeet"})
 
     def resolve(settings):
         return module.own_meeting_speech(settings).model

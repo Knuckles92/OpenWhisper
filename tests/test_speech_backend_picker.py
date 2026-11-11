@@ -1,5 +1,7 @@
 """GUI recommendation labels preserve engine identities and user choices."""
 import pytest
+
+from tests.helpers import patch_setting_defaults
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QComboBox
 
@@ -50,13 +52,10 @@ def test_fresh_mac_settings_select_mlx_for_dictation_and_meetings(monkeypatch, t
 
     monkeypatch.setattr(picker, "parakeet_mlx_supported", lambda: True)
     monkeypatch.setattr(config, "DEFAULT_BACKEND", "parakeet_mlx")
-    defaults = {
-        **settings_module.SETTING_DEFAULTS,
+    patch_setting_defaults(monkeypatch, {
         SettingsKey.SELECTED_MODEL: "parakeet_mlx",
         SettingsKey.MEETING_ASR_MODEL: "parakeet-v3-mlx",
-    }
-    monkeypatch.setattr(settings_module, "SETTING_DEFAULTS", defaults)
-    monkeypatch.setattr(models_module, "SETTING_DEFAULTS", defaults)
+    }, models_module)
     manager = SettingsManager(str(tmp_path / "settings.json"))
     with _isolated_settings(manager):
         host = _Host(lambda: None)

@@ -37,3 +37,19 @@ def make_segment(meeting_id, seg_id="sg_aaa111", start=1.0, end=3.0,
         segment_id=seg_id, meeting_id=meeting_id, chunk_id=None,
         channel=channel, start_s=start, end_s=end, text=text,
     )
+
+
+def patch_setting_defaults(monkeypatch, overrides, *modules):
+    """Give settings other defaults for one test, as another platform's config would.
+
+    Patches each declaration's default and the ``SETTING_DEFAULTS`` table in
+    services.settings and in each of ``modules`` that imported it by name.
+    """
+    from services import settings as settings_module
+
+    for key, value in overrides.items():
+        monkeypatch.setattr(settings_module.SETTINGS_BY_KEY[key], "_default", value)
+    defaults = {**settings_module.SETTING_DEFAULTS, **overrides}
+    for module in (settings_module, *modules):
+        monkeypatch.setattr(module, "SETTING_DEFAULTS", defaults)
+    return defaults
