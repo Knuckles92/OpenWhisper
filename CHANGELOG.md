@@ -7,6 +7,14 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Changed
+
+- **Failures show up in the log** — problems that OpenWhisper used to work around silently, or only recorded at the debug level, are now written to the log with their cause: a dictation step that fell back to a default, a meeting agent or speech request that failed, a settings page that could not load or save something, and a paired computer's request that failed on the host. The app still carries on as before. Where an error could quote what you said or searched for, the log names the kind of error only.
+
+### Fixed
+
+- **A broken overlay no longer floods the log** — when the recording overlay could not draw, it logged the full error on every frame; it now logs it once.
+
 ## [2.8.9] - 2026-11-10
 
 ### Changed
