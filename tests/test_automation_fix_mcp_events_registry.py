@@ -165,9 +165,15 @@ def eventually(predicate, timeout=5.0):
 
 def forgotten(sub_id):
     path = Path(config.MCP_EVENT_SUBSCRIPTIONS_FILE)
+    try:
+        saved = path.read_text(encoding="utf-8")
+    except PermissionError:
+        # Windows refuses a read while the registry is replacing the file on
+        # its own thread. Not forgotten yet as far as this look can tell.
+        return False
     return (
         credentials.store().get(events_ext.secret_name(sub_id)) is None
-        and sub_id not in path.read_text(encoding="utf-8")
+        and sub_id not in saved
     )
 
 
