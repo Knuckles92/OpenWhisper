@@ -302,9 +302,12 @@ def test_the_stage_budget_holds_and_skips_what_is_left(receiver, failures):
     assert 2.9 <= elapsed < 3.4
     reasons = [e.data["reason"] for e in wait_for(failures, 3)]
     assert reasons[0] == "No answer within 2 s"
-    # The second filter only had what was left of the stage's 3 s.
+    # The second filter only had what was left of the stage's 3 s: 1 s less
+    # whatever the first one's 2 s limit overran by. On a busy runner that is
+    # a few hundred ms (0.177 s seen on macOS); the stage still ends on time,
+    # which the elapsed check above holds to.
     assert reasons[1].startswith("No answer within ")
-    assert 0.85 <= float(reasons[1].split()[3]) <= 1.0
+    assert 0.5 <= float(reasons[1].split()[3]) <= 1.0
     assert reasons[2] == "Skipped: this stage's 3 s for filters ran out"
     assert [e.data["filter_id"] for e in failures] == ["one", "two", "three"]
 
