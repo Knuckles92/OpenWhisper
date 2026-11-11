@@ -28,7 +28,7 @@ def _settings(stored=None):
     stored = {} if stored is None else stored
     manager = MagicMock()
     manager.get.side_effect = lambda key, default=None: stored.get(key, default)
-    manager.load_all_settings.return_value = dict(stored)
+    manager.load_all_settings.side_effect = lambda: dict(stored)
     return manager
 
 

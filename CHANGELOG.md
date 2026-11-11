@@ -15,6 +15,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 - **Windows code signing in the release build** — when the repository has signing secrets (Azure Trusted Signing or a PFX certificate), the release build signs and timestamps `OpenWhisper.exe`, the updater, the uninstaller and the setup exe, verifies every signature, and records the result as `windows_signed` in the release's `BUILD-METADATA.json`. Without the secrets the build stays unsigned and says so. See [Windows code signing](docs/windows-signing.md).
 
+### Fixed
+
+- **Hand-edited settings read the same everywhere** — an on/off setting saved as something other than `true` or `false` (for example `"auto_paste": "false"` typed into the settings file) was treated as on by some parts of the app and as its default by others, including the saved consent for AI insights in meetings. Every part now reads only a real `true` or `false` and otherwise uses the default. Settings the app saves itself are unaffected.
+
 ## [2.8.9] - 2026-11-10
 
 ### Changed

@@ -28,10 +28,11 @@ class TestMainWindowCompactMode:
 
     @pytest.fixture(autouse=True)
     def _setup(self):
+        self.saved = {}
         self.load_settings = patch.object(
             settings_manager,
             "load_all_settings",
-            return_value={},
+            side_effect=lambda: dict(self.saved),
         )
         self.get_setting = patch.object(
             settings_manager,
@@ -202,11 +203,7 @@ class TestMainWindowCompactMode:
         self.saved_setting.assert_any_call(SettingsKey.COMPACT_MODE, False)
 
     def test_persisted_compact_mode_is_restored(self):
-        self.mock_get_setting.side_effect = (
-            lambda key, default=None: True
-            if key == SettingsKey.COMPACT_MODE
-            else default
-        )
+        self.saved[SettingsKey.COMPACT_MODE] = True
 
         self.window._restore_compact_mode()
 
@@ -223,11 +220,7 @@ class TestMainWindowCompactMode:
             "format": self.window._geometry_format,
             "history_expanded": False,
         }
-        self.mock_get_setting.side_effect = (
-            lambda key, default=None: saved_geometry
-            if key == SettingsKey.WINDOW_GEOMETRY
-            else default
-        )
+        self.saved[SettingsKey.WINDOW_GEOMETRY] = saved_geometry
 
         self.window._restore_window_geometry()
 
@@ -243,11 +236,7 @@ class TestMainWindowCompactMode:
             "format": self.window._geometry_format,
             "history_expanded": False,
         }
-        self.mock_get_setting.side_effect = (
-            lambda key, default=None: saved_geometry
-            if key == SettingsKey.WINDOW_GEOMETRY
-            else default
-        )
+        self.saved[SettingsKey.WINDOW_GEOMETRY] = saved_geometry
 
         self.window._restore_window_geometry()
 

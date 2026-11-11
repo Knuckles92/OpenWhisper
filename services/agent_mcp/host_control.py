@@ -11,7 +11,6 @@ import logging
 import threading
 
 from services.agent_mcp.controls import CONTROLS_BY_KEY, ControlError, writable_settings
-from services.agent_mcp.runtime import DEFAULT_PORT
 from services.settings import SettingsKey
 
 logger = logging.getLogger(__name__)
@@ -40,13 +39,12 @@ class HostMcpControl:
     def state(self):
         preferences = self._settings.load_all_settings()
         status = self._runtime.status()
-        port = preferences.get(SettingsKey.MCP_PORT, DEFAULT_PORT)
         return {
-            "enabled": preferences.get(SettingsKey.MCP_ENABLED) is True,
+            "enabled": SettingsKey.MCP_ENABLED.read(preferences),
             "state": status.state,
             "message": status.message,
-            "port": port if _valid_port(port) else DEFAULT_PORT,
-            "tailscale": preferences.get(SettingsKey.MCP_TAILSCALE_ENABLED) is True,
+            "port": SettingsKey.MCP_PORT.read(preferences),
+            "tailscale": SettingsKey.MCP_TAILSCALE_ENABLED.read(preferences),
             "url": status.url,
             "remote_url": status.remote_url,
             "token": self._runtime.token(),
@@ -85,7 +83,7 @@ class HostMcpControl:
         ):
             raise ControlError("invalid_value: Choose supported preferences.")
         status = self._runtime.status()
-        saved_on = self._settings.get(SettingsKey.MCP_ENABLED, False) is True
+        saved_on = SettingsKey.MCP_ENABLED.read(self._settings.load_all_settings())
         if ("port" in changes or "tailscale" in changes) and (
             saved_on or status.state not in ("stopped", "error")
         ):
@@ -113,8 +111,7 @@ class HostMcpControl:
             grants = changes["writable"]
 
             def commit(saved):
-                granted = saved.get(SettingsKey.MCP_WRITABLE_SETTINGS, {})
-                granted = dict(granted) if isinstance(granted, dict) else {}
+                granted = dict(SettingsKey.MCP_WRITABLE_SETTINGS.read(saved))
                 granted.update(grants)
                 saved[SettingsKey.MCP_WRITABLE_SETTINGS] = granted
 
@@ -130,9 +127,8 @@ class HostMcpControl:
 
     def _start(self):
         preferences = self._settings.load_all_settings()
-        port = preferences.get(SettingsKey.MCP_PORT, DEFAULT_PORT)
-        port = port if _valid_port(port) else DEFAULT_PORT
-        if preferences.get(SettingsKey.MCP_TAILSCALE_ENABLED) is True:
+        port = SettingsKey.MCP_PORT.read(preferences)
+        if SettingsKey.MCP_TAILSCALE_ENABLED.read(preferences):
             self._runtime.start(port, tailscale=True)
         else:
             self._runtime.start(port)

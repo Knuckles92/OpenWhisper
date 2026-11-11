@@ -4,7 +4,7 @@
 
 - Branch from `main` and keep each pull request to one topic. Split unrelated fixes, refactors, and dependency updates into their own pull requests.
 - For a larger feature or a new dependency, open an issue or a discussion first so the approach can be agreed before you build it.
-- Run the tests for the code you touched and `uv run --locked ruff check --select F .` (see [Validation](#validation)). UI changes need both interfaces checked (see [Desktop feature parity](#desktop-feature-parity)) and before/after screenshots in the pull request.
+- Run the tests for the code you touched, `uv run --locked ruff check --select F .` and `uv run --locked mypy` (see [Validation](#validation)). UI changes need both interfaces checked (see [Desktop feature parity](#desktop-feature-parity)) and before/after screenshots in the pull request.
 - Add a user-visible change to `CHANGELOG.md` under `## [Unreleased]`, in the matching `### Added`, `### Changed`, or `### Fixed` group. Follow the existing entries: a bold summary, then what changed for the user and any limits. Internal refactors and test-only changes need no entry.
 - When a change is a headline feature, rewrite the "New in OpenWhisper" note in `ui_qt/whats_new.py` and set its `updated` date; the file explains how. A minor or major version bump must update its `release_line`.
 - Update the README or the page in `docs/` that describes the behavior you changed.
@@ -57,6 +57,26 @@ uv run --locked ruff check --select F .
 Keep imports that perform required runtime initialization or verify optional
 libraries, with a specific `noqa: F401` explanation. Avoid broad automatic fixes
 for typing or import order as part of behavior changes.
+
+CI also type-checks a list of modules with mypy 2.4.1:
+
+```powershell
+uv run --locked mypy
+```
+
+The list is `files` under `[tool.mypy]` in `pyproject.toml`. It holds the
+settings layer (`services/settings.py`, `services/setting_types.py`, checked
+with `--strict`) and the modules that read settings through
+`SettingsKey.X.read(settings)`, where a misspelt key or a value used as the
+wrong type is an error. Read a setting that way rather than with
+`settings.get(...)`: the declaration on `SettingsKey` gives its type, default
+and validation.
+
+To add a module, put its path in `files`, run `uv run --locked mypy`, and fix
+what it reports. Prefer a real fix or an annotation; where the code is right
+and mypy cannot see it, use `# type: ignore[<code>]` with a comment saying
+why. Don't silence a whole module; a per-module `disable_error_code` needs a
+comment saying why and when it can go.
 
 Dashboard changes also require `npm test` in `webui` before the locked build
 below. It covers transcript loading, action acknowledgements, and speech previews.

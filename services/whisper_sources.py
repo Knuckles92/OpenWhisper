@@ -175,9 +175,8 @@ def custom_models(settings: dict) -> list[str]:
     """Read registered sources; keep missing local folders available for removal."""
     from services.settings import SettingsKey
 
-    values = settings.get(SettingsKey.CUSTOM_WHISPER_MODELS, [])
     found = []
-    for name in values if isinstance(values, list) else []:
+    for name in SettingsKey.CUSTOM_WHISPER_MODELS.read(settings):
         if not isinstance(name, str) or not is_custom_model(name):
             continue
         try:

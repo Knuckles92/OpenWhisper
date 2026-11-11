@@ -32,7 +32,7 @@ from services.history_manager import (
     remote_history_entry,
 )
 from services.models import FAILED_RECORDING_KIND
-from services.settings import SETTING_DEFAULTS, SettingsKey, settings_manager
+from services.settings import SettingsKey, settings_manager
 from services.text_llm import profile_display_name
 from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_DURATION_MS,
@@ -1404,10 +1404,8 @@ class HistorySidebar(QWidget):
     @staticmethod
     def _delete_confirmation_wanted():
         try:
-            return settings_manager.get(
-                SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE,
-                SETTING_DEFAULTS[SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE],
-            )
+            return SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE.read(
+                settings_manager.load_all_settings())
         except Exception as exc:
             logger.warning("Failed to load history deletion preference: %s", exc)
             return True
