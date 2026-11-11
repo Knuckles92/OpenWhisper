@@ -462,7 +462,7 @@ class AudioProcessor:
                     os.remove(temp_path)
                 elif os.path.isdir(temp_path):
                     shutil.rmtree(temp_path)
-            except Exception as e:
+            except OSError as e:
                 logger.warning(f"Failed to cleanup temp file {temp_path}: {e}")
 
         self.temp_files.clear()

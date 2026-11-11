@@ -134,7 +134,7 @@ def _load_carbon() -> Optional[ctypes.CDLL]:
         path = ctypes.util.find_library("Carbon")
         carbon = ctypes.cdll.LoadLibrary(path)
     except Exception as exc:
-        logger.warning(f"Could not load Carbon framework: {exc}")
+        logger.warning("Could not load Carbon framework: %s", exc, exc_info=True)
         return None
 
     # Pointer-returning/accepting calls MUST declare types, or ctypes truncates
@@ -255,7 +255,7 @@ class CarbonHotkeyRegistrar:
                     )
                     self._on_action(action, released)
         except Exception as exc:
-            logger.error(f"Error handling Carbon hotkey event: {exc}")
+            logger.error("Error handling Carbon hotkey event: %s", exc, exc_info=True)
         return 0  # noErr — always let the system continue.
 
     def register_hotkeys(self, hotkeys: Dict[str, str]) -> None:

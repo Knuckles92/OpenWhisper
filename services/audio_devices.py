@@ -104,6 +104,7 @@ def _default_io_indexes(sd) -> tuple[Optional[int], Optional[int]]:
         default = sd.default.device
         return _as_device_index(default[0]), _as_device_index(default[1])
     except Exception:
+        logger.debug("PortAudio default device unavailable", exc_info=True)
         return None, None
 
 
@@ -120,6 +121,7 @@ def _hostapi_default_input_index(sd) -> Optional[int]:
             return None
         return _as_device_index(host.get("default_input_device", -1))
     except Exception:
+        logger.debug("Host API default input unavailable", exc_info=True)
         return None
 
 
@@ -128,6 +130,7 @@ def _default_hostapi_index(sd) -> int:
         index = getattr(sd.default, "hostapi", None)
         return 0 if index is None else int(index)
     except Exception:
+        logger.debug("Default host API unavailable; using host API 0", exc_info=True)
         return 0
 
 
@@ -290,7 +293,7 @@ def can_open(
             )
         return True
     except Exception:
-        return False
+        return False  # PortAudio rejects unsupported formats with assorted errors.
 
 
 def default_input(sd=None, devices: Optional[Sequence[InputDevice]] = None) -> Optional[InputDevice]:

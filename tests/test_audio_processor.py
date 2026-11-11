@@ -519,3 +519,19 @@ class TestMovingAverage:
         points = processor._find_split_points(audio, rate)
         assert points
         assert points == with_convolve(audio, rate)
+
+
+def test_cleanup_survives_a_temp_file_it_cannot_remove(processor, tmp_path, monkeypatch, caplog):
+    leftover = tmp_path / "chunk_000.wav"
+    leftover.write_bytes(b"x")
+    processor.temp_files.append(str(leftover))
+
+    def refuse(_path):
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(os, "remove", refuse)
+
+    processor.cleanup_temp_files()
+
+    assert processor.temp_files == []
+    assert "Failed to cleanup temp file" in caplog.text

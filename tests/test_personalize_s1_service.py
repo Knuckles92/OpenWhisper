@@ -423,3 +423,19 @@ def test_the_default_service_is_the_real_one_for_this_platform():
 
 def test_capture_metrics_are_allowlisted():
     assert {"context_capture_ms", "context_capture_timeouts"} <= diagnostics.METRIC_NAMES
+
+
+def test_settling_an_already_resolved_future_reports_false():
+    future = _capture.Future()
+    assert _capture._settle(future, FocusSnapshot(OUTLOOK)) is True
+    assert _capture._settle(future, FocusSnapshot()) is False
+    assert future.result(timeout=0) == FocusSnapshot(OUTLOOK)
+
+
+def test_identity_now_gives_up_after_the_timeout(make_service):
+    service, platform, _metrics = make_service(FakePlatform(sync=False, text=False))
+    platform.identity_delay = 1.0
+
+    started = time.monotonic()
+    assert service.identity_now(0.05) is None
+    assert time.monotonic() - started < 0.9

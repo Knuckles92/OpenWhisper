@@ -431,7 +431,7 @@ class HotkeyManager:
             else:
                 self._mouse_hook.stop()
         except Exception as exc:
-            logger.warning("Mouse button shortcuts unavailable: %s", exc)
+            logger.warning("Mouse button shortcuts unavailable: %s", exc, exc_info=True)
 
     def set_dynamic_hotkeys(
         self, namespace: str, hotkeys: Dict[str, str], callback: Callable[[str], None]
@@ -528,12 +528,12 @@ class HotkeyManager:
         try:
             self.cleanup()
         except Exception as e:
-            logger.warning(f"Error during rehook cleanup: {e}")
+            logger.warning("Error during rehook cleanup: %s", e, exc_info=True)
         try:
             self._setup_keyboard_hook()
             logger.info("Keyboard hook re-registered successfully")
         except Exception as e:
-            logger.error(f"Failed to re-register keyboard hook: {e}")
+            logger.error("Failed to re-register keyboard hook: %s", e, exc_info=True)
 
     def update_hotkeys(self, new_hotkeys: Dict[str, str]):
         """Replace the configured hotkey mappings."""
@@ -547,7 +547,7 @@ class HotkeyManager:
         try:
             self._mouse_hook.stop()
         except Exception as e:
-            logger.error(f"Error removing the mouse hook: {e}")
+            logger.error("Error removing the mouse hook: %s", e, exc_info=True)
         try:
             # Use a timeout to avoid blocking if cleanup is called from wrong thread
             if threading.current_thread() is threading.main_thread():
@@ -560,7 +560,7 @@ class HotkeyManager:
             if "cannot join" not in str(e).lower():
                 logger.error(f"Error cleaning up keyboard hooks: {e}")
         except Exception as e:
-            logger.error(f"Error cleaning up keyboard hooks: {e}")
+            logger.error("Error cleaning up keyboard hooks: %s", e, exc_info=True)
 
     def set_callbacks(self,
                      on_record_toggle: Callable = None,
