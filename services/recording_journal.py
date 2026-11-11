@@ -121,6 +121,8 @@ class RecordingJournal:
             if not self._discard:
                 os.fsync(self._file.fileno())
         except Exception as exc:
+            if not self._discard:
+                logger.warning('Recording journal writer failed', exc_info=True)
             self.error = f'Recording could not be saved: {exc}'
             self._stop.set()
         finally:

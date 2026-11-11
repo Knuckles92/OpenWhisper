@@ -302,7 +302,7 @@ def ai_insights_destination(
         # Fast judgments elsewhere still receive excerpts under the same switch.
         judged_elsewhere = resolve_typesafe_enabled(settings) and not route_is_local(settings)
     except Exception:
-        logger.debug("Could not resolve the meeting AI model", exc_info=True)
+        logger.warning("Could not resolve the meeting AI model", exc_info=True)
         profile = None
     if profile is None:
         return (
@@ -1823,7 +1823,7 @@ class MeetingModeTab(QWidget):
             try:
                 meetings = read_recent_meetings()
             except Exception:
-                logger.debug("Could not read recent meetings", exc_info=True)
+                logger.warning("Could not read recent meetings", exc_info=True)
                 meetings = []
             loaded.emit(token, meetings)
 

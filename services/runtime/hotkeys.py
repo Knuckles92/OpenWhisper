@@ -658,7 +658,7 @@ class HotkeyRuntime:
                     self.controller._watchdog_interval_ms / 1000.0
                 )
             except Exception as exc:
-                logger.error(f"Failed to re-register keyboard hook: {exc}")
+                logger.error(f"Failed to re-register keyboard hook: {exc}", exc_info=True)
 
     def on_stt_state_changed(self, enabled: bool) -> None:
         state = OverlayState.STT_ENABLED if enabled else OverlayState.STT_DISABLED

@@ -13,11 +13,13 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ### Changed
 
+- **Failures show up in the log** — problems that OpenWhisper used to work around silently, or only recorded at the debug level, are now written to the log with their cause: a dictation step that fell back to a default, a meeting agent or speech request that failed, a settings page that could not load or save something, and a paired computer's request that failed on the host. The app still carries on as before. Where an error could quote what you said or searched for, the log names the kind of error only.
 - **Windows code signing in the release build** — when the repository has signing secrets (Azure Trusted Signing or a PFX certificate), the release build signs and timestamps `OpenWhisper.exe`, the updater, the uninstaller and the setup exe, verifies every signature, and records the result as `windows_signed` in the release's `BUILD-METADATA.json`. Without the secrets the build stays unsigned and says so. See [Windows code signing](docs/windows-signing.md).
 
 ### Fixed
 
 - **Hand-edited settings read the same everywhere** — an on/off setting saved as something other than `true` or `false` (for example `"auto_paste": "false"` typed into the settings file) was treated as on by some parts of the app and as its default by others, including the saved consent for AI insights in meetings. Every part now reads only a real `true` or `false` and otherwise uses the default. Settings the app saves itself are unaffected.
+- **A broken overlay no longer floods the log** — when the recording overlay could not draw, it logged the full error on every frame; it now logs it once.
 
 ## [2.8.9] - 2026-11-10
 

@@ -378,10 +378,11 @@ class AgentControls:
         if self.on_change is not None:
             try:
                 self.on_change(kind, changes)
-            except Exception:
+            except Exception as exc:
                 # The change is already committed. A closed window must not
                 # make an agent retry a successful write or expose source data.
-                logger.warning("Could not refresh the desktop after an MCP change.")
+                logger.warning("Could not refresh the desktop after an MCP change (%s).",
+                               type(exc).__name__)
 
     def _engine(self):
         # mode=rw cannot create a missing database or run startup migrations.

@@ -25,7 +25,7 @@ import queue
 import sys
 import threading
 import time
-from concurrent.futures import Future
+from concurrent.futures import Future, InvalidStateError
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -127,8 +127,8 @@ def _settle(future: Future, snapshot: FocusSnapshot) -> bool:
     try:
         future.set_result(snapshot)
         return True
-    except Exception:
-        return False
+    except InvalidStateError:
+        return False  # Already resolved (the deadline or the other path won).
 
 
 @dataclass
@@ -178,7 +178,8 @@ class _TextWorker:
                 try:
                     self._service._execute(task, reader)
                 except Exception as exc:
-                    logger.debug("Text capture task failed (%s)", type(exc).__name__)
+                    # Exception text could quote the app's content; the type cannot.
+                    logger.warning("Text capture task failed (%s)", type(exc).__name__)
                 finally:
                     self._service._finished(self)
                 if self.abandoned:
@@ -228,7 +229,7 @@ class CaptureService(ContextCaptureService):
             else:
                 self._identify_async(future, include_text, include_selection, started)
         except Exception:
-            logger.debug("Focus capture failed", exc_info=True)
+            logger.warning("Focus capture failed", exc_info=True)
             _settle(future, FocusSnapshot())
         return future
 
@@ -249,7 +250,8 @@ class CaptureService(ContextCaptureService):
                          name="focus-context-identity", daemon=True).start()
         try:
             return answer.result(timeout=max(0.0, timeout_s))
-        except Exception:
+        except TimeoutError:
+            logger.debug("Focused app not named within %.2fs", timeout_s)
             return None
 
     def reread(self, identity: AppIdentity,
@@ -263,7 +265,7 @@ class CaptureService(ContextCaptureService):
             ):
                 self._deliver(callback, None)
         except Exception:
-            logger.debug("Text re-read failed", exc_info=True)
+            logger.warning("Text re-read failed", exc_info=True)
             self._deliver(callback, None)
 
     def shutdown(self) -> None:
@@ -426,7 +428,7 @@ class CaptureService(ContextCaptureService):
 
             values = SettingsKey.APP_CONTEXT_EXCLUDED_APPS.read(self._settings())
         except Exception:
-            logger.debug("Excluded apps unavailable", exc_info=True)
+            logger.warning("Excluded apps unavailable; not reading text near the cursor", exc_info=True)
             return True
         return any(
             catalog.matches(identity, value)
@@ -473,4 +475,4 @@ class CaptureService(ContextCaptureService):
         try:
             callback(context)
         except Exception:
-            logger.debug("Text re-read callback failed", exc_info=True)
+            logger.warning("Text re-read callback failed", exc_info=True)

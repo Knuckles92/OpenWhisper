@@ -202,7 +202,7 @@ class PairRequestPrompter(QObject):
         try:
             request = self._service.pending_pair_request()
         except Exception:
-            logger.debug("Could not read the pending pairing request", exc_info=True)
+            logger.warning("Could not read the pending pairing request", exc_info=True)
             request = None
         dialog = self.dialog
         if dialog is not None and (request is None or request["id"] != dialog.request_id):
@@ -214,7 +214,7 @@ class PairRequestPrompter(QObject):
         try:
             grants = self._service.pairing_grants() if hasattr(self._service, "pairing_grants") else []
         except Exception:
-            logger.debug("Could not read what paired computers may do", exc_info=True)
+            logger.warning("Could not read what paired computers may do", exc_info=True)
             grants = []
         dialog = PairRequestDialog(request, self._window, grants)
         dialog.answered.connect(

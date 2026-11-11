@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 
 from sqlalchemy import case, func, or_, text as sql_text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import object_session
 from meeting.corrections import (StaleCorrectionSelection, correct_segment_text,
                                  correct_text, occurrence_rules, segment_fingerprint,
@@ -1468,8 +1469,11 @@ class SqlMeetingRepository:
                         WHERE meeting_segments_fts MATCH :q AND (:any = 1 OR s.cloud_enabled = 1) AND s.id != :exclude
                         ORDER BY bm25(meeting_segments_fts), s.started_at DESC LIMIT :limit
                     """), params).mappings())
-                except Exception:
-                    logger.debug("Search index unavailable for semantic candidates")
+                except SQLAlchemyError:
+                    logger.debug(
+                        "Search index unavailable for semantic candidates; using recent passages",
+                        exc_info=True,
+                    )
             recent = conn.execute(sql_text("""
                 WITH passages AS (
                     SELECT ms.id AS segment_id, ms.meeting_id, ms.start_s, ms.end_s,

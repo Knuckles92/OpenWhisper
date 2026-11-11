@@ -831,7 +831,7 @@ class RemoteEngineSection(QObject):
             status = self._records.status()
         except Exception as exc:
             self.storage_tile.hide()
-            logger.warning("Record sync status failed: %s", exc)
+            logger.warning("Record sync status failed: %s", exc, exc_info=True)
             return
         self.storage_tile.setVisible(self._service is not None and status.paired)
         if not status.paired:
@@ -963,7 +963,7 @@ class RemoteEngineSection(QObject):
             try:
                 scan = service.scan_nearby(sweep=sweep)
             except Exception as exc:
-                logger.warning("Looking for computers to pair with failed: %s", exc)
+                logger.warning("Looking for computers to pair with failed: %s", exc, exc_info=True)
                 scan = exc
             finished.emit(token, scan)
 
@@ -1332,6 +1332,7 @@ class RemoteEngineSection(QObject):
             try:
                 pairing = service.pair(address, code, tailscale=tailscale)
             except Exception as exc:
+                logger.warning("Pairing with a host failed", exc_info=True)
                 finished.emit(token, None, exc, host)
             else:
                 finished.emit(token, pairing, None, host)
@@ -1360,6 +1361,7 @@ class RemoteEngineSection(QObject):
             try:
                 pairing = service.retry_pairing_save()
             except Exception as exc:
+                logger.warning("Saving the pairing key failed", exc_info=True)
                 finished.emit(token, None, exc, None)
             else:
                 finished.emit(token, pairing, None, None)
@@ -1392,6 +1394,12 @@ class RemoteEngineSection(QObject):
                     canceled=canceled,
                 )
             except Exception as exc:
+                from services.remote_asr.client import PairingCanceled
+
+                if isinstance(exc, PairingCanceled):
+                    logger.debug("Pairing request canceled")
+                else:
+                    logger.warning("Requesting to pair with a host failed", exc_info=True)
                 finished.emit(token, None, exc, host)
             else:
                 finished.emit(token, pairing, None, host)
@@ -1513,6 +1521,7 @@ class RemoteEngineSection(QObject):
         try:
             renamed = self._service.rename_host(name)
         except Exception as exc:
+            logger.warning("Could not rename the remote host", exc_info=True)
             QMessageBox.warning(self.client_tile.window(), "Could not rename host", str(exc))
             return
         if renamed is not None:
@@ -1588,6 +1597,7 @@ class RemoteEngineSection(QObject):
                 return
             self._records.set_location(location)
         except Exception as exc:
+            logger.warning("Couldn't change where records are kept", exc_info=True)
             self._records_note = f"Couldn't change where records are kept: {exc}"
         else:
             status = self._records.status()
@@ -1612,6 +1622,7 @@ class RemoteEngineSection(QObject):
             try:
                 message = work()
             except Exception as exc:
+                logger.warning("Remote records job failed", exc_info=True)
                 message = str(exc) or type(exc).__name__
             done.emit(token, message)
 
@@ -1713,6 +1724,7 @@ class RemoteEngineSection(QObject):
         try:
             self._service.rename_device(device_id, name)
         except Exception as exc:
+            logger.warning("Could not rename a paired computer", exc_info=True)
             QMessageBox.warning(self.devices_tile.window(), "Could not rename computer", str(exc))
         self.refresh()
 
@@ -1745,6 +1757,7 @@ class RemoteEngineSection(QObject):
         try:
             self._service.remove_device(device_id, delete_records=delete_records)
         except Exception as exc:
+            logger.warning("Could not remove a paired computer", exc_info=True)
             QMessageBox.warning(self.devices_tile.window(), "Could not remove computer", str(exc))
         self.refresh()
 
@@ -1756,6 +1769,7 @@ class RemoteEngineSection(QObject):
             owners = service.recoverable_record_owners()
             devices = service.host_state()["devices"]
         except Exception as exc:
+            logger.warning("Could not load stored records to recover", exc_info=True)
             QMessageBox.warning(self.devices_tile.window(), "Could not load stored records", str(exc))
             return
         if not owners or not devices:
@@ -1816,6 +1830,7 @@ class RemoteEngineSection(QObject):
                     "Refresh its history to see them."
                 )
             except Exception as exc:
+                logger.warning("Could not recover a paired computer's records", exc_info=True)
                 message = f"Could not recover records: {exc}"
             done.emit(token, message)
 

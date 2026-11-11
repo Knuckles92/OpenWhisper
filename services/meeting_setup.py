@@ -181,7 +181,7 @@ def check_audio(
                     if source.is_active():
                         return monitor
                 except Exception:
-                    logger.info("Could not open %s for the meeting audio check", channel, exc_info=True)
+                    logger.warning("Could not open %s for the meeting audio check", channel, exc_info=True)
                 return None
 
             def portaudio_source(channel, device):

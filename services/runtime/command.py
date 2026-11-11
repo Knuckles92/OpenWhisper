@@ -17,7 +17,7 @@ import logging
 import threading
 import time
 import weakref
-from concurrent.futures import Future
+from concurrent.futures import CancelledError, Future, InvalidStateError
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -81,7 +81,7 @@ def _resolve(future: Optional[Future], value) -> None:
     if future is not None and not future.done():
         try:
             future.set_result(value)
-        except Exception:
+        except InvalidStateError:
             pass  # resolved by another thread in between
 
 
@@ -90,7 +90,11 @@ def _snapshot(future: Optional[Future], timeout: float):
         return None
     try:
         value = future.result(timeout=timeout)
+    except (TimeoutError, CancelledError):
+        # Not ready in time, or abandoned: go on without it.
+        return None
     except Exception:
+        logger.debug("Focus capture result unavailable", exc_info=True)
         return None
     return value if isinstance(value, focus_context.FocusSnapshot) else None
 
@@ -279,7 +283,7 @@ class CommandRuntime:
                 include_text=False, include_selection=True
             )
         except Exception:
-            logger.debug("Focus capture could not start", exc_info=True)
+            logger.warning("Focus capture could not start", exc_info=True)
             return None
 
     def _read_selection(self, focus: Optional[Future], done: Callable[[object], None]) -> None:
@@ -396,7 +400,7 @@ class CommandRuntime:
                     job.snapshot(timeout=config.CONTEXT_CAPTURE_DEADLINE_S)
                 )
             except Exception:
-                logger.debug("Caret context unavailable", exc_info=True)
+                logger.warning("Caret context unavailable", exc_info=True)
         started = time.monotonic()
         result, error = text_rewrite.rewrite_with(
             cleaner,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import fields, replace
 from typing import Callable, Mapping, Optional
 
@@ -60,6 +61,8 @@ from ui_qt.widgets.no_wheel import NoWheelSpinBox
 from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.setting_tile import InfoTile
 from ui_qt.widgets.wrapped_label import WrappedLabel
+
+logger = logging.getLogger(__name__)
 
 _KIND_NOTES = {
     ActionKind.CHANNEL: (
@@ -582,6 +585,7 @@ class ActionEditor(InfoTile):
             self.show_message(str(exc))
             return False
         except Exception as exc:
+            logger.warning("Could not save the action", exc_info=True)
             self.show_message(f"Couldn't save the action: {exc}")
             return False
         self._secret_made = False

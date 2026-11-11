@@ -278,7 +278,10 @@ class WaveformOverlay(QWidget):
             self._draw_state(painter, rect)
             self._draw_listening_extras(painter)
         except Exception as e:
-            logger.error(f"Error drawing waveform frame: {e}", exc_info=True)
+            # paintEvent runs every frame: log the first failure only.
+            if not getattr(self, "_paint_error_logged", False):
+                self._paint_error_logged = True
+                logger.error(f"Error drawing waveform frame: {e}", exc_info=True)
             try:
                 painter = QPainter(self)
                 painter.fillRect(self.rect(), token_color("overlay-bg"))
@@ -286,7 +289,7 @@ class WaveformOverlay(QWidget):
                 painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
                 painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Error")
             except Exception:
-                pass
+                pass  # The error frame is cosmetic; the failure is logged above.
 
     def _draw_state(self, painter: QPainter, rect: QRect) -> None:
         """Paint what the current state shows over the background."""

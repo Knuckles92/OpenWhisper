@@ -523,8 +523,8 @@ def find_recoverable_meetings(repository: Any) -> List[Dict[str, Any]]:
             if finalization_from_meeting_row(meeting).card_deferred:
                 continue
         except Exception:
-            logger.debug(
-                "Could not read finalization deferral for meeting %s",
+            logger.warning(
+                "Could not read finalization deferral for meeting %s; offering recovery",
                 meeting.get("id"),
                 exc_info=True,
             )

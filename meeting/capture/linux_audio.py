@@ -103,6 +103,8 @@ def _package_family() -> str:
         from services.linux_deps import detect_package_family
         return detect_package_family(fallback="unknown")
     except Exception:
+        logger.debug("Could not detect the package family; install hints stay generic",
+                     exc_info=True)
         return "unknown"
 
 
@@ -146,6 +148,7 @@ def _libpulse_available(
         except OSError:
             continue
         except Exception:
+            logger.debug("Could not load %s; trying the next name", soname, exc_info=True)
             continue
     return False
 
@@ -175,6 +178,8 @@ def soundcard_connection_alive(soundcard_module: Any) -> Optional[bool]:
         state = pulse._pa_context_get_state(pulse.context)
         return state == backend._pa.PA_CONTEXT_READY
     except Exception:
+        logger.debug("SoundCard connection state unreadable; treating it as dead",
+                     exc_info=True)
         return False
 
 
@@ -195,6 +200,8 @@ def _harden_backend(backend: Any) -> None:
         unref = pulse._pa_operation_unref
         null = backend._ffi.NULL
     except Exception:
+        # A SoundCard version without these internals: leave it unhardened.
+        logger.debug("Skipping SoundCard hardening; internals not found", exc_info=True)
         return
 
     def _unref_if_operation(operation: Any) -> None:
@@ -438,6 +445,7 @@ def _soundcard_server_kind(soundcard_module: Any) -> Optional[str]:
     try:
         name = str(backend._pulse.server_info.get("server name") or "")
     except Exception:
+        logger.debug("Audio server name unavailable", exc_info=True)
         return None
     if not name:
         return None
@@ -495,6 +503,7 @@ def _device_channels(device: Any) -> int:
     try:
         channels = int(getattr(device, "channels", 2) or 2)
     except Exception:
+        logger.debug("Device channel count unreadable; assuming stereo", exc_info=True)
         channels = 2
     return max(1, channels)
 
@@ -509,6 +518,8 @@ def _positive_loopback_flag(device: Any) -> bool:
             return False
         return bool(flag)
     except Exception:
+        logger.debug("Device loopback flag unreadable; treating it as not loopback",
+                     exc_info=True)
         return False
 
 
@@ -592,6 +603,7 @@ def _scan_loopbacks(
     try:
         loopbacks = list(soundcard_module.all_microphones(include_loopback=True))
     except Exception:
+        logger.debug("Could not list loopback devices", exc_info=True)
         loopbacks = []
 
     exact = None
@@ -619,6 +631,7 @@ def _lookup_loopback(
             id=lookup_id, include_loopback=True
         )
     except Exception:
+        logger.debug("Loopback device lookup failed", exc_info=True)
         device = None
     if (
         device is not None
@@ -731,6 +744,7 @@ def _verify_monitor_open_once(
             id=lookup_id, include_loopback=True
         )
     except Exception:
+        logger.debug("Monitor lookup by id failed", exc_info=True)
         monitor = None
     if monitor is None and lookup_id != selection.monitor_id:
         try:
@@ -738,6 +752,7 @@ def _verify_monitor_open_once(
                 id=selection.monitor_id, include_loopback=True
             )
         except Exception:
+            logger.debug("Monitor lookup by source id failed", exc_info=True)
             monitor = None
     if monitor is None or not _positive_loopback_flag(monitor):
         raise RuntimeError(REASON_MONITOR_OPEN_FAILED)

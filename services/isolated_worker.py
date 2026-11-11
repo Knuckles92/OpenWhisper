@@ -11,6 +11,7 @@ import socket
 import select
 import sys
 import threading
+import traceback
 
 
 #: Optional transcription fields, sent only when the request carries them.
@@ -140,6 +141,9 @@ def main():
                 result = _run_operation(op, request, model, protocol)
             response = {"id": request["id"], "result": result}
         except Exception as exc:
+            # The parent keeps the last stderr lines and logs them if this
+            # worker stops; the reply carries only the one-line message.
+            traceback.print_exc(file=sys.stderr)
             response = {"id": request.get("id"), "error": str(exc),
                         "status_code": getattr(exc, "status_code", None),
                         "code": getattr(exc, "code", None)}

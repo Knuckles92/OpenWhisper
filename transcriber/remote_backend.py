@@ -246,7 +246,7 @@ class RemoteSpeechBackend(LocalSpeechBackend):
             try:
                 callback()
             except Exception:
-                logger.debug("Remote link listener raised", exc_info=True)
+                logger.warning("Remote link listener raised", exc_info=True)
 
     def _set_connecting(self, connecting: bool) -> None:
         with self._state_lock:

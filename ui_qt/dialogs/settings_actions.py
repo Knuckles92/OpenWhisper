@@ -6,6 +6,10 @@ imports this module when it registers its pages, so module-level imports stay
 light; ``build`` imports the widgets.
 """
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 TITLE = "Actions"
 SUBTITLE = "Send what you say somewhere other than the cursor: a chat, your agent, or your own tools."
 
@@ -63,6 +67,7 @@ def _try_action(dialog, action, sample_text: str, done) -> None:
     try:
         handler(action, sample_text, done)
     except Exception as exc:  # The runtime failed before it could answer.
+        logger.warning("Trying an action failed before the runtime answered", exc_info=True)
         done(ActionResult(False, f"Couldn't try it: {exc}"))
 
 

@@ -11,6 +11,7 @@ other thread ever holds or emits on a widget.
 from __future__ import annotations
 
 import itertools
+import logging
 import os
 import threading
 import time
@@ -52,6 +53,8 @@ from ui_qt.widgets.no_wheel import NoWheelSpinBox
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.wrapped_label import WrappedLabel
+
+logger = logging.getLogger(__name__)
 
 #: Friendly names for event types, in the order the chooser offers them.
 EVENT_LABELS: dict[str, str] = {
@@ -699,6 +702,8 @@ class WebhookEditor(_Editor):
         try:
             records = webhook_engine.deliveries(self.source.id)
         except Exception:
+            # Polled by a timer: debug only, the editor just shows no rows.
+            logger.debug("Could not read recent webhook deliveries", exc_info=True)
             records = []
         rows = []
         for record in records:
@@ -885,6 +890,8 @@ class ProgramEditor(_ProgramFields, _Editor):
         try:
             records = program_engine.runs(self.source.id)
         except Exception:
+            # Polled by a timer: debug only, the editor just shows no rows.
+            logger.debug("Could not read recent program runs", exc_info=True)
             records = []
         rows = []
         for record in records:
@@ -1219,6 +1226,7 @@ class HookSection(QWidget):
         try:
             return self.manager.load_all_settings()
         except Exception:
+            logger.warning("Could not load settings for the hooks list", exc_info=True)
             return {}
 
     def items(self) -> list:
@@ -1379,6 +1387,7 @@ class HookSection(QWidget):
             self.editor.set_message(str(exc), error=True)
             return False
         except Exception as exc:
+            logger.warning("Could not save the %s", self.NOUN, exc_info=True)
             self.editor.set_message(f"Couldn't save the {self.NOUN}: {_error_text(exc)}", error=True)
             return False
         self.refresh(draft.id)
@@ -1423,6 +1432,7 @@ class HookSection(QWidget):
         try:
             self.manager.mutate_settings(lambda settings: self._delete_item(settings, item.id))
         except Exception as exc:
+            logger.warning("Could not delete the %s", self.NOUN, exc_info=True)
             self.editor.set_message(f"Couldn't delete the {self.NOUN}: {_error_text(exc)}", error=True)
             return
         self._close_editor()
@@ -1442,6 +1452,7 @@ class HookSection(QWidget):
                 lambda settings: self._save_item(settings, self._with_enabled(item, enabled))
             )
         except Exception as exc:
+            logger.warning("Could not turn the %s on or off", self.NOUN, exc_info=True)
             self._set_message(_error_text(exc), error=True)
             self.refresh_live()
             return
@@ -1500,6 +1511,7 @@ class WebhookSection(HookSection):
         try:
             records = webhook_engine.deliveries(item.id)
         except Exception:
+            logger.debug("Could not read the last webhook delivery", exc_info=True)
             return None
         return records[0] if records else None
 
@@ -1555,6 +1567,7 @@ class ProgramSection(HookSection):
         try:
             records = program_engine.runs(item.id)
         except Exception:
+            logger.debug("Could not read the last program run", exc_info=True)
             return None
         return records[0] if records else None
 
@@ -1615,6 +1628,7 @@ class _LeaseList(QWidget):
         try:
             leases = list(filter_engine.leases())
         except Exception:
+            logger.debug("Could not read text filter leases", exc_info=True)
             leases = []
         now = time.time()
         shown = tuple(

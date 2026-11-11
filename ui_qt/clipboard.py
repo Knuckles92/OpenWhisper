@@ -522,7 +522,7 @@ class TemporaryClipboard(QObject):
         try:
             self._clipboard.setMimeData(mime_data)
         except Exception as exc:
-            logger.error("Failed to copy files to the clipboard: %s", exc)
+            logger.error("Failed to copy files to the clipboard: %s", exc, exc_info=True)
             return False
         self._discard_pending()
         return True
@@ -558,7 +558,7 @@ class TemporaryClipboard(QObject):
                 snapshot = ClipboardSnapshot.capture(self._clipboard.mimeData())
             except Exception as exc:
                 logger.warning(
-                    "Could not snapshot clipboard before auto-paste: %s", exc
+                    "Could not snapshot clipboard before auto-paste: %s", exc, exc_info=True
                 )
                 return ClipboardStageResult(
                     self._stage_without_lease(text, html), restore_unavailable=True
@@ -575,7 +575,7 @@ class TemporaryClipboard(QObject):
         try:
             self._clipboard.setMimeData(mime_data)
         except Exception as exc:
-            logger.error("Failed to stage clipboard for auto-paste: %s", exc)
+            logger.error("Failed to stage clipboard for auto-paste: %s", exc, exc_info=True)
             return ClipboardStageResult(False)
 
         if not self._owns(lease):
@@ -689,7 +689,11 @@ class TemporaryClipboard(QObject):
             except Exception as exc:
                 # Without a copy of the user's clipboard it could not be put
                 # back, so no copy is sent at all.
-                logger.warning("Could not snapshot clipboard before copying the selection: %s", exc)
+                logger.warning(
+                    "Could not snapshot clipboard before copying the selection: %s",
+                    exc,
+                    exc_info=True,
+                )
                 self._call_back(callback, "")
                 return
         sequence = self._sequence() if self._sequence is not None else None
@@ -702,7 +706,7 @@ class TemporaryClipboard(QObject):
         try:
             send_copy()
         except Exception as exc:
-            logger.warning("Could not send the copy shortcut: %s", exc)
+            logger.warning("Could not send the copy shortcut: %s", exc, exc_info=True)
             self._finish_selection("")
             return
         self._selection.sent = True
@@ -775,7 +779,11 @@ class TemporaryClipboard(QObject):
             except Exception as exc:
                 holds_original = False
                 message = str(exc) or "unknown clipboard error"
-                logger.error("Failed to restore clipboard after copying the selection: %s", message)
+                logger.error(
+                    "Failed to restore clipboard after copying the selection: %s",
+                    message,
+                    exc_info=True,
+                )
                 self.restore_failed.emit(message)
         if holds_original and self._sequence is not None:
             # The clipboard holds exactly this snapshot again, so the next
@@ -826,7 +834,7 @@ class TemporaryClipboard(QObject):
             return ClipboardRestoreOutcome.RESTORED
         except Exception as exc:
             message = str(exc) or "unknown clipboard error"
-            logger.error("Failed to restore clipboard after auto-paste: %s", message)
+            logger.error("Failed to restore clipboard after auto-paste: %s", message, exc_info=True)
             self.restore_failed.emit(message)
             return ClipboardRestoreOutcome.FAILED
 
@@ -839,6 +847,9 @@ class TemporaryClipboard(QObject):
                 return False
             return bytes(mime_data.data(AUTO_PASTE_MARKER_FORMAT)) == lease.token
         except Exception:
+            # Treated as "not ours": callers then skip the restore or report
+            # the unverified write.
+            logger.debug("Could not read the clipboard to check its auto-paste marker", exc_info=True)
             return False
 
     def _write_text(self, text: str, html: str = "") -> bool:
@@ -852,7 +863,7 @@ class TemporaryClipboard(QObject):
                 self._clipboard.setText(text or "")
             return True
         except Exception as exc:
-            logger.error("Failed to copy to clipboard: %s", exc)
+            logger.error("Failed to copy to clipboard: %s", exc, exc_info=True)
             return False
 
     def _stage_without_lease(self, text: str, html: str) -> bool:
@@ -875,7 +886,9 @@ class TemporaryClipboard(QObject):
             try:
                 render()
             except Exception as exc:
-                logger.debug("Could not pre-render the staged clipboard %s: %s", name, exc)
+                logger.warning(
+                    "Could not pre-render the staged clipboard %s: %s", name, exc, exc_info=True
+                )
 
     def _discard_pending(self) -> None:
         self._restore_timer.stop()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from datetime import UTC, datetime
 from typing import Literal
@@ -15,6 +16,8 @@ from services.agent_api.store import (
 )
 from services.remote_asr import protocol, settings as remote_settings
 from services.remote_asr.client import RemoteConnection
+
+logger = logging.getLogger(__name__)
 
 
 class _Query(BaseModel):
@@ -118,7 +121,9 @@ class HistoryReader:
             return {"error": "snapshot_unavailable"}
         except (InvalidQuery, ValidationError, ValueError, TypeError):
             return {"error": "invalid_query"}
-        except Exception:
+        except Exception as exc:
+            # Type only: a message could carry the query or the database path.
+            logger.warning("Could not answer the host's history query: %s", type(exc).__name__)
             return {"error": "unavailable"}
 
 
@@ -191,9 +196,9 @@ class HistoryClient:
                     self._answer_queries(connection, reader)
                 else:
                     retry_delay = _RETRY_UNSUPPORTED_S
-        except Exception:
+        except Exception as exc:
             # Reconnection never interrupts speech or moves saved records.
-            pass
+            logger.debug("History connection to the host ended: %s", type(exc).__name__)
         finally:
             if connection:
                 connection.close()

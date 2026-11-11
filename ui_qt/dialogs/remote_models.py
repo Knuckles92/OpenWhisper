@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import logging
 import threading
 from typing import Optional
 
@@ -25,6 +26,8 @@ from PyQt6.QtWidgets import (
 
 from ui_qt.widgets import Button, ElidingComboBox, PrimaryButton, WrappedLabel
 from ui_qt.widgets.engine_field import DEVICE_LABELS as _DEVICE_LABELS
+
+logger = logging.getLogger(__name__)
 
 
 class _RequestRelay(QObject):
@@ -419,6 +422,7 @@ class RemoteModelsDialog(QDialog):
                     op, expected_pairing=pairing, **fields
                 )
             except Exception as exc:
+                logger.warning("Remote model request %s failed", op, exc_info=True)
                 error = str(exc) or type(exc).__name__
             finished.emit(token, op, result, error)
 

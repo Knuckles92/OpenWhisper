@@ -302,5 +302,6 @@ def acknowledge_unsupported_meeting_mode(
         logger.warning(
             "Could not persist unsupported-platform Meeting Mode ack: %s",
             exc,
+            exc_info=True,
         )
     return True

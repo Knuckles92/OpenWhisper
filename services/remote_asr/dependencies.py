@@ -183,6 +183,7 @@ class HostRuntimeInstaller:
                     daemon=True,
                 ).start()
             except Exception:
+                logger.warning("Could not start the remote runtime installation", exc_info=True)
                 component_coordinator.end_install(component)
                 self._job.update(
                     state="failed",

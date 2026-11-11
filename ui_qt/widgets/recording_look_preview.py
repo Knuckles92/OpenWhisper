@@ -9,6 +9,7 @@ or the preview leaves the screen. Nothing is recorded: the take is thrown away.
 """
 from __future__ import annotations
 
+import logging
 import math
 import os
 import random
@@ -21,6 +22,8 @@ from PyQt6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from ui_qt.overlays.waveform_overlay import WaveformOverlay
 from ui_qt.widgets.buttons import Button, neutral_button
 from ui_qt.widgets.wrapped_label import WrappedLabel
+
+logger = logging.getLogger(__name__)
 
 _TICK_MS = 33
 #: One loop of the sample: the recording, then the finish, then a breath.
@@ -186,6 +189,7 @@ class RecordingLookPreview(QWidget):
                 return True
             reason = getattr(self._recorder, "last_start_error", "") or ""
         except Exception as exc:  # a missing or busy device must not break Settings
+            logger.warning("Could not open the microphone for the recording look preview", exc_info=True)
             reason = str(exc)
         self._release_recorder()
         self.source_label.setText(
@@ -198,7 +202,7 @@ class RecordingLookPreview(QWidget):
             try:
                 self._recorder.cancel_recording()
             except Exception:
-                pass
+                logger.debug("Could not cancel the preview recording", exc_info=True)
         self._release_recorder()
 
     def _release_recorder(self) -> None:
@@ -206,7 +210,7 @@ class RecordingLookPreview(QWidget):
             try:
                 self._recorder.cleanup()
             except Exception:
-                pass
+                logger.debug("Could not clean up the preview recorder", exc_info=True)
             self._recorder = None
 
     def _update_source_label(self) -> None:

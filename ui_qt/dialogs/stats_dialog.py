@@ -92,6 +92,7 @@ def _language_text(code: str) -> str:
     try:
         return importlib.import_module("services.dictation_language").label(code)
     except Exception:
+        logger.debug("Could not label dictation language %s; showing the code", code, exc_info=True)
         return code
 
 

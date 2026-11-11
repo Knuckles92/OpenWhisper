@@ -1,5 +1,6 @@
 """Controls for Settings → Commands: the Command Mode shortcut and the transforms library."""
 
+import logging
 from dataclasses import replace
 from uuid import uuid4
 
@@ -42,6 +43,8 @@ from ui_qt.widgets.buttons import (
 )
 from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
 from ui_qt.widgets.wrapped_label import WrappedLabel
+
+logger = logging.getLogger(__name__)
 
 COMMAND_ACTION = "command_mode"
 #: The transforms list's width beside the editor, unless its buttons need more.
@@ -527,6 +530,8 @@ class TransformsPanel(QWidget):
         try:
             self.manager.mutate_settings(lambda settings: save_transform(settings, transform))
         except Exception as exc:
+            if not isinstance(exc, ValueError):  # ValueError is a validation message.
+                logger.warning("Could not save the transform", exc_info=True)
             self.message.setText(str(exc))
             return False
         self._saved = transform
@@ -553,6 +558,7 @@ class TransformsPanel(QWidget):
         try:
             self.manager.mutate_settings(lambda settings: delete_transform(settings, transform_id))
         except Exception as exc:
+            logger.warning("Could not delete the transform", exc_info=True)
             self.message.setText(str(exc))
             return
         self._saved = None

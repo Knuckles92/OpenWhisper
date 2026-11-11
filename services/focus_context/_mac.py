@@ -178,4 +178,5 @@ def _secure_input_enabled() -> bool:
             "/System/Library/Frameworks/Carbon.framework/Carbon")
         return bool(carbon.IsSecureEventInputEnabled())
     except Exception:
+        logger.debug("Secure input state unavailable; assuming it is on", exc_info=True)
         return True

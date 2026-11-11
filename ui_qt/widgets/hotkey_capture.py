@@ -232,7 +232,7 @@ if USE_PYNPUT_BACKEND:
                     self.failed.emit(HOTKEY_CAPTURE_FAILURE_MESSAGE)
             except Exception as exc:
                 if not self._canceled:
-                    logger.error("Error capturing hotkey: %s", exc)
+                    logger.error("Error capturing hotkey: %s", exc, exc_info=True)
                     self.failed.emit(HOTKEY_CAPTURE_FAILURE_MESSAGE)
 
         def stop(self) -> None:
@@ -242,7 +242,7 @@ if USE_PYNPUT_BACKEND:
                 try:
                     listener.stop()
                 except Exception:
-                    pass
+                    pass  # Already stopped or never started; nothing to release.
 
 else:
 
@@ -285,14 +285,14 @@ else:
                         return
             except Exception as exc:
                 if not self._stopped:
-                    logger.error("Error capturing hotkey: %s", exc)
+                    logger.error("Error capturing hotkey: %s", exc, exc_info=True)
                     self.failed.emit(HOTKEY_CAPTURE_FAILURE_MESSAGE)
             finally:
                 if hooked is not None:
                     try:
                         keyboard.unhook(hooked)
                     except Exception:
-                        pass
+                        pass  # Hook already removed; nothing to release.
 
         def stop(self) -> None:
             self._stopped = True

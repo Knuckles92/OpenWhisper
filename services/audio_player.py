@@ -138,7 +138,7 @@ class AudioPlayer:
             )
         except Exception as exc:
             self.last_error = str(exc) or type(exc).__name__
-            logger.warning("History playback couldn't start: %s", self.last_error)
+            logger.warning("History playback couldn't start: %s", self.last_error, exc_info=True)
             self._finish(playback)
             return
         with self._stream_lock:
@@ -150,7 +150,7 @@ class AudioPlayer:
                 stream.start()
             except Exception as exc:
                 self.last_error = str(exc) or type(exc).__name__
-                logger.warning("History playback couldn't start: %s", self.last_error)
+                logger.warning("History playback couldn't start: %s", self.last_error, exc_info=True)
                 playback.stream = None
                 _close(stream)
                 failed = True
@@ -198,7 +198,7 @@ class AudioPlayer:
             try:
                 playback.on_finished()
             except Exception:
-                logger.debug("A playback finished callback raised", exc_info=True)
+                logger.warning("A playback finished callback raised", exc_info=True)
 
     def stop(self) -> None:
         with self._lock:

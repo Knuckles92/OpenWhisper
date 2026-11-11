@@ -357,7 +357,8 @@ def clear() -> None:
     try:
         current.clear()
     except Exception as exc:
-        logger.debug("Could not clear the event buffer: %s", type(exc).__name__)
+        # Deleted text could still be replayed to a reconnecting stream: say so.
+        logger.warning("Could not clear the event buffer: %s", type(exc).__name__)
 
 
 def set_bus(replacement: Optional[EventBus]) -> Optional[EventBus]:
@@ -374,5 +375,5 @@ def publish(event_type: str, data: Mapping[str, Any], *,
     try:
         return bus().publish(event_type, data, replay=replay)
     except Exception as exc:
-        logger.debug("Could not publish %s: %s", event_type, type(exc).__name__)
+        logger.warning("Could not publish %s: %s", event_type, type(exc).__name__)
         return None

@@ -119,7 +119,8 @@ def _decode_history_cursor(cursor: str) -> tuple[Optional[str], Optional[str]]:
         if not isinstance(started_at, str) or not isinstance(meeting_id, str):
             raise ValueError("invalid cursor fields")
         return started_at, meeting_id
-    except Exception as exc:
+    # bad base64/UTF-8/JSON/shape, absurd nesting, or a number float() can't hold
+    except (ValueError, TypeError, OverflowError, RecursionError) as exc:
         raise HTTPException(status_code=400, detail="invalid meeting cursor") from exc
 
 
@@ -132,7 +133,8 @@ def _decode_cursor(cursor: str) -> tuple[Optional[float], Optional[str]]:
             base64.urlsafe_b64decode(cursor + padding).decode("utf-8")
         )
         return float(start_s), str(segment_id)
-    except Exception as exc:
+    # bad base64/UTF-8/JSON/shape, absurd nesting, or a number float() can't hold
+    except (ValueError, TypeError, OverflowError, RecursionError) as exc:
         raise HTTPException(status_code=400, detail="invalid transcript cursor") from exc
 
 

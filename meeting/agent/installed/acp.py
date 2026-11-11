@@ -238,7 +238,12 @@ class AcpConnection:
                 if isinstance(msg, dict):
                     self._dispatch(msg)
         except Exception:
-            logger.debug("ACP reader stopped", exc_info=True)
+            # Reader thread entry point: a decode error or a dispatch bug
+            # would otherwise end the connection without a word.
+            if self._closed:
+                logger.debug("ACP reader stopped after close", exc_info=True)
+            else:
+                logger.warning("ACP reader stopped unexpectedly", exc_info=True)
         finally:
             self._fail_pending(self._exit_message())
 
@@ -253,7 +258,8 @@ class AcpConnection:
                         self._stderr_tail.append(text[:400])
                     logger.debug("agent stderr: %s", text[:400])
         except Exception:
-            pass
+            # Stderr is only kept for diagnostics; losing its tail is harmless.
+            logger.debug("ACP stderr reader stopped", exc_info=True)
 
     def _dispatch(self, msg: Dict[str, Any]) -> None:
         method = msg.get("method")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from typing import Callable, Mapping, Optional
 
@@ -29,6 +30,8 @@ from ui_qt.widgets.action_gallery import PresetGallery
 from ui_qt.widgets.action_list import ActionList
 from ui_qt.widgets.buttons import Button, compact_primary_button, fit_compact_button
 from ui_qt.widgets.reflow import Reflow
+
+logger = logging.getLogger(__name__)
 
 LIST, GALLERY, EDITOR = "list", "gallery", "editor"
 #: How long a just-saved card glows.
@@ -257,6 +260,7 @@ class ActionsPanel(QWidget):
         try:
             self.manager.mutate_settings(lambda settings: delete_action(settings, action_id))
         except Exception as exc:
+            logger.warning("Could not delete the action", exc_info=True)
             self.show_notice(f"Couldn't delete {action.name}: {exc}", "error")
             return
         if action.kind == ActionKind.WEBHOOK:

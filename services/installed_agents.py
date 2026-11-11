@@ -487,7 +487,7 @@ def _notify(agent_ids: Iterable[str]) -> None:
             try:
                 listener(agent_id)
             except Exception:
-                logger.debug("Agent lookup listener failed", exc_info=True)
+                logger.warning("Agent lookup listener failed", exc_info=True)
 
 
 def scan_agents(refresh: bool = False) -> Dict[str, Optional[InstalledAgent]]:

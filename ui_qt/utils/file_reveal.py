@@ -35,8 +35,8 @@ def reveal_in_file_manager(path: str) -> bool:
             if sys.platform == "darwin":
                 subprocess.run(["open", "-R", target], check=False)
                 return True
-        except Exception as e:
-            logger.warning(f"Failed to reveal {target}: {e}")
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            logger.warning(f"Failed to reveal {target}: {e}", exc_info=True)
 
     return _open_containing_folder(target)
 

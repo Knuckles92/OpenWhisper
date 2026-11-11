@@ -271,7 +271,8 @@ class TranscriptCleanup:
             )
         except Exception as exc:
             logger.error(
-                "Failed to initialize transcript cleanup client: %s", exc
+                "Failed to initialize transcript cleanup client: %s", exc,
+                exc_info=True,
             )
             self.client = None
             self._connection = None
@@ -409,7 +410,7 @@ class TranscriptCleanup:
             return text
         except Exception as exc:
             self.last_error = str(exc)
-            logger.warning("Transcript cleanup failed; using raw text: %s", exc)
+            logger.warning("Transcript cleanup failed; using raw text: %s", exc, exc_info=True)
             return text
 
     def _cleanup_with_agent(self, text: str, prompt: str,

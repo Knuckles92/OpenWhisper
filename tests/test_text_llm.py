@@ -368,3 +368,8 @@ class TestSnapshotsAndConsent:
         assert profile_display_name("openai") == "OpenAI"
         assert profile_display_name("missing_profile") == "missing_profile"
         assert SIDECAR_API_KEY_ENV == "OPENWHISPER_LLM_API_KEY"
+
+    def test_snapshot_from_unreadable_json_is_none(self):
+        assert snapshot_from_mapping("{not json") is None
+        assert snapshot_from_mapping("   ") is None
+        assert snapshot_from_mapping("[1, 2]") is None

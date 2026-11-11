@@ -168,7 +168,7 @@ def run_once(argv: Sequence[str], stdin: bytes, *, timeout_s: float, cwd: str = 
         try:
             kill_agent_process(proc)
         except Exception as exc:
-            logger.debug("Could not stop a program's processes: %s", type(exc).__name__)
+            logger.warning("Could not stop a program's processes: %s", type(exc).__name__)
         deadline = time.monotonic() + 2.0
     else:
         # It ended by itself: what it started is the user's now.

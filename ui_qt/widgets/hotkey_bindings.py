@@ -5,6 +5,7 @@ editors (Profiles, Commands, Actions) set it too; a row here saves through the
 same validation, so a shortcut is refused here exactly when it would be there.
 """
 
+import logging
 from dataclasses import dataclass, replace
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -27,6 +28,8 @@ from ui_qt.widgets.hotkey_capture import mouse_shortcut_note
 from ui_qt.widgets.hotkey_row import ReflowCard
 from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
 from ui_qt.widgets.wrapped_label import WrappedLabel
+
+logger = logging.getLogger(__name__)
 
 #: A profile's or transform's instructions are quoted up to this many characters.
 _INSTRUCTION_CHARS = 80
@@ -275,6 +278,7 @@ class BindingShortcuts(QWidget):
             row.show_note(str(exc), warning=True)
             return
         except Exception as exc:  # The settings file couldn't be written.
+            logger.warning("Could not save the shortcut", exc_info=True)
             row.field.set_hotkey(binding.hotkey)
             row.show_note(f"Couldn't save the shortcut: {exc}", warning=True)
             return

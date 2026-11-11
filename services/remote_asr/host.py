@@ -702,7 +702,7 @@ class SpeechHost:
         try:
             self._on_event(kind, detail)
         except Exception:
-            logger.debug("Remote engine host event listener raised", exc_info=True)
+            logger.warning("Remote engine host event listener raised", exc_info=True)
 
     @staticmethod
     def _check_path(connection, request):
@@ -714,7 +714,7 @@ class SpeechHost:
         try:
             engine = self._engine_provider()
         except Exception as exc:
-            logger.warning("Remote engine provider failed: %s", exc)
+            logger.warning("Remote engine provider failed: %s", exc, exc_info=True)
             return UnavailableEngine("The host's engine is unavailable")
         return engine if engine is not None else UnavailableEngine("No engine is selected on the host")
 
@@ -775,7 +775,7 @@ class SpeechHost:
         except TimeoutError:
             ws.close(protocol.CLOSE_TIMEOUT, "handshake timeout")
             return None
-        except Exception:
+        except Exception:  # the connection dropped before saying hello
             return None
         try:
             message = json.loads(first) if isinstance(first, str) else None
@@ -1075,6 +1075,8 @@ class SpeechHost:
             connection.release()
 
     def _serve_device(self, ws, message: dict, address: str, device: dict) -> None:
+        from websockets.exceptions import ConnectionClosed
+
         if message.get("purpose") == "history":
             self.history.serve(ws, device, message.get("token"), message.get("history_enabled"))
             return
@@ -1123,8 +1125,11 @@ class SpeechHost:
                 if reply.get("code") == "engine_changed":
                     ws.close(protocol.CLOSE_ENGINE_CHANGED, "engine changed")
                     break
-        except Exception as exc:
+        except (ConnectionClosed, OSError) as exc:
             logger.info("Remote engine client %s disconnected: %s", device["name"], exc)
+        except Exception:
+            logger.warning("Remote engine client %s dropped after an error", device["name"],
+                           exc_info=True)
         finally:
             self._drop_client(engine, streams, connection_id, device)
 
@@ -1314,6 +1319,9 @@ class SpeechHost:
             elif op == "stream":
                 self.activity.previewed(device_id, device_name)
         except Exception as exc:
+            # Stream previews arrive many times a second: keep their failures out of the log.
+            (logger.debug if op in ("stream", "cancel_stream") else logger.warning)(
+                "Remote %s request from %s failed", op, device_name, exc_info=True)
             error = str(exc) or type(exc).__name__
             if decodes:
                 self.activity.failed(device_id, device_name, error)
@@ -1344,6 +1352,7 @@ class SpeechHost:
         try:
             result = self._manage_models(op, header, device_name)
         except Exception as exc:
+            logger.warning("Model request %s from %s failed", op, device_name, exc_info=True)
             return {"id": request_id, "error": str(exc) or type(exc).__name__}
         return {"id": request_id, "result": result}
 
@@ -1432,6 +1441,7 @@ class SpeechHost:
         try:
             engine = self._configure_runtime(header["family"], header["model"], header["settings"], device_name)
         except Exception as exc:
+            logger.warning("Runtime change from %s failed", device_name, exc_info=True)
             return {"id": request_id, "error": str(exc) or type(exc).__name__}
         self._emit("engine", {"by": device_name})
         return {"id": request_id, "result": {"engine": engine, "runtime": self._runtime()}}
@@ -1458,6 +1468,7 @@ class SpeechHost:
             engine = (self._select_model(family, model, device_name, header["device"]) if "device" in header
                       else self._select_model(family, model, device_name))
         except Exception as exc:
+            logger.warning("Model switch from %s failed", device_name, exc_info=True)
             return {"id": request_id, "error": str(exc) or type(exc).__name__}
         self.activity.switched(device_name, str((engine or {}).get("label") or model))
         self._emit("engine", {"family": family, "model": model, "by": device_name})
