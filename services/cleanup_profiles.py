@@ -44,7 +44,7 @@ STARTER_PROFILES = (
 
 def load_cleanup_profiles(settings: dict) -> list[CleanupProfile]:
     """Read valid profiles; starters appear only before a library is saved."""
-    raw = settings.get(SettingsKey.TRANSCRIPT_CLEANUP_PROFILES)
+    raw = SettingsKey.TRANSCRIPT_CLEANUP_PROFILES.read(settings)
     if raw is None:
         return list(STARTER_PROFILES)
     if not isinstance(raw, list):
@@ -90,12 +90,12 @@ def cleanup_may_run(settings: dict) -> bool:
     """
     if SettingsKey.TRANSCRIPT_CLEANUP_ENABLED.read(settings):
         return True
-    if settings.get(SettingsKey.QUICK_RECORD_PROFILE):
+    if SettingsKey.QUICK_RECORD_PROFILE.read(settings):
         return True
     if any(profile.hotkey for profile in load_cleanup_profiles(settings)):
         return True
-    hotkeys = settings.get(SettingsKey.HOTKEYS)
-    if isinstance(hotkeys, dict) and hotkeys.get("command_mode"):
+    hotkeys = SettingsKey.HOTKEYS.read(settings)
+    if hotkeys is not None and hotkeys.get("command_mode"):
         return True
     from services.text_transforms import load_transforms
 
@@ -159,7 +159,7 @@ def delete_cleanup_profile(settings: dict, profile_id: str) -> None:
     settings[SettingsKey.TRANSCRIPT_CLEANUP_PROFILES] = [
         p.to_dict() for p in load_cleanup_profiles(settings) if p.id != profile_id
     ]
-    if settings.get(SettingsKey.QUICK_RECORD_PROFILE) == profile_id:
+    if SettingsKey.QUICK_RECORD_PROFILE.read(settings) == profile_id:
         settings[SettingsKey.QUICK_RECORD_PROFILE] = ""
 
 

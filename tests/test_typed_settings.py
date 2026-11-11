@@ -314,27 +314,95 @@ def test_resolve_bool_setting_refuses_a_key_that_is_not_on_off():
 
 # --- Equivalence of migrated call sites ------------------------------------
 #
-# Each entry is (setting, the expression the call site used before, the typed
-# read that replaced it). Grouped by module; the expression is copied from the
-# code at 77b63c1 with ``s`` for the loaded mapping.
+# Each entry is (setting, the expression the call site used at 77b63c1, the
+# typed read that replaced it), with ``s`` for the loaded mapping. They must
+# agree on every stored value of the declared type, on a missing key, and on
+# values the old expression itself turned into a well-typed result. Where the
+# old expression handed a wrong-typed stored value (or None) on to the code
+# after it, which no setting the app writes can hold, the typed read gives the
+# default instead; that is the one allowed difference.
+
+#: The type a typed read of each kind returns.
+DECLARED_TYPES = {
+    "BoolSetting": bool, "IntSetting": int, "IntChoiceSetting": int,
+    "FloatSetting": (int, float), "StrSetting": str, "ChoiceSetting": str,
+    "ListSetting": list, "DictSetting": dict, "OptionalStrSetting": (str, type(None)),
+    "OptionalListSetting": (list, type(None)), "OptionalDictSetting": (dict, type(None)),
+    "RawSetting": object,
+}
 
 D = old.SETTING_DEFAULTS
-CALL_SITES: dict[str, list[tuple[Setting[Any], Callable[[dict], Any], Callable[[dict], Any]]]] = {}
+CALL_SITES: dict[str, list[tuple[Setting[Any], Callable[[dict], Any],
+                                  Callable[[dict], Any], Any]]] = {}
 
 
 def call_site(module: str, setting: Setting[Any], before: Callable[[dict], Any],
-              after: Callable[[dict], Any] | None = None) -> None:
-    CALL_SITES.setdefault(module, []).append((setting, before, after or setting.read))
+              after: Callable[[dict], Any] | None = None, result: Any = None) -> None:
+    """Register a migrated read; ``result`` is the type of what the two return
+    when it is not the setting's own (a predicate on the value, say)."""
+    expected = result or DECLARED_TYPES[type(setting).__name__]
+    CALL_SITES.setdefault(module, []).append(
+        (setting, before, after or setting.read, expected))
 
 
-@pytest.mark.parametrize("module", sorted(CALL_SITES) or ["(none)"])
-def test_migrated_call_sites_read_what_they_read_before(module):
-    for setting, before, after in CALL_SITES.get(module, []):
-        for value in _battery(setting):
-            _same(after, before, _mapping(setting, value))
+def _well_typed(expected: Any, value: Any) -> bool:
+    if isinstance(value, bool) and expected not in (bool, object):
+        return False
+    return isinstance(value, expected)
+
+
+# Registered call sites, by module.
+call_site("runtime.streaming", SettingsKey.STREAMING_CHUNK_DURATION,
+          lambda s: old.setting_value(SettingsKey.STREAMING_CHUNK_DURATION, s))
+call_site("cleanup_prompts", SettingsKey.TRANSCRIPT_CLEANUP_PROMPT,
+          lambda s: (lambda v: v if isinstance(v, str) else "")(
+              s.get(SettingsKey.TRANSCRIPT_CLEANUP_PROMPT)))
+call_site("dictation_language", SettingsKey.SELECTED_MODEL,
+          lambda s: (lambda v: "api" if isinstance(v, str) and v in old.LEGACY_API_MODELS
+                     else v if isinstance(v, str) and v in config.MODEL_VALUE_MAP.values()
+                     else D[SettingsKey.SELECTED_MODEL])(s.get(SettingsKey.SELECTED_MODEL)))
+call_site("dictation_language", SettingsKey.WHISPER_MODEL,
+          lambda s: old.setting_value(SettingsKey.WHISPER_MODEL, s))
+call_site("dictation_language", SettingsKey.DICTATION_LANGUAGES,
+          lambda s: (lambda v: v if isinstance(v, (list, tuple)) else [])(
+              s.get(SettingsKey.DICTATION_LANGUAGES)))
+call_site("dictation_language", SettingsKey.DICTATION_ACTIVE_LANGUAGE,
+          lambda s: (lambda v: v if isinstance(v, str) else "")(
+              s.get(SettingsKey.DICTATION_ACTIVE_LANGUAGE)))
+call_site("dictation_language", SettingsKey.LOCAL_ASR_LANGUAGE,
+          lambda s: (lambda v: v if isinstance(v, str) else None)(
+              old.setting_value(SettingsKey.LOCAL_ASR_LANGUAGE, s)))
+call_site("dictation_language", SettingsKey.DICTATION_ACTIVE_LANGUAGE,
+          lambda s: s.get(SettingsKey.DICTATION_ACTIVE_LANGUAGE) not in ("", "en", "fr"),
+          lambda s: SettingsKey.DICTATION_ACTIVE_LANGUAGE.stored(s) not in ("", "en", "fr"),
+          result=bool)
+call_site("cleanup_profiles", SettingsKey.TRANSCRIPT_CLEANUP_PROFILES,
+          lambda s: s.get(SettingsKey.TRANSCRIPT_CLEANUP_PROFILES))
+call_site("cleanup_profiles", SettingsKey.QUICK_RECORD_PROFILE,
+          lambda s: s.get(SettingsKey.QUICK_RECORD_PROFILE) or "",
+          lambda s: SettingsKey.QUICK_RECORD_PROFILE.read(s) or "")
+call_site("cleanup_profiles", SettingsKey.HOTKEYS,
+          lambda s: (lambda v: v if isinstance(v, dict) else None)(s.get(SettingsKey.HOTKEYS)))
 
 
 def test_config_is_where_the_defaults_come_from():
     # The same check as tests/test_setting_defaults.py, on the declarations.
     assert SettingsKey.STREAMING_CHUNK_DURATION.default == config.STREAMING_CHUNK_DURATION_SEC
     assert SettingsKey.SELECTED_MODEL.default == config.DEFAULT_BACKEND
+
+
+@pytest.mark.parametrize("module", sorted(CALL_SITES) or ["(none)"])
+def test_migrated_call_sites_read_what_they_read_before(module):
+    for setting, before, after, result in CALL_SITES.get(module, []):
+        for value in _battery(setting):
+            settings = _mapping(setting, value)
+            try:
+                expected = before(copy.deepcopy(settings))
+            except Exception:
+                after(copy.deepcopy(settings))
+                continue
+            if not _well_typed(result, expected):
+                got = after(copy.deepcopy(settings))
+                assert got == expected or _well_typed(result, got), (module, setting, value)
+                continue
+            assert after(copy.deepcopy(settings)) == expected, (module, setting, value)

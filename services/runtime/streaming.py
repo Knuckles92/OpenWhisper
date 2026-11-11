@@ -7,7 +7,7 @@ import time
 from typing import TYPE_CHECKING, Callable, Optional
 
 from config import config
-from services.settings import SettingsKey, setting_value, settings_manager
+from services.settings import SettingsKey, settings_manager
 
 if TYPE_CHECKING:
     from services.recorder import AudioLevelCallback
@@ -276,7 +276,7 @@ class StreamingRuntime:
         )
 
     def _use_window_stream(self, streaming_backend, settings) -> None:
-        chunk_duration = setting_value(SettingsKey.STREAMING_CHUNK_DURATION, settings)
+        chunk_duration = SettingsKey.STREAMING_CHUNK_DURATION.read(settings)
         self.controller.streaming_transcriber = StreamingTranscriber(
             backend=streaming_backend,
             chunk_duration_sec=chunk_duration,
