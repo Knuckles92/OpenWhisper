@@ -37,18 +37,6 @@ from PyQt6.QtWidgets import (
 
 from config import config
 from services.components import component_coordinator
-from services.credentials import (
-    MAX_API_KEY_LEN,
-    CredentialSource,
-    CredentialStoreError,
-    credential_source,
-    environment_shadowed,
-    mask_key,
-    resolve_credential,
-    validate_api_key,
-)
-from services.credentials import store as credential_store
-from services.typesafe import CREDENTIAL_ENV as TYPESAFE_CREDENTIAL_ENV
 from services.typesafe import OPENROUTER_ROUTE as JEV_OPENROUTER_ROUTE
 from services.typesafe import TEXT_MODEL_TIMEOUT_S
 from services.typesafe import TYPESAFE_ROUTE as JEV_TYPESAFE_ROUTE
@@ -116,11 +104,8 @@ from services.settings import (
     settings_manager,
 )
 from services.text_llm import (
-    credential_label,
     get_profile as get_text_llm_profile,
-    list_profiles,
     profile_display_name,
-    verify_api_key,
 )
 from services import cleanup_prompts
 from services.cleanup_prompts import CleanupLevel
@@ -168,6 +153,7 @@ from ui_qt.dialogs.settings_destinations import (
     resolve_destination,
 )
 from ui_qt.dialogs.settings_downloads import DownloadsPage
+from ui_qt.dialogs import settings_api_keys
 from ui_qt.dialogs.settings_backup import BackupSettingsPage
 from ui_qt.dialogs.settings_fields import (
     group_title,
@@ -198,7 +184,6 @@ from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets import (
     Button,
-    DangerButton,
     ElidingComboBox,
     NoWheelSpinBox,
     FieldTile,
@@ -412,7 +397,6 @@ class _ThreadRelay(QObject):
     connections.
     """
 
-    api_key_verified = pyqtSignal(int, str, bool, str)
     typesafe_route_verified = pyqtSignal(int, str, bool, str)
     cleanup_rule_polished = pyqtSignal(int, str, str, str)
     rule_dictation_finished = pyqtSignal(int, str, str)
@@ -687,11 +671,8 @@ class SettingsDialog(QDialog):
         self._rule_level_token = 0
         self._rule_polish_token = 0
         self._rule_dictation_token = 0
-        self._api_key_token = 0
         self._typesafe_route_token = 0
-        self._api_key_testing = False
         self._typesafe_route_testing = False
-        self._api_key_source = CredentialSource.NONE
         self._rule_dictation_path = os.path.join(
             tempfile.gettempdir(), "openwhisper_rule_dictation.wav"
         )
@@ -711,6 +692,12 @@ class SettingsDialog(QDialog):
         self._bindings = SettingsBinder(self._persist)
         self._meeting_bindings = SettingsBinder(self._persist)
 
+        self.api_keys = settings_api_keys.ApiKeysSection(
+            self,
+            load_settings=lambda: settings_manager.load_all_settings(),
+            is_loading=lambda: self._loading,
+        )
+
         self._setup_ui()
         self.setMinimumSize(self.MINIMUM_SIZE)
         self.resize(self.DEFAULT_SIZE)
@@ -719,10 +706,11 @@ class SettingsDialog(QDialog):
         relay.cleanup_rule_polished.connect(self._on_cleanup_rule_polished)
         relay.rule_dictation_finished.connect(self._on_rule_dictation_finished)
         relay.rule_dictation_level.connect(self._on_rule_dictation_level)
-        relay.api_key_verified.connect(self._on_api_key_verified)
         relay.typesafe_route_verified.connect(self._on_typesafe_route_verified)
         lookup_relay().looked_up.connect(self._on_agent_looked_up)
         self.finished.connect(self._release_rule_recorder)
+        self.api_keys.message.connect(lambda text: self.message_label.setText(text))
+        self.api_keys.keys_changed.connect(self._on_api_keys_saved)
         self.models.assignments_changed.connect(self._refresh_rail_values)
         self.models.downloads_requested.connect(self.show_downloads)
         self.downloads.inventory_changed.connect(self._refresh_rail_values)
@@ -2874,431 +2862,25 @@ class SettingsDialog(QDialog):
         self._tile_group(layout, "Port", [self.meeting_port_tile])
 
     def _build_api_keys_page(self, layout: QVBoxLayout) -> None:
-        self.api_key_combo = ElidingComboBox()
-        self.api_key_combo.setObjectName("apiKeyCredentialCombo")
-        self.api_key_combo.setMinimumHeight(40)
-        self.api_key_combo.currentIndexChanged.connect(
-            self._on_api_key_credential_changed
-        )
-        self.api_key_credential_tile = FieldTile(
-            "Credential",
-            "Choose the provider whose key you want to save or test.",
-            self.api_key_combo,
-            design_icon("key-blue.svg"),
-        )
-
-        status_row = QHBoxLayout()
-        status_row.setContentsMargins(0, 0, 0, 0)
-        status_row.setSpacing(8)
-        self.api_key_status_icon = QLabel()
-        self.api_key_status_icon.setObjectName("apiKeyStatusIcon")
-        self.api_key_status_icon.setFixedSize(16, 16)
-        self.api_key_status = WrappedLabel("")
-        self.api_key_status.setObjectName("apiKeyStatus")
-        status_row.addWidget(
-            self.api_key_status_icon, alignment=Qt.AlignmentFlag.AlignTop
-        )
-        status_row.addWidget(self.api_key_status, stretch=1)
-        self.api_key_credential_tile.add_body_layout(status_row)
-        self.api_key_uses_caption = settings_caption("")
-        self.api_key_credential_tile.add_body(self.api_key_uses_caption)
-        self._tile_group(
-            layout, "", [self.api_key_credential_tile], columns=1
-        )
-
-        self.api_key_entry_tile = InfoTile(
-            "Add or replace a key",
-            self._api_key_store_copy(),
-            design_icon("plus-blue.svg"),
-        )
-        self.api_key_store_caption = self.api_key_entry_tile.description_label
-        self.api_key_store_caption.setToolTip(self._api_key_store_detail())
-
-        # Password echo also makes Qt refuse copy/cut from the field, and the
-        # input-method hints keep IMEs and predictive text from retaining it.
-        self.api_key_edit = QLineEdit()
-        self.api_key_edit.setObjectName("apiKeyInput")
-        self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key_edit.setPlaceholderText("Paste a key to save or test")
-        self.api_key_edit.setMaxLength(MAX_API_KEY_LEN)
-        self.api_key_edit.setInputMethodHints(
-            Qt.InputMethodHint.ImhHiddenText
-            | Qt.InputMethodHint.ImhSensitiveData
-            | Qt.InputMethodHint.ImhNoAutoUppercase
-            | Qt.InputMethodHint.ImhNoPredictiveText
-        )
-        self.api_key_edit.setMinimumHeight(40)
-        # The key itself is set in a spaced monospace; the placeholder keeps
-        # the normal field font (QSS can't style a placeholder on its own).
-        self.api_key_edit.textChanged.connect(
-            lambda text: set_style_property(self.api_key_edit, "hasText", bool(text))
-        )
-        self.api_key_edit.textChanged.connect(self._update_api_key_controls)
-        self.api_key_edit.returnPressed.connect(self._save_api_key)
-        self.api_key_show_button = neutral_button(Button("Show"))
-        self.api_key_show_button.setObjectName("apiKeyShowButton")
-        self.api_key_show_button.setCheckable(True)
-        self.api_key_show_button.set_base_minimum_size(80, 40)
-        self.api_key_show_button.setMinimumHeight(40)
-        self.api_key_show_button.setMaximumHeight(40)
-        self.api_key_show_button.toggled.connect(self._on_api_key_show_toggled)
-        input_row = QWidget()
-        input_row.setObjectName("modelManagerFieldGroup")
-        input_layout = QHBoxLayout(input_row)
-        input_layout.setContentsMargins(0, 0, 0, 0)
-        input_layout.setSpacing(8)
-        input_layout.addWidget(self.api_key_edit, stretch=1)
-        input_layout.addWidget(self.api_key_show_button)
-        self.api_key_entry_tile.add_body(input_row)
-
-        buttons = QHBoxLayout()
-        buttons.setContentsMargins(0, 0, 0, 0)
-        buttons.setSpacing(8)
-        # A plain Button: PrimaryButton's own padding would make it taller than Test.
-        self.api_key_save_button = Button("Save key")
-        self.api_key_save_button.setObjectName("apiKeySaveButton")
-        compact_primary_button(self.api_key_save_button)
-        fit_compact_button(self.api_key_save_button, 120)
-        self.api_key_save_button.clicked.connect(self._save_api_key)
-        self.api_key_test_button = neutral_button(Button("Test"))
-        self.api_key_test_button.setObjectName("apiKeyTestButton")
-        fit_compact_button(self.api_key_test_button, 90)
-        self.api_key_test_button.clicked.connect(self._test_api_key)
-        self.api_key_remove_button = DangerButton("Remove saved key")
-        self.api_key_remove_button.setProperty("buttonId", "apiKeyRemoveButton")
-        fit_compact_button(self.api_key_remove_button, 160)
-        self.api_key_remove_button.clicked.connect(self._remove_api_key)
-        buttons.addWidget(self.api_key_save_button)
-        buttons.addWidget(self.api_key_test_button)
-        buttons.addStretch()
-        buttons.addWidget(self.api_key_remove_button)
-        self.api_key_entry_tile.add_body_layout(buttons)
-        self._tile_group(layout, "", [self.api_key_entry_tile], columns=1)
-
-    @staticmethod
-    def _api_key_store_copy() -> str:
-        status = credential_store().status()
-        if not status.available:
-            # The error itself goes in the tooltip (_api_key_store_detail).
-            return (
-                f"{status.backend_name} isn't available on this computer, so "
-                "keys can't be saved from here. Set the variable in your "
-                "environment or a .env file instead; OpenWhisper never falls "
-                "back to an unprotected file."
-            )
-        copy = (
-            f"Encrypted by {status.backend_name} for your account. "
-            "Saved keys override environment variables and .env, and never "
-            "enter settings or logs."
-        )
-        if sys.platform == "darwin":
-            # "Allow" lasts one read, so macOS asks again every launch.
-            copy += (
-                " When macOS asks to use your Keychain, choose Always Allow so "
-                "it doesn't ask every launch."
-            )
-        return copy
-
-    @staticmethod
-    def _api_key_store_detail() -> str:
-        """The store's own error, for the caption's tooltip; "" when it works."""
-        status = credential_store().status()
-        if status.available or not status.reason:
-            return ""
-        return f"Details: {status.reason}"
-
-    @staticmethod
-    def _api_key_entries(settings: dict) -> list:
-        """One row per distinct variable; profiles sharing a variable share it."""
-        from services import speech_endpoints
-
-        names: Dict[str, list] = {}
-        owners = [(p.api_key_env, p.name) for p in list_profiles(settings) if p.api_key_env]
-        for env_name, owner in owners + speech_endpoints.credential_owners(settings):
-            if owner not in names.setdefault(env_name, []):
-                names[env_name].append(owner)
-        entries = [
-            (env_name, f"{' / '.join(owners)} · {env_name}")
-            for env_name, owners in names.items()
-        ]
-        # TypeSafe is a decision service rather than a text-model profile, so
-        # it is not in ``list_profiles`` but still needs a home for its key.
-        entries.append((TYPESAFE_CREDENTIAL_ENV, f"TypeSafe · {TYPESAFE_CREDENTIAL_ENV}"))
-        return entries
-
-    def _load_api_key_settings(self, settings: dict) -> None:
-        current = self.api_key_combo.currentData()
-        self.api_key_combo.blockSignals(True)
-        self.api_key_combo.clear()
-        for env_name, label in self._api_key_entries(settings):
-            self.api_key_combo.addItem(label, env_name)
-        index = self.api_key_combo.findData(current) if current else -1
-        self.api_key_combo.setCurrentIndex(max(0, index))
-        self.api_key_combo.blockSignals(False)
-        self._clear_api_key_input()
-        self.api_key_store_caption.setText(self._api_key_store_copy())
-        self.api_key_store_caption.setToolTip(self._api_key_store_detail())
-        self._render_api_key_status()
+        self.api_keys.build(layout, self._tile_group)
+        # The dialog names the section's controls too, for deep links,
+        # search reveals and CONTROL_DESTINATIONS.
+        for name in settings_api_keys.CONTROLS:
+            setattr(self, name, getattr(self.api_keys, name))
 
     def focus_api_keys(self, env_name: Optional[str] = None) -> None:
         """Open the API keys destination, optionally on one credential."""
         self.select_destination(API_KEYS)
-        if env_name:
-            index = self.api_key_combo.findData(env_name)
-            if index >= 0:
-                self.api_key_combo.setCurrentIndex(index)
-        self.api_key_edit.setFocus()
+        self.api_keys.focus(env_name)
 
-    def _selected_api_key_name(self) -> str:
-        return self.api_key_combo.currentData() or ""
-
-    def _api_key_profile(self, env_name: str):
-        """The text endpoint, else the speech server, that sends ``env_name``."""
-        from services import speech_endpoints
-
-        settings = settings_manager.load_all_settings()
-        speech = [
-            speech_endpoints.configured_endpoint(endpoint_id, settings).connection
-            for endpoint_id in speech_endpoints.ENDPOINT_IDS
-        ]
-        for profile in [*list_profiles(settings), *speech]:
-            if profile.api_key_env == env_name:
-                return profile
-        return None
-
-    def _api_key_label(self, env_name: str) -> str:
-        if env_name == TYPESAFE_CREDENTIAL_ENV:
-            return "TypeSafe API key"
-        profile = self._api_key_profile(env_name)
-        return credential_label(profile) if profile is not None else env_name
-
-    def _clear_api_key_input(self) -> None:
-        self.api_key_edit.clear()
-        self.api_key_show_button.setChecked(False)
-
-    def _render_api_key_status(self) -> None:
-        name = self._selected_api_key_name()
-        status = credential_store().status()
-        tone = "warning"
-        if not name:
-            self._api_key_source = CredentialSource.NONE
-            text = "No endpoint needs an API key."
-        else:
-            source = credential_source(name)
-            self._api_key_source = source
-            suffix = mask_key(resolve_credential(name))
-            if source == CredentialSource.STORED:
-                text = f"Saved in {status.backend_name} · {suffix}"
-                if environment_shadowed(name):
-                    text += (
-                        f". The {name} variable in your environment or .env "
-                        "file is ignored while a key is saved here."
-                    )
-                tone = "success"
-            elif source == CredentialSource.ENVIRONMENT:
-                text = (
-                    f"Using the {name} environment variable · {suffix}. "
-                    "Save a key here to use it instead."
-                )
-                tone = "success"
-            elif source == CredentialSource.DOTENV:
-                text = (
-                    f"Using the .env file · {suffix}. "
-                    "Save a key here to use it instead."
-                )
-                tone = "success"
-            else:
-                text = "No key set."
-        self.api_key_status.setText(text)
-        icon = "check-green.svg" if tone == "success" else "info-warning.svg"
-        self.api_key_status_icon.setPixmap(design_icon(icon).pixmap(16, 16))
-        set_style_property(self.api_key_status, "tone", tone)
-        self._render_api_key_uses(name)
-        self._update_api_key_controls()
-
-    def _render_api_key_uses(self, env_name: str) -> None:
-        if env_name == "OPENAI_API_KEY":
-            text = (
-                "Used for API transcription with OpenAI, OpenAI transcript "
-                "cleanup and meeting intelligence, and cloud speaker "
-                "identification."
-            )
-        elif env_name == JEV_OPENROUTER_ROUTE.credential_env:
-            text = (
-                "Used for transcript cleanup and meeting intelligence through "
-                "OpenRouter. It can also run fast judgments (Jev): choose "
-                "OpenRouter under Meeting Mode → Fast judgments."
-            )
-        elif env_name == TYPESAFE_CREDENTIAL_ENV:
-            text = (
-                "Used for TypeSafe fast judgments: topic changes, spoken "
-                "instructions, live highlights, the questions radar, citation "
-                "checks, semantic search, and insight review. Enable them under "
-                "Meeting Mode → Fast judgments, where an OpenRouter key can "
-                "run the same model instead."
-            )
-        elif env_name:
-            from services import speech_endpoints
-
-            settings = settings_manager.load_all_settings()
-            uses = []
-            owners = [p.name for p in list_profiles(settings) if p.api_key_env == env_name]
-            if owners:
-                uses.append(f"to {' and '.join(owners)} for transcript cleanup and meeting intelligence")
-            speech = [name for env, name in speech_endpoints.credential_owners(settings) if env == env_name]
-            if speech:
-                uses.append(f"to {' and '.join(speech)} for API transcription")
-            text = f"Sent as the API key {', and '.join(uses)}."
-        else:
-            text = ""
-        self.api_key_uses_caption.setText(text)
-        self.api_key_uses_caption.setVisible(bool(text))
-
-    def _update_api_key_controls(self, *_args) -> None:
-        name = self._selected_api_key_name()
-        can_store = bool(name) and credential_store().status().available
-        typed = bool(self.api_key_edit.text().strip())
-        busy = self._api_key_testing
-        self.api_key_edit.setEnabled(bool(name) and not busy)
-        self.api_key_show_button.setEnabled(bool(name) and not busy)
-        self.api_key_save_button.setEnabled(can_store and typed and not busy)
-        self.api_key_test_button.setEnabled(
-            bool(name)
-            and not busy
-            and (typed or self._api_key_source != CredentialSource.NONE)
-        )
-        self.api_key_remove_button.setEnabled(
-            can_store
-            and not busy
-            and self._api_key_source == CredentialSource.STORED
-        )
-
-    def _api_key_rail_value(self) -> str:
-        entries = self._api_key_entries(self._settings_snapshot())
-        if not entries:
-            return "None needed"
-        available = sum(credential_source(name) != CredentialSource.NONE for name, _label in entries)
-        return f"{available} of {len(entries)} set"
-
-    def _on_api_key_credential_changed(self, _index: int = 0) -> None:
-        if self._loading:
-            return
-        self._clear_api_key_input()
-        self.message_label.setText("")
-        self._render_api_key_status()
-
-    def _on_api_key_show_toggled(self, checked: bool) -> None:
-        self.api_key_edit.setEchoMode(
-            QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
-        )
-        self.api_key_show_button.setText("Hide" if checked else "Show")
-
-    def _notify_api_keys_changed(self) -> None:
+    def _on_api_keys_saved(self) -> None:
+        self._refresh_rail_values()
         if not self.on_api_keys_changed:
             return
         try:
             self.on_api_keys_changed()
         except Exception as exc:
             logger.error("API key change callback failed: %s", exc)
-
-    def _save_api_key(self) -> None:
-        name = self._selected_api_key_name()
-        if not name or not self.api_key_save_button.isEnabled():
-            return
-        try:
-            key = validate_api_key(self.api_key_edit.text())
-            credential_store().set(name, key)
-        except (ValueError, CredentialStoreError) as exc:
-            self.message_label.setText(str(exc))
-            return
-        self._clear_api_key_input()
-        self._render_api_key_status()
-        self._refresh_rail_values()
-        self.message_label.setText(f"{self._api_key_label(name)} saved.")
-        self._notify_api_keys_changed()
-
-    def _remove_api_key(self) -> None:
-        name = self._selected_api_key_name()
-        if not name:
-            return
-        label = self._api_key_label(name)
-        backend = credential_store().status().backend_name
-        reply = QMessageBox.question(
-            self,
-            "Remove saved key",
-            f"Remove the saved {label} from {backend}?\n\n"
-            f"OpenWhisper will fall back to a {name} environment variable or "
-            ".env entry if one exists; otherwise features that need this key "
-            "become unavailable.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            removed = credential_store().delete(name)
-        except CredentialStoreError as exc:
-            self.message_label.setText(str(exc))
-            return
-        self._clear_api_key_input()
-        self._render_api_key_status()
-        self._refresh_rail_values()
-        self.message_label.setText(
-            f"{label} removed." if removed else f"No saved {label} to remove."
-        )
-        self._notify_api_keys_changed()
-
-    def _test_api_key(self) -> None:
-        name = self._selected_api_key_name()
-        if self._api_key_testing or not name:
-            return
-        # TypeSafe is not an OpenAI-compatible endpoint and so has no entry in
-        # ``list_profiles``; it verifies through its own one-judgment probe.
-        profile = self._api_key_profile(name)
-        if profile is None and name != TYPESAFE_CREDENTIAL_ENV:
-            return
-        label = self._api_key_label(name)
-        typed = self.api_key_edit.text()
-        if typed.strip():
-            try:
-                key = validate_api_key(typed)
-            except ValueError as exc:
-                self.message_label.setText(str(exc))
-                return
-        else:
-            key = resolve_credential(name)
-            if not key:
-                self.message_label.setText("Paste a key to test.")
-                return
-        self._api_key_testing = True
-        self._update_api_key_controls()
-        self.message_label.setText(f"Testing {label}…")
-        self._api_key_token = token = next(_tokens)
-        # Bound here: the worker must not reach back into the window.
-        verify_typesafe = typesafe_verify_key
-        verify = verify_api_key
-        done = _thread_relay().api_key_verified
-
-        def worker():
-            if profile is None:
-                ok, detail = verify_typesafe(key)
-            else:
-                ok, detail = verify(profile, key)
-            done.emit(token, name, ok, detail)
-
-        threading.Thread(target=worker, daemon=True, name="api-key-verify").start()
-
-    def _on_api_key_verified(
-        self, token: int, env_name: str, ok: bool, detail: str
-    ) -> None:
-        if token != self._api_key_token:
-            return
-        self._api_key_testing = False
-        self._update_api_key_controls()
-        label = self._api_key_label(env_name)
-        self.message_label.setText(
-            f"{label} works: {detail}" if ok else f"{label} failed: {detail}"
-        )
 
     def _build_hotkeys_page(self, layout: QVBoxLayout) -> None:
         instruction_card = QFrame()
@@ -4062,7 +3644,7 @@ class SettingsDialog(QDialog):
         self._render_typesafe_key_state()
         self.rail.set_value(MEETING_FAST, self._meeting_fast_rail_value())
         self.rail.set_value(MEETING_DASHBOARD, _meeting_dashboard_rail_value(settings))
-        self.rail.set_value(API_KEYS, self._api_key_rail_value())
+        self.rail.set_value(API_KEYS, settings_api_keys.rail_value(self._settings_snapshot()))
         self.rail.set_value(HOTKEYS, self._hotkey_rail_value())
         self.rail.set_value(
             WALKTHROUGHS, "AI write-up on" if resolve_walkthrough_write_up(settings) else "As spoken"
@@ -4158,7 +3740,7 @@ class SettingsDialog(QDialog):
             storage_checking=self.downloads.is_checking(),
             components=components,
             footer=(
-                f"API keys: {self._api_key_rail_value()}  ·  Runtime: "
+                f"API keys: {settings_api_keys.rail_value(self._settings_snapshot())}  ·  Runtime: "
                 f"{models.runtime_summary()}  ·  Missing models: "
                 f"{_HF_POLICY_LABELS.get(policy, 'ask first')}"
             ),
@@ -5537,7 +5119,7 @@ class SettingsDialog(QDialog):
             self._load_appearance_settings(settings)
         self._load_meeting_settings(settings)
         if self._page_is_loading(API_KEYS):
-            self._load_api_key_settings(settings)
+            self.api_keys.load(settings)
         if self._page_is_loading(ADVANCED):
             self.developer_mode_check.setChecked(resolve_developer_mode(settings))
         if self._page_is_loading(DOWNLOADS):

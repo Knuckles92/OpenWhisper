@@ -31,6 +31,7 @@ from services.settings import (
     SettingsKey,
     SettingsManager,
 )
+from ui_qt.dialogs import settings_api_keys
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
@@ -859,13 +860,13 @@ class TestWorkers:
 
         dialog, _store = make_dialog()
         if work == "api-key-verify":
-            monkeypatch.setattr(settings_dialog_module, "verify_api_key", blocked((True, "ok")))
+            monkeypatch.setattr(settings_api_keys, "verify_api_key", blocked((True, "ok")))
             dialog.focus_api_keys("OPENAI_API_KEY")
             dialog.api_key_edit.setText("sk-proj-abcdefghijklmnopqrstuvwxyz")
-            dialog._test_api_key()
+            dialog.api_keys.test_key()
         elif work == "jev-route-verify":
             credentials.store().set(
-                settings_dialog_module.TYPESAFE_CREDENTIAL_ENV, "ts-live-0123456789abcdefghij"
+                settings_api_keys.TYPESAFE_CREDENTIAL_ENV, "ts-live-0123456789abcdefghij"
             )
             monkeypatch.setattr(
                 settings_dialog_module, "typesafe_verify_key", blocked((True, "ok"))
