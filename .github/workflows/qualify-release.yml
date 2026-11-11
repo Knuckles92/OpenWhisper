@@ -11,6 +11,11 @@ on:
         description: Existing draft release tag for that exact candidate
         required: true
         type: string
+      require_windows_signed:
+        description: Refuse a candidate whose Windows executables and installer are unsigned
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -54,13 +59,19 @@ jobs:
           path: release
           run-id: ${{ inputs.candidate_run_id }}
           github-token: ${{ github.token }}
-      - name: Verify checksums and source qualification
+      - name: Verify checksums, source qualification, and signing record
         env:
           CANDIDATE_RUN: ${{ inputs.candidate_run_id }}
+          REQUIRE_WINDOWS_SIGNED: ${{ inputs.require_windows_signed }}
         run: |
+          # Without pipefail, tee's success would hide a failed qualification.
+          set -o pipefail
+          require=()
+          if [[ "$REQUIRE_WINDOWS_SIGNED" == "true" ]]; then require=(--require-windows-signed); fi
           python3 scripts/check_release_qualification.py --candidate release \
             --expected-commit "$(git rev-parse HEAD)" \
-            --expected-run "$CANDIDATE_RUN"
+            --expected-run "$CANDIDATE_RUN" "${require[@]}" | tee qualification.txt
+          echo "::notice title=Windows signing::$(grep -m 1 '^Windows executables and installer:' qualification.txt)"
       - name: Upload verified artifacts to existing draft
         env:
           GH_TOKEN: ${{ github.token }}

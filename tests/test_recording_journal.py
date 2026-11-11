@@ -60,7 +60,14 @@ time.sleep(60)
         assert ready.wait(10) and lines == ['ready\n']
         child.kill()
         child.wait(timeout=5)
+        # Windows releases a killed process's file locks some time after it
+        # exits; until then its journal still reads as a live session and is
+        # skipped, as it should be. Recovery is made to be retried.
+        deadline = time.monotonic() + 10
         recovered = recover_recordings(output, str(tmp_path / 'saved'))
+        while not recovered and time.monotonic() < deadline:
+            time.sleep(0.05)
+            recovered = recover_recordings(output, str(tmp_path / 'saved'))
         assert len(recovered) == 1
         with wave.open(recovered[0]) as audio:
             assert audio.getnframes() == 16000

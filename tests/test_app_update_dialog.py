@@ -294,3 +294,13 @@ def test_mac_update_explains_restart_rollback_and_manual_fallback():
     assert 'does not start' in hint
     assert 'drag OpenWhisper to Applications' in hint
     dialog.close()
+
+
+def test_title_names_a_beta_release():
+    from dataclasses import replace
+
+    QApplication.instance() or QApplication([])
+    stable = _result()
+    beta = replace(stable, release=replace(stable.release, prerelease=True))
+    assert AppUpdateDialog(stable)._title_text() == "OpenWhisper 2.2.0 is available"
+    assert AppUpdateDialog(beta)._title_text() == "OpenWhisper 2.2.0 beta is available"

@@ -57,7 +57,7 @@ sudo pacman -U "./OpenWhisper-<version>-linux-x86_64.pkg.tar.zst"
 
 Launch from your app menu; Linux packages also provide `ow` and `openwhisper` commands. Opening the app again on Linux brings the existing window forward.
 
-Downloads include `SHA256SUMS.txt` for verification. Compare your file's hash using `Get-FileHash` in PowerShell, `shasum -a 256` on macOS, or `sha256sum` on Linux. The Windows installer is unsigned; if SmartScreen blocks it, verify the download before choosing **More info → Run anyway**.
+Downloads include `SHA256SUMS.txt` for verification. Compare your file's hash using `Get-FileHash` in PowerShell, `shasum -a 256` on macOS, or `sha256sum` on Linux. Unless a release says its Windows build is signed (its `BUILD-METADATA.json` then has `"windows_signed": true`), the installer is unsigned; if SmartScreen blocks it, verify the download before choosing **More info → Run anyway**.
 
 ### macOS permissions
 
@@ -118,6 +118,8 @@ Other speech engines use their own runtimes from Downloads. On Apple Silicon Mac
 ## Updates
 
 OpenWhisper asks GitHub for the latest release when it starts and every 4 hours while it runs, sending only the app version. A newer release shows as an **Update to x.y.z** button in the title bar and the tray menu until you update. To check yourself, use **OpenWhisper → Check for Updates** on macOS or **Help → Check for Updates** on Windows and Linux. Turn automatic checks off in **Settings → App → General → Updates**. Git checkouts don't check on their own.
+
+To try releases a few days early, turn on **Get beta updates** in the same group: OpenWhisper then also offers GitHub prereleases, whichever of the newest beta and the newest regular release has the higher version. Betas are verified exactly like regular releases. Turning it off never downgrades: you keep the beta you have and get the next regular release that is newer (often the same build, once it is promoted). While GitHub's API is rate-limited, beta copies are offered only regular releases until it answers again.
 
 - **Windows:** Apply the in-app update or follow the setup prompt.
 - **macOS:** The verified update installs and restarts the app, restoring the previous version if startup fails. If the app cannot replace itself, it opens the verified DMG for replacement in Applications.
