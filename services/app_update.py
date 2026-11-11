@@ -342,8 +342,8 @@ def seconds_until_auto_check(
 ) -> Optional[float]:
     """Return how long until the next background GitHub check is due.
 
-    The times come from settings, so a restart does not reset the clock and
-    the launch check and the running app's checks share one budget.
+    The times come from settings, so they survive a restart. A launch passes
+    ``interval_s=0``: it always asks, unless a check failed within the hour.
 
     Args:
         settings: Loaded settings dict. Loaded from disk when omitted.
