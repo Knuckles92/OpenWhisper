@@ -78,8 +78,8 @@ LATEST_RELEASE_URL: Final[str] = (
     f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 )
 # Newest releases first, prereleases included; drafts are only listed for
-# authenticated maintainers and are skipped regardless. Thirty covers months
-# of daily releases, so the newest stable release is always on this page.
+# authenticated maintainers and are skipped regardless. Releases older than
+# the thirty newest carry lower versions than those on this page.
 RELEASE_LIST_URL: Final[str] = (
     f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=30"
 )
