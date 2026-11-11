@@ -6,6 +6,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, Callable, Optional
 
+from PyQt6.QtCore import QObject, pyqtSignal
+
 from config import config
 from services.settings import SettingsKey, setting_value, settings_manager
 
@@ -48,14 +50,33 @@ def preview_unavailable_reason(backend_key: str, host: str = "", host_family: Op
     return PREVIEW_UNAVAILABLE_STATUS
 
 
-class StreamingRuntime:
+class StreamingRuntime(QObject):
     """Owns streaming transcription setup and lifecycle."""
 
+    # Preview text and overlay changes come from the streaming worker thread;
+    # this object is created on the Qt thread, so their slots run there.
+    partial_transcription = pyqtSignal(str, bool)
+    streaming_text_update = pyqtSignal(str, bool)
+    streaming_overlay_show = pyqtSignal()
+    streaming_overlay_hide = pyqtSignal()
+    # Hop streaming setup onto the Qt main thread after an engine load.
+    streaming_setup_requested = pyqtSignal()
+
     def __init__(self, controller: "ApplicationController"):
+        super().__init__()
         self.controller = controller
         self._stopping = False
         #: ``_engine_identity()`` when the current preview was set up.
         self._configured_for: Optional[tuple] = None
+
+    def connect_signals(self) -> None:
+        ui = self.controller.ui_controller
+        self.streaming_setup_requested.connect(self.setup_streaming)
+        self.partial_transcription.connect(ui.main_window.set_partial_transcription)
+        self.streaming_text_update.connect(ui.update_streaming_text)
+        self.streaming_text_update.connect(self.controller._publish_preview)
+        self.streaming_overlay_show.connect(ui.show_streaming_overlay)
+        self.streaming_overlay_hide.connect(ui.hide_streaming_overlay)
 
     def setup_audio_level_callback(self) -> None:
         def audio_level_callback(level: float) -> None:
@@ -97,9 +118,9 @@ class StreamingRuntime:
     def on_partial_transcription(self, text: str, is_final: bool) -> None:
         if self._stopping:
             return
-        self.controller.partial_transcription.emit(text, is_final)
+        self.partial_transcription.emit(text, is_final)
         if self.controller._streaming_enabled and text:
-            self.controller.streaming_text_update.emit(text, is_final)
+            self.streaming_text_update.emit(text, is_final)
 
     def start_streaming_session(self) -> None:
         """Start real-time streaming transcription for an active recording."""
@@ -127,7 +148,7 @@ class StreamingRuntime:
             # Set synchronously so a queued RECORDING overlay update does not
             # flash the waveform before the streaming overlay show is delivered.
             self.controller.ui_controller.streaming_flow_active = True
-            self.controller.streaming_overlay_show.emit()
+            self.streaming_overlay_show.emit()
 
     def begin_stop_streaming_session(self) -> None:
         """Hide further preview updates while post-roll still feeds the decoder."""
@@ -194,7 +215,7 @@ class StreamingRuntime:
             logger.info("Streaming transcription canceled")
 
         if self.controller._streaming_enabled:
-            self.controller.streaming_overlay_hide.emit()
+            self.streaming_overlay_hide.emit()
 
     def cleanup(self) -> None:
         self._cleanup_streaming_resources()

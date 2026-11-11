@@ -165,6 +165,8 @@ class _Receiver(QObject):
     ("services.runtime.components", "ComponentRuntime", "component_progress", ("gpu-accel", "download", 1, 2)),
     ("services.runtime.remote", "RemoteRuntime", "remote_settled", ("offline",)),
     ("services.runtime.meeting", "MeetingRuntime", "meeting_status_update", ("Starting",)),
+    ("services.runtime.streaming", "StreamingRuntime", "streaming_text_update", ("hello", False)),
+    ("services.runtime.streaming", "StreamingRuntime", "streaming_overlay_hide", ()),
 ])
 def test_feature_runtimes_deliver_worker_signals_on_the_qt_thread(module, cls, signal, args):
     """The signals moved off the controller still hop from worker threads to Qt."""

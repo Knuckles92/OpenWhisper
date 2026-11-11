@@ -240,9 +240,10 @@ def _controller(backend, events):
     )
     controller.models = SimpleNamespace(
         runtime_consent_requested=_Signal("runtime_consent_requested", events))
-    for name in ("device_info_update", "status_update", "engine_busy_changed",
-                 "streaming_setup_requested"):
+    for name in ("device_info_update", "status_update", "engine_busy_changed"):
         setattr(controller, name, _Signal(name, events))
+    controller.streaming_runtime = SimpleNamespace(
+        streaming_setup_requested=_Signal("streaming_setup_requested", events))
     for name in ("_reload_worker", "_reload_selected_engine",
                  "_finish_speech_reload", "_flush_pending_streaming_setup",
                  "release_local_engine", "restore_local_engine",

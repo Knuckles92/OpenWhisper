@@ -108,7 +108,6 @@ def app(h, monkeypatch):
     c = h.controller
     c.recorder = Recorder()
     c.recording_state_changed = foundation.Signal()
-    c.streaming_overlay_hide = foundation.Signal()
     c._streaming_enabled = False
     c.current_backend.is_transcribing = False
     c.current_backend.is_remote = False

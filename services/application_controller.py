@@ -131,10 +131,6 @@ class ApplicationController(QObject):
     # The user's Cancel reached the actions still running; emitted from the
     # hotkey dispatcher thread too, and ActionRuntime works on the Qt thread.
     actions_cancel_requested = pyqtSignal()
-    partial_transcription = pyqtSignal(str, bool)
-    streaming_text_update = pyqtSignal(str, bool)
-    streaming_overlay_show = pyqtSignal()
-    streaming_overlay_hide = pyqtSignal()
     overlay_state_update = pyqtSignal(object)
     transcription_retry_progress = pyqtSignal(str)
     minimize_to_tray_requested = pyqtSignal()
@@ -145,8 +141,6 @@ class ApplicationController(QObject):
     # Arm the engine reload's debounce timer (emitted from any thread; hotkeys
     # and transcription workers ask for reloads off the Qt thread).
     reload_debounce_requested = pyqtSignal()
-    # Hop streaming setup onto the Qt main thread after the first local load.
-    streaming_setup_requested = pyqtSignal()
     # Shortcut actions, emitted from the hotkey dispatcher thread and handled
     # on the Qt thread. A transform shortcut carries the transform's id.
     transform_requested = pyqtSignal(str)
@@ -639,7 +633,7 @@ class ApplicationController(QObject):
             return
         if self._pending_streaming_setup:
             self._pending_streaming_setup = False
-            self.streaming_setup_requested.emit()
+            self.streaming_runtime.streaming_setup_requested.emit()
 
     def _start_initial_whisper_load(self) -> None:
         """Load the deferred local model after the main window is shown."""
@@ -1264,7 +1258,7 @@ class ApplicationController(QObject):
         self.device_info_update.connect(self.ui_controller.set_device_info)
         self.engine_busy_changed.connect(self.ui_controller.set_engine_busy)
         self.engine_busy_changed.connect(self.remote.on_engine_busy)
-        self.streaming_setup_requested.connect(self.streaming_runtime.setup_streaming)
+        self.streaming_runtime.connect_signals()
         self.components.connect_signals()
         self.meeting_runtime.connect_signals()
         self.updater.connect_signals()
@@ -1280,13 +1274,6 @@ class ApplicationController(QObject):
         self.minimize_to_tray_requested.connect(
             self.ui_controller.main_window.toggle_tray_visibility
         )
-        self.partial_transcription.connect(
-            self.ui_controller.main_window.set_partial_transcription
-        )
-        self.streaming_text_update.connect(self.ui_controller.update_streaming_text)
-        self.streaming_text_update.connect(self._publish_preview)
-        self.streaming_overlay_show.connect(self.ui_controller.show_streaming_overlay)
-        self.streaming_overlay_hide.connect(self.ui_controller.hide_streaming_overlay)
 
     def _publish_preview(self, text: str, is_final: bool) -> None:
         """Live preview text as transcription.preview; Qt thread."""

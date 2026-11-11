@@ -169,7 +169,6 @@ def h(monkeypatch, tmp_path):
         status_update=Signal(),
         recording_state_changed=Signal(),
         recording_destination_changed=Signal(),
-        streaming_overlay_hide=Signal(),
         transcription_completed=Signal(),
         transcription_failed=Signal(),
         executor=SimpleNamespace(submit=lambda fn, *args: submitted.append((fn, args))),
