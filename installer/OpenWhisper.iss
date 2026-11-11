@@ -31,6 +31,14 @@ AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}
 AppUpdatesURL={#AppURL}
 VersionInfoVersion={#AppVersion}
+;
+; Code signing: build_installer.ps1 defines SignToolName and passes the
+; matching /S command only when a signing method is configured. Inno then
+; signs the uninstaller it embeds and the finished setup exe.
+#ifdef SignToolName
+SignTool={#SignToolName}
+SignedUninstaller=yes
+#endif
 
 ; Per-user installation into %LOCALAPPDATA%\Programs\OpenWhisper.
 PrivilegesRequired=lowest

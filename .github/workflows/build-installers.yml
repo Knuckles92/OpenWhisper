@@ -46,6 +46,23 @@ jobs:
     needs: [source, qualification]
     runs-on: windows-2022
     timeout-minutes: 90
+    env:
+      # Optional, one method at a time. With either set the executables, the
+      # uninstaller and the setup exe are Authenticode signed, timestamped
+      # and verified; with neither they stay unsigned and the run says so.
+      # docs/windows-signing.md lists what each secret holds.
+      # Method 1: an OV/EV code-signing certificate exported as a PFX.
+      WINDOWS_CERTIFICATE_PFX: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      # Method 2: Azure Trusted Signing (an app registration with the
+      # "Trusted Signing Certificate Profile Signer" role).
+      AZURE_TRUSTED_SIGNING_TENANT_ID: ${{ secrets.AZURE_TRUSTED_SIGNING_TENANT_ID }}
+      AZURE_TRUSTED_SIGNING_CLIENT_ID: ${{ secrets.AZURE_TRUSTED_SIGNING_CLIENT_ID }}
+      AZURE_TRUSTED_SIGNING_CLIENT_SECRET: ${{ secrets.AZURE_TRUSTED_SIGNING_CLIENT_SECRET }}
+      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+      AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+      AZURE_TRUSTED_SIGNING_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+      TRUSTED_SIGNING_CLIENT_VERSION: "1.0.53"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -82,9 +99,73 @@ jobs:
         run: |
           . .\venv\Scripts\Activate.ps1
           python -m pytest tests/test_app_update.py tests/test_app_update_rate_limit.py tests/test_app_update_apply.py tests/test_app_update_dialog.py tests/test_app_update_handoff.py tests/test_updater_helper.py tests/test_update_startup_gate.py tests/test_update_resilience.py tests/test_application_controller.py tests/test_bootstrap.py -q
-      - name: Build and verify
+      - name: Configure Windows code signing
         shell: pwsh
+        run: |
+          # An unset secret arrives as an empty or missing variable.
+          $pfx = -not [string]::IsNullOrEmpty($env:WINDOWS_CERTIFICATE_PFX)
+          $azure = -not [string]::IsNullOrEmpty($env:AZURE_TRUSTED_SIGNING_CLIENT_ID)
+          if ($pfx -and $azure) {
+            throw 'Set either the WINDOWS_CERTIFICATE_* or the AZURE_TRUSTED_SIGNING_* secrets, not both.'
+          }
+          if ($pfx) {
+            $file = Join-Path $env:RUNNER_TEMP 'openwhisper-signing.pfx'
+            [IO.File]::WriteAllBytes($file, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX))
+            try {
+              $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+              $cert = Import-PfxCertificate -FilePath $file -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            } finally {
+              Remove-Item -LiteralPath $file -Force
+            }
+            $thumbprint = @($cert | Where-Object HasPrivateKey)[0].Thumbprint
+            if (-not $thumbprint) { throw 'The PFX has no certificate with a private key.' }
+            "OPENWHISPER_SIGN_CERT_SHA1=$thumbprint" >> $env:GITHUB_ENV
+            Write-Host "::notice title=Windows signing::Signing with certificate $thumbprint."
+          } elseif ($azure) {
+            foreach ($name in 'TENANT_ID', 'CLIENT_SECRET', 'ENDPOINT', 'ACCOUNT', 'PROFILE') {
+              if (-not [Environment]::GetEnvironmentVariable("AZURE_TRUSTED_SIGNING_$name")) {
+                throw "AZURE_TRUSTED_SIGNING_$name is missing."
+              }
+            }
+            $dir = Join-Path $env:RUNNER_TEMP 'trusted-signing'
+            nuget install Microsoft.Trusted.Signing.Client -Version $env:TRUSTED_SIGNING_CLIENT_VERSION -OutputDirectory $dir -NonInteractive
+            if ($LASTEXITCODE -ne 0) { throw 'Could not install the Trusted Signing client.' }
+            $dlib = Get-ChildItem -Path $dir -Recurse -Filter Azure.CodeSigning.Dlib.dll |
+              Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1
+            if (-not $dlib) { throw 'Azure.CodeSigning.Dlib.dll (x64) not found.' }
+            $metadata = Join-Path $env:RUNNER_TEMP 'trusted-signing-metadata.json'
+            @{
+              Endpoint = $env:AZURE_TRUSTED_SIGNING_ENDPOINT
+              CodeSigningAccountName = $env:AZURE_TRUSTED_SIGNING_ACCOUNT
+              CertificateProfileName = $env:AZURE_TRUSTED_SIGNING_PROFILE
+            } | ConvertTo-Json | Set-Content -LiteralPath $metadata -Encoding utf8
+            "OPENWHISPER_SIGN_DLIB=$($dlib.FullName)" >> $env:GITHUB_ENV
+            "OPENWHISPER_SIGN_METADATA=$metadata" >> $env:GITHUB_ENV
+            Write-Host "::notice title=Windows signing::Signing with Azure Trusted Signing."
+          } else {
+            Write-Host "::notice title=Windows signing::No Windows signing secrets are set; the executables and installer will be unsigned. See docs/windows-signing.md."
+          }
+      - name: Build and verify
+        # Signs, timestamps and verifies when the step above configured a
+        # method; otherwise builds unsigned and verifies nothing is signed.
+        # Either way it writes build/windows-signing.json.
+        shell: pwsh
+        env:
+          # Read by the Trusted Signing dlib (Azure EnvironmentCredential).
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TRUSTED_SIGNING_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_TRUSTED_SIGNING_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_TRUSTED_SIGNING_CLIENT_SECRET }}
         run: .\scripts\build_installer.ps1 -Clean
+      - name: Remove signing certificate
+        if: always() && env.OPENWHISPER_SIGN_CERT_SHA1 != ''
+        shell: pwsh
+        run: Remove-Item -LiteralPath "Cert:\CurrentUser\My\$env:OPENWHISPER_SIGN_CERT_SHA1" -DeleteKey -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-signing
+          path: build/windows-signing.json
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -371,6 +452,10 @@ jobs:
           pattern: openwhisper-*
           merge-multiple: true
           path: release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-signing
+          path: signing
       - name: Inventory, build metadata, and checksums
         env:
           BUILD_REF: ${{ inputs.release_tag || github.ref }}
@@ -396,15 +481,24 @@ jobs:
           export BUILD_COMMIT="$(git rev-parse HEAD)"
           export BUILD_VERSION="$(python3 -c 'import _version; print(_version.__version__)')"
           export BUILT_AT_UTC="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          # Bound to the exact setup exe: a report from another build fails.
+          export WINDOWS_SIGNING="$(python3 scripts/windows_signing.py metadata \
+            --report signing/windows-signing.json --release release)"
+          if [[ "$(python3 -c 'import json, os; print(json.loads(os.environ["WINDOWS_SIGNING"])["windows_signed"])')" == "True" ]]; then
+            echo "::notice title=Windows signing::The Windows executables and installer are signed."
+          else
+            echo "::notice title=Windows signing::The Windows executables and installer are unsigned."
+          fi
           python3 - <<'PY'
           import json
           import os
           from pathlib import Path
 
           metadata = {
-              "schema_version": 2,
+              "schema_version": 3,
               "source_qualification": "passed",
               "windows_setup_only": os.environ["SETUP_ONLY_WINDOWS"] == "true",
+              **json.loads(os.environ["WINDOWS_SIGNING"]),
               "version": os.environ["BUILD_VERSION"],
               "commit_sha": os.environ["BUILD_COMMIT"],
               "source_ref": os.environ["BUILD_REF"],
