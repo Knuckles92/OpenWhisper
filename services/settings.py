@@ -1578,7 +1578,7 @@ resolve_streaming_overlay_font_size = SettingsKey.STREAMING_OVERLAY_FONT_SIZE.re
 
 
 def resolve_transcript_cleanup_prompt(
-    settings: Optional[Dict[str, Any]] = None,
+    settings: Optional[Mapping[str, Any]] = None,
 ) -> str:
     """The prompt standard cleanup starts from: the saved custom prompt, or
     the saved level's preset when there is none."""

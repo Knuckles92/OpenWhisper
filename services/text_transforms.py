@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Mapping
+from typing import Any, Mapping
 
 from config import config
 from services.cleanup_profiles import normalize_hotkey
@@ -75,7 +75,7 @@ def load_transforms(settings: Mapping) -> list[Transform]:
     for item in raw:
         if not isinstance(item, dict):
             continue
-        values = [item.get(key) for key in ("id", "name", "instruction")]
+        values: list[Any] = [item.get(key) for key in ("id", "name", "instruction")]
         if any(not isinstance(value, str) or not value.strip() for value in values):
             continue
         transform_id, name, instruction = (value.strip() for value in values)

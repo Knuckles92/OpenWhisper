@@ -1,7 +1,7 @@
 """Local transcription with faster-whisper."""
 import logging
 import threading
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 from .base import TranscriptionBackend
 from config import config
 
@@ -83,9 +83,9 @@ class LocalWhisperBackend(TranscriptionBackend):
 
     def __init__(
         self,
-        model_name: str = None,
-        device: str = None,
-        compute_type: str = None,
+        model_name: Optional[str] = None,
+        device: Optional[str] = None,
+        compute_type: Optional[str] = None,
         *,
         load: bool = True,
     ):
@@ -481,7 +481,8 @@ class LocalWhisperBackend(TranscriptionBackend):
                 )
 
             from services.isolated import IsolatedWhisperModel
-            model = self.model
+            model: Any = self.model
+            cancel_options: dict[str, Any]
             if isinstance(model, IsolatedWhisperModel):
                 transcribe = model.transcribe_cancelable
                 cancel_options = {"should_cancel": lambda: self.should_cancel}
@@ -532,7 +533,7 @@ class LocalWhisperBackend(TranscriptionBackend):
     def recognition_support(self) -> str:
         return "model"
 
-    def reload_model(self, model_name: str = None):
+    def reload_model(self, model_name: Optional[str] = None):
         """Reload an explicit model or the model currently stored in settings."""
         if model_name:
             self.model_name = model_name

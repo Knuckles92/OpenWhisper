@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import asdict, dataclass
+from typing import Any
 
 from services.settings import SettingsKey
 from services.walkthrough.write_up import DEFAULT_INSTRUCTIONS
@@ -75,7 +76,7 @@ def saved_styles(settings: dict) -> list[WriteUpStyle]:
     for item in raw:
         if not isinstance(item, dict):
             continue
-        values = [item.get(key) for key in ("id", "name", "instructions")]
+        values: list[Any] = [item.get(key) for key in ("id", "name", "instructions")]
         if any(not isinstance(value, str) or not value.strip() for value in values):
             continue
         style = WriteUpStyle(*(value.strip() for value in values))

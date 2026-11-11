@@ -6,6 +6,7 @@ import math
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import create_engine, select, update
 from sqlalchemy.pool import NullPool
@@ -81,7 +82,7 @@ class SettingControl:
             return SETTING_DEFAULTS[self.key]
 
     def describe(self):
-        result = {
+        result: dict[str, Any] = {
             "key": self.key,
             "label": self.label,
             "group": self.group,

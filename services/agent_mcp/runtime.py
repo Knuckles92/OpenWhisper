@@ -200,7 +200,7 @@ class McpRuntime:
     def _serve(self, port, tailscale=False):
         from services.credentials import CredentialStoreError
 
-        sockets = []
+        sockets: list[socket.socket] = []
         error = ""
         try:
             addresses, allowed_hosts, remote_url = _listen_addresses(port, tailscale)

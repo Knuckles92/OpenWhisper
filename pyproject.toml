@@ -45,7 +45,7 @@ gpu = [
 ]
 
 [dependency-groups]
-dev = [{ include-group = "build" }, "ruff==0.16.4"]
+dev = [{ include-group = "build" }, "ruff==0.16.4", "mypy==2.4.1"]
 # Component builders use pip's JSON dependency report.
 build = [
     "pyinstaller>=6.10.0",
@@ -180,3 +180,76 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["E501"]
+
+[tool.mypy]
+# Type checking is opt-in per module: CI runs `python -m mypy` over the files
+# below. CONTRIBUTING.md says how to add one. Imports outside the list are
+# read for their types but not reported on.
+python_version = "3.12"
+files = [
+    # The settings layer, strict.
+    "services/setting_types.py",
+    "services/settings.py",
+    # The dictation path.
+    "services/dictation_pipeline.py",
+    "services/runtime/streaming.py",
+    "services/runtime/transcription.py",
+    "services/cleanup_profiles.py",
+    "services/cleanup_prompts.py",
+    "services/dictation_language.py",
+    # Other modules that read settings through SettingsKey.X.read.
+    "services/actions/model.py",
+    "services/agent_mcp/host_control.py",
+    "services/agent_mcp/runtime.py",
+    "services/app_styles.py",
+    "services/audio_devices.py",
+    "services/automation/permissions.py",
+    "services/gpu_setup.py",
+    "services/guided_setup.py",
+    "services/hotkey_conflicts.py",
+    "services/local_asr/catalog.py",
+    "services/remote_asr/mcp_link.py",
+    "services/remote_asr/model_management.py",
+    "services/remote_asr/runtime.py",
+    "services/remote_asr/settings.py",
+    "services/snippets.py",
+    "services/speech_endpoints.py",
+    "services/text_transforms.py",
+    "services/walkthrough/styles.py",
+    "services/whisper_sources.py",
+    "transcriber/local_backend.py",
+    "transcriber/optional_backend.py",
+    "ui_qt/dialogs/settings_commands.py",
+    "ui_qt/widgets/tabbed_content.py",
+]
+follow_imports = "silent"
+ignore_missing_imports = true
+# Check the bodies of unannotated functions too: that is where most settings
+# reads are, and a misspelt SettingsKey is an attribute error there.
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+strict_equality = true
+enable_error_code = ["ignore-without-code"]
+
+# The settings layer is held to --strict. (A per-module `strict = true`
+# leaks into every module, so the flags it implies are listed.)
+[[tool.mypy.overrides]]
+module = ["services.setting_types", "services.settings"]
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+warn_return_any = true
+no_implicit_reexport = true
+extra_checks = true
+
+# The dictation runtime calls the controller's current backend, which
+# ApplicationController declares Optional; these paths only run once an engine
+# is loaded. Narrow them when services/application_controller.py has been
+# split; until then only this one error code is off, only here.
+[[tool.mypy.overrides]]
+module = ["services.runtime.transcription", "services.runtime.streaming"]
+disable_error_code = ["union-attr"]

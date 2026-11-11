@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 from types import SimpleNamespace
+from typing import Any, Optional
 
 import numpy as np
 
@@ -46,15 +47,15 @@ class LocalSpeechBackend(TranscriptionBackend):
         self.backend_id = backend
         self._model_override = model_name
         self._device_override = device
-        self._process = None
+        self._process: Any = None
         self._generation = 0
         self._state_lock = threading.RLock()
         self._decode_lock = threading.Lock()
-        self.model = None
+        self.model: Any = None
         self.last_error = ""
         # Why an Auto device runs on the CPU although a GPU is present.
         self.cpu_fallback_note = ""
-        self.runtime_component = None
+        self.runtime_component: Optional[str] = None
         self.device = "cpu"
         self.model_name = model_name or selected_model(backend, self._settings())
 

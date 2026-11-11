@@ -1,6 +1,7 @@
 """Named, on-demand output formats, independent of standard dictation."""
 
 from dataclasses import asdict, dataclass
+from typing import Any, Mapping
 
 from config import config
 from services.hotkey_manager import format_hotkey, parse_hotkey
@@ -42,7 +43,7 @@ STARTER_PROFILES = (
 )
 
 
-def load_cleanup_profiles(settings: dict) -> list[CleanupProfile]:
+def load_cleanup_profiles(settings: Mapping[str, Any]) -> list[CleanupProfile]:
     """Read valid profiles; starters appear only before a library is saved."""
     raw = SettingsKey.TRANSCRIPT_CLEANUP_PROFILES.read(settings)
     if raw is None:
@@ -54,7 +55,7 @@ def load_cleanup_profiles(settings: dict) -> list[CleanupProfile]:
     for item in raw:
         if not isinstance(item, dict):
             continue
-        values = [item.get(key) for key in ("id", "name", "instructions")]
+        values: list[Any] = [item.get(key) for key in ("id", "name", "instructions")]
         if any(not isinstance(value, str) or not value.strip() for value in values):
             continue
         profile_id, name, instructions = (value.strip() for value in values)
@@ -74,7 +75,9 @@ def load_cleanup_profiles(settings: dict) -> list[CleanupProfile]:
     return profiles
 
 
-def find_cleanup_profile(settings: dict, profile_id: str) -> CleanupProfile | None:
+def find_cleanup_profile(
+    settings: Mapping[str, Any], profile_id: str,
+) -> CleanupProfile | None:
     return next(
         (p for p in load_cleanup_profiles(settings) if p.id == profile_id), None
     )

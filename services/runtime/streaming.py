@@ -184,7 +184,8 @@ class StreamingRuntime:
     def cancel_streaming_session(self) -> None:
         """Cancel any active streaming session."""
         self._stopping = True
-        self.controller.recorder.set_streaming_callback(None)
+        # None stops the stream; the recorder only stores the callback.
+        self.controller.recorder.set_streaming_callback(None)  # type: ignore[arg-type]
         if self.controller.streaming_transcriber:
             cancel = getattr(self.controller.streaming_transcriber, "cancel_streaming", None)
             if callable(cancel):
@@ -264,7 +265,7 @@ class StreamingRuntime:
             # A remote host's first push is its own process's cost,
             # and waiting on the network here would block the Qt thread.
             self._warmup_native_stream(streaming_backend)
-        self.controller.streaming_transcriber = NativeStreamingTranscriber(
+        self.controller.streaming_transcriber = NativeStreamingTranscriber(  # type: ignore[assignment]  # ApplicationController declares it as None
             backend=streaming_backend,
             update_interval_sec=config.STREAMING_NATIVE_UPDATE_SEC,
         )
@@ -277,7 +278,7 @@ class StreamingRuntime:
 
     def _use_window_stream(self, streaming_backend, settings) -> None:
         chunk_duration = SettingsKey.STREAMING_CHUNK_DURATION.read(settings)
-        self.controller.streaming_transcriber = StreamingTranscriber(
+        self.controller.streaming_transcriber = StreamingTranscriber(  # type: ignore[assignment]  # ApplicationController declares it as None
             backend=streaming_backend,
             chunk_duration_sec=chunk_duration,
             overlap_sec=config.STREAMING_OVERLAP_SEC,
@@ -308,7 +309,8 @@ class StreamingRuntime:
         """True when the engine's selected model advertises a native stream."""
         from services.local_asr.catalog import MODELS
 
-        model = MODELS.get(getattr(backend, "model_name", None))
+        # A backend without a model name reads None, which names no model.
+        model = MODELS.get(getattr(backend, "model_name", None))  # type: ignore[arg-type]
         return (
             backend.backend_id in config.STREAMING_NATIVE_PREVIEW_BACKENDS
             and bool(model and model.streaming)
@@ -326,7 +328,7 @@ class StreamingRuntime:
             return None
 
         logger.info("Creating dedicated tiny.en backend for streaming preview...")
-        self.controller._streaming_backend = LocalWhisperBackend(model_name="tiny.en")
+        self.controller._streaming_backend = LocalWhisperBackend(model_name="tiny.en")  # type: ignore[assignment]  # ApplicationController declares it as None
         streaming_backend = self.controller._streaming_backend
         if getattr(streaming_backend, "model", None) is None:
             logger.warning("Streaming preview inactive: tiny.en did not load")

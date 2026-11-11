@@ -111,7 +111,10 @@ def load_client_pairing(settings: Optional[Dict[str, Any]] = None) -> Optional[C
         return None
     if not 1 <= port <= 65535:
         return None
-    alternates = raw.get("alternates") if isinstance(raw.get("alternates"), list) else []
+    alternates = raw.get("alternates")
+    if not isinstance(alternates, list):
+        alternates = []
+    via = raw.get("via")
     return ClientPairing(
         host=host,
         port=port,
@@ -120,7 +123,7 @@ def load_client_pairing(settings: Optional[Dict[str, Any]] = None) -> Optional[C
         device_id=str(raw.get("device_id") or ""),
         paired_at=str(raw.get("paired_at") or ""),
         alternates=tuple(a for a in alternates if isinstance(a, str) and a and a != host),
-        via=raw.get("via") if raw.get("via") in PAIRING_ROUTES else "code",
+        via=via if isinstance(via, str) and via in PAIRING_ROUTES else "code",
         paired_name=str(raw.get("paired_name") or ""),
     )
 

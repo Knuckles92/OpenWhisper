@@ -7,7 +7,7 @@ import logging
 import os
 import threading
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 from config import config
 from services import audio_player, dictation_pipeline, recognition_context
@@ -180,10 +180,10 @@ class TranscriptionRuntime:
         # Copy buttons. Set per job after the slot is claimed.
         self._deliver_to_clipboard = True
         self._retry_entry_id: Optional[str] = None
-        self._remote_recording = None
+        self._remote_recording: Optional[Tuple[Any, Any]] = None
         self._remote_retry_exhausted = False
         self._recording_profile = None
-        self._profile_settings = None
+        self._profile_settings: Optional[Dict[str, Any]] = None
         # The recording's DictationJob from its start until its stop claims
         # the slot; uploads never inherit one.
         self._job: Optional[dictation_pipeline.DictationJob] = None
@@ -227,7 +227,7 @@ class TranscriptionRuntime:
         self._incremental = IncrementalDictation()
         # The walkthrough job's WalkthroughSession, from its start until the
         # job ends; read and changed under _job_lock.
-        self._walkthrough = None
+        self._walkthrough: Any = None
         # Stops the AI write-up of a finished walkthrough while one runs,
         # after its job; Qt thread only.
         self._write_up_cancel: Optional[threading.Event] = None
@@ -673,7 +673,9 @@ class TranscriptionRuntime:
             route = self._dictation_route()
         if profile_id and settings is None:
             settings = settings_manager.load_all_settings()
-        profile = find_cleanup_profile(settings, profile_id) if profile_id else None
+        # Loaded above whenever there is a profile to find.
+        profile = (find_cleanup_profile(settings, profile_id)
+                   if profile_id and settings is not None else None)
         if profile_id and profile is None:
             self.controller.status_update.emit("Cleanup profile no longer exists")
             return None
@@ -1506,7 +1508,10 @@ class TranscriptionRuntime:
         job = self._active_job
         if profile is _RECORDING_PROFILE:
             profile = self._recording_profile
-            settings = self._profile_settings if profile else settings_manager.load_all_settings()
+            # A recording's profile keeps the settings it started with.
+            settings = self._profile_settings if profile else None
+            if settings is None:
+                settings = settings_manager.load_all_settings()
         else:
             settings = settings_manager.load_all_settings()
         self._formatting_profile = profile
@@ -1613,7 +1618,7 @@ class TranscriptionRuntime:
             logger.error(f"Transcription failed: {exc}")
             self.controller.transcription_failed.emit(str(exc))
 
-    def _with_final_recognition(self, job):
+    def _with_final_recognition(self, job: Optional[dictation_pipeline.DictationJob]):
         """``(job, recognition)`` for the final pass, the job updated to match."""
         recognition = self._final_pass_recognition(job)
         if job is not None and recognition is not None and recognition != (
@@ -1623,9 +1628,8 @@ class TranscriptionRuntime:
             # started; history and stats record the one decoded with.
             with self._job_lock:
                 if self._active_job is job:
-                    job = self._active_job = dataclasses.replace(
-                        job, recognition=recognition
-                    )
+                    job = dataclasses.replace(job, recognition=recognition)
+                    self._active_job = job
         return job, recognition
 
     def _timed_decode(self, backend, decode):
@@ -2237,7 +2241,7 @@ class TranscriptionRuntime:
             self._finish_job()
             return
 
-        entry = dict(
+        entry: Dict[str, Any] = dict(
                     text=transcript,
                     model=self._model_info_for_history(),
                     source_audio_path=self.controller._pending_audio_path,
@@ -2688,7 +2692,7 @@ class TranscriptionRuntime:
         ui = self.controller.ui_controller
         # Only options that differ from the defaults are passed, so a plain
         # paste stays the one-argument call every UI stand-in takes.
-        options = {}
+        options: Dict[str, Any] = {}
         if html:
             options["html"] = html
         if not SettingsKey.RESTORE_CLIPBOARD.read(settings):
