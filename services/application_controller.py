@@ -400,6 +400,9 @@ class ApplicationController(QObject):
         self._update_check_timer = QTimer()
         self._update_check_timer.setSingleShot(True)
         self._update_check_timer.timeout.connect(self._maybe_start_update_check)
+        # A launch asks GitHub without waiting out the interval since the
+        # last successful check; that interval only spaces a running app's.
+        self._launch_update_check_pending = False
         self._update_cancel = threading.Event()
         self._update_attempt = None
         self._update_download_lock = threading.Lock()
@@ -889,18 +892,24 @@ class ApplicationController(QObject):
 
     def _maybe_start_update_check(self) -> None:
         """Run the automatic check if it is due, else wait until it is."""
-        wait_ms = self._update_check_wait_ms()
+        wait_ms = self._update_check_wait_ms(
+            interval_s=0 if self._launch_update_check_pending else None
+        )
         if wait_ms == 0:
+            self._launch_update_check_pending = False
             self.request_update_check(manual=False)
         elif wait_ms is not None:
             self._update_check_timer.start(wait_ms)
 
-    def _update_check_wait_ms(self) -> Optional[int]:
-        """Milliseconds until the automatic check is due; None when it is off."""
+    def _update_check_wait_ms(self, interval_s: Optional[int] = None) -> Optional[int]:
+        """Milliseconds until the automatic check is due; None when it is off.
+
+        ``interval_s`` replaces the usual wait since the last successful check.
+        """
         from services.app_update import seconds_until_auto_check
 
         try:
-            wait_s = seconds_until_auto_check()
+            wait_s = seconds_until_auto_check(interval_s=interval_s)
         except Exception as exc:
             logger.warning("Could not read the update-check schedule: %s", exc)
             return None
@@ -1165,6 +1174,7 @@ class ApplicationController(QObject):
         self.component_executor.submit(component_coordinator.list_components)
         # The GitHub metadata check waits out startup; after it, the timer
         # re-arms itself for as long as the app runs.
+        self._launch_update_check_pending = True
         self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)
         # Share this computer's engine if Settings says so. Its own thread:
         # a first run creates the TLS certificate, and the two executors can

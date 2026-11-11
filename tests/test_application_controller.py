@@ -3147,6 +3147,30 @@ class TestApplicationController:
                 controller._maybe_start_update_check()
             request.assert_called_once_with(manual=False)
 
+    def test_launch_check_skips_the_interval_once(self):
+        controller = self._create_controller()
+        timer = controller._update_check_timer
+        controller._launch_update_check_pending = True
+        intervals = []
+
+        def wait(interval_s=None):
+            intervals.append(interval_s)
+            # A check failed 30 minutes ago, then nothing is in the way.
+            return 1800.0 if len(intervals) == 1 else 0
+
+        with patch.object(controller, "request_update_check") as request, patch(
+            "services.app_update.seconds_until_auto_check", side_effect=wait
+        ):
+            controller._maybe_start_update_check()
+            request.assert_not_called()
+            assert timer.started_ms == 1_800_000
+            controller._maybe_start_update_check()
+            request.assert_called_once_with(manual=False)
+            controller._maybe_start_update_check()
+        # Still the launch check after the failure back-off; the usual
+        # interval only once it has run.
+        assert intervals == [0, 0, None]
+
     def test_gpu_fallback_reverts_device_setting_and_names_the_fix(self):
         controller = self._create_controller()
         backend = controller.transcription_backends["local_whisper"]

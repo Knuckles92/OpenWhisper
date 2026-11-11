@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Fixed
+
+- **Update check on every launch** — starting OpenWhisper now always asks GitHub for the latest release. Before, a launch within 4 hours of the last check skipped it, so a release published in between went unnoticed until later. The 4-hour spacing still applies while the app stays open, and a launch within an hour of a failed check still waits.
+
 ## [2.8.9] - 2026-11-10
 
 ### Changed
