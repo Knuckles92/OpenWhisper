@@ -9,7 +9,8 @@ on:
         type: string
   pull_request:
   push:
-    branches: [main]
+    # TEMPORARY: dev branch trigger to iterate on the Windows full suite. Remove before merge.
+    branches: [main, dev/vibrant-galileo-vmt4a0-windows-ci]
 
 permissions:
   contents: read
@@ -96,9 +97,9 @@ jobs:
         run: ./venv/bin/python -m pytest -n auto -v --durations=20 -o faulthandler_timeout=120
 
   windows-updater:
-    name: Windows updater and OpenCode regression tests
+    name: Windows tests
     runs-on: windows-2022
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -113,11 +114,15 @@ jobs:
           python -m venv venv
           . .\venv\Scripts\Activate.ps1
           python -m pip install -r requirements.txt -r requirements-build.txt -c requirements-release-constraints.txt
-      - name: Run updater and controller tests
+      - name: Run test suite
+        timeout-minutes: 25
         shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          HF_HUB_OFFLINE: "1"
         run: |
           . .\venv\Scripts\Activate.ps1
-          python -m pytest tests/test_app_update.py tests/test_app_update_rate_limit.py tests/test_app_update_apply.py tests/test_app_update_dialog.py tests/test_app_update_handoff.py tests/test_updater_helper.py tests/test_update_startup_gate.py tests/test_update_resilience.py tests/test_application_controller.py tests/test_bootstrap.py -q
+          python -m pytest -n auto -v --durations=20 -o faulthandler_timeout=120
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
