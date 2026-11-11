@@ -7,7 +7,6 @@ from services.hotkey_manager import format_hotkey, parse_hotkey
 from services.settings import (
     SettingsKey,
     compose_transcript_cleanup_prompt,
-    setting_value,
 )
 
 
@@ -89,7 +88,7 @@ def cleanup_may_run(settings: dict) -> bool:
     Command Mode and transforms always use the cleanup model, so their
     shortcuts count too.
     """
-    if setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings):
+    if SettingsKey.TRANSCRIPT_CLEANUP_ENABLED.read(settings):
         return True
     if settings.get(SettingsKey.QUICK_RECORD_PROFILE):
         return True

@@ -14,7 +14,6 @@ from services.settings import (
     SETTING_DEFAULTS,
     SettingsKey,
     resolve_meeting_mode_intro_seen,
-    setting_value,
     settings_manager,
 )
 from ui_qt.utils.collapse_animation import (
@@ -2065,7 +2064,7 @@ class MainWindow(QMainWindow):
 
         try:
             settings = settings_manager.load_all_settings()
-            minimize_tray = setting_value(SettingsKey.MINIMIZE_TRAY, settings)
+            minimize_tray = SettingsKey.MINIMIZE_TRAY.read(settings)
         except Exception as e:
             logger.error(f"Failed to load settings: {e}")
             minimize_tray = True  # Default to True on error

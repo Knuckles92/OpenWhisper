@@ -202,7 +202,7 @@ class StreamingRuntime:
     def _configure_streaming(self, *, initial_setup: bool) -> None:
         try:
             settings = settings_manager.load_all_settings()
-            self.controller._streaming_enabled = setting_value(SettingsKey.STREAMING_ENABLED, settings)
+            self.controller._streaming_enabled = SettingsKey.STREAMING_ENABLED.read(settings)
             if not self.controller._streaming_enabled:
                 logger.info("Streaming transcription disabled")
                 return

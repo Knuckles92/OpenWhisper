@@ -35,7 +35,6 @@ from services.batch_upload import (
     join_raw_parts,
 )
 from services.settings import (
-    SETTING_DEFAULTS,
     SettingsKey,
     WalkthroughCopyFormat,
     resolve_walkthrough_copy_format,
@@ -44,7 +43,6 @@ from services.settings import (
     resolve_transcript_cleanup_provider,
     resolve_transcript_cleanup_reasoning,
     resolve_transcript_cleanup_rules,
-    setting_value,
     settings_manager,
 )
 
@@ -620,7 +618,7 @@ class TranscriptionRuntime:
         # Command Mode reads the selection through the clipboard first,
         # so its snapshot would no longer be the user's.
         if mode == JobMode.DICTATION and all(
-            settings_manager.get(key, SETTING_DEFAULTS[key])
+            key.read(settings_manager.load_all_settings())
             for key in (SettingsKey.AUTO_PASTE, SettingsKey.RESTORE_CLIPBOARD)
         ):
             self.controller.ui_controller.prefetch_clipboard_snapshot()
@@ -1519,7 +1517,7 @@ class TranscriptionRuntime:
         prepared = dictation_pipeline.prepare_text(raw, job, settings)
         self._spoken_text = prepared.text
         self._stats_counts = dictation_pipeline.stats_counts(prepared)
-        enabled = profile is not None or setting_value(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, settings)
+        enabled = profile is not None or SettingsKey.TRANSCRIPT_CLEANUP_ENABLED.read(settings)
         if not enabled or prepared.skip_cleanup:
             return self._finish_without_cleanup(prepared)
 
@@ -2408,7 +2406,7 @@ class TranscriptionRuntime:
         settings = settings_manager.load_all_settings()
         copy_format = resolve_walkthrough_copy_format(settings)
         auto_paste = (copy_format == WalkthroughCopyFormat.AGENT_TASK
-                      and setting_value(SettingsKey.AUTO_PASTE, settings))
+                      and SettingsKey.AUTO_PASTE.read(settings))
         target = None
         if auto_paste:
             from services.focus_context import get_service
@@ -2639,8 +2637,8 @@ class TranscriptionRuntime:
             True when the paste keystroke was sent.
         """
         settings = settings_manager.load_all_settings()
-        copy_clipboard = setting_value(SettingsKey.COPY_CLIPBOARD, settings)
-        auto_paste = force_paste or setting_value(SettingsKey.AUTO_PASTE, settings)
+        copy_clipboard = SettingsKey.COPY_CLIPBOARD.read(settings)
+        auto_paste = force_paste or SettingsKey.AUTO_PASTE.read(settings)
 
         def _status(text: str) -> None:
             self._delivery_status = text + status_suffix
@@ -2693,7 +2691,7 @@ class TranscriptionRuntime:
         options = {}
         if html:
             options["html"] = html
-        if not setting_value(SettingsKey.RESTORE_CLIPBOARD, settings):
+        if not SettingsKey.RESTORE_CLIPBOARD.read(settings):
             options["restore"] = False
         stage = ui.stage_transcript_for_paste(transcript, **options)
         if not stage.written:

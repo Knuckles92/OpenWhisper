@@ -304,7 +304,7 @@ class AppLink:
             from services.settings import SettingsKey
 
             try:
-                enabled = self._read_settings().get(SettingsKey.MCP_ENABLED, False)
+                enabled = SettingsKey.MCP_ENABLED.read(self._read_settings())
             except Exception:
                 enabled = None
             if enabled is False:

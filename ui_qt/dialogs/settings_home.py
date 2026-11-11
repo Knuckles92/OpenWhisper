@@ -620,7 +620,7 @@ class HomePage(QWidget):
             SettingsKey.MINIMIZE_TRAY,
             lambda settings: (
                 self.dialog._tray_available
-                and setting_value(SettingsKey.MINIMIZE_TRAY, settings)
+                and SettingsKey.MINIMIZE_TRAY.read(settings)
             ),
         )
         tray.setEnabled(self.dialog._tray_available)
