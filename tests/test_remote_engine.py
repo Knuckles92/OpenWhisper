@@ -868,8 +868,10 @@ def _controller(backend, events):
     controller._remote_watch = QTimer()
     controller._remote_retry_timer = QTimer()
     controller._remote_retry_timer.setSingleShot(True)
+    controller.models = SimpleNamespace(
+        runtime_consent_requested=_Signal("runtime_consent_requested", events))
     for name in ("device_info_update", "status_update", "engine_busy_changed",
-                 "runtime_consent_requested", "streaming_setup_requested",
+                 "streaming_setup_requested",
                  "remote_settled", "remote_retry_requested"):
         setattr(controller, name, _Signal(name, events))
     for name in ("_reload_worker", "_reload_selected_engine", "_finish_speech_reload",
