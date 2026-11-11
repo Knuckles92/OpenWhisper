@@ -112,6 +112,13 @@ The Windows setup-only recovery option omits only the native update archive
 and follows the same automatic verification steps. No manual hardware report
 is requested or attached.
 
+The workflow also reports whether the Windows executables and installer are
+signed, from the record the build made of its own signature check; see
+[Windows code signing](windows-signing.md). Publishing the draft is a separate,
+manual step: publish it as a prerelease to let it soak with beta testers first
+and promote it later without rebuilding, as described in
+[Beta releases](beta-releases.md).
+
 ## Shutdown limits
 
 There is no application-wide hard shutdown deadline. Isolated native inference

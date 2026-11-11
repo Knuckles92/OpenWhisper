@@ -161,7 +161,7 @@ class TestSettingsGeneralLayout(unittest.TestCase):
 
             general = dialog._pages[GENERAL]
             tiles = general.findChildren(SettingTile)
-            self.assertEqual(len(tiles), 7)
+            self.assertEqual(len(tiles), 8)
             self.assertEqual(general.findChildren(FieldTile), [])
             self.assertIs(dialog.auto_paste_check, dialog.auto_paste_tile.checkbox)
             self.assertIs(

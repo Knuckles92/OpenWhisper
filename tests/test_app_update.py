@@ -473,7 +473,7 @@ class TestCheckForUpdate:
         monkeypatch.setattr(
             app_update,
             "fetch_latest_release",
-            lambda: parse_release_payload(LATEST_RELEASE_FIXTURE),
+            lambda _track=None: parse_release_payload(LATEST_RELEASE_FIXTURE),
         )
         monkeypatch.setattr(app_update, "__version__", "2.1.1")
         result = check_for_update()
@@ -492,7 +492,7 @@ class TestCheckForUpdate:
         monkeypatch.setattr(
             app_update,
             "fetch_latest_release",
-            lambda: parse_release_payload(LATEST_RELEASE_FIXTURE),
+            lambda _track=None: parse_release_payload(LATEST_RELEASE_FIXTURE),
         )
         monkeypatch.setattr(app_update, "__version__", "2.0.0")
         result = check_for_update(persist=False)
@@ -769,7 +769,7 @@ def test_mac_update_check_selects_verified_dmg(monkeypatch):
     release = parse_release_payload(payload)
     assert release.macos_asset.name == name
     monkeypatch.setattr(app_update, 'detect_channel', lambda: InstallChannel.INSTALLER)
-    monkeypatch.setattr(app_update, 'fetch_latest_release', lambda: release)
+    monkeypatch.setattr(app_update, 'fetch_latest_release', lambda _track=None: release)
     monkeypatch.setattr(app_update.sys, 'platform', 'darwin')
     monkeypatch.setattr('platform.machine', lambda: 'arm64')
     result = check_for_update(persist=False)

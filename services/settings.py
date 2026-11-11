@@ -802,6 +802,8 @@ class SettingsKey:
     UPDATE_RESTART_PROMPT_ENABLED: Final = BoolSetting(
         "update_restart_prompt_enabled", config.UPDATE_RESTART_PROMPT_ENABLED,
     )
+    # Opt-in: also offer GitHub prereleases (the beta release track).
+    UPDATE_BETA_TRACK_ENABLED: Final = BoolSetting("update_beta_track_enabled", False)
     UPDATE_LAST_CHECK_AT: Final = RawSetting("update_last_check_at")
     UPDATE_LAST_FAILED_CHECK_AT: Final = RawSetting("update_last_failed_check_at")
     UPDATE_API_RETRY_AT: Final = RawSetting("update_api_retry_at")
@@ -1479,6 +1481,7 @@ resolve_developer_mode = SettingsKey.DEVELOPER_MODE.read
 resolve_update_check_enabled = SettingsKey.UPDATE_CHECK_ENABLED.read
 resolve_update_notify_enabled = SettingsKey.UPDATE_NOTIFY_ENABLED.read
 resolve_update_restart_prompt_enabled = SettingsKey.UPDATE_RESTART_PROMPT_ENABLED.read
+resolve_update_beta_track_enabled = SettingsKey.UPDATE_BETA_TRACK_ENABLED.read
 # Meeting consents and acknowledgements, off until given. On unsupported
 # platforms (old macOS, unsupported Linux architectures, other OSes) the
 # Meeting Mode tab stays muted until the ack is granted once; supported Linux

@@ -36,12 +36,18 @@ def candidate_identity(directory: Path):
     _require("BUILD-METADATA.json" in hashes, "Candidate build metadata is not checksummed")
     metadata = json.loads((directory / "BUILD-METADATA.json").read_text(encoding="utf-8"))
     _require(isinstance(metadata, dict), "Invalid build metadata")
-    _require(metadata.get("schema_version") == 2 and metadata.get("source_qualification") == "passed",
-             "Candidate predates the required full source qualification")
+    _require(metadata.get("schema_version") == 3 and metadata.get("source_qualification") == "passed",
+             "Candidate predates the required full source qualification and signing record")
     _require(re.fullmatch(r"[a-f0-9]{40}", str(metadata.get("commit_sha", ""))), "Invalid candidate commit")
     version = metadata.get("version")
     _require(isinstance(version, str) and re.fullmatch(r"\d+\.\d+\.\d+", version), "Invalid candidate version")
     _require(type(metadata.get("windows_setup_only")) is bool, "Missing Windows artifact mode")
+    _require(type(metadata.get("windows_signed")) is bool, "Missing Windows signing status")
+    if metadata["windows_signed"]:
+        signing = metadata.get("windows_signing")
+        _require(isinstance(signing, dict) and signing.get("method") in ("certificate", "trusted-signing")
+                 and isinstance(signing.get("signer_subject"), str) and signing["signer_subject"],
+                 "Incomplete Windows signing record")
     expected = {
         f"OpenWhisper-Setup-{version}.exe", f"OpenWhisper-{version}-linux-amd64.deb",
         f"OpenWhisper-{version}-linux-x86_64.pkg.tar.zst", f"OpenWhisper-{version}-macos-arm64.dmg",
@@ -83,11 +89,21 @@ def validate_draft_assets(directory: Path, release, *, uploaded=False):
                  "Draft contains unrelated assets; clean up the draft before uploading this candidate")
 
 
+def signing_summary(metadata):
+    """One line for the job log: whether Windows users get a signed build."""
+    if not metadata["windows_signed"]:
+        return "Windows executables and installer: unsigned (SmartScreen will warn)."
+    signing = metadata["windows_signing"]
+    return f"Windows executables and installer: signed via {signing['method']} by {signing['signer_subject']}."
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--expected-commit")
     parser.add_argument("--expected-run", type=int)
+    parser.add_argument("--require-windows-signed", action="store_true",
+                        help="fail unless the Windows build is signed")
     args = parser.parse_args(argv)
     try:
         metadata, _ = candidate_identity(args.candidate)
@@ -95,6 +111,9 @@ def main(argv=None):
             _require(metadata["commit_sha"] == args.expected_commit, "Release tag moved or candidate commit differs")
         if args.expected_run:
             _require(metadata.get("workflow_run_id") == args.expected_run, "Candidate is from a different build run")
+        if args.require_windows_signed:
+            _require(metadata["windows_signed"], "Windows build is unsigned but signing is required")
+        print(signing_summary(metadata))
         print("Candidate checksums, source qualification, and build provenance passed.")
         return 0
     except (OSError, ValueError, TypeError, KeyError) as exc:
