@@ -44,6 +44,9 @@ class UpdaterRuntime(QObject):
         self._check_timer = QTimer()
         self._check_timer.setSingleShot(True)
         self._check_timer.timeout.connect(self._maybe_start_check)
+        # A launch asks GitHub without waiting out the interval since the
+        # last successful check; that interval only spaces a running app's.
+        self._launch_check_pending = False
         self._cancel = threading.Event()
         self._attempt = None
         self._download_lock = threading.Lock()
@@ -59,8 +62,15 @@ class UpdaterRuntime(QObject):
 
     # ---- checks ----
 
-    def schedule_check(self) -> None:
-        """Check once startup is out of the way, or when it is next due."""
+    def schedule_check(self, launch: bool = False) -> None:
+        """Check once startup is out of the way, or when it is next due.
+
+        Args:
+            launch: The app just started, so check whatever the time since
+                the last successful check.
+        """
+        if launch:
+            self._launch_check_pending = True
         self._check_timer.start(config.UPDATE_CHECK_DELAY_MS)
 
     def request_check(self, manual: bool = True) -> None:
@@ -69,18 +79,24 @@ class UpdaterRuntime(QObject):
 
     def _maybe_start_check(self) -> None:
         """Run the automatic check if it is due, else wait until it is."""
-        wait_ms = self._check_wait_ms()
+        wait_ms = self._check_wait_ms(
+            interval_s=0 if self._launch_check_pending else None
+        )
         if wait_ms == 0:
+            self._launch_check_pending = False
             self.request_check(manual=False)
         elif wait_ms is not None:
             self._check_timer.start(wait_ms)
 
-    def _check_wait_ms(self) -> Optional[int]:
-        """Milliseconds until the automatic check is due; None when it is off."""
+    def _check_wait_ms(self, interval_s: Optional[int] = None) -> Optional[int]:
+        """Milliseconds until the automatic check is due; None when it is off.
+
+        ``interval_s`` replaces the usual wait since the last successful check.
+        """
         from services.app_update import seconds_until_auto_check
 
         try:
-            wait_s = seconds_until_auto_check()
+            wait_s = seconds_until_auto_check(interval_s=interval_s)
         except Exception as exc:
             logger.warning(
                 "Could not read the update-check schedule: %s; not scheduling an "

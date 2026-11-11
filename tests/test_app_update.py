@@ -207,6 +207,18 @@ class TestSecondsUntilAutoCheck:
         }
         assert self._wait(settings) == 40 * 60
 
+    def test_launch_does_not_wait_out_a_recent_success(self):
+        settings = {SettingsKey.UPDATE_LAST_CHECK_AT: self._ago(minutes=5)}
+        assert seconds_until_auto_check(
+            settings, now=self.NOW, interval_s=0, channel=InstallChannel.INSTALLER
+        ) == 0
+
+    def test_launch_still_waits_an_hour_after_a_failure(self):
+        settings = {SettingsKey.UPDATE_LAST_FAILED_CHECK_AT: self._ago(minutes=20)}
+        assert seconds_until_auto_check(
+            settings, now=self.NOW, interval_s=0, channel=InstallChannel.INSTALLER
+        ) == 40 * 60
+
     def test_future_times_from_a_moved_clock_are_ignored(self):
         settings = {
             SettingsKey.UPDATE_LAST_CHECK_AT: (self.NOW + timedelta(days=2)).isoformat(),

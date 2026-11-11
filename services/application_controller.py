@@ -855,7 +855,7 @@ class ApplicationController(QObject):
         self.component_executor.submit(component_coordinator.list_components)
         # The GitHub metadata check waits out startup; after it, the timer
         # re-arms itself for as long as the app runs.
-        self.updater.schedule_check()
+        self.updater.schedule_check(launch=True)
         # Share this computer's engine if Settings says so. Its own thread:
         # a first run creates the TLS certificate, and the two executors can
         # be busy for minutes with model loads and installs.

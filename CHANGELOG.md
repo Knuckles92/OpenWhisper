@@ -18,6 +18,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ### Fixed
 
+- **Update check on every launch** — starting OpenWhisper now always asks GitHub for the latest release. Before, a launch within 4 hours of the last check skipped it, so a release published in between went unnoticed until later. The 4-hour spacing still applies while the app stays open, and a launch within an hour of a failed check still waits.
 - **Hand-edited settings read the same everywhere** — an on/off setting saved as something other than `true` or `false` (for example `"auto_paste": "false"` typed into the settings file) was treated as on by some parts of the app and as its default by others, including the saved consent for AI insights in meetings. Every part now reads only a real `true` or `false` and otherwise uses the default. Settings the app saves itself are unaffected.
 - **A broken overlay no longer floods the log** — when the recording overlay could not draw, it logged the full error on every frame; it now logs it once.
 - **A lasting meeting fault is reported once** — when something kept failing during a meeting (a microphone that would not open, the capture watchdog, speaker labels, the heartbeat), the log repeated the full error on every pass, as often as once a second. It now records the error the first time, keeps repeats out of the default log, and reports it again if it comes back after recovering.
