@@ -240,6 +240,19 @@ def test_semantic_candidates_include_non_keyword_passages_and_exclude_offline(re
     assert repo.search_candidates("shipping delay", exclude_meeting_id="m_online") == []
 
 
+def test_semantic_candidates_fall_back_to_recent_passages_without_the_search_index(repo, db):
+    from sqlalchemy import text as sql_text
+
+    repo.create_meeting(id="m_online", title="Launch", status="ended", started_at="2026-09-18T10:00:00", host_token="m_online", guest_token="m_onlineg", cloud_enabled=True, spool_dir="/tmp/spool")
+    repo.add_segments([TranscriptSegment("sg_m_online", "m_online", None, "mic", 10, 15, "We agreed to postpone the launch.")])
+    with db.engine.begin() as conn:
+        for trigger in conn.execute(sql_text("SELECT name FROM sqlite_master WHERE type = 'trigger' AND sql LIKE '%meeting_segments_fts%'")).scalars().all():
+            conn.execute(sql_text(f'DROP TRIGGER "{trigger}"'))
+        conn.execute(sql_text("DROP TABLE meeting_segments_fts"))
+    rows = repo.search_candidates("postpone launch")
+    assert [r["meeting_id"] for r in rows] == ["m_online"]
+
+
 def test_semantic_ranking_and_failure_fallback(monkeypatch):
     monkeypatch.setattr("meeting.semantic_search.resolve_typesafe_feature_enabled", lambda _: True)
     candidates = [{"segment_id": "sg_a", "meeting_id": "m_a", "text": "Launch postponed"}, {"segment_id": "sg_b", "meeting_id": "m_b", "text": "Coffee break"}]

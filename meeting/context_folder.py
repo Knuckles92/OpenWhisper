@@ -127,6 +127,10 @@ def context_folder_enabled() -> bool:
 
         return bool(resolve_meeting_context_folder_enabled())
     except Exception:
+        logger.warning(
+            "Could not read the knowledge-folder setting; search stays off",
+            exc_info=True,
+        )
         return False
 
 
@@ -136,6 +140,9 @@ def _configured_root() -> Optional[Path]:
 
         raw = resolve_meeting_context_folder_path()
     except Exception:
+        logger.warning(
+            "Could not read the knowledge-folder path setting", exc_info=True
+        )
         return None
     cleaned = str(raw or "").strip()
     if not cleaned:
@@ -409,6 +416,8 @@ def _extract_pdf(path: Path) -> str:
             if reader.decrypt("") == 0:
                 return ""
         except Exception:
+            # pypdf raises assorted errors for unsupported encryption.
+            logger.debug("Skipping an encrypted PDF that could not be opened", exc_info=True)
             return ""
     pages = []
     for index, page in enumerate(reader.pages):

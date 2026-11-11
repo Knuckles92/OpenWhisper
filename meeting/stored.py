@@ -44,6 +44,10 @@ def meeting_endpoint(meeting: dict[str, Any] | None) -> dict[str, Any] | None:
 
         return snapshot_from_meeting(meeting).to_dict()
     except Exception:
+        logger.warning(
+            "Could not resolve the meeting's text endpoint; using the stored snapshot",
+            exc_info=True,
+        )
         return stored_endpoint(meeting)
 
 
@@ -129,6 +133,7 @@ def _fresh_state(meeting: dict[str, Any], meeting_id: str) -> MeetingState:
         from services.settings import resolve_meeting_report_views
         report_views = list(resolve_meeting_report_views())
     except Exception:
+        logger.warning("Could not read meeting report views; using defaults", exc_info=True)
         report_views = ["ribbon", "brief", "signal"]
     return MeetingState(
         meeting_id=meeting_id,

@@ -968,6 +968,7 @@ def _supports_tools(profile: Any, model: str) -> bool:
 
         return bool(model_spec(profile, model).tools)
     except Exception:
+        logger.debug("No model spec for the report model; assuming tool support", exc_info=True)
         return True
 
 
@@ -977,6 +978,7 @@ def _default_model(profile: Any) -> str:
 
         return default_model_for_profile(profile) or ""
     except Exception:
+        logger.warning("Could not resolve a default report model", exc_info=True)
         return ""
 
 

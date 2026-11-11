@@ -121,6 +121,8 @@ def _me_participant_id(store: MeetingStateStore) -> Optional[str]:
     try:
         participants = store.with_state(lambda s: dict(s.participants))
     except Exception:
+        logger.warning("Could not read meeting participants for speaker assignment",
+                       exc_info=True)
         return None
     for pid, participant in participants.items():
         kind = getattr(participant, "kind", None)
@@ -574,6 +576,10 @@ def _coverage_refusal(repository: Any, meeting_id: str, decoded: List[Transcript
     try:
         existing = repository.get_segments(meeting_id)
     except Exception:
+        logger.exception(
+            "Could not read the draft transcript for %s; coverage guard skipped",
+            meeting_id,
+        )
         existing = []
     new_words = _word_count(decoded)
     old_words = _word_count(existing)
