@@ -977,7 +977,6 @@ def test_a_refused_model_switch_is_shown_on_the_dashboard():
 
 def _switching_controller(current="parakeet"):
     """The controller's switch methods on a stand-in whose window selects backends."""
-    from services.application_controller import ApplicationController
 
     controller = SimpleNamespace(
         _current_model_name=current,
@@ -996,8 +995,12 @@ def _switching_controller(current="parakeet"):
         controller._current_model_name = config.MODEL_VALUE_MAP[display]
 
     controller.ui_controller.select_transcription_backend.side_effect = select
+    from services.runtime.remote import RemoteRuntime
+
+    remote = SimpleNamespace(controller=controller)
     for name in ("_switch_engine_to", "select_host_model"):
-        setattr(controller, name, getattr(ApplicationController, name).__get__(controller))
+        setattr(remote, name, getattr(RemoteRuntime, name).__get__(remote))
+    controller.select_host_model = remote.select_host_model
     return controller
 
 

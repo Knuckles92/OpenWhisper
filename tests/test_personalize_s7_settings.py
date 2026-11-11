@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import QAbstractButton, QApplication, QComboBox, QLabel, QP
 from services import audio_devices
 from services.audio_devices import InputDevice
 from services.settings import SettingsKey, SettingsManager
+from ui_qt.dialogs import settings_cleanup_rules
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
 from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
@@ -311,9 +312,9 @@ def test_rule_dictation_records_from_the_saved_order(make_dialog):
             pass
 
     dialog.on_dictation_transcribe = MagicMock()
-    with patch.object(settings_dialog_module, "AudioRecorder", FakeRecorder):
-        dialog._toggle_rule_dictation()
-        dialog._toggle_rule_dictation()
+    with patch.object(settings_cleanup_rules, "AudioRecorder", FakeRecorder):
+        dialog.cleanup_rules.toggle_dictation()
+        dialog.cleanup_rules.toggle_dictation()
 
     assert created == [[SNOWBALL, USB]]
 

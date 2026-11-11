@@ -3,7 +3,6 @@ import itertools
 import logging
 import os
 import sys
-import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -21,7 +20,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLayout,
     QLineEdit,
-    QListWidget,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -37,18 +35,6 @@ from PyQt6.QtWidgets import (
 
 from config import config
 from services.components import component_coordinator
-from services.credentials import (
-    MAX_API_KEY_LEN,
-    CredentialSource,
-    CredentialStoreError,
-    credential_source,
-    environment_shadowed,
-    mask_key,
-    resolve_credential,
-    validate_api_key,
-)
-from services.credentials import store as credential_store
-from services.typesafe import CREDENTIAL_ENV as TYPESAFE_CREDENTIAL_ENV
 from services.typesafe import OPENROUTER_ROUTE as JEV_OPENROUTER_ROUTE
 from services.typesafe import TEXT_MODEL_TIMEOUT_S
 from services.typesafe import TYPESAFE_ROUTE as JEV_TYPESAFE_ROUTE
@@ -106,8 +92,6 @@ from services.settings import (
     resolve_ui_theme,
     resolve_transcript_cleanup_level,
     resolve_transcript_cleanup_model,
-    resolve_transcript_cleanup_provider,
-    resolve_transcript_cleanup_reasoning,
     resolve_transcript_cleanup_rules,
     resolve_update_beta_track_enabled,
     resolve_update_check_enabled,
@@ -117,17 +101,12 @@ from services.settings import (
     settings_manager,
 )
 from services.text_llm import (
-    credential_label,
     get_profile as get_text_llm_profile,
-    list_profiles,
-    profile_display_name,
-    verify_api_key,
 )
 from services import cleanup_prompts
 from services.cleanup_prompts import CleanupLevel
 from ui_qt.dialogs import cleanup_levels
 from ui_qt.dialogs.cleanup_prompt_dialog import CleanupPromptDialog
-from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
 from ui_qt.dialogs.settings_binder import SettingsBinder
 from ui_qt.dialogs import settings_microphones
 from ui_qt.dialogs.settings_metadata import (
@@ -169,6 +148,7 @@ from ui_qt.dialogs.settings_destinations import (
     resolve_destination,
 )
 from ui_qt.dialogs.settings_downloads import DownloadsPage
+from ui_qt.dialogs import settings_api_keys, settings_cleanup_rules
 from ui_qt.dialogs.settings_backup import BackupSettingsPage
 from ui_qt.dialogs.settings_fields import (
     group_title,
@@ -196,15 +176,12 @@ from ui_qt.utils.font_scale import current_ui_font_scale
 from ui_qt.utils.icons import design_icon
 from ui_qt.utils.palette import current_palette
 from ui_qt.utils.restyle import set_style_property
-from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets import (
     Button,
-    DangerButton,
     ElidingComboBox,
     NoWheelSpinBox,
     FieldTile,
     InfoTile,
-    PrimaryButton,
     SettingTile,
     WrappedLabel,
 )
@@ -247,14 +224,10 @@ from services.settings import (
 from ui_qt.widgets.cleanup_profiles_panel import CleanupProfilesPanel
 from services.cleanup_profiles import load_cleanup_profiles, profile_hotkey_conflict
 from ui_qt.widgets.nav_rail import NavRail
-from ui_qt.widgets.rule_activity import ItemGlow, RuleActivityStrip
 from ui_qt.widgets.recording_look_preview import RecordingLookPreview
 from ui_qt.widgets.segmented_bar import SegmentedBar
 
 logger = logging.getLogger(__name__)
-
-#: A dictated rule stops recording on its own after this long.
-_RULE_DICTATION_CAP_MS = 60_000
 
 #: The consent version saved when the meeting insight review is turned on.
 
@@ -413,11 +386,7 @@ class _ThreadRelay(QObject):
     connections.
     """
 
-    api_key_verified = pyqtSignal(int, str, bool, str)
     typesafe_route_verified = pyqtSignal(int, str, bool, str)
-    cleanup_rule_polished = pyqtSignal(int, str, str, str)
-    rule_dictation_finished = pyqtSignal(int, str, str)
-    rule_dictation_level = pyqtSignal(int, float)
 
 
 _relay: Optional[_ThreadRelay] = None
@@ -456,12 +425,6 @@ def _general_rail_value(settings: dict) -> str:
     return "Manual"
 
 
-def _rule_count_label(rule_count: int) -> str:
-    if rule_count == 0:
-        return "No rules"
-    return f"{rule_count} rule{'' if rule_count == 1 else 's'}"
-
-
 def _meeting_after_rail_value(settings: dict) -> str:
     if resolve_meeting_end_report(settings):
         return "Report"
@@ -478,52 +441,6 @@ def _meeting_dashboard_rail_value(settings: dict) -> str:
     if bind != MeetingServerBind.LAN:
         return "Localhost"
     return f"LAN · {'auto' if port == 0 else port}"
-
-
-def _rule_capture_problem(recorder, audio_path: str) -> Optional[str]:
-    """Why a stopped rule dictation can't be transcribed, or None once it's saved."""
-    if not recorder.wait_for_stop_completion():
-        return "Recording did not finish stopping; audio kept for recovery."
-    if getattr(recorder, "last_capture_error", None):
-        return str(recorder.last_capture_error)
-    if not recorder.has_recording_data():
-        return "No audio was captured."
-    if not recorder.save_recording(audio_path):
-        return "Couldn't save the dictation audio."
-    return None
-
-
-def _remove_dictation_audio(audio_path: str) -> None:
-    try:
-        if os.path.exists(audio_path):
-            os.remove(audio_path)
-    except OSError:
-        pass
-
-
-def _transcribe_rule_dictation(recorder, transcribe, audio_path: str):
-    """Stop, save and transcribe a rule dictation; returns ``(text, error)``.
-
-    Runs on a worker thread. The recording and its audio file are discarded
-    either way.
-    """
-    text = ""
-    error = ""
-    try:
-        recorder.stop_recording()
-        problem = _rule_capture_problem(recorder, audio_path)
-        if problem is not None:
-            error = problem
-        else:
-            text = transcribe(audio_path) or ""
-            if not text.strip():
-                error = "Nothing was transcribed."
-    except Exception as exc:
-        error = str(exc) or "Transcription failed."
-    finally:
-        recorder.clear_recording_data()
-        _remove_dictation_audio(audio_path)
-    return text, error
 
 
 class _SettingsPage(QWidget):
@@ -677,29 +594,8 @@ class SettingsDialog(QDialog):
         # (tile, button) per "AI cleanup is off" notice; see cleanup_gate_tile.
         self._cleanup_gates: list = []
         self._cleanup_gate_needed: dict = {}
-        self._rule_polishing = False
-        # Whether the words being polished came (at least partly) from
-        # dictation, so the review dialog can say "said" instead of "typed".
-        self._rule_polish_dictated = False
-        self._rule_dictation_state = "idle"
-        self._rule_recorder: Optional[AudioRecorder] = None
-        self._rule_recorder_device: tuple = ()
-        # The request each relayed result must match; 0 matches none.
-        self._rule_level_token = 0
-        self._rule_polish_token = 0
-        self._rule_dictation_token = 0
-        self._api_key_token = 0
         self._typesafe_route_token = 0
-        self._api_key_testing = False
         self._typesafe_route_testing = False
-        self._api_key_source = CredentialSource.NONE
-        self._rule_dictation_path = os.path.join(
-            tempfile.gettempdir(), "openwhisper_rule_dictation.wav"
-        )
-        self._rule_dictation_timer = QTimer(self)
-        self._rule_dictation_timer.setSingleShot(True)
-        self._rule_dictation_timer.setInterval(_RULE_DICTATION_CAP_MS)
-        self._rule_dictation_timer.timeout.connect(self._stop_rule_dictation)
         # Lets a burst of chevron or arrow-key steps settle into one
         # retention change; typed counts commit on Enter or focus-out.
         self._retention_commit_timer = QTimer(self)
@@ -712,18 +608,35 @@ class SettingsDialog(QDialog):
         self._bindings = SettingsBinder(self._persist)
         self._meeting_bindings = SettingsBinder(self._persist)
 
+        self.cleanup_rules = settings_cleanup_rules.CleanupRulesSection(
+            self,
+            load_settings=lambda: settings_manager.load_all_settings(),
+            settings_snapshot=self._settings_snapshot,
+            # Looked up when asked: it builds the AI cleanup page if needed.
+            cleanup_enabled=lambda: self.transcript_cleanup_check.isChecked(),
+            persist_rules=lambda rules: self._persist(SettingsKey.TRANSCRIPT_CLEANUP_RULES, rules),
+            transcriber=lambda: self.on_dictation_transcribe,
+            meeting_active=lambda: self.get_meeting_active is not None and self.get_meeting_active(),
+            transcribe_detail=self._rule_transcribe_detail,
+            is_visible=self.isVisible,
+            ensure_built=lambda: self.ensure_page(CLEANUP_RULES),
+        )
+        self.api_keys = settings_api_keys.ApiKeysSection(
+            self,
+            load_settings=lambda: settings_manager.load_all_settings(),
+            is_loading=lambda: self._loading,
+        )
+
         self._setup_ui()
         self.setMinimumSize(self.MINIMUM_SIZE)
         self.resize(self.DEFAULT_SIZE)
 
         relay = _thread_relay()
-        relay.cleanup_rule_polished.connect(self._on_cleanup_rule_polished)
-        relay.rule_dictation_finished.connect(self._on_rule_dictation_finished)
-        relay.rule_dictation_level.connect(self._on_rule_dictation_level)
-        relay.api_key_verified.connect(self._on_api_key_verified)
         relay.typesafe_route_verified.connect(self._on_typesafe_route_verified)
         lookup_relay().looked_up.connect(self._on_agent_looked_up)
-        self.finished.connect(self._release_rule_recorder)
+        self.finished.connect(self.cleanup_rules.release_recorder)
+        self.api_keys.message.connect(lambda text: self.message_label.setText(text))
+        self.api_keys.keys_changed.connect(self._on_api_keys_saved)
         self.models.assignments_changed.connect(self._refresh_rail_values)
         self.models.downloads_requested.connect(self.show_downloads)
         self.downloads.inventory_changed.connect(self._refresh_rail_values)
@@ -2380,115 +2293,11 @@ class SettingsDialog(QDialog):
         )
         self.cleanup_rules_turn_on_btn = self._cleanup_gates[-1][1]
         layout.addWidget(self.cleanup_rules_gate_tile)
-
-        self.cleanup_rules_composer_tile = InfoTile(
-            "Teach a new rule",
-            "Type or dictate an instruction in your own words. Your AI "
-            "cleanup model rewrites it as a clear rule, and you review it "
-            "before it's saved.",
-            design_icon("plus-blue.svg"),
-        )
-        rule_input_row = QHBoxLayout()
-        rule_input_row.setContentsMargins(0, 0, 0, 0)
-        rule_input_row.setSpacing(8)
-        self.cleanup_rule_input = QLineEdit()
-        self.cleanup_rule_input.setObjectName("cleanupRuleInput")
-        self.cleanup_rule_input.setMinimumHeight(40)
-        self.cleanup_rule_input.setPlaceholderText(
-            'Try: Always spell my name "Alex Rivera"'
-        )
-        self.cleanup_rule_input.returnPressed.connect(self._add_cleanup_rule)
-        self.cleanup_rule_input.textEdited.connect(
-            lambda _text: self._set_rule_notice("")
-        )
-        rule_input_row.addWidget(self.cleanup_rule_input, stretch=1)
-        self.cleanup_rule_mic_btn = Button("Dictate")
-        self.cleanup_rule_mic_btn.setObjectName("cleanupRuleDictateButton")
-        # theme.qss swaps the icon (microphone / stop) on this property.
-        self.cleanup_rule_mic_btn.setProperty("recording", False)
-        self.cleanup_rule_mic_btn.setIconSize(QSize(16, 16))
-        self.cleanup_rule_mic_btn.set_base_minimum_size(108, 40)
-        self.cleanup_rule_mic_btn.setToolTip(
-            "Speak the instruction instead of typing it"
-        )
-        self.cleanup_rule_mic_btn.clicked.connect(self._toggle_rule_dictation)
-        rule_input_row.addWidget(self.cleanup_rule_mic_btn)
-        self.cleanup_rule_add_btn = PrimaryButton("Add rule")
-        self.cleanup_rule_add_btn.setObjectName("cleanupRuleAddButton")
-        self.cleanup_rule_add_btn.set_base_minimum_size(104, 40)
-        self.cleanup_rule_add_btn.clicked.connect(self._add_cleanup_rule)
-        rule_input_row.addWidget(self.cleanup_rule_add_btn)
-        # No spacing between the input row and the activity strip: the strip
-        # carries its own gap inside the height it animates, so it slides
-        # open from nothing.
-        composer_column = QVBoxLayout()
-        composer_column.setContentsMargins(0, 0, 0, 0)
-        composer_column.setSpacing(0)
-        composer_column.addLayout(rule_input_row)
-        self.cleanup_rule_activity = RuleActivityStrip(
-            _RULE_DICTATION_CAP_MS // 1000
-        )
-        composer_column.addWidget(self.cleanup_rule_activity)
-        self.cleanup_rules_composer_tile.add_body_layout(composer_column)
-        # Problems only; progress is narrated by the activity strip.
-        self.cleanup_rule_status = QLabel("")
-        self.cleanup_rule_status.setObjectName("cleanupRuleStatus")
-        self.cleanup_rule_status.setWordWrap(True)
-        self.cleanup_rule_status.hide()
-        self.cleanup_rules_composer_tile.add_body(self.cleanup_rule_status)
-        self._tile_group(
-            layout, "", [self.cleanup_rules_composer_tile], columns=1
-        )
-
-        self.cleanup_rules_library_tile = InfoTile(
-            "Your rules",
-            "Select a rule or double-click it to edit. Every rule applies to "
-            "AI cleanup, and to profiles set to also apply learned rules.",
-            design_icon("stack-slate.svg"),
-        )
-        self.cleanup_rules_count = QLabel()
-        self.cleanup_rules_count.setObjectName("cleanupRulesCount")
-        self.cleanup_rules_count.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cleanup_rules_library_tile.add_trailing(self.cleanup_rules_count)
-
-        self.cleanup_rules_list = QListWidget()
-        self.cleanup_rules_list.setObjectName("cleanupRulesList")
-        self.cleanup_rules_list.setWordWrap(True)
-        self.cleanup_rules_list.setSpacing(6)
-        self.cleanup_rules_list.setMinimumHeight(88)
-        self.cleanup_rules_list.itemSelectionChanged.connect(
-            self._update_cleanup_rule_controls
-        )
-        self.cleanup_rules_list.itemDoubleClicked.connect(
-            lambda _item: self._edit_cleanup_rule()
-        )
-        self.cleanup_rules_library_tile.add_body(self.cleanup_rules_list)
-        self._rule_glow = ItemGlow(self.cleanup_rules_list)
-
-        self.cleanup_rules_empty = EmptyState(
-            "No rules yet",
-            "Add your first instruction above to start building a personal cleanup profile.",
-        )
-        self.cleanup_rules_library_tile.add_body(self.cleanup_rules_empty)
-
-        rule_btn_row = QHBoxLayout()
-        rule_btn_row.setContentsMargins(0, 0, 0, 0)
-        rule_btn_row.setSpacing(8)
-        rule_btn_row.addStretch()
-        self.cleanup_rule_edit_btn = neutral_button(Button("Edit rule"))
-        self.cleanup_rule_edit_btn.setObjectName("cleanupRuleEditButton")
-        self.cleanup_rule_edit_btn.set_base_minimum_size(96, 34)
-        self.cleanup_rule_edit_btn.clicked.connect(self._edit_cleanup_rule)
-        rule_btn_row.addWidget(self.cleanup_rule_edit_btn)
-        self.cleanup_rule_delete_btn = neutral_button(Button("Delete"))
-        self.cleanup_rule_delete_btn.setObjectName("cleanupRuleDeleteButton")
-        self.cleanup_rule_delete_btn.set_base_minimum_size(88, 34)
-        self.cleanup_rule_delete_btn.clicked.connect(self._delete_cleanup_rule)
-        rule_btn_row.addWidget(self.cleanup_rule_delete_btn)
-        self.cleanup_rules_library_tile.add_body_layout(rule_btn_row)
-        self._tile_group(
-            layout, "", [self.cleanup_rules_library_tile], columns=1
-        )
+        self.cleanup_rules.build(layout, self._tile_group)
+        # The dialog names the section's controls too, for deep links,
+        # search reveals and CONTROL_DESTINATIONS.
+        for name in settings_cleanup_rules.CONTROLS:
+            setattr(self, name, getattr(self.cleanup_rules, name))
         self._update_cleanup_prompt_ui()
 
     def _build_meeting_intelligence_page(self, layout: QVBoxLayout) -> None:
@@ -2893,431 +2702,25 @@ class SettingsDialog(QDialog):
         self._tile_group(layout, "Port", [self.meeting_port_tile])
 
     def _build_api_keys_page(self, layout: QVBoxLayout) -> None:
-        self.api_key_combo = ElidingComboBox()
-        self.api_key_combo.setObjectName("apiKeyCredentialCombo")
-        self.api_key_combo.setMinimumHeight(40)
-        self.api_key_combo.currentIndexChanged.connect(
-            self._on_api_key_credential_changed
-        )
-        self.api_key_credential_tile = FieldTile(
-            "Credential",
-            "Choose the provider whose key you want to save or test.",
-            self.api_key_combo,
-            design_icon("key-blue.svg"),
-        )
-
-        status_row = QHBoxLayout()
-        status_row.setContentsMargins(0, 0, 0, 0)
-        status_row.setSpacing(8)
-        self.api_key_status_icon = QLabel()
-        self.api_key_status_icon.setObjectName("apiKeyStatusIcon")
-        self.api_key_status_icon.setFixedSize(16, 16)
-        self.api_key_status = WrappedLabel("")
-        self.api_key_status.setObjectName("apiKeyStatus")
-        status_row.addWidget(
-            self.api_key_status_icon, alignment=Qt.AlignmentFlag.AlignTop
-        )
-        status_row.addWidget(self.api_key_status, stretch=1)
-        self.api_key_credential_tile.add_body_layout(status_row)
-        self.api_key_uses_caption = settings_caption("")
-        self.api_key_credential_tile.add_body(self.api_key_uses_caption)
-        self._tile_group(
-            layout, "", [self.api_key_credential_tile], columns=1
-        )
-
-        self.api_key_entry_tile = InfoTile(
-            "Add or replace a key",
-            self._api_key_store_copy(),
-            design_icon("plus-blue.svg"),
-        )
-        self.api_key_store_caption = self.api_key_entry_tile.description_label
-        self.api_key_store_caption.setToolTip(self._api_key_store_detail())
-
-        # Password echo also makes Qt refuse copy/cut from the field, and the
-        # input-method hints keep IMEs and predictive text from retaining it.
-        self.api_key_edit = QLineEdit()
-        self.api_key_edit.setObjectName("apiKeyInput")
-        self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.api_key_edit.setPlaceholderText("Paste a key to save or test")
-        self.api_key_edit.setMaxLength(MAX_API_KEY_LEN)
-        self.api_key_edit.setInputMethodHints(
-            Qt.InputMethodHint.ImhHiddenText
-            | Qt.InputMethodHint.ImhSensitiveData
-            | Qt.InputMethodHint.ImhNoAutoUppercase
-            | Qt.InputMethodHint.ImhNoPredictiveText
-        )
-        self.api_key_edit.setMinimumHeight(40)
-        # The key itself is set in a spaced monospace; the placeholder keeps
-        # the normal field font (QSS can't style a placeholder on its own).
-        self.api_key_edit.textChanged.connect(
-            lambda text: set_style_property(self.api_key_edit, "hasText", bool(text))
-        )
-        self.api_key_edit.textChanged.connect(self._update_api_key_controls)
-        self.api_key_edit.returnPressed.connect(self._save_api_key)
-        self.api_key_show_button = neutral_button(Button("Show"))
-        self.api_key_show_button.setObjectName("apiKeyShowButton")
-        self.api_key_show_button.setCheckable(True)
-        self.api_key_show_button.set_base_minimum_size(80, 40)
-        self.api_key_show_button.setMinimumHeight(40)
-        self.api_key_show_button.setMaximumHeight(40)
-        self.api_key_show_button.toggled.connect(self._on_api_key_show_toggled)
-        input_row = QWidget()
-        input_row.setObjectName("modelManagerFieldGroup")
-        input_layout = QHBoxLayout(input_row)
-        input_layout.setContentsMargins(0, 0, 0, 0)
-        input_layout.setSpacing(8)
-        input_layout.addWidget(self.api_key_edit, stretch=1)
-        input_layout.addWidget(self.api_key_show_button)
-        self.api_key_entry_tile.add_body(input_row)
-
-        buttons = QHBoxLayout()
-        buttons.setContentsMargins(0, 0, 0, 0)
-        buttons.setSpacing(8)
-        # A plain Button: PrimaryButton's own padding would make it taller than Test.
-        self.api_key_save_button = Button("Save key")
-        self.api_key_save_button.setObjectName("apiKeySaveButton")
-        compact_primary_button(self.api_key_save_button)
-        fit_compact_button(self.api_key_save_button, 120)
-        self.api_key_save_button.clicked.connect(self._save_api_key)
-        self.api_key_test_button = neutral_button(Button("Test"))
-        self.api_key_test_button.setObjectName("apiKeyTestButton")
-        fit_compact_button(self.api_key_test_button, 90)
-        self.api_key_test_button.clicked.connect(self._test_api_key)
-        self.api_key_remove_button = DangerButton("Remove saved key")
-        self.api_key_remove_button.setProperty("buttonId", "apiKeyRemoveButton")
-        fit_compact_button(self.api_key_remove_button, 160)
-        self.api_key_remove_button.clicked.connect(self._remove_api_key)
-        buttons.addWidget(self.api_key_save_button)
-        buttons.addWidget(self.api_key_test_button)
-        buttons.addStretch()
-        buttons.addWidget(self.api_key_remove_button)
-        self.api_key_entry_tile.add_body_layout(buttons)
-        self._tile_group(layout, "", [self.api_key_entry_tile], columns=1)
-
-    @staticmethod
-    def _api_key_store_copy() -> str:
-        status = credential_store().status()
-        if not status.available:
-            # The error itself goes in the tooltip (_api_key_store_detail).
-            return (
-                f"{status.backend_name} isn't available on this computer, so "
-                "keys can't be saved from here. Set the variable in your "
-                "environment or a .env file instead; OpenWhisper never falls "
-                "back to an unprotected file."
-            )
-        copy = (
-            f"Encrypted by {status.backend_name} for your account. "
-            "Saved keys override environment variables and .env, and never "
-            "enter settings or logs."
-        )
-        if sys.platform == "darwin":
-            # "Allow" lasts one read, so macOS asks again every launch.
-            copy += (
-                " When macOS asks to use your Keychain, choose Always Allow so "
-                "it doesn't ask every launch."
-            )
-        return copy
-
-    @staticmethod
-    def _api_key_store_detail() -> str:
-        """The store's own error, for the caption's tooltip; "" when it works."""
-        status = credential_store().status()
-        if status.available or not status.reason:
-            return ""
-        return f"Details: {status.reason}"
-
-    @staticmethod
-    def _api_key_entries(settings: dict) -> list:
-        """One row per distinct variable; profiles sharing a variable share it."""
-        from services import speech_endpoints
-
-        names: Dict[str, list] = {}
-        owners = [(p.api_key_env, p.name) for p in list_profiles(settings) if p.api_key_env]
-        for env_name, owner in owners + speech_endpoints.credential_owners(settings):
-            if owner not in names.setdefault(env_name, []):
-                names[env_name].append(owner)
-        entries = [
-            (env_name, f"{' / '.join(owners)} · {env_name}")
-            for env_name, owners in names.items()
-        ]
-        # TypeSafe is a decision service rather than a text-model profile, so
-        # it is not in ``list_profiles`` but still needs a home for its key.
-        entries.append((TYPESAFE_CREDENTIAL_ENV, f"TypeSafe · {TYPESAFE_CREDENTIAL_ENV}"))
-        return entries
-
-    def _load_api_key_settings(self, settings: dict) -> None:
-        current = self.api_key_combo.currentData()
-        self.api_key_combo.blockSignals(True)
-        self.api_key_combo.clear()
-        for env_name, label in self._api_key_entries(settings):
-            self.api_key_combo.addItem(label, env_name)
-        index = self.api_key_combo.findData(current) if current else -1
-        self.api_key_combo.setCurrentIndex(max(0, index))
-        self.api_key_combo.blockSignals(False)
-        self._clear_api_key_input()
-        self.api_key_store_caption.setText(self._api_key_store_copy())
-        self.api_key_store_caption.setToolTip(self._api_key_store_detail())
-        self._render_api_key_status()
+        self.api_keys.build(layout, self._tile_group)
+        # The dialog names the section's controls too, for deep links,
+        # search reveals and CONTROL_DESTINATIONS.
+        for name in settings_api_keys.CONTROLS:
+            setattr(self, name, getattr(self.api_keys, name))
 
     def focus_api_keys(self, env_name: Optional[str] = None) -> None:
         """Open the API keys destination, optionally on one credential."""
         self.select_destination(API_KEYS)
-        if env_name:
-            index = self.api_key_combo.findData(env_name)
-            if index >= 0:
-                self.api_key_combo.setCurrentIndex(index)
-        self.api_key_edit.setFocus()
+        self.api_keys.focus(env_name)
 
-    def _selected_api_key_name(self) -> str:
-        return self.api_key_combo.currentData() or ""
-
-    def _api_key_profile(self, env_name: str):
-        """The text endpoint, else the speech server, that sends ``env_name``."""
-        from services import speech_endpoints
-
-        settings = settings_manager.load_all_settings()
-        speech = [
-            speech_endpoints.configured_endpoint(endpoint_id, settings).connection
-            for endpoint_id in speech_endpoints.ENDPOINT_IDS
-        ]
-        for profile in [*list_profiles(settings), *speech]:
-            if profile.api_key_env == env_name:
-                return profile
-        return None
-
-    def _api_key_label(self, env_name: str) -> str:
-        if env_name == TYPESAFE_CREDENTIAL_ENV:
-            return "TypeSafe API key"
-        profile = self._api_key_profile(env_name)
-        return credential_label(profile) if profile is not None else env_name
-
-    def _clear_api_key_input(self) -> None:
-        self.api_key_edit.clear()
-        self.api_key_show_button.setChecked(False)
-
-    def _render_api_key_status(self) -> None:
-        name = self._selected_api_key_name()
-        status = credential_store().status()
-        tone = "warning"
-        if not name:
-            self._api_key_source = CredentialSource.NONE
-            text = "No endpoint needs an API key."
-        else:
-            source = credential_source(name)
-            self._api_key_source = source
-            suffix = mask_key(resolve_credential(name))
-            if source == CredentialSource.STORED:
-                text = f"Saved in {status.backend_name} · {suffix}"
-                if environment_shadowed(name):
-                    text += (
-                        f". The {name} variable in your environment or .env "
-                        "file is ignored while a key is saved here."
-                    )
-                tone = "success"
-            elif source == CredentialSource.ENVIRONMENT:
-                text = (
-                    f"Using the {name} environment variable · {suffix}. "
-                    "Save a key here to use it instead."
-                )
-                tone = "success"
-            elif source == CredentialSource.DOTENV:
-                text = (
-                    f"Using the .env file · {suffix}. "
-                    "Save a key here to use it instead."
-                )
-                tone = "success"
-            else:
-                text = "No key set."
-        self.api_key_status.setText(text)
-        icon = "check-green.svg" if tone == "success" else "info-warning.svg"
-        self.api_key_status_icon.setPixmap(design_icon(icon).pixmap(16, 16))
-        set_style_property(self.api_key_status, "tone", tone)
-        self._render_api_key_uses(name)
-        self._update_api_key_controls()
-
-    def _render_api_key_uses(self, env_name: str) -> None:
-        if env_name == "OPENAI_API_KEY":
-            text = (
-                "Used for API transcription with OpenAI, OpenAI transcript "
-                "cleanup and meeting intelligence, and cloud speaker "
-                "identification."
-            )
-        elif env_name == JEV_OPENROUTER_ROUTE.credential_env:
-            text = (
-                "Used for transcript cleanup and meeting intelligence through "
-                "OpenRouter. It can also run fast judgments (Jev): choose "
-                "OpenRouter under Meeting Mode → Fast judgments."
-            )
-        elif env_name == TYPESAFE_CREDENTIAL_ENV:
-            text = (
-                "Used for TypeSafe fast judgments: topic changes, spoken "
-                "instructions, live highlights, the questions radar, citation "
-                "checks, semantic search, and insight review. Enable them under "
-                "Meeting Mode → Fast judgments, where an OpenRouter key can "
-                "run the same model instead."
-            )
-        elif env_name:
-            from services import speech_endpoints
-
-            settings = settings_manager.load_all_settings()
-            uses = []
-            owners = [p.name for p in list_profiles(settings) if p.api_key_env == env_name]
-            if owners:
-                uses.append(f"to {' and '.join(owners)} for transcript cleanup and meeting intelligence")
-            speech = [name for env, name in speech_endpoints.credential_owners(settings) if env == env_name]
-            if speech:
-                uses.append(f"to {' and '.join(speech)} for API transcription")
-            text = f"Sent as the API key {', and '.join(uses)}."
-        else:
-            text = ""
-        self.api_key_uses_caption.setText(text)
-        self.api_key_uses_caption.setVisible(bool(text))
-
-    def _update_api_key_controls(self, *_args) -> None:
-        name = self._selected_api_key_name()
-        can_store = bool(name) and credential_store().status().available
-        typed = bool(self.api_key_edit.text().strip())
-        busy = self._api_key_testing
-        self.api_key_edit.setEnabled(bool(name) and not busy)
-        self.api_key_show_button.setEnabled(bool(name) and not busy)
-        self.api_key_save_button.setEnabled(can_store and typed and not busy)
-        self.api_key_test_button.setEnabled(
-            bool(name)
-            and not busy
-            and (typed or self._api_key_source != CredentialSource.NONE)
-        )
-        self.api_key_remove_button.setEnabled(
-            can_store
-            and not busy
-            and self._api_key_source == CredentialSource.STORED
-        )
-
-    def _api_key_rail_value(self) -> str:
-        entries = self._api_key_entries(self._settings_snapshot())
-        if not entries:
-            return "None needed"
-        available = sum(credential_source(name) != CredentialSource.NONE for name, _label in entries)
-        return f"{available} of {len(entries)} set"
-
-    def _on_api_key_credential_changed(self, _index: int = 0) -> None:
-        if self._loading:
-            return
-        self._clear_api_key_input()
-        self.message_label.setText("")
-        self._render_api_key_status()
-
-    def _on_api_key_show_toggled(self, checked: bool) -> None:
-        self.api_key_edit.setEchoMode(
-            QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
-        )
-        self.api_key_show_button.setText("Hide" if checked else "Show")
-
-    def _notify_api_keys_changed(self) -> None:
+    def _on_api_keys_saved(self) -> None:
+        self._refresh_rail_values()
         if not self.on_api_keys_changed:
             return
         try:
             self.on_api_keys_changed()
         except Exception as exc:
             logger.error("API key change callback failed: %s", exc)
-
-    def _save_api_key(self) -> None:
-        name = self._selected_api_key_name()
-        if not name or not self.api_key_save_button.isEnabled():
-            return
-        try:
-            key = validate_api_key(self.api_key_edit.text())
-            credential_store().set(name, key)
-        except (ValueError, CredentialStoreError) as exc:
-            self.message_label.setText(str(exc))
-            return
-        self._clear_api_key_input()
-        self._render_api_key_status()
-        self._refresh_rail_values()
-        self.message_label.setText(f"{self._api_key_label(name)} saved.")
-        self._notify_api_keys_changed()
-
-    def _remove_api_key(self) -> None:
-        name = self._selected_api_key_name()
-        if not name:
-            return
-        label = self._api_key_label(name)
-        backend = credential_store().status().backend_name
-        reply = QMessageBox.question(
-            self,
-            "Remove saved key",
-            f"Remove the saved {label} from {backend}?\n\n"
-            f"OpenWhisper will fall back to a {name} environment variable or "
-            ".env entry if one exists; otherwise features that need this key "
-            "become unavailable.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            removed = credential_store().delete(name)
-        except CredentialStoreError as exc:
-            self.message_label.setText(str(exc))
-            return
-        self._clear_api_key_input()
-        self._render_api_key_status()
-        self._refresh_rail_values()
-        self.message_label.setText(
-            f"{label} removed." if removed else f"No saved {label} to remove."
-        )
-        self._notify_api_keys_changed()
-
-    def _test_api_key(self) -> None:
-        name = self._selected_api_key_name()
-        if self._api_key_testing or not name:
-            return
-        # TypeSafe is not an OpenAI-compatible endpoint and so has no entry in
-        # ``list_profiles``; it verifies through its own one-judgment probe.
-        profile = self._api_key_profile(name)
-        if profile is None and name != TYPESAFE_CREDENTIAL_ENV:
-            return
-        label = self._api_key_label(name)
-        typed = self.api_key_edit.text()
-        if typed.strip():
-            try:
-                key = validate_api_key(typed)
-            except ValueError as exc:
-                self.message_label.setText(str(exc))
-                return
-        else:
-            key = resolve_credential(name)
-            if not key:
-                self.message_label.setText("Paste a key to test.")
-                return
-        self._api_key_testing = True
-        self._update_api_key_controls()
-        self.message_label.setText(f"Testing {label}…")
-        self._api_key_token = token = next(_tokens)
-        # Bound here: the worker must not reach back into the window.
-        verify_typesafe = typesafe_verify_key
-        verify = verify_api_key
-        done = _thread_relay().api_key_verified
-
-        def worker():
-            if profile is None:
-                ok, detail = verify_typesafe(key)
-            else:
-                ok, detail = verify(profile, key)
-            done.emit(token, name, ok, detail)
-
-        threading.Thread(target=worker, daemon=True, name="api-key-verify").start()
-
-    def _on_api_key_verified(
-        self, token: int, env_name: str, ok: bool, detail: str
-    ) -> None:
-        if token != self._api_key_token:
-            return
-        self._api_key_testing = False
-        self._update_api_key_controls()
-        label = self._api_key_label(env_name)
-        self.message_label.setText(
-            f"{label} works: {detail}" if ok else f"{label} failed: {detail}"
-        )
 
     def _build_hotkeys_page(self, layout: QVBoxLayout) -> None:
         instruction_card = QFrame()
@@ -4012,7 +3415,7 @@ class SettingsDialog(QDialog):
             self._persist_cleanup_prompt()
         if self._retention_commit_timer.isActive():
             self._commit_retention()
-        self._release_rule_recorder()
+        self.cleanup_rules.release_recorder()
         super().closeEvent(event)
 
     def _persist(self, key: str, value, *, message: str = "") -> bool:
@@ -4076,12 +3479,12 @@ class SettingsDialog(QDialog):
             rule_count = rule_list.count()
         else:
             rule_count = len(resolve_transcript_cleanup_rules(settings))
-        self.rail.set_value(CLEANUP_RULES, _rule_count_label(rule_count))
+        self.rail.set_value(CLEANUP_RULES, settings_cleanup_rules.rule_count_label(rule_count))
         self.rail.set_value(MEETING_AFTER, _meeting_after_rail_value(settings))
         self._render_typesafe_key_state()
         self.rail.set_value(MEETING_FAST, self._meeting_fast_rail_value())
         self.rail.set_value(MEETING_DASHBOARD, _meeting_dashboard_rail_value(settings))
-        self.rail.set_value(API_KEYS, self._api_key_rail_value())
+        self.rail.set_value(API_KEYS, settings_api_keys.rail_value(self._settings_snapshot()))
         self.rail.set_value(HOTKEYS, self._hotkey_rail_value())
         self.rail.set_value(
             WALKTHROUGHS, "AI write-up on" if resolve_walkthrough_write_up(settings) else "As spoken"
@@ -4177,7 +3580,7 @@ class SettingsDialog(QDialog):
             storage_checking=self.downloads.is_checking(),
             components=components,
             footer=(
-                f"API keys: {self._api_key_rail_value()}  ·  Runtime: "
+                f"API keys: {settings_api_keys.rail_value(self._settings_snapshot())}  ·  Runtime: "
                 f"{models.runtime_summary()}  ·  Missing models: "
                 f"{_HF_POLICY_LABELS.get(policy, 'ask first')}"
             ),
@@ -4851,7 +4254,7 @@ class SettingsDialog(QDialog):
             # Styles lock while cleanup is off, also when it changes on their page.
             self._refresh_page_module(STYLES, self._page_modules[STYLES])
         if self.__dict__.get("cleanup_rules_gate_tile") is not None:
-            self._update_cleanup_rule_controls()
+            self.cleanup_rules.update_controls()
         self._update_cleanup_level_ui()
 
     def _update_cleanup_level_ui(self) -> None:
@@ -4895,53 +4298,6 @@ class SettingsDialog(QDialog):
             self._forget_custom_prompt()
             self._update_cleanup_prompt_ui()
 
-    def _staged_cleanup_rules(self) -> list:
-        return [
-            self.cleanup_rules_list.item(i).text()
-            for i in range(self.cleanup_rules_list.count())
-        ]
-
-    def _persist_cleanup_rules(self) -> None:
-        self._persist(
-            SettingsKey.TRANSCRIPT_CLEANUP_RULES, self._staged_cleanup_rules()
-        )
-
-    def _update_cleanup_rule_controls(self) -> None:
-        enabled = self.transcript_cleanup_check.isChecked()
-        busy = self._rule_polishing or self._rule_dictation_state != "idle"
-        rule_count = self.cleanup_rules_list.count()
-        self.cleanup_rules_count.setText(
-            f"{rule_count} / {config.MAX_TRANSCRIPT_CLEANUP_RULES}"
-        )
-        self.cleanup_rules_list.setVisible(rule_count > 0)
-        self.cleanup_rules_empty.setVisible(rule_count == 0)
-        self.cleanup_rules_empty.setEnabled(enabled)
-        self.cleanup_rule_input.setEnabled(enabled and not busy)
-        self.cleanup_rule_add_btn.setEnabled(enabled and not busy)
-        self.cleanup_rule_mic_btn.setEnabled(
-            enabled
-            and not self._rule_polishing
-            and self._rule_dictation_state != "transcribing"
-        )
-        has_selection = bool(self.cleanup_rules_list.selectedItems())
-        self.cleanup_rule_edit_btn.setEnabled(enabled and has_selection)
-        self.cleanup_rule_delete_btn.setEnabled(enabled and has_selection)
-
-    def _set_rule_notice(self, text: str) -> None:
-        """Show a problem under the composer, or clear it with ``""``."""
-        self.cleanup_rule_status.setText(text)
-        self.cleanup_rule_status.setVisible(bool(text))
-
-    def _set_rule_mic_recording(self, recording: bool) -> None:
-        button = self.cleanup_rule_mic_btn
-        set_style_property(button, "recording", recording)
-        button.setText("Stop" if recording else "Dictate")
-        button.setToolTip(
-            "Stop and transcribe · Esc throws the recording away"
-            if recording else
-            "Speak the instruction instead of typing it"
-        )
-
     def _rule_transcribe_detail(self) -> str:
         """Where the dictation engine runs, named as the rail names it."""
         summary = self.models.voice_summary()
@@ -4951,188 +4307,6 @@ class SettingsDialog(QDialog):
         if self.models.voice_is_remote():
             return self.models.voice_detail()
         return f"On this computer · {summary}"
-
-    @staticmethod
-    def _rule_polish_detail(provider: str, model: str, settings) -> str:
-        """The endpoint and model that will rewrite the words."""
-        name = profile_display_name(provider, settings)
-        return " · ".join(part for part in (name, model) if part)
-
-    def _add_cleanup_rule(self) -> None:
-        self._polish_cleanup_rule(self.cleanup_rule_input.text())
-
-    def _polish_cleanup_rule(self, raw: str, dictated: bool = False) -> None:
-        raw = raw.strip()
-        if self._rule_polishing or self._rule_dictation_state != "idle":
-            return
-        if not raw:
-            self.cleanup_rule_activity.finish()
-            return
-        staged = {r.casefold() for r in self._staged_cleanup_rules()}
-        if raw.casefold() in staged:
-            self.cleanup_rule_activity.finish()
-            self._set_rule_notice("That rule already exists.")
-            return
-        if self.cleanup_rules_list.count() >= config.MAX_TRANSCRIPT_CLEANUP_RULES:
-            self.cleanup_rule_activity.finish()
-            self._set_rule_notice(
-                f"Rule limit reached ({config.MAX_TRANSCRIPT_CLEANUP_RULES})."
-            )
-            return
-
-        self._rule_polishing = True
-        self._rule_polish_dictated = dictated
-        self._set_rule_notice("")
-
-        settings = settings_manager.load_all_settings()
-        provider = resolve_transcript_cleanup_provider(settings)
-        model = resolve_transcript_cleanup_model(settings)
-        reasoning = resolve_transcript_cleanup_reasoning(settings)
-        self.cleanup_rule_activity.show_polishing(
-            self._rule_polish_detail(provider, model, settings)
-        )
-        self._update_cleanup_rule_controls()
-        self._rule_polish_token = token = next(_tokens)
-        done = _thread_relay().cleanup_rule_polished
-
-        def worker():
-            try:
-                from services.transcript_cleanup import polish_cleanup_rule
-
-                polished, error = polish_cleanup_rule(
-                    raw, provider=provider, model=model, reasoning=reasoning
-                )
-            except Exception as exc:
-                polished, error = raw, str(exc)
-            done.emit(token, raw, polished or raw, error or "")
-
-        threading.Thread(
-            target=worker, name="cleanup-rule-polish", daemon=True
-        ).start()
-
-    def _on_cleanup_rule_polished(
-        self, token: int, raw: str, polished: str, error: str
-    ) -> None:
-        if token != self._rule_polish_token:
-            return
-        self._rule_polishing = False
-        dictated, self._rule_polish_dictated = self._rule_polish_dictated, False
-        self.cleanup_rule_activity.finish()
-        self._update_cleanup_rule_controls()
-        if not self.isVisible():
-            # Settings closed while the model worked. The words are still in
-            # the input for next time; a review dialog now would pop up alone.
-            return
-
-        notice = None
-        if error:
-            notice = (
-                "AI polish unavailable — your words will be saved as transcribed."
-                if dictated else
-                "AI polish unavailable — your wording will be saved as written."
-            )
-        dialog = CleanupRuleDialog(
-            polished, original=raw, notice=notice, dictated=dictated, parent=self
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        rule = dialog.rule_text()
-        if not rule:
-            return
-        staged = {r.casefold() for r in self._staged_cleanup_rules()}
-        if rule.casefold() in staged:
-            self._set_rule_notice("That rule already exists.")
-            return
-        self.cleanup_rules_list.addItem(rule)
-        item = self.cleanup_rules_list.item(self.cleanup_rules_list.count() - 1)
-        self.cleanup_rule_input.clear()
-        self._update_cleanup_rule_controls()
-        self._persist_cleanup_rules()
-        self._rule_glow.flash(item)
-
-    def _edit_cleanup_rule(self) -> None:
-        items = self.cleanup_rules_list.selectedItems()
-        if not items:
-            return
-        item = items[0]
-        dialog = CleanupRuleDialog(item.text(), parent=self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        rule = dialog.rule_text()
-        if rule:
-            item.setText(rule)
-            self._persist_cleanup_rules()
-
-    def _delete_cleanup_rule(self) -> None:
-        for item in self.cleanup_rules_list.selectedItems():
-            self.cleanup_rules_list.takeItem(self.cleanup_rules_list.row(item))
-        self._update_cleanup_rule_controls()
-        self._persist_cleanup_rules()
-
-    def _toggle_rule_dictation(self) -> None:
-        if self._rule_dictation_state == "recording":
-            self._stop_rule_dictation()
-            return
-        if self._rule_dictation_state != "idle" or self._rule_polishing:
-            return
-        if self.on_dictation_transcribe is None:
-            self._set_rule_notice("Dictation is unavailable.")
-            return
-        if self.get_meeting_active is not None and self.get_meeting_active():
-            self._set_rule_notice(
-                "Meeting Mode is active — end the meeting to dictate a rule."
-            )
-            return
-
-        settings = self._settings_snapshot()
-        priority = settings_microphones.saved_priority(settings)
-        order = tuple((entry["hostapi"], entry["name"]) for entry in priority)
-        if self._rule_recorder is None or self._rule_recorder_device != order:
-            if self._rule_recorder is not None:
-                self._rule_recorder.cleanup()
-            self._rule_recorder = AudioRecorder(
-                device_priority=priority, output_file=self._rule_dictation_path
-            )
-            # Levels come from the audio thread, which must not reach back
-            # into the window; the relay hands them to the composer's trace.
-            self._rule_level_token = token = next(_tokens)
-            level = _thread_relay().rule_dictation_level
-            self._rule_recorder.set_audio_level_callback(
-                lambda value: level.emit(token, value)
-            )
-            self._rule_recorder_device = order
-
-        if not self._rule_recorder.start_recording():
-            reason = self._rule_recorder.last_start_error
-            self._set_rule_notice(
-                f"Couldn't start recording: {reason}." if reason
-                else "Couldn't start recording."
-            )
-            return
-        self._rule_dictation_state = "recording"
-        self._set_rule_notice("")
-        self._set_rule_mic_recording(True)
-        self.cleanup_rule_activity.show_listening(
-            settings_microphones.preferred_name(settings)
-        )
-        self._rule_dictation_timer.start()
-        self._update_cleanup_rule_controls()
-
-    def _on_rule_dictation_level(self, token: int, level: float) -> None:
-        if token == self._rule_level_token:
-            self.cleanup_rule_activity.push_level(level)
-
-    def _cancel_rule_dictation(self) -> None:
-        """Throw the take away without transcribing it."""
-        if self._rule_dictation_state != "recording":
-            return
-        self._rule_dictation_timer.stop()
-        if self._rule_recorder is not None:
-            self._rule_recorder.cancel_recording()
-        self._rule_dictation_state = "idle"
-        self._set_rule_mic_recording(False)
-        self.cleanup_rule_activity.finish()
-        self._update_cleanup_rule_controls()
 
     def _apply_page_menu_icon(self) -> None:
         # The same per-theme chevron the stylesheet and the rail draw.
@@ -5165,9 +4339,9 @@ class SettingsDialog(QDialog):
         # stays open.
         if (
             event.key() == Qt.Key.Key_Escape
-            and self._rule_dictation_state == "recording"
+            and self.cleanup_rules.dictation_state == "recording"
         ):
-            self._cancel_rule_dictation()
+            self.cleanup_rules.cancel_dictation()
             event.accept()
             return
         if event.key() == Qt.Key.Key_Escape and self.capturing is not None:
@@ -5182,61 +4356,6 @@ class SettingsDialog(QDialog):
             event.accept()
             return
         super().keyPressEvent(event)
-
-    def _stop_rule_dictation(self) -> None:
-        if self._rule_dictation_state != "recording":
-            return
-        self._rule_dictation_timer.stop()
-        self._rule_dictation_state = "transcribing"
-        self._set_rule_mic_recording(False)
-        self.cleanup_rule_activity.show_transcribing(self._rule_transcribe_detail())
-        self._update_cleanup_rule_controls()
-
-        recorder = self._rule_recorder
-        transcribe = self.on_dictation_transcribe
-        audio_path = self._rule_dictation_path
-        self._rule_dictation_token = token = next(_tokens)
-        done = _thread_relay().rule_dictation_finished
-
-        def worker():
-            text, error = _transcribe_rule_dictation(recorder, transcribe, audio_path)
-            done.emit(token, text.strip(), error)
-
-        threading.Thread(
-            target=worker, name="rule-dictation", daemon=True
-        ).start()
-
-    def _on_rule_dictation_finished(self, token: int, text: str, error: str) -> None:
-        if token != self._rule_dictation_token:
-            return
-        self._rule_dictation_state = "idle"
-        self._update_cleanup_rule_controls()
-        if error:
-            self.cleanup_rule_activity.finish()
-            self._set_rule_notice(error)
-            return
-        current = self.cleanup_rule_input.text().strip()
-        raw = f"{current} {text}".strip() if current else text
-        # The words land in the input first, so a canceled review (or a
-        # Settings window closed mid-polish) keeps them for editing.
-        self.cleanup_rule_input.setText(raw)
-        if not self.isVisible():
-            self.cleanup_rule_activity.finish(animate=False)
-            return
-        self._polish_cleanup_rule(raw, dictated=True)
-
-    def _release_rule_recorder(self, *_args) -> None:
-        self._rule_dictation_timer.stop()
-        if self._rule_dictation_state == "recording":
-            # Settings is reused when it reopens, so a take still recording
-            # at close is discarded here rather than left showing "Stop".
-            self._rule_dictation_state = "idle"
-            self._set_rule_mic_recording(False)
-            self.cleanup_rule_activity.finish(animate=False)
-            self._update_cleanup_rule_controls()
-        if self._rule_recorder is not None:
-            self._rule_recorder.cleanup()
-            self._rule_recorder = None
 
     def _update_meeting_bind_ui(self) -> None:
         is_lan = self.meeting_bind_combo.currentData() == MeetingServerBind.LAN
@@ -5565,7 +4684,7 @@ class SettingsDialog(QDialog):
             self._load_appearance_settings(settings)
         self._load_meeting_settings(settings)
         if self._page_is_loading(API_KEYS):
-            self._load_api_key_settings(settings)
+            self.api_keys.load(settings)
         if self._page_is_loading(ADVANCED):
             self.developer_mode_check.setChecked(resolve_developer_mode(settings))
         if self._page_is_loading(DOWNLOADS):
@@ -5587,8 +4706,7 @@ class SettingsDialog(QDialog):
             self.cleanup_prompt_edit.setPlainText(prompt)
             self._saved_cleanup_prompt = prompt
         if self._page_is_loading(CLEANUP_RULES):
-            self.cleanup_rules_list.clear()
-            self.cleanup_rules_list.addItems(resolve_transcript_cleanup_rules(settings))
+            self.cleanup_rules.load(settings)
         self._update_cleanup_prompt_ui()
 
     def _load_appearance_settings(self, settings: dict) -> None:

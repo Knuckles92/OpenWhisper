@@ -271,8 +271,8 @@ class TestRuleComposerFlow(unittest.TestCase):
         _FakeReviewDialog.answer = QDialog.DialogCode.Rejected
         _FakeReviewDialog.rule = ""
         for target, replacement in (
-            ("ui_qt.dialogs.settings_dialog.AudioRecorder", _FakeRecorder),
-            ("ui_qt.dialogs.settings_dialog.CleanupRuleDialog", _FakeReviewDialog),
+            ("ui_qt.dialogs.settings_cleanup_rules.AudioRecorder", _FakeRecorder),
+            ("ui_qt.dialogs.settings_cleanup_rules.CleanupRuleDialog", _FakeReviewDialog),
             (
                 "services.transcript_cleanup.polish_cleanup_rule",
                 lambda raw, **_kw: ("Always write Kubernetes with a capital K.", None),
@@ -295,7 +295,7 @@ class TestRuleComposerFlow(unittest.TestCase):
 
     def _start_dictation(self) -> _FakeRecorder:
         QTest.mouseClick(self.dialog.cleanup_rule_mic_btn, Qt.MouseButton.LeftButton)
-        self.assertEqual(self.dialog._rule_dictation_state, "recording")
+        self.assertEqual(self.dialog.cleanup_rules.dictation_state, "recording")
         return _FakeRecorder.instances[-1]
 
     def test_dictating_shows_a_live_strip_and_a_red_stop(self):
@@ -315,7 +315,7 @@ class TestRuleComposerFlow(unittest.TestCase):
         recorder = self._start_dictation()
         QTest.keyClick(self.dialog, Qt.Key.Key_Escape)
         self.assertEqual(recorder.canceled, 1)
-        self.assertEqual(self.dialog._rule_dictation_state, "idle")
+        self.assertEqual(self.dialog.cleanup_rules.dictation_state, "idle")
         self.assertTrue(self.dialog.isVisible())
         self.assertEqual(self.dialog.cleanup_rule_mic_btn.text(), "Dictate")
         self.assertFalse(self.dialog.cleanup_rule_mic_btn.property("recording"))
@@ -325,8 +325,8 @@ class TestRuleComposerFlow(unittest.TestCase):
         recorder = self._start_dictation()
         self.dialog.close()
         self.assertGreaterEqual(recorder.cleaned, 1)
-        self.assertIsNone(self.dialog._rule_recorder)
-        self.assertEqual(self.dialog._rule_dictation_state, "idle")
+        self.assertIsNone(self.dialog.cleanup_rules.recorder)
+        self.assertEqual(self.dialog.cleanup_rules.dictation_state, "idle")
         self.assertEqual(self.dialog.cleanup_rule_mic_btn.text(), "Dictate")
         self.assertTrue(self.dialog.cleanup_rule_activity.isHidden())
 
@@ -341,7 +341,7 @@ class TestRuleComposerFlow(unittest.TestCase):
         self.assertIsNone(call["notice"])
         self.assertEqual(self.dialog.cleanup_rule_input.text(), "capitalize kubernetes")
         self.assertEqual(self.dialog.cleanup_rules_list.count(), 0)
-        self.assertFalse(self.dialog._rule_polishing)
+        self.assertFalse(self.dialog.cleanup_rules.polishing)
 
     def test_dictation_adds_to_words_already_typed(self):
         self.dialog.cleanup_rule_input.setText("Always")
@@ -360,7 +360,7 @@ class TestRuleComposerFlow(unittest.TestCase):
         self.assertTrue(_pump_until(lambda: self.dialog.cleanup_rules_list.count() == 1))
         self.assertFalse(_FakeReviewDialog.calls[-1]["dictated"])
         self.assertEqual(self.dialog.cleanup_rule_input.text(), "")
-        self.assertTrue(self.dialog._rule_glow.isVisible())
+        self.assertTrue(self.dialog.cleanup_rules.glow.isVisible())
         self.assertEqual(self.dialog.rail.value(CLEANUP_RULES), "1 rule")
 
     def test_typed_rule_notice_says_written_when_polish_fails(self):
@@ -380,7 +380,7 @@ class TestRuleComposerFlow(unittest.TestCase):
         status = self.dialog.cleanup_rule_status
         self.assertFalse(status.isHidden())
         self.assertEqual(status.text(), "That rule already exists.")
-        self.assertFalse(self.dialog._rule_polishing)
+        self.assertFalse(self.dialog.cleanup_rules.polishing)
         self.assertTrue(self.dialog.cleanup_rule_activity.isHidden())
         # Editing the words clears the notice.
         QTest.keyClick(self.dialog.cleanup_rule_input, Qt.Key.Key_X)

@@ -2499,12 +2499,12 @@ def test_background_end_persists_report_while_next_meeting_runs(
     from services.runtime.meeting import MeetingRuntime
 
     controller = SimpleNamespace(
-        meeting_active=False, meeting_status_update=MagicMock(),
-        meeting_state_changed=MagicMock(), meeting_server_started=MagicMock(),
-        meeting_error=MagicMock(), past_meetings_refresh_requested=MagicMock(),
-        restore_local_engine=MagicMock(),
+        meeting_active=False, restore_local_engine=MagicMock(),
     )
     runtime = MeetingRuntime(controller)
+    for name in ("meeting_status_update", "meeting_state_changed", "meeting_server_started",
+                 "meeting_error", "past_meetings_refresh_requested"):
+        setattr(runtime, name, MagicMock())
     runtime._repo = repo
     old = make_engine(cloud_enabled=True)
     runtime._engine = old
@@ -2532,7 +2532,7 @@ def test_background_end_persists_report_while_next_meeting_runs(
         # settle before observing only the old meeting's completion signals.
         assert new.wait_for_processing(5)
         controller.meeting_active = True
-        controller.meeting_state_changed.reset_mock()
+        runtime.meeting_state_changed.reset_mock()
         controller.restore_local_engine.reset_mock()
         released.set()
         worker.join(5)
@@ -2540,7 +2540,7 @@ def test_background_end_persists_report_while_next_meeting_runs(
         assert new.is_active()
         assert controller.meeting_active is True
         controller.restore_local_engine.assert_not_called()
-        for call in controller.meeting_state_changed.emit.call_args_list:
+        for call in runtime.meeting_state_changed.emit.call_args_list:
             assert set(call.args[0]) == {"background_message"}
         stored = repo.get_meeting(old.meeting_id)
         import json

@@ -945,11 +945,18 @@ class TestApplicationController:
                 # bound to the REAL settings_manager, so consent-dependent
                 # tests read the process-wide store instead of the fake.
                 "services.runtime.meeting",
+                "services.runtime.updater",
+                "services.runtime.models",
+                "services.runtime.components",
+                "services.runtime.remote",
                 "services.application_controller",
             ]:
                 sys.modules.pop(module_name, None)
 
             self.app_controller_module = importlib.import_module("services.application_controller")
+            self.updater_module = importlib.import_module("services.runtime.updater")
+            self.models_module = importlib.import_module("services.runtime.models")
+            self.components_module = importlib.import_module("services.runtime.components")
             self.hotkeys_runtime_module = importlib.import_module("services.runtime.hotkeys")
             monkeypatch.setattr(
                 self.hotkeys_runtime_module.HotkeyRuntime,
@@ -1008,6 +1015,21 @@ class TestApplicationController:
         controller.meeting_runtime._starting = True
         assert "meeting" in controller._acquire_backup()
         assert not controller._backup_in_progress
+
+    def test_backup_waits_for_a_rule_dictation_in_settings(self):
+        controller = self._create_controller()
+        controller._startup_database_ready = True
+        central = types.SimpleNamespace(isEnabled=lambda: True, setEnabled=Mock())
+        controller.ui_controller.main_window.centralWidget = lambda: central
+        rules = types.SimpleNamespace(dictation_state="recording")
+        controller.ui_controller._settings_dialog = types.SimpleNamespace(cleanup_rules=rules)
+        assert "cleanup rule" in controller._acquire_backup()
+        rules.dictation_state = "transcribing"
+        assert "cleanup rule" in controller._acquire_backup()
+        assert controller._backup_in_progress is False
+        rules.dictation_state = "idle"
+        assert controller._acquire_backup() is None
+        controller._release_backup()
 
     def test_walkthrough_library_edit_leaves_dictation_free(self):
         """A redone write-up runs an agent for minutes; the hotkey must still dictate."""
@@ -1115,11 +1137,11 @@ class TestApplicationController:
         controller.ui_controller.select_transcription_backend = controller.on_model_changed
         controller.meeting_active = True
         with pytest.raises(RuntimeError, match="running a meeting"):
-            controller._switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
+            controller.remote.switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
         assert controller._current_model_name == "local_whisper"
         controller.meeting_active = False
 
-        controller._switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
+        controller.remote.switch_engine_for_client("nemotron", "nemotron-3.5", "laptop")
         assert controller._current_model_name == "nemotron"
         assert self.settings.saved_model_selection == "nemotron"
         assert self.settings.all_settings["local_asr_models"] == {"nemotron": "nemotron-3.5"}
@@ -1164,7 +1186,7 @@ class TestApplicationController:
         self.settings.all_settings["whisper_model"] = "small"
         controller.ui_controller.consent_result = "cancel"
 
-        controller._on_hf_consent_requested("small", False, True)
+        controller.models._on_hf_consent_requested("small", False, True)
 
         # Selection and inline combos roll back to the model that is cached
         assert self.settings.all_settings["whisper_model"] == "turbo"
@@ -1186,7 +1208,7 @@ class TestApplicationController:
         self.settings.all_settings["whisper_model"] = "small"
         controller.ui_controller.consent_result = "cancel"
 
-        controller._on_hf_consent_requested("small", False, True)
+        controller.models._on_hf_consent_requested("small", False, True)
 
         assert self.settings.all_settings["whisper_model"] == "small"
 
@@ -1735,7 +1757,7 @@ class TestApplicationController:
             elif outcome != "timeout":
                 settled.set()
 
-        controller.retry_remote_for_transcription = Mock(side_effect=reconnect)
+        controller.remote.retry_for_transcription = Mock(side_effect=reconnect)
         runtime.transcribe_audio_file = Mock(
             side_effect=lambda path: controller._on_transcription_complete("recovered words")
         )
@@ -1743,7 +1765,7 @@ class TestApplicationController:
         runtime._run_transcription_job(str(source))
 
         attempts = {"reconnected": 2, "offline": 3, "canceled": 1, "timeout": 1}[outcome]
-        assert controller.retry_remote_for_transcription.call_count == attempts
+        assert controller.remote.retry_for_transcription.call_count == attempts
         assert progress == [f"Retrying connection ({n}/3)..." for n in range(1, attempts + 1)]
         assert not controller.ui_controller.copied
         if outcome == "reconnected":
@@ -1819,11 +1841,11 @@ class TestApplicationController:
         source.write_bytes(b"RIFF")
         assert runtime._claim_job()
         controller._pending_audio_path = str(source)
-        controller.retry_remote_for_transcription = Mock(side_effect=reconnect)
+        controller.remote.retry_for_transcription = Mock(side_effect=reconnect)
 
         runtime._run_transcription_job(str(source))
 
-        controller.retry_remote_for_transcription.assert_called_once()
+        controller.remote.retry_for_transcription.assert_called_once()
         assert backend.transcribe.call_count == 2
         assert self.history_manager.entries[0]["text"] == "recovered words"
         assert not controller.ui_controller.copied
@@ -2605,13 +2627,13 @@ class TestApplicationController:
         controller = self._create_controller()
         backend = controller.transcription_backends["local_whisper"]
         backend.model_name = "base"
-        decision = self.app_controller_module.AccessDecision.LOAD_CACHED
+        decision = self.models_module.AccessDecision.LOAD_CACHED
         self._coordinator().evaluate_access = (
             lambda model, consume_grant=True: decision
         )
         controller.meeting_active = True
 
-        controller._hf_model_worker("turbo")
+        controller.models._hf_model_worker("turbo")
 
         assert backend.model_name == "base"
         assert backend.device_info == "cpu"
@@ -2623,13 +2645,13 @@ class TestApplicationController:
         backend = controller.transcription_backends["local_whisper"]
         backend.model_name = "turbo"
         backend.is_model_missing = True
-        decision = self.app_controller_module.AccessDecision.LOAD_CACHED
+        decision = self.models_module.AccessDecision.LOAD_CACHED
         self._coordinator().evaluate_access = (
             lambda model, consume_grant=True: decision
         )
         controller.meeting_active = True
 
-        assert controller._download_model_to_cache("turbo") is True
+        assert controller.models._download_model_to_cache("turbo") is True
 
         assert backend.is_model_missing is True
         assert self._ENGINE_REFUSAL in controller.ui_controller.statuses
@@ -2638,12 +2660,12 @@ class TestApplicationController:
         """The gate must not block the ordinary path."""
         controller = self._create_controller()
         backend = controller.transcription_backends["local_whisper"]
-        decision = self.app_controller_module.AccessDecision.LOAD_CACHED
+        decision = self.models_module.AccessDecision.LOAD_CACHED
         self._coordinator().evaluate_access = (
             lambda model, consume_grant=True: decision
         )
 
-        controller._hf_model_worker("turbo")
+        controller.models._hf_model_worker("turbo")
 
         assert backend.model_name == "turbo"
         assert self._ENGINE_REFUSAL not in controller.ui_controller.statuses
@@ -2851,7 +2873,7 @@ class TestApplicationController:
     # ── Model Manager download/delete orchestration ────────────────
 
     def _coordinator(self):
-        return self.app_controller_module.hf_access_coordinator
+        return self.models_module.hf_access_coordinator
 
     def test_manager_download_consent_cancel_keeps_selection(self):
         """A declined fetch-only download must not revert the model selection."""
@@ -2859,7 +2881,7 @@ class TestApplicationController:
         self.settings.all_settings["whisper_model"] = "base"
         controller.ui_controller.consent_result = "cancel"
 
-        controller.request_model_download("tiny")
+        controller.models.request_model_download("tiny")
 
         assert controller.ui_controller.consent_requests[-1][0] == "tiny"
         assert self.settings.all_settings["whisper_model"] == "base"
@@ -2867,14 +2889,14 @@ class TestApplicationController:
 
     def test_manager_download_already_cached_short_circuits(self):
         controller = self._create_controller()
-        decision = self.app_controller_module.AccessDecision.LOAD_CACHED
+        decision = self.models_module.AccessDecision.LOAD_CACHED
         self._coordinator().evaluate_access = (
             lambda model, consume_grant=True: decision
         )
         ended = []
         self._coordinator().end_request = ended.append
 
-        controller.request_model_download("tiny")
+        controller.models.request_model_download("tiny")
 
         assert ended == ["tiny"]
         assert controller.ui_controller.model_manager_refreshes == 1
@@ -2883,13 +2905,13 @@ class TestApplicationController:
     def test_manager_fetch_only_download_leaves_engine_alone(self):
         controller = self._create_controller()
         backend = controller.transcription_backends["local_whisper"]
-        decision = self.app_controller_module.AccessDecision.DOWNLOAD_ALLOWED
+        decision = self.models_module.AccessDecision.DOWNLOAD_ALLOWED
         self._coordinator().evaluate_access = (
             lambda model, consume_grant=True: decision
         )
         fetched = []
         with patch.object(
-            self.app_controller_module,
+            self.models_module,
             "download_model_files",
             side_effect=lambda name, progress_callback=None, **kwargs: (
                 fetched.append(name) or f"/cache/{name}"
@@ -2897,7 +2919,7 @@ class TestApplicationController:
         ):
             busy_before = list(controller.ui_controller.engine_busy_states)
 
-            controller.request_model_download("tiny")
+            controller.models.request_model_download("tiny")
             assert controller.ui_controller.download_started == ["tiny"]
             fn, args = controller.executor.submissions[-1]
             fn(*args)
@@ -2914,12 +2936,12 @@ class TestApplicationController:
         backend = controller.transcription_backends["local_whisper"]
         backend.model_name = "tiny"
         backend.is_model_missing = True
-        decision = self.app_controller_module.AccessDecision.DOWNLOAD_ALLOWED
+        decision = self.models_module.AccessDecision.DOWNLOAD_ALLOWED
         self._coordinator().evaluate_access = (
             lambda model, consume_grant=True: decision
         )
 
-        controller.request_model_download("tiny")
+        controller.models.request_model_download("tiny")
         fn, args = controller.executor.submissions[-1]
         fn(*args)
 
@@ -2933,9 +2955,9 @@ class TestApplicationController:
         ended = []
         coordinator.end_request = ended.append
         coordinator.grant_once = lambda model_name: None
-        controller._download_model_to_cache = lambda model_name: model_name != "base"
+        controller.models._download_model_to_cache = lambda model_name: model_name != "base"
 
-        controller._hf_batch_worker(["tiny", "base", "small"])
+        controller.models._hf_batch_worker(["tiny", "base", "small"])
 
         assert ended == ["tiny", "base", "small"]
         assert controller.ui_controller.batch_finished == [(2, 3)]
@@ -2948,12 +2970,12 @@ class TestApplicationController:
         coordinator.grant_once = lambda model_name: None
 
         def download(model_name):
-            controller._batch_stop_requested = True
+            controller.models._batch_stop_requested = True
             return True
 
-        controller._download_model_to_cache = download
+        controller.models._download_model_to_cache = download
 
-        controller._hf_batch_worker(["tiny", "base", "small"])
+        controller.models._hf_batch_worker(["tiny", "base", "small"])
 
         assert ended == ["tiny", "base", "small"]
         assert controller.ui_controller.batch_finished == [(1, 3)]
@@ -2963,7 +2985,7 @@ class TestApplicationController:
         backend = controller.transcription_backends["local_whisper"]
         backend.last_loaded_model = "base"
 
-        controller.request_model_delete("base")
+        controller.models.request_model_delete("base")
 
         assert controller.ui_controller.deleted_models == [("base", False, "Model is in use — switch models first")]
         assert len(controller.executor.submissions) == 0
@@ -2974,11 +2996,11 @@ class TestApplicationController:
         self._coordinator().end_request = ended.append
         deleted = []
         with patch.object(
-            self.app_controller_module,
+            self.models_module,
             "delete_model_from_cache",
             side_effect=deleted.append,
         ):
-            controller.request_model_delete("tiny")
+            controller.models.request_model_delete("tiny")
             fn, args = controller.executor.submissions[-1]
             fn(*args)
 
@@ -2990,11 +3012,11 @@ class TestApplicationController:
     def test_manager_delete_reports_locked_files(self):
         controller = self._create_controller()
         with patch.object(
-            self.app_controller_module,
+            self.models_module,
             "delete_model_from_cache",
             side_effect=PermissionError("locked"),
         ):
-            controller.request_model_delete("tiny")
+            controller.models.request_model_delete("tiny")
             fn, args = controller.executor.submissions[-1]
             fn(*args)
 
@@ -3018,17 +3040,17 @@ class TestApplicationController:
             "archives": [],
         }
         with patch.object(
-            self.app_controller_module, "install_component", lambda *a, **k: None
+            self.components_module, "install_component", lambda *a, **k: None
         ), patch.object(
-            self.app_controller_module, "activate_component", lambda cid: (True, "")
+            self.components_module, "activate_component", lambda cid: (True, "")
         ), patch.object(
-            self.app_controller_module, "gpu_runtime_available", lambda: True
+            self.components_module, "gpu_runtime_available", lambda: True
         ), patch.object(
             self.app_controller_module.component_coordinator,
             "catalog_entry",
             return_value=gpu_entry,
         ):
-            controller._component_install_worker("gpu-accel", threading.Event())
+            controller.components._install_worker("gpu-accel", threading.Event())
 
         component_id, success, message = (
             controller.ui_controller.component_install_results[-1]
@@ -3057,19 +3079,19 @@ class TestApplicationController:
             "archives": [],
         }
         with patch.object(
-            self.app_controller_module, "install_component", lambda *a, **k: None
+            self.components_module, "install_component", lambda *a, **k: None
         ), patch.object(
-            self.app_controller_module,
+            self.components_module,
             "activate_component",
             lambda cid: (False, "registration failed"),
         ), patch.object(
-            self.app_controller_module, "gpu_runtime_available", lambda: False
+            self.components_module, "gpu_runtime_available", lambda: False
         ), patch.object(
             self.app_controller_module.component_coordinator,
             "catalog_entry",
             return_value=gpu_entry,
         ):
-            controller._component_install_worker("gpu-accel", threading.Event())
+            controller.components._install_worker("gpu-accel", threading.Event())
 
         _cid, success, message = (
             controller.ui_controller.component_install_results[-1]
@@ -3084,15 +3106,15 @@ class TestApplicationController:
 
         controller = self._create_controller()
         with patch.object(
-            self.app_controller_module, "install_component", lambda *a, **k: None
+            self.components_module, "install_component", lambda *a, **k: None
         ), patch.object(
-            self.app_controller_module, "activate_component", lambda cid: (True, "")
+            self.components_module, "activate_component", lambda cid: (True, "")
         ), patch.object(
             self.app_controller_module.component_coordinator,
             "catalog_entry",
             return_value={"version": "node22-pi1"},
         ):
-            controller._component_install_worker("meeting-agent", threading.Event())
+            controller.components._install_worker("meeting-agent", threading.Event())
 
         component_id, success, message = (
             controller.ui_controller.component_install_results[-1]
@@ -3103,7 +3125,7 @@ class TestApplicationController:
 
     def test_auto_update_check_failure_is_background_status(self):
         controller = self._create_controller()
-        controller._on_update_check_finished(
+        controller.updater._on_check_finished(
             None, "GitHub rate-limited this update check.", False
         )
         assert not controller.ui_controller.statuses
@@ -3120,31 +3142,31 @@ class TestApplicationController:
         with patch(
             "services.app_update.seconds_until_auto_check", return_value=3 * 3600
         ):
-            controller._on_update_check_finished(None, "", False)
-        assert controller._update_check_timer.started_ms == 3 * 3600 * 1000
+            controller.updater._on_check_finished(None, "", False)
+        assert controller.updater._check_timer.started_ms == 3 * 3600 * 1000
 
     def test_unsaved_check_times_never_mean_checking_again_at_once(self):
         controller = self._create_controller()
         with patch("services.app_update.seconds_until_auto_check", return_value=0):
-            controller._on_update_check_finished(None, "offline", False)
-        assert controller._update_check_timer.started_ms == (
-            self.app_controller_module.UPDATE_RECHECK_FLOOR_MS
+            controller.updater._on_check_finished(None, "offline", False)
+        assert controller.updater._check_timer.started_ms == (
+            self.updater_module.UPDATE_RECHECK_FLOOR_MS
         )
 
     def test_update_tick_checks_when_due_and_otherwise_waits(self):
         controller = self._create_controller()
-        timer = controller._update_check_timer
+        timer = controller.updater._check_timer
         timer.started_ms = None
-        with patch.object(controller, "request_update_check") as request:
+        with patch.object(controller.updater, "request_check") as request:
             with patch("services.app_update.seconds_until_auto_check", return_value=None):
-                controller._maybe_start_update_check()
+                controller.updater._maybe_start_check()
             assert timer.started_ms is None
             with patch("services.app_update.seconds_until_auto_check", return_value=90.0):
-                controller._maybe_start_update_check()
+                controller.updater._maybe_start_check()
             request.assert_not_called()
             assert timer.started_ms == 90_000
             with patch("services.app_update.seconds_until_auto_check", return_value=0):
-                controller._maybe_start_update_check()
+                controller.updater._maybe_start_check()
             request.assert_called_once_with(manual=False)
 
     def test_gpu_fallback_reverts_device_setting_and_names_the_fix(self):
@@ -3152,16 +3174,16 @@ class TestApplicationController:
         backend = controller.transcription_backends["local_whisper"]
         backend.gpu_fallback_note = "GPU unavailable, using CPU"
         backend.gpu_fallback_cause = (
-            self.app_controller_module.GpuFallbackCause.MISSING_LIBRARIES
+            self.models_module.GpuFallbackCause.MISSING_LIBRARIES
         )
         self.settings.all_settings["whisper_device"] = "cuda"
 
         with patch.object(
-            self.app_controller_module,
+            self.models_module,
             "available_component_ids",
             lambda: ("gpu-accel",),
         ):
-            controller.gpu_fallback_detected.emit()
+            controller.models.gpu_fallback_detected.emit()
 
         assert self.settings.all_settings["whisper_device"] == "cpu"
         assert "Downloads" in controller.ui_controller.statuses[-1]
@@ -3171,11 +3193,11 @@ class TestApplicationController:
         backend = controller.transcription_backends["local_whisper"]
         backend.gpu_fallback_note = "GPU out of memory, using CPU"
         backend.gpu_fallback_cause = (
-            self.app_controller_module.GpuFallbackCause.OUT_OF_MEMORY
+            self.models_module.GpuFallbackCause.OUT_OF_MEMORY
         )
         self.settings.all_settings["whisper_device"] = "auto"
 
-        controller.gpu_fallback_detected.emit()
+        controller.models.gpu_fallback_detected.emit()
 
         assert self.settings.all_settings["whisper_device"] == "cpu"
         status = controller.ui_controller.statuses[-1]
@@ -3190,14 +3212,14 @@ class TestApplicationController:
             backend.device_info = "turbo | cpu (int8) — GPU unavailable, using CPU"
             backend.gpu_fallback_note = "GPU unavailable, using CPU"
             backend.gpu_fallback_cause = (
-                self.app_controller_module.GpuFallbackCause.MISSING_LIBRARIES
+                self.models_module.GpuFallbackCause.MISSING_LIBRARIES
             )
 
         backend.reload_model = reload_with_fallback
         self.settings.all_settings["whisper_device"] = "cuda"
 
         with patch.object(
-            self.app_controller_module,
+            self.models_module,
             "available_component_ids",
             lambda: ("gpu-accel",),
         ):
@@ -3218,12 +3240,12 @@ class TestApplicationController:
         backend = controller.transcription_backends["local_whisper"]
         backend.gpu_fallback_note = "GPU unavailable, using CPU"
         backend.gpu_fallback_cause = (
-            self.app_controller_module.GpuFallbackCause.MISSING_LIBRARIES
+            self.models_module.GpuFallbackCause.MISSING_LIBRARIES
         )
         self.settings.all_settings["whisper_device"] = "auto"
 
         with patch.object(
-            self.app_controller_module,
+            self.models_module,
             "available_component_ids",
             lambda: ("gpu-accel",),
         ):
@@ -3419,7 +3441,7 @@ class TestApplicationController:
 
     def test_optional_download_never_marks_engine_busy(self):
         controller = self._create_controller()
-        controller._start_hf_model_task("parakeet-v3")
+        controller.models._start_hf_model_task("parakeet-v3")
         fn, args = controller.executor.submissions[-1]
         assert fn.__name__ == "_hf_model_worker"
         assert args == ("parakeet-v3", False)
@@ -3430,14 +3452,14 @@ class TestApplicationController:
         backend.model = None
         backend.last_loaded_model = "turbo"
         self.settings.all_settings["whisper_model"] = "base"
-        controller._revert_declined_model_selection("parakeet-v3")
+        controller.models._revert_declined_model_selection("parakeet-v3")
         assert self.settings.all_settings["whisper_model"] == "base"
 
     def test_runtime_removal_is_blocked_during_a_meeting(self):
         controller = self._create_controller()
         controller.meeting_active = True
-        with patch("services.application_controller.uninstall_component") as uninstall:
-            controller.request_component_uninstall("asr-nvidia-cpu")
+        with patch("services.runtime.components.uninstall_component") as uninstall:
+            controller.components.request_uninstall("asr-nvidia-cpu")
         uninstall.assert_not_called()
 
     def test_optional_selection_cannot_change_while_a_job_is_active(self):
@@ -3453,14 +3475,14 @@ class TestApplicationController:
         ui = controller.ui_controller
         ui.show_required_runtime_dialog = Mock(return_value=accepted)
         ui.open_downloads = Mock()
-        controller.request_component_install = Mock()
+        controller.components.request_install = Mock()
         with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
                 patch('services.local_asr.catalog.gpu_runtime_offer', return_value=None), \
                 patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=False):
-            controller._prompt_for_model_runtime('parakeet-v3')
-            controller._prompt_for_model_runtime('parakeet-v3')
+            controller.models._prompt_for_model_runtime('parakeet-v3')
+            controller.models._prompt_for_model_runtime('parakeet-v3')
         ui.show_required_runtime_dialog.assert_called_once_with('parakeet-v3', 'asr-nvidia-cpu')
-        assert controller.request_component_install.call_count == int(accepted)
+        assert controller.components.request_install.call_count == int(accepted)
         assert ui.open_downloads.call_count == int(accepted)
 
     @pytest.mark.parametrize('installing,offline', [(True, False), (False, True)])
@@ -3471,8 +3493,8 @@ class TestApplicationController:
         with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
                 patch('services.local_asr.catalog.gpu_runtime_offer', return_value=None), \
                 patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=installing), \
-                patch.object(self.app_controller_module, 'is_hf_hub_offline_env_set', return_value=offline):
-            controller._prompt_for_model_runtime('parakeet-v3')
+                patch.object(self.models_module, 'is_hf_hub_offline_env_set', return_value=offline):
+            controller.models._prompt_for_model_runtime('parakeet-v3')
         controller.ui_controller.show_required_runtime_dialog.assert_not_called()
 
     def test_download_prompts_for_runtime_even_when_model_not_selected(self):
@@ -3482,7 +3504,7 @@ class TestApplicationController:
         with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
                 patch('services.local_asr.catalog.gpu_runtime_offer', return_value=None), \
                 patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=False):
-            controller._start_hf_model_task('parakeet-v3')
+            controller.models._start_hf_model_task('parakeet-v3')
         controller.ui_controller.show_required_runtime_dialog.assert_called_once()
         assert controller._current_model_name == 'local_whisper'
 
@@ -3498,7 +3520,7 @@ class TestApplicationController:
         ui = controller.ui_controller
         ui.show_required_runtime_dialog = Mock(side_effect=lambda *args: not controller._reload_in_flight)
         ui.open_downloads = Mock()
-        controller.request_component_install = Mock()
+        controller.components.request_install = Mock()
         with patch('services.local_asr.cache.is_cached', return_value=cached) as is_cached, \
                 patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
                 patch('services.local_asr.catalog.gpu_runtime_offer', return_value=None), \
@@ -3508,10 +3530,10 @@ class TestApplicationController:
         assert not controller._reload_in_flight
         if cached:
             ui.show_required_runtime_dialog.assert_called_once_with('parakeet-v3', 'asr-nvidia-cpu')
-            controller.request_component_install.assert_called_once_with('asr-nvidia-cpu')
+            controller.components.request_install.assert_called_once_with('asr-nvidia-cpu')
         else:
             ui.show_required_runtime_dialog.assert_not_called()
-            controller.request_component_install.assert_not_called()
+            controller.components.request_install.assert_not_called()
 
     @pytest.mark.parametrize('choice', ['asr-nvidia-cuda', 'asr-nvidia-cpu', None])
     def test_first_use_offers_the_gpu_runtime_with_the_cpu_one(self, choice):
@@ -3521,20 +3543,20 @@ class TestApplicationController:
         ui.show_gpu_runtime_dialog = Mock(return_value=choice)
         ui.show_required_runtime_dialog = Mock()
         ui.open_downloads = Mock()
-        controller.request_component_install = Mock()
+        controller.components.request_install = Mock()
         with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
                 patch('services.local_asr.catalog.gpu_runtime_offer', return_value='asr-nvidia-cuda'), \
                 patch.object(self.app_controller_module.component_coordinator, 'is_installing', return_value=False):
-            controller._prompt_for_model_runtime('parakeet-v3')
-            controller._prompt_for_model_runtime('parakeet-v3')
+            controller.models._prompt_for_model_runtime('parakeet-v3')
+            controller.models._prompt_for_model_runtime('parakeet-v3')
         # Asked once per session, whichever answer; Later asks again next run.
         ui.show_gpu_runtime_dialog.assert_called_once_with('parakeet-v3', 'asr-nvidia-cuda', 'asr-nvidia-cpu')
         ui.show_required_runtime_dialog.assert_not_called()
         if choice:
-            controller.request_component_install.assert_called_once_with(choice)
+            controller.components.request_install.assert_called_once_with(choice)
             ui.open_downloads.assert_called_once_with(component_id=choice)
         else:
-            controller.request_component_install.assert_not_called()
+            controller.components.request_install.assert_not_called()
             ui.open_downloads.assert_not_called()
 
     def test_gpu_runtime_offer_waits_for_its_install_in_flight(self):
@@ -3545,7 +3567,7 @@ class TestApplicationController:
                 patch('services.local_asr.catalog.gpu_runtime_offer', return_value='asr-nvidia-cuda'), \
                 patch.object(self.app_controller_module.component_coordinator, 'is_installing',
                              side_effect=lambda component: component == 'asr-nvidia-cuda'):
-            controller._prompt_for_model_runtime('parakeet-v3')
+            controller.models._prompt_for_model_runtime('parakeet-v3')
         controller.ui_controller.show_gpu_runtime_dialog.assert_not_called()
 
 
@@ -3611,7 +3633,7 @@ class TestApplicationController:
         controller = self._create_controller()
         retried = []
         controller.meeting_runtime.retry_recovery_scan = lambda: retried.append(True)
-        controller.meeting_recovery_scan_failed.emit("database unavailable")
+        controller.meeting_runtime.meeting_recovery_scan_failed.emit("database unavailable")
         message, retry = controller.ui_controller.meeting_recovery_scan_errors[-1]
         assert "database unavailable" in message
         retry()
