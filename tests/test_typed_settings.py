@@ -6,6 +6,13 @@ every migrated call site's typed read with the expression it replaced, over
 missing, valid and malformed stored values. A stored value both versions
 reject must read the same; the only allowed difference is where the old code
 raised (it had no effective value) and the typed read now returns the default.
+
+The snapshot is a one-time oracle for that refactor, not a specification.
+Settings added since are not in it and are not compared, so adding one needs
+nothing here. If you deliberately change an existing setting's default or
+validation and an equivalence test fails, the oracle has done its job: delete
+``tests/legacy_settings_77b63c1.py`` and the equivalence sections below, and
+keep the tests of the declarations themselves.
 """
 from __future__ import annotations
 
@@ -73,18 +80,23 @@ def _plain(value: Any) -> Any:
 def test_every_key_is_a_declared_setting_with_its_old_name():
     old_keys = {name: value for name, value in vars(old.SettingsKey).items() if name.isupper()}
     new_keys = {name: value for name, value in vars(SettingsKey).items() if name.isupper()}
-    assert set(new_keys) == set(old_keys)
+    # Every key the snapshot had is still declared; newer ones are welcome.
+    assert set(old_keys) <= set(new_keys)
     for name, setting in new_keys.items():
         assert isinstance(setting, Setting), name
-        assert setting == old_keys[name] and setting.key == old_keys[name], name
         assert type(setting.key) is str
+        if name in old_keys:
+            assert setting == old_keys[name] and setting.key == old_keys[name], name
 
 
 def test_the_defaults_table_is_unchanged():
-    assert dict(SETTING_DEFAULTS) == dict(old.SETTING_DEFAULTS)
-    assert list(SETTING_DEFAULTS) == list(old.SETTING_DEFAULTS) or (
-        set(SETTING_DEFAULTS) == set(old.SETTING_DEFAULTS)
-    )
+    # For every setting the snapshot had; a setting added since has no old default.
+    assert {key: SETTING_DEFAULTS[key] for key in old.SETTING_DEFAULTS} == dict(
+        old.SETTING_DEFAULTS)
+    snapshot_keys = {value for name, value in vars(old.SettingsKey).items()
+                     if name.isupper()}
+    assert {key for key in SETTING_DEFAULTS if key in snapshot_keys} == set(
+        old.SETTING_DEFAULTS)
 
 
 def test_every_table_default_is_what_a_read_of_nothing_returns():
