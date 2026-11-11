@@ -184,7 +184,7 @@ class LoopbackMcpServer:
             try:
                 text, is_error = endpoint.handler(name, arguments, meta)
             except Exception as exc:
-                logger.warning("Meeting tool %s failed: %s", name, exc)
+                logger.warning("Meeting tool %s failed: %s", name, exc, exc_info=True)
                 text, is_error = json.dumps({"error": str(exc)}), True
         return _tool_text(text, is_error)
 

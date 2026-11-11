@@ -269,6 +269,8 @@ def parse_diarized_result(result: Any) -> List[Dict[str, Any]]:
         try:
             data = result.model_dump()
         except Exception:
+            logger.debug("Diarize result has no usable model_dump; reading it as is",
+                         exc_info=True)
             data = result
     if not isinstance(data, dict):
         segments = getattr(result, "segments", None)

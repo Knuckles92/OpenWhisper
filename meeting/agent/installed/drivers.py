@@ -147,7 +147,12 @@ class PassRequest:
             try:
                 self.on_event(kind, tool)
             except Exception:
-                logger.debug("Agent event callback failed", exc_info=True)
+                # Called per agent event: warn once per pass, then stay quiet.
+                if not getattr(self, "_event_cb_warned", False):
+                    self._event_cb_warned = True
+                    logger.warning("Agent event callback failed", exc_info=True)
+                else:
+                    logger.debug("Agent event callback failed", exc_info=True)
 
     def tracked_handler(self) -> ToolHandler:
         """``handler`` that also counts as progress and reports the tool."""
@@ -384,6 +389,7 @@ class HeadlessDriver:
                      request: PassRequest) -> None:
         """Feed each JSON event line to :meth:`handle_event`; any line is a heartbeat."""
         assert proc.stdout is not None
+        warned = False
         for raw in proc.stdout:
             line = raw.strip()
             if not line:
@@ -397,7 +403,12 @@ class HeadlessDriver:
                 try:
                     self.handle_event(event, state, request)
                 except Exception:
-                    logger.debug("Could not read an agent event", exc_info=True)
+                    # Per event: warn once per pass, then stay quiet.
+                    if not warned:
+                        warned = True
+                        logger.warning("Could not read an agent event", exc_info=True)
+                    else:
+                        logger.debug("Could not read an agent event", exc_info=True)
 
     def _watch(self, proc: subprocess.Popen, request: PassRequest, state: _RunState,
                reader: threading.Thread) -> Optional[PassOutcome]:

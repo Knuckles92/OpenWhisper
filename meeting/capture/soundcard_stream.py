@@ -134,11 +134,14 @@ class SoundcardLoopbackSource:
                 from meeting.capture.linux_audio import probe_linux_audio
                 return bool(probe_linux_audio(verify_open=False).ready)
             except Exception:
+                logger.debug("Linux system-audio probe unavailable", exc_info=True)
                 return False
         try:
             import soundcard  # noqa: F401
             return True
         except Exception:
+            logger.debug("SoundCard is not importable; loopback capture unavailable",
+                         exc_info=True)
             return False
 
     def start(self, on_block: Callable[[CaptureBlock], None]) -> None:
@@ -351,6 +354,7 @@ def _loopback_or_none(sc: Any, device_id: Any) -> Any:
     try:
         return sc.get_microphone(id=device_id, include_loopback=True)
     except Exception:
+        logger.debug("Loopback device lookup failed", exc_info=True)
         return None
 
 

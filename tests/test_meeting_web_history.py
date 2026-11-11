@@ -96,3 +96,40 @@ def test_history_paging_and_state_preserve_auth_and_bad_cursor_errors(history_cl
         assert history_client.get(route, params={"token": "wrong"}).status_code == 401
     assert history_client.get("/api/meetings", params={"token": "host-token", "cursor": "bad"}).status_code == 400
     assert history_client.get("/api/meetings/m_missing/state", params={"token": "host-token"}).status_code == 404
+
+
+_BAD_CURSORS = [
+    "bad",  # base64 of bytes that are not UTF-8
+    "!!!",  # no base64 alphabet: decodes to nothing
+    "e30",  # {}: not a list
+    "WzEsMiwzXQ",  # [1,2,3]: wrong length
+    "MQ",  # 1: not iterable
+    "bnVsbA",  # null
+]
+
+
+@pytest.mark.parametrize("cursor", _BAD_CURSORS + [
+    "WzEsMl0",  # [1,2]: fields are not strings
+    "x" * 5000,  # too long
+])
+def test_malformed_history_cursors_are_client_errors(cursor):
+    from fastapi import HTTPException
+
+    from meeting.web.api import _decode_history_cursor
+
+    with pytest.raises(HTTPException) as error:
+        _decode_history_cursor(cursor)
+    assert error.value.status_code == 400
+
+
+@pytest.mark.parametrize("cursor", _BAD_CURSORS + [
+    "WyJhIiwiYiJd",  # ["a","b"]: start is not a number
+])
+def test_malformed_transcript_cursors_are_client_errors(cursor):
+    from fastapi import HTTPException
+
+    from meeting.web.api import _decode_cursor
+
+    with pytest.raises(HTTPException) as error:
+        _decode_cursor(cursor)
+    assert error.value.status_code == 400

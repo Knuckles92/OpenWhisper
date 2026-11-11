@@ -309,7 +309,7 @@ def _close_quietly(stream: Any) -> None:
         try:
             stream.close()
         except Exception:
-            pass
+            pass  # closing a pipe of a dead child; nothing left to do
 
 
 def _terminate_process(proc: subprocess.Popen) -> None:
@@ -321,8 +321,8 @@ def _terminate_process(proc: subprocess.Popen) -> None:
         proc.kill()
         try:
             proc.wait(timeout=_KILL_WAIT_S)
-        except Exception:
-            pass
+        except subprocess.TimeoutExpired:
+            logger.warning("Meeting sidecar did not exit after kill (pid %s)", proc.pid)
 
 
 def _log_sidecar_line(params: Dict[str, Any]) -> None:
@@ -653,7 +653,12 @@ class SidecarAgent:
             try:
                 callback(detail)
             except Exception:
-                logger.debug("Checkpoint progress callback failed", exc_info=True)
+                # Called per sidecar event: warn once, then stay quiet.
+                if not getattr(self, "_progress_cb_warned", False):
+                    self._progress_cb_warned = True
+                    logger.warning("Checkpoint progress callback failed", exc_info=True)
+                else:
+                    logger.debug("Checkpoint progress callback failed", exc_info=True)
 
     def _current_pass_kind(self, request_id: Any = None) -> str:
         """Pass kind of the in-flight ``request_id``, else an empty string."""
@@ -676,7 +681,12 @@ class SidecarAgent:
         try:
             callback(activity)
         except Exception:
-            logger.debug("Agent activity callback failed", exc_info=True)
+            # Called per streamed event: warn once, then stay quiet.
+            if not getattr(self, "_activity_cb_warned", False):
+                self._activity_cb_warned = True
+                logger.warning("Agent activity callback failed", exc_info=True)
+            else:
+                logger.debug("Agent activity callback failed", exc_info=True)
 
     def _run_checkpoint(self, payload: CheckpointPayload,
                         timeout_s: float,
@@ -951,7 +961,7 @@ class SidecarAgent:
         if code is None:
             try:
                 code = proc.wait(timeout=0.5)
-            except Exception:
+            except subprocess.TimeoutExpired:
                 code = None
         return "unknown" if code is None else code
 
@@ -1008,7 +1018,7 @@ class SidecarAgent:
             if proc.poll() is None:
                 _terminate_process(proc)
         except Exception:
-            logger.debug("Sidecar process teardown error", exc_info=True)
+            logger.warning("Sidecar process teardown error", exc_info=True)
         finally:
             for stream in (proc.stdout, proc.stderr):
                 _close_quietly(stream)
@@ -1220,7 +1230,15 @@ class SidecarAgent:
                         break
                 self._dispatch_inbound(msg, generation)
         except Exception:
-            logger.debug("Sidecar stdout reader stopped", exc_info=True)
+            # A teardown closes the pipe under this reader; anything else is
+            # unexpected and ends the protocol stream.
+            with self._lock:
+                stale = (self._proc is not proc
+                         or generation != self._restart_generation)
+            if stale or self._shut_down:
+                logger.debug("Sidecar stdout reader stopped", exc_info=True)
+            else:
+                logger.warning("Sidecar stdout reader stopped unexpectedly", exc_info=True)
         finally:
             self._on_stdout_closed(generation, proc)
 
@@ -1489,7 +1507,7 @@ class SidecarAgent:
                 "result": payload,
             })
         except Exception as exc:
-            logger.warning("Tool bridge %s failed: %s", method, exc)
+            logger.warning("Tool bridge %s failed: %s", method, exc, exc_info=True)
             try:
                 self._write_error(req_id, -32603, str(exc))
             except Exception:
