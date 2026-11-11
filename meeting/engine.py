@@ -30,10 +30,8 @@ from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 from meeting.capture_session import MeetingCapture
 from meeting.clock import MeetingClock
-from meeting.finalization import (
-    POLISH_TIMEOUT_S, make_step, failed_steps_message, insights_ready_message,
-    saved_state_detail, speaker_pass_gate,
-)
+from meeting.end_run import EndRun
+from meeting.finalization import POLISH_TIMEOUT_S, speaker_pass_gate
 from meeting.interfaces import (
     CHANNEL_LOOPBACK,
     CHANNEL_MIC,
@@ -130,11 +128,6 @@ class MeetingEngineOptions:
     system_audio_policy: str = 'auto'
 
 
-_INSIGHTS_OFF_MESSAGE = "AI insights are off for this meeting."
-_RECOVERY_PENDING_MESSAGE = (
-    "Final insights are unavailable until "
-    "transcription recovery finishes."
-)
 _INTELLIGENCE_OFFLINE_MESSAGE = (
     "Meeting intelligence is offline; final cloud "
     "insights could not run."
@@ -152,15 +145,6 @@ def _agent_failure_text(error: str) -> str:
     return f"Last error: {error[:200]}" if error else ""
 
 
-#: Headline shown while each finalization step runs.
-_STEP_RUNNING_MESSAGES = {
-    "redecode": "Re-transcribing meeting…",
-    "speaker_id": "Identifying speakers…",
-    "polish": "Cleaning transcript…",
-    "consolidation": "Preparing final report…",
-}
-
-
 def _stop_quietly(component: Any, failure_message: str) -> None:
     """Stop ``component`` if there is one, logging rather than raising."""
     if component is None:
@@ -169,84 +153,6 @@ def _stop_quietly(component: Any, failure_message: str) -> None:
         component.stop()
     except Exception:
         logger.exception(failure_message)
-
-
-class _EndRun:
-    """What one End carries from capture shutdown through finalization."""
-
-    def __init__(self, engine: "MeetingEngine", *, complete: bool, unfinished: Any,
-                 scheduler: Any, will_offline: bool, will_speaker_id: bool) -> None:
-        self.engine = engine
-        self.complete = complete
-        self.unfinished = unfinished
-        self.scheduler = scheduler
-        self.will_offline = will_offline
-        self.will_speaker_id = will_speaker_id
-        self.cloud_enabled = False
-        self.want_polish = False
-        self.want_report = False
-        self.run_cloud = False
-        self.steps: List[Dict[str, Any]] = []
-        self.total_steps = 0
-        self.offline_ok = False
-        self.speaker_ok = False
-        self.speaker_skipped = False
-        self.speaker_error = ""
-
-    def update_step(self, step_id: str, step_status: str, detail_msg: str = "", *,
-                    message: str = "", emit: bool = True) -> None:
-        logger.log(
-            logging.WARNING if step_status == "failed" else logging.INFO,
-            "Meeting finalization meeting_id=%s stage=%s status=%s detail=%s",
-            self.engine.meeting_id, step_id, step_status, detail_msg,
-        )
-        curr_idx = 1
-        for idx, s in enumerate(self.steps, 1):
-            if s["id"] == step_id:
-                s["status"] = step_status
-                if detail_msg:
-                    s["detail"] = detail_msg
-                curr_idx = idx
-                break
-        top_msg = message or _STEP_RUNNING_MESSAGES.get(step_id, "Finalizing meeting state…")
-        self.engine._set_finalization(
-            "running",
-            top_msg,
-            stage=step_id,
-            current_step=curr_idx,
-            total_steps=self.total_steps,
-            step_details=detail_msg,
-            steps=self.steps,
-            emit=emit,
-        )
-
-    def progress(self, step_id: str, template: str) -> Callable[[str, int, int], None]:
-        """A ``(detail, current, total)`` callback; ``template`` takes ``curr`` and ``total``."""
-        def report(detail: str, curr: int, total: int) -> None:
-            self.update_step(
-                step_id,
-                "running",
-                detail,
-                message=template.format(curr=curr, total=total),
-            )
-        return report
-
-    def speaker_outcome(self) -> Tuple[str, str]:
-        """Final status and message when speaker identification ends the run."""
-        if self.speaker_ok:
-            if self.cloud_enabled:
-                return "completed", "Speaker identification finished."
-            return "completed", (
-                "Speaker identification finished. "
-                "AI insights are off for this meeting."
-            )
-        if self.speaker_skipped:
-            return "completed", self.speaker_error or (
-                "Speaker identification skipped."
-            )
-        return "failed", self.speaker_error or (
-            "Speaker identification failed."
-        )
 
 
 class MeetingEngine:
@@ -997,13 +903,22 @@ class MeetingEngine:
             drained = self._drain_end_capture(drain_timeout_s)
             unfinished = self._unfinished_chunks_after_drain()
             complete = drained and unfinished == 0 and not self._capture.integrity_error
-            end = _EndRun(
-                self,
+            end = EndRun(
+                self.meeting_id,
                 complete=complete,
                 unfinished=unfinished,
                 scheduler=self._scheduler,
                 will_offline=self._will_redecode_at_end(),
                 will_speaker_id=self._will_identify_speakers_at_end(),
+                set_finalization=self._set_finalization,
+                redecode=self._offline_pass_for_end,
+                redecode_failure=lambda: self._offline_failure_detail,
+                identify_speakers=self._run_cloud_speaker_pass,
+                allow_agent_writes=self.allow_agent_writes,
+                revoke_agent_writes=self.revoke_agent_writes,
+                core_is_healthy=self._core_is_healthy,
+                offline_message=self._intelligence_offline_message,
+                summary_stats=self._finalization_summary_stats,
             )
             # Immediate repair still uses the live draft so the dashboard is
             # useful the moment capture ends; the offline pass may replace it.
@@ -1014,8 +929,15 @@ class MeetingEngine:
             terminal_status = status
             self._stop_heartbeat()
 
-            self._plan_end_steps(end)
-            self._announce_finalization(end)
+            end.plan(
+                cloud_enabled=(
+                    bool(self.store.with_state(lambda s: s.cloud_enabled))
+                    if self.store is not None else False
+                ),
+                want_polish=bool(self.options.end_polish),
+                want_report=bool(self.options.end_report),
+            )
+            end.announce()
 
             self._active = False
             self._broadcast({"type": "meeting_ended", "status": status})
@@ -1029,13 +951,13 @@ class MeetingEngine:
             })
             ended_emitted = True
 
-            self._end_redecode(end)
+            end.redecode()
             # The remaining passes use saved audio/text. Free Whisper before
             # cloud work so another meeting can own the local model.
             if self._stop_asr("end"):
                 self._emit("background_ready", {"meeting_id": self.meeting_id})
-            self._end_speaker_id(end)
-            self._end_insights(end)
+            end.identify_speakers()
+            end.insights()
             self._wrap_up_end(end)
         except Exception as exc:
             logger.exception("Meeting end failed")
@@ -1116,286 +1038,14 @@ class MeetingEngine:
             logger.exception("Failed to persist terminal meeting metadata")
             raise
 
-    def _plan_end_steps(self, end: _EndRun) -> None:
-        if self.store is not None:
-            end.cloud_enabled = bool(
-                self.store.with_state(lambda s: s.cloud_enabled)
-            )
-        end.want_polish = bool(self.options.end_polish)
-        end.want_report = bool(self.options.end_report)
-        end.run_cloud = bool(
-            end.cloud_enabled
-            and end.complete
-            and end.scheduler is not None
-            and self._core_is_healthy()
-            and (end.want_polish or end.want_report)
-        )
-        end.steps = [make_step(step_id) for step_id, enabled in (
-            ("redecode", end.will_offline),
-            ("speaker_id", end.will_speaker_id),
-            ("polish", end.run_cloud and end.want_polish),
-            ("consolidation", end.run_cloud and end.want_report),
-            ("finalize", True),
-        ) if enabled]
-        end.total_steps = len(end.steps)
-
-    def _announce_finalization(self, end: _EndRun) -> None:
-        """Publish the opening finalization state before ``ended`` goes out."""
-        if end.will_offline or end.will_speaker_id or end.run_cloud:
-            end.update_step(end.steps[0]["id"], "running", end.steps[0]["detail"], emit=False)
-        elif not end.cloud_enabled:
-            self._set_finalization("disabled", _INSIGHTS_OFF_MESSAGE, emit=False)
-        elif not end.complete:
-            self._set_finalization("unavailable", _RECOVERY_PENDING_MESSAGE, emit=False)
-        else:
-            self._set_finalization("unavailable", self._intelligence_offline_message(), emit=False)
-
-    def _end_redecode(self, end: _EndRun) -> None:
-        if not end.will_offline:
-            return
-        end.update_step(
-            "redecode",
-            "running",
-            "Starting high-accuracy session audio re-decoding...",
-            message="Re-transcribing meeting…",
-        )
-        progress = end.progress("redecode", "Re-transcribing meeting (window {curr}/{total})…")
-        try:
-            self._offline_failure_detail = ""
-            end.offline_ok = bool(self._run_offline_final_pass(progress_cb=progress))
-        except Exception:
-            logger.exception("Offline clean ASR pass failed")
-            end.offline_ok = False
-        if end.offline_ok:
-            end.update_step("redecode", "completed", "High-accuracy re-decoding complete")
-        else:
-            end.update_step(
-                "redecode",
-                "failed",
-                self._offline_failure_detail or "Re-decoding failed; kept live transcript",
-            )
-
-    def _end_speaker_id(self, end: _EndRun) -> None:
-        if not end.will_speaker_id:
-            return
-
-        def _announce_upload() -> None:
-            end.update_step(
-                "speaker_id",
-                "running",
-                "Uploading system audio for speaker labels…",
-                message="Identifying speakers…",
-            )
-
-        try:
-            speaker_result = self._run_cloud_speaker_pass(
-                progress_cb=end.progress("speaker_id", "Identifying speakers (window {curr}/{total})…"),
-                on_start=_announce_upload,
-            )
-        except Exception:
-            logger.exception("Cloud speaker identification failed")
-            speaker_result = {
-                "ok": False, "skipped": False,
-                "error": "Speaker identification failed.",
-            }
-        from meeting.refinalize import speaker_step_outcome
-
-        end.speaker_ok = bool(speaker_result.get("ok"))
-        end.speaker_skipped = bool(speaker_result.get("skipped"))
-        end.speaker_error = str(speaker_result.get("error") or "")
-        end.update_step("speaker_id", *speaker_step_outcome(speaker_result))
-
-    def _end_insights(self, end: _EndRun) -> None:
-        if end.run_cloud and end.scheduler is not None:
-            self._run_end_cloud_passes(end)
-        else:
-            self.revoke_agent_writes()
-            self._report_end_without_cloud(end)
-
-    def _run_end_cloud_passes(self, end: _EndRun) -> None:
-        try:
-            self.allow_agent_writes()
-            if end.want_polish:
-                self._end_polish(end)
-            if end.want_report:
-                status, message = self._end_consolidation(end)
-            else:
-                status = "completed"
-                message = "Transcript cleanup is ready."
-        except Exception as exc:
-            logger.exception("Post-end consolidation pass failed")
-            self.revoke_agent_writes()
-            self._set_finalization(
-                "failed",
-                f"Final insights failed: {exc}",
-                stage="failed",
-                current_step=end.total_steps,
-                total_steps=end.total_steps,
-                step_details=f"Final insights failed: {exc}",
-                steps=end.steps,
-            )
-        else:
-            self.revoke_agent_writes()
-            self._complete_end_finalization(end, status, message)
-
-    def _end_polish(self, end: _EndRun) -> None:
-        end.update_step(
-            "polish",
-            "running",
-            "Starting AI transcript cleanup and formatting...",
-            message="Cleaning transcript…",
-        )
-        progress = end.progress("polish", "Cleaning transcript (block {curr}/{total})…")
-        polish = getattr(end.scheduler, "run_final_polish", None)
-        polish_status = "completed"
-        polish_detail = "Transcript cleanup finished"
-        if callable(polish):
-            try:
-                polish_outcome = polish(
-                    timeout_s=POLISH_TIMEOUT_S,
-                    progress_cb=progress,
-                )
-                polish_status = getattr(
-                    polish_outcome, "status", "completed",
-                )
-                polish_detail = (
-                    getattr(polish_outcome, "message", "")
-                    or (
-                        "Transcript cleanup finished"
-                        if polish_status == "completed"
-                        else "Transcript cleanup failed"
-                    )
-                )
-            except Exception as exc:
-                logger.exception("Post-end transcript polish failed")
-                polish_status = "failed"
-                polish_detail = f"Transcript cleanup failed: {exc}"
-        end.update_step(
-            "polish",
-            "completed" if polish_status == "completed" else "failed",
-            polish_detail,
-        )
-
-    def _end_consolidation(self, end: _EndRun) -> Tuple[str, str]:
-        end.update_step(
-            "consolidation",
-            "running",
-            "Synthesizing executive summary, key points, decisions, and action items...",
-            message="Preparing final report…",
-        )
-
-        def _consolidation_progress(detail: str) -> None:
-            end.update_step(
-                "consolidation",
-                "running",
-                detail,
-                message="Preparing final report…",
-            )
-        # live_notes is preserved into consolidation so the
-        # final report pass can synthesize the meeting notes
-        # and reconcile them against the final transcript.
-        outcome = end.scheduler.run_consolidation(
-            progress_cb=_consolidation_progress,
-        )
-        status = getattr(outcome, "status", "failed")
-        message = getattr(outcome, "message", "") or ""
-        if status == "completed":
-            end.update_step("consolidation", "completed", "Summary & action items ready")
-        else:
-            end.update_step("consolidation", "failed", message)
-        return status, message
-
-    def _complete_end_finalization(self, end: _EndRun, status: str, message: str) -> None:
-        end.update_step(
-            "finalize",
-            "running",
-            "Saving final transcript and meeting state...",
-            message="Finalizing meeting state…",
-        )
-        summary_stats = self._finalization_summary_stats()
-
-        end.update_step(
-            "finalize",
-            "completed",
-            saved_state_detail(summary_stats),
-        )
-
-        if any(s.get("status") == "failed" for s in end.steps):
-            status = "failed"
-            final_msg = failed_steps_message(end.steps)
-        elif status == "completed" and end.want_report:
-            final_msg = insights_ready_message(summary_stats)
-        else:
-            final_msg = message
-
-        self._set_finalization(
-            status,
-            final_msg,
-            stage="complete" if status == "completed" else status,
-            current_step=end.total_steps,
-            total_steps=end.total_steps,
-            step_details=final_msg,
-            steps=end.steps,
-            summary_stats=summary_stats,
-        )
-
     def _intelligence_offline_message(self) -> str:
         return f"{_INTELLIGENCE_OFFLINE_MESSAGE} {self._intelligence_failure}".strip()
 
-    def _report_end_without_cloud(self, end: _EndRun) -> None:
-        if end.will_speaker_id:
-            self._finish_end_after_speakers(end)
-        elif not end.cloud_enabled:
-            self._set_finalization("disabled", _INSIGHTS_OFF_MESSAGE)
-        elif not end.complete:
-            # Cloud passes wait for recovery even when the re-decode worked;
-            # without a terminal state here the dashboard would keep showing
-            # the re-decode as running.
-            if not end.will_offline:
-                self._set_finalization("unavailable", _RECOVERY_PENDING_MESSAGE)
-                return
-            end.update_step(
-                "finalize", "completed",
-                "Saved meeting state after re-transcription.", emit=False,
-            )
-            self._set_finalization(
-                "unavailable",
-                _RECOVERY_PENDING_MESSAGE,
-                stage="unavailable",
-                current_step=end.total_steps,
-                total_steps=end.total_steps,
-                step_details=_RECOVERY_PENDING_MESSAGE,
-                steps=end.steps,
-            )
-        elif not end.want_polish and not end.want_report:
-            self._set_finalization(
-                "completed",
-                "Post-meeting cleanup and report are off.",
-            )
-        elif end.scheduler is None or not self._core_is_healthy():
-            self._set_finalization("unavailable", self._intelligence_offline_message())
+    def _offline_pass_for_end(self, progress_cb: Callable[[str, int, int], None]) -> bool:
+        self._offline_failure_detail = ""
+        return self._run_offline_final_pass(progress_cb=progress_cb)
 
-    def _finish_end_after_speakers(self, end: _EndRun) -> None:
-        end.update_step(
-            "finalize",
-            "completed",
-            "Saved meeting state after speaker identification.",
-        )
-        final_status, final_msg = end.speaker_outcome()
-        self._set_finalization(
-            final_status,
-            final_msg,
-            stage=(
-                "complete" if final_status == "completed"
-                else final_status
-            ),
-            current_step=end.total_steps,
-            total_steps=end.total_steps,
-            step_details=final_msg,
-            steps=end.steps,
-        )
-
-    def _wrap_up_end(self, end: _EndRun) -> None:
+    def _wrap_up_end(self, end: EndRun) -> None:
         # A meeting awaiting recovery takes no final highlights pass (the
         # pass itself refuses that status), so only a complete one asks.
         if end.complete:
