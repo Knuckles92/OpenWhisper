@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import socket
-import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -47,6 +46,7 @@ from services.runtime import (
     TranscriptionRuntime,
 )
 from services.runtime.command import CommandRuntime
+from services.runtime.updater import UpdaterRuntime
 from services.runtime.walkthrough import WalkthroughRuntime
 from services.actions.runtime import ActionRuntime
 from services.dictation_pipeline import JobMode
@@ -75,10 +75,6 @@ REMOTE_WATCH_INTERVAL_MS = 1000
 REMOTE_RETRY_DELAYS_S = (2, 5, 15, 30, 60)
 #: What the user's Cancel says when it found nothing to cancel.
 NOTHING_TO_CANCEL = "Nothing to cancel"
-#: Least wait after an update check before the next one, whatever the stored
-#: times say: a copy that cannot save them must not ask GitHub again at once.
-UPDATE_RECHECK_FLOOR_MS = 60 * 60 * 1000
-
 
 def _import_openai_sdk() -> None:
     """Warm-up target: a later client build then only constructs the client."""
@@ -256,10 +252,6 @@ class ApplicationController(QObject):
     meeting_guest_link_ready = pyqtSignal(str)
     # Past Meetings sidebar rebuild; always hop to the Qt GUI thread.
     past_meetings_refresh_requested = pyqtSignal()
-    # App updater: (result_or_none, error, manual).
-    update_check_finished = pyqtSignal(object, str, bool)
-    update_download_progress = pyqtSignal(object, str, int, int)
-    update_download_finished = pyqtSignal(object, object, str)
     # The Remote engine's pairing changed (emitted from the pairing worker).
     remote_pairing_changed = pyqtSignal()
     # This computer's owner renamed the paired host; same pairing, new name.
@@ -397,12 +389,6 @@ class ApplicationController(QObject):
         # device_info the watch last reported, so repeat failures stay quiet.
         self._remote_reported = ""
 
-        self._update_check_timer = QTimer()
-        self._update_check_timer.setSingleShot(True)
-        self._update_check_timer.timeout.connect(self._maybe_start_update_check)
-        self._update_cancel = threading.Event()
-        self._update_attempt = None
-        self._update_download_lock = threading.Lock()
         self.update_readiness_error = ""
 
         # Exclusive mode: True while a meeting session runs; dictation start
@@ -417,6 +403,7 @@ class ApplicationController(QObject):
         self.walkthrough_runtime = WalkthroughRuntime(self)
         self._preview_events = PreviewEvents(self.transcription_runtime.publish_preview)
         self.meeting_runtime = MeetingRuntime(self)
+        self.updater = UpdaterRuntime(self)
 
         self._setup_transcription_backends(local_backend=local_backend)
         self._setup_ui_callbacks()
@@ -521,11 +508,11 @@ class ApplicationController(QObject):
         self.ui_controller.on_component_cancel = self.cancel_component_install
         self.ui_controller.on_component_remove = self.request_component_uninstall
         self.ui_controller.on_check_for_updates = (
-            lambda: self.request_update_check(manual=True)
+            lambda: self.updater.request_check(manual=True)
         )
-        self.ui_controller.on_update_download = self.request_update_download
-        self.ui_controller.on_update_cancel = self.cancel_update_download
-        self.ui_controller.on_update_abandon = self.discard_update_handoff
+        self.ui_controller.on_update_download = self.updater.request_download
+        self.ui_controller.on_update_cancel = self.updater.cancel_download
+        self.ui_controller.on_update_abandon = self.updater.discard_handoff
         self.ui_controller.get_transcribing = self.is_transcribing
         self.ui_controller.get_current_backend = lambda: self.current_backend
         self.ui_controller.on_paste_text_now = self.transcription_runtime.paste_text_now
@@ -601,7 +588,7 @@ class ApplicationController(QObject):
             automation_service.reload(kind)
         if kind == "updates":
             # Turning automatic checks back on checks once it is due.
-            self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)
+            self.updater.schedule_check()
 
     def reload_whisper_model(self) -> None:
         """Schedule a debounced, background reload of the local whisper model.
@@ -883,153 +870,12 @@ class ApplicationController(QObject):
             return "The selected API transcription engine needs a valid API key"
         return "The selected transcription engine is unavailable"
 
-    def request_update_check(self, manual: bool = True) -> None:
-        """Run a GitHub latest-release check on a worker thread."""
-        self.executor.submit(self._update_check_worker, manual)
-
-    def _maybe_start_update_check(self) -> None:
-        """Run the automatic check if it is due, else wait until it is."""
-        wait_ms = self._update_check_wait_ms()
-        if wait_ms == 0:
-            self.request_update_check(manual=False)
-        elif wait_ms is not None:
-            self._update_check_timer.start(wait_ms)
-
-    def _update_check_wait_ms(self) -> Optional[int]:
-        """Milliseconds until the automatic check is due; None when it is off."""
-        from services.app_update import seconds_until_auto_check
-
-        try:
-            wait_s = seconds_until_auto_check()
-        except Exception as exc:
-            logger.warning("Could not read the update-check schedule: %s", exc)
-            return None
-        return None if wait_s is None else int(wait_s * 1000)
-
-    def _update_check_worker(self, manual: bool) -> None:
-        from services.app_update import AppUpdateError, check_for_update
-
-        try:
-            result = check_for_update()
-        except Exception as exc:
-            logger.warning("Update check failed: %s", exc)
-            message = str(exc) if isinstance(exc, AppUpdateError) else (
-                "Could not check for updates."
-            )
-            self.update_check_finished.emit(None, message, manual)
-            return
-        self.update_check_finished.emit(result, "", manual)
-
-    def _on_update_check_finished(self, result, error: str, manual: bool) -> None:
-        # The check saved its time, success or failure; wait from there.
-        wait_ms = self._update_check_wait_ms()
-        if wait_ms is not None:
-            self._update_check_timer.start(max(wait_ms, UPDATE_RECHECK_FLOOR_MS))
-        if error and not manual:
-            from services.app_update import update_check_failure_status
-
-            # Background news: offline, it used to land two seconds after
-            # "Model download failed" and hide the reason the app can't work.
-            show = getattr(self.ui_controller, "set_ambient_status", None)
-            if show is not None:
-                show(update_check_failure_status(error))
-        handler = getattr(self.ui_controller, "on_update_check_finished", None)
-        if handler:
-            handler(result, error, manual)
-
-    def request_update_download(self, result, force_setup: bool = False) -> None:
-        """Download and prepare one verified update attempt on the worker."""
-        # Never clear and reuse a prior token: a quick retry must not revive a
-        # canceled worker that has not unwound yet.
-        self._update_cancel.set()
-        cancel = threading.Event()
-        attempt = object()
-        self._update_cancel = cancel
-        self._update_attempt = attempt
-        self.component_executor.submit(
-            self._update_download_worker,
-            result,
-            force_setup,
-            cancel,
-            attempt,
-        )
-
-    def cancel_update_download(self) -> None:
-        self._update_cancel.set()
-
     def is_transcribing(self) -> bool:
         runtime = getattr(self, "transcription_runtime", None)
         if runtime is not None and runtime.has_active_job:
             return True
         backend = getattr(self, "current_backend", None)
         return bool(backend and getattr(backend, "is_transcribing", False))
-
-    def _update_download_worker(
-        self,
-        result,
-        force_setup: bool = False,
-        cancel: Optional[threading.Event] = None,
-        attempt=None,
-    ) -> None:
-        token = cancel if cancel is not None else self._update_cancel
-
-        def is_current() -> bool:
-            return attempt is None or self._update_attempt is attempt
-
-        release = getattr(result, "release", None)
-        if release is None:
-            if is_current():
-                self.update_download_finished.emit(attempt, None, "No installer is available.")
-            return
-
-        def progress(phase: str, done: int, total: int) -> None:
-            if is_current() and not token.is_set():
-                self.update_download_progress.emit(attempt, phase, done, total)
-
-        from services.app_update import apply_update
-
-        try:
-            with self._update_download_lock:
-                handoff = apply_update(
-                    result,
-                    progress=progress,
-                    cancel=token,
-                    force_setup=force_setup,
-                )
-        except Exception as exc:
-            logger.warning("Update download failed: %s", exc)
-            message = str(exc) if str(exc) else "The download failed."
-            if is_current():
-                self.update_download_finished.emit(attempt, None, message)
-            return
-        if token.is_set() or not is_current():
-            from services.app_update import discard_prepared_result
-
-            discard_prepared_result(handoff)
-            if is_current():
-                self.update_download_finished.emit(attempt, None, "The download was canceled.")
-            return
-        self.update_download_finished.emit(attempt, handoff, "")
-
-    def discard_update_handoff(self, handoff: str) -> None:
-        from services.app_update import discard_prepared_result
-
-        self.component_executor.submit(discard_prepared_result, handoff)
-
-    def _on_update_download_progress(self, attempt, phase, done, total) -> None:
-        if attempt is self._update_attempt and not self._update_cancel.is_set():
-            self.ui_controller.on_update_download_progress(phase, done, total)
-
-    def _on_update_download_finished(self, attempt, handoff, error) -> None:
-        if attempt is not self._update_attempt or self._update_cancel.is_set():
-            if handoff:
-                self.discard_update_handoff(handoff)
-            if attempt is self._update_attempt:
-                self.ui_controller.on_update_download_finished(
-                    None, "The update was canceled."
-                )
-            return
-        self.ui_controller.on_update_download_finished(handoff, error)
 
     def setup_backup(self) -> None:
         from services.backup_manager import BackupCoordinator
@@ -1158,14 +1004,14 @@ class ApplicationController(QObject):
         if not self._startup_database_requested:
             self._startup_database_requested = True
             self._startup_executor.submit(self._initialize_startup_database)
-        self.component_executor.submit(self._prune_update_leftovers)
+        self.component_executor.submit(self.updater.prune_leftovers)
         # Measures every installed runtime (a walk of ~30k files for Qwen)
         # and probes the system GPU runtime, both remembered, so Settings'
         # first open doesn't do it on the Qt thread.
         self.component_executor.submit(component_coordinator.list_components)
         # The GitHub metadata check waits out startup; after it, the timer
         # re-arms itself for as long as the app runs.
-        self._update_check_timer.start(config.UPDATE_CHECK_DELAY_MS)
+        self.updater.schedule_check()
         # Share this computer's engine if Settings says so. Its own thread:
         # a first run creates the TLS certificate, and the two executors can
         # be busy for minutes with model loads and installs.
@@ -1562,43 +1408,6 @@ class ApplicationController(QObject):
         remote = self.transcription_backends.get("remote")
         if remote is not None and remote.refresh_host_catalog(pairing, ready, catalog):
             self.ui_controller.refresh_remote_models()
-
-    def _prune_update_leftovers(self) -> None:
-        """Collect the downloads and transactions an earlier update left behind."""
-        from services.app_update import prune_stale_downloads
-        from services.app_update_apply import prune_abandoned_transactions
-
-        try:
-            removed = prune_stale_downloads()
-        except Exception:
-            logger.exception("Could not prune finished update downloads")
-        else:
-            if removed:
-                logger.info(
-                    "Removed finished update downloads: %s", ", ".join(removed)
-                )
-        if sys.platform == "darwin":
-            from services.app_update_macos import prune_transactions
-
-            try:
-                removed = prune_transactions()
-            except Exception:
-                logger.exception("Could not prune Mac update transactions")
-            else:
-                if removed:
-                    logger.info("Removed Mac update transactions: %s", ", ".join(removed))
-        try:
-            transactions = prune_abandoned_transactions()
-            from services.setup_update import cleanup_setup_backup
-            from services.app_update_apply import running_app_dir
-            cleanup_setup_backup(running_app_dir())
-        except Exception:
-            logger.exception("Could not prune abandoned update transactions")
-            return
-        if transactions:
-            logger.info(
-                "Removed abandoned update transactions: %s", ", ".join(transactions)
-            )
 
     def on_hf_policy_changed(self, policy: str) -> None:
         """React to a Hugging Face access-policy change from Settings.
@@ -2834,13 +2643,7 @@ class ApplicationController(QObject):
         self.past_meetings_refresh_requested.connect(
             self.ui_controller.main_window.refresh_past_meetings
         )
-        self.update_check_finished.connect(self._on_update_check_finished)
-        self.update_download_progress.connect(
-            self._on_update_download_progress
-        )
-        self.update_download_finished.connect(
-            self._on_update_download_finished
-        )
+        self.updater.connect_signals()
         if hasattr(self.ui_controller, "set_overlay_state"):
             self.overlay_state_update.connect(self.ui_controller.set_overlay_state)
         if hasattr(self.ui_controller, "show_transcription_retry"):
@@ -2960,12 +2763,13 @@ class ApplicationController(QObject):
     def _stop_timers(self) -> None:
         for name in (
             "_watchdog_timer", "_reload_timer", "_periodic_refresh_timer",
-            "_update_check_timer", "_remote_watch", "_remote_retry_timer",
+            "_remote_watch", "_remote_retry_timer",
         ):
             if hasattr(self, name) and getattr(self, name):
                 getattr(self, name).stop()
-        if hasattr(self, "_update_cancel"):
-            self._update_cancel.set()
+        updater = getattr(self, "updater", None)
+        if updater is not None:
+            updater.stop()
 
     def _interrupt_backends(self) -> None:
         for name, backend in self.transcription_backends.items():

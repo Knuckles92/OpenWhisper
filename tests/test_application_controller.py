@@ -945,11 +945,13 @@ class TestApplicationController:
                 # bound to the REAL settings_manager, so consent-dependent
                 # tests read the process-wide store instead of the fake.
                 "services.runtime.meeting",
+                "services.runtime.updater",
                 "services.application_controller",
             ]:
                 sys.modules.pop(module_name, None)
 
             self.app_controller_module = importlib.import_module("services.application_controller")
+            self.updater_module = importlib.import_module("services.runtime.updater")
             self.hotkeys_runtime_module = importlib.import_module("services.runtime.hotkeys")
             monkeypatch.setattr(
                 self.hotkeys_runtime_module.HotkeyRuntime,
@@ -3103,7 +3105,7 @@ class TestApplicationController:
 
     def test_auto_update_check_failure_is_background_status(self):
         controller = self._create_controller()
-        controller._on_update_check_finished(
+        controller.updater._on_check_finished(
             None, "GitHub rate-limited this update check.", False
         )
         assert not controller.ui_controller.statuses
@@ -3120,31 +3122,31 @@ class TestApplicationController:
         with patch(
             "services.app_update.seconds_until_auto_check", return_value=3 * 3600
         ):
-            controller._on_update_check_finished(None, "", False)
-        assert controller._update_check_timer.started_ms == 3 * 3600 * 1000
+            controller.updater._on_check_finished(None, "", False)
+        assert controller.updater._check_timer.started_ms == 3 * 3600 * 1000
 
     def test_unsaved_check_times_never_mean_checking_again_at_once(self):
         controller = self._create_controller()
         with patch("services.app_update.seconds_until_auto_check", return_value=0):
-            controller._on_update_check_finished(None, "offline", False)
-        assert controller._update_check_timer.started_ms == (
-            self.app_controller_module.UPDATE_RECHECK_FLOOR_MS
+            controller.updater._on_check_finished(None, "offline", False)
+        assert controller.updater._check_timer.started_ms == (
+            self.updater_module.UPDATE_RECHECK_FLOOR_MS
         )
 
     def test_update_tick_checks_when_due_and_otherwise_waits(self):
         controller = self._create_controller()
-        timer = controller._update_check_timer
+        timer = controller.updater._check_timer
         timer.started_ms = None
-        with patch.object(controller, "request_update_check") as request:
+        with patch.object(controller.updater, "request_check") as request:
             with patch("services.app_update.seconds_until_auto_check", return_value=None):
-                controller._maybe_start_update_check()
+                controller.updater._maybe_start_check()
             assert timer.started_ms is None
             with patch("services.app_update.seconds_until_auto_check", return_value=90.0):
-                controller._maybe_start_update_check()
+                controller.updater._maybe_start_check()
             request.assert_not_called()
             assert timer.started_ms == 90_000
             with patch("services.app_update.seconds_until_auto_check", return_value=0):
-                controller._maybe_start_update_check()
+                controller.updater._maybe_start_check()
             request.assert_called_once_with(manual=False)
 
     def test_gpu_fallback_reverts_device_setting_and_names_the_fix(self):
