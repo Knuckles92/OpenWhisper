@@ -34,13 +34,11 @@ from PyQt6.QtWidgets import (
 
 from config import config
 from services.components import component_coordinator
-from services.typesafe import TYPESAFE_ROUTE as JEV_TYPESAFE_ROUTE
 from services.format_utils import format_file_size
 from services.history_manager import history_manager
 from services.hotkey_manager import USE_PYNPUT_BACKEND, format_hotkey_display, parse_hotkey
 from services.recorder import AudioRecorder
 from services.settings import (
-    INSIGHT_REVIEW_CONSENT,
     LEGACY_STREAMING_KEYS,
     HuggingFaceAccessPolicy,
     MeetingServerBind,
@@ -62,11 +60,7 @@ from services.settings import (
     resolve_meeting_end_redecode,
     resolve_meeting_redecode_coverage_guard,
     resolve_meeting_end_report,
-    resolve_meeting_insight_review,
     resolve_meeting_past_recall_enabled,
-    resolve_meeting_report_brief,
-    resolve_meeting_report_ribbon,
-    resolve_meeting_report_signal,
     resolve_recording_trigger_mode,
     resolve_meeting_server_bind,
     resolve_meeting_server_port,
@@ -135,12 +129,16 @@ from ui_qt.dialogs.settings_destinations import (
     resolve_destination,
 )
 from ui_qt.dialogs.settings_downloads import DownloadsPage
-from ui_qt.dialogs import settings_api_keys, settings_cleanup_rules, settings_fast_judgments
+from ui_qt.dialogs import (
+    settings_api_keys,
+    settings_cleanup_rules,
+    settings_fast_judgments,
+    settings_meeting_after,
+)
 from ui_qt.dialogs.settings_backup import BackupSettingsPage
 from ui_qt.dialogs.settings_fields import (
     group_title,
     settings_caption,
-    settings_field,
 )
 from ui_qt.dialogs.settings_mcp import McpSettingsView
 from ui_qt.dialogs.settings_models import ModelAssignments
@@ -583,6 +581,15 @@ class SettingsDialog(QDialog):
             focus_api_keys=self.focus_api_keys,
             set_rail_value=lambda value: self.rail.set_value(MEETING_FAST, value),
             ensure_built=lambda: self.ensure_page(MEETING_FAST),
+        )
+        self.meeting_after = settings_meeting_after.MeetingAfterSection(
+            self,
+            persist=self._persist,
+            persist_many=self._persist_many,
+            bindings=self._meeting_bindings,
+            is_loading=lambda: self._loading,
+            review_route=lambda: self.fast_judgments.selected_route(),
+            ensure_built=lambda: self.ensure_page(MEETING_AFTER),
         )
 
         self._setup_ui()
@@ -2319,133 +2326,11 @@ class SettingsDialog(QDialog):
             setattr(self, name, getattr(self.fast_judgments, name))
 
     def _build_meeting_after_page(self, layout: QVBoxLayout) -> None:
-        self.meeting_end_redecode_tile = SettingTile(
-            "Re-transcribe the full recording",
-            "After End, recut the continuous session audio on longer quiet "
-            "gaps and run Whisper again. Live capture is unchanged.",
-            design_icon("microphone-blue.svg"),
-        )
-        self.meeting_end_redecode_check = self.meeting_end_redecode_tile.checkbox
-        self._meeting_bindings.checkbox(
-            self.meeting_end_redecode_check,
-            SettingsKey.MEETING_END_REDECODE,
-            resolve_meeting_end_redecode,
-        )
-
-        self.meeting_end_polish_tile = SettingTile(
-            "Clean up the transcript with the LLM",
-            "Rewrites the finished transcript for readability. Needs AI "
-            "insights on for the meeting.",
-            design_icon("stack-purple.svg"),
-        )
-        self.meeting_end_polish_check = self.meeting_end_polish_tile.checkbox
-        self._meeting_bindings.checkbox(
-            self.meeting_end_polish_check,
-            SettingsKey.MEETING_END_POLISH,
-            resolve_meeting_end_polish,
-        )
-
-        self.meeting_end_report_tile = SettingTile(
-            "Write the final report",
-            "Topic, summary, and cards, generated once live captions finish. "
-            "Needs AI insights on for the meeting.",
-            design_icon("check-green.svg"),
-        )
-        self.meeting_end_report_check = self.meeting_end_report_tile.checkbox
-        self.meeting_end_report_check.toggled.connect(
-            self._on_end_report_toggled
-        )
-
-        self.meeting_review_tile = SettingTile(
-            "Review uncertain insights at the end",
-            "For new meetings. Gives the Fast judgments judge relevant excerpts, speaker "
-            "names and insights to find ambiguities, and asks the three highest-priority "
-            "questions first. No audio is sent. Needs AI insights and Fast judgments.",
-            design_icon("check-green.svg"),
-        )
-        self.meeting_review_tile.add_title_badge("Experimental")
-        self.meeting_review_check = self.meeting_review_tile.checkbox
-        self.meeting_review_check.toggled.connect(self._on_meeting_review_toggled)
-        review_row = QHBoxLayout()
-        self.meeting_review_sensitivity = ElidingComboBox()
-        self.meeting_review_sensitivity.addItem("Normal", "normal")
-        self.meeting_review_sensitivity.addItem("Thorough", "thorough")
-        self._meeting_bindings.combo(
-            self.meeting_review_sensitivity,
-            SettingsKey.MEETING_INSIGHT_REVIEW_SENSITIVITY,
-            lambda settings: resolve_meeting_insight_review(settings)["sensitivity"],
-        )
-        review_row.addWidget(
-            settings_field("Sensitivity", self.meeting_review_sensitivity)
-        )
-        self.meeting_review_tile.add_body_layout(review_row)
-
-        self._tile_group(
-            layout,
-            "After End",
-            [
-                self.meeting_end_redecode_tile,
-                self.meeting_end_polish_tile,
-                self.meeting_end_report_tile,
-                self.meeting_review_tile,
-            ],
-            intro=(
-                "Live captions stay on short chunks so text appears quickly. "
-                "These steps run afterward."
-            ),
-        )
-
-        self.meeting_report_ribbon_tile = SettingTile(
-            "Ribbon",
-            "Timeline walk. Adds timeline beats and polished minutes, which "
-            "is the main token cost.",
-            design_icon("stack-slate.svg"),
-        )
-        self.meeting_report_brief_tile = SettingTile(
-            "Brief",
-            "One-page editorial summary. Reuses the same cards as Signal.",
-            design_icon("notes-blue.svg"),
-        )
-        self.meeting_report_signal_tile = SettingTile(
-            "Signal",
-            "One-screen glance. Reuses the same cards as Brief.",
-            design_icon("broadcast-green.svg"),
-        )
-        self.meeting_report_ribbon_check = self.meeting_report_ribbon_tile.checkbox
-        self.meeting_report_brief_check = self.meeting_report_brief_tile.checkbox
-        self.meeting_report_signal_check = self.meeting_report_signal_tile.checkbox
-        for check, key in (
-            (self.meeting_report_ribbon_check, SettingsKey.MEETING_REPORT_RIBBON),
-            (self.meeting_report_brief_check, SettingsKey.MEETING_REPORT_BRIEF),
-            (self.meeting_report_signal_check, SettingsKey.MEETING_REPORT_SIGNAL),
-        ):
-            check.toggled.connect(
-                lambda checked, setting=key: self._on_report_view_toggled(
-                    setting, checked
-                )
-            )
-
-        self.meeting_report_views_title, self.meeting_report_views_info = (
-            self._tile_group(
-                layout,
-                "Report views",
-                [
-                    self.meeting_report_ribbon_tile,
-                    self.meeting_report_brief_tile,
-                    self.meeting_report_signal_tile,
-                ],
-                intro=(
-                    "Each enabled view is generated at End. At least one view "
-                    "stays on."
-                ),
-            )
-        )
-
-        self.meeting_report_views_hint = settings_caption(
-            "At least one view is required. Ribbon stays on."
-        )
-        self.meeting_report_views_hint.hide()
-        layout.addWidget(self.meeting_report_views_hint)
+        self.meeting_after.build(layout, self._tile_group)
+        # The dialog names the section's controls too, for deep links,
+        # search reveals and CONTROL_DESTINATIONS.
+        for name in settings_meeting_after.CONTROLS:
+            setattr(self, name, getattr(self.meeting_after, name))
 
     def _build_meeting_dashboard_page(self, layout: QVBoxLayout) -> None:
         self.meeting_bind_combo = ElidingComboBox()
@@ -3697,61 +3582,6 @@ class SettingsDialog(QDialog):
             self._saved_cleanup_prompt = custom
             self._update_cleanup_prompt_ui()
 
-    def _on_meeting_review_toggled(self, checked: bool) -> None:
-        if self._loading:
-            return
-        if checked:
-            route = self.fast_judgments.selected_route()
-            if route.is_local:
-                destination = f"{route.name} on this computer"
-            elif route.profile is not None:
-                destination = f"{route.name} ({route.host})"
-            elif route is JEV_TYPESAFE_ROUTE:
-                destination = "TypeSafe"
-            else:
-                destination = f"TypeSafe through {route.name}"
-            separate = ("" if route.profile is not None
-                        else "This is a separate service from your meeting LLM. ")
-            reply = QMessageBox.question(
-                self, "Enable experimental insight review?",
-                "For future meetings with AI insights on, send relevant transcript "
-                f"excerpts, speaker names, and generated insights to {destination} after the meeting? "
-                f"{separate}No audio is sent. "
-                "Review is optional and does not block saving your recording.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                self.meeting_review_check.blockSignals(True)
-                self.meeting_review_check.setChecked(False)
-                self.meeting_review_check.blockSignals(False)
-                return
-        # One write, so the consent and the switch never disagree on disk.
-        self._persist_many({
-            SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT:
-                INSIGHT_REVIEW_CONSENT if checked else "",
-            SettingsKey.MEETING_INSIGHT_REVIEW: bool(checked),
-        })
-
-    def _on_end_report_toggled(self, checked: bool) -> None:
-        self._update_report_views_enabled()
-        self._persist(SettingsKey.MEETING_END_REPORT, bool(checked))
-
-    def _on_report_view_toggled(self, key: str, _checked: bool) -> None:
-        self._guard_report_views()
-        actual = {
-            SettingsKey.MEETING_REPORT_RIBBON: (
-                self.meeting_report_ribbon_check.isChecked()
-            ),
-            SettingsKey.MEETING_REPORT_BRIEF: (
-                self.meeting_report_brief_check.isChecked()
-            ),
-            SettingsKey.MEETING_REPORT_SIGNAL: (
-                self.meeting_report_signal_check.isChecked()
-            ),
-        }
-        self._persist(key, actual[key])
-
     def _on_meeting_bind_changed(self, _index: int = 0) -> None:
         self._update_meeting_bind_ui()
         self._persist(
@@ -3915,35 +3745,6 @@ class SettingsDialog(QDialog):
         is_lan = self.meeting_bind_combo.currentData() == MeetingServerBind.LAN
         self.meeting_bind_warning.setVisible(is_lan)
 
-    def _report_view_checks(self):
-        return (
-            self.meeting_report_ribbon_check,
-            self.meeting_report_brief_check,
-            self.meeting_report_signal_check,
-        )
-
-    def _update_report_views_enabled(self) -> None:
-        enabled = self.meeting_end_report_check.isChecked()
-        self.meeting_report_views_title.setEnabled(enabled)
-        self.meeting_report_views_info.setEnabled(enabled)
-        for tile in (
-            self.meeting_report_ribbon_tile,
-            self.meeting_report_brief_tile,
-            self.meeting_report_signal_tile,
-        ):
-            tile.setEnabled(enabled)
-        if not enabled:
-            self.meeting_report_views_hint.hide()
-
-    def _guard_report_views(self) -> None:
-        if any(check.isChecked() for check in self._report_view_checks()):
-            self.meeting_report_views_hint.hide()
-            return
-        blocker = self.meeting_report_ribbon_check.blockSignals(True)
-        self.meeting_report_ribbon_check.setChecked(True)
-        self.meeting_report_ribbon_check.blockSignals(blocker)
-        self.meeting_report_views_hint.show()
-
     def _browse_context_folder(self) -> None:
         current = self.meeting_context_folder_path.text().strip()
         start = current if os.path.isdir(current) else os.path.expanduser("~")
@@ -3979,17 +3780,7 @@ class SettingsDialog(QDialog):
     def _load_meeting_settings(self, settings: dict) -> None:
         self._meeting_bindings.load(settings, start=self._initial_meeting_binding_start)
         if self._page_is_loading(MEETING_AFTER):
-            review_on = (
-                settings.get(SettingsKey.MEETING_INSIGHT_REVIEW) is True
-                and settings.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == INSIGHT_REVIEW_CONSENT
-            )
-            self.meeting_review_check.setChecked(review_on)
-            self.meeting_end_report_check.setChecked(resolve_meeting_end_report(settings))
-            self.meeting_report_ribbon_check.setChecked(resolve_meeting_report_ribbon(settings))
-            self.meeting_report_brief_check.setChecked(resolve_meeting_report_brief(settings))
-            self.meeting_report_signal_check.setChecked(resolve_meeting_report_signal(settings))
-            self._guard_report_views()
-            self._update_report_views_enabled()
+            self.meeting_after.load(settings)
         if self._page_is_loading(MEETING_DASHBOARD):
             _select_combo_data(self.meeting_bind_combo, resolve_meeting_server_bind(settings))
             self._update_meeting_bind_ui()
