@@ -302,7 +302,7 @@ class ModelRuntime(QObject):
                 model_name, False, "Files are in use by another process"
             )
         except Exception as exc:
-            logger.error(f"Model delete failed for '{model_name}': {exc}")
+            logger.error(f"Model delete failed for '{model_name}': {exc}", exc_info=True)
             self.model_deleted.emit(model_name, False, str(exc))
         else:
             controller.status_update.emit(f"Model '{model_name}' deleted")
@@ -625,7 +625,8 @@ class ModelRuntime(QObject):
                 if getattr(backend, "gpu_fallback_note", None):
                     self.gpu_fallback_detected.emit()
         except Exception as exc:
-            logger.error("Model download/load failed for '%s': %s", model_name, exc)
+            logger.error("Model download/load failed for '%s': %s", model_name, exc,
+                         exc_info=True)
             controller.status_update.emit(
                 f"Model '{model_name}' failed to load (details in openwhisper.log)."
                 if downloaded else describe_model_download_error(model_name, exc)
@@ -727,7 +728,8 @@ class ModelRuntime(QObject):
                 try:
                     success = self._download_model_to_cache(model_name)
                 except Exception as exc:
-                    logger.error(f"Model download failed for '{model_name}': {exc}")
+                    logger.error(f"Model download failed for '{model_name}': {exc}",
+                                 exc_info=True)
                     controller.status_update.emit(
                         describe_model_download_error(model_name, exc)
                     )

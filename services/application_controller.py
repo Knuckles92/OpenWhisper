@@ -50,7 +50,9 @@ def _import_openai_sdk() -> None:
     try:
         import openai  # noqa: F401
     except Exception:
-        logger.debug("openai SDK warm-up failed", exc_info=True)
+        # Only a head start: the first request imports it again and reports
+        # any real failure there.
+        logger.debug("openai SDK warm-up failed; skipping the early import", exc_info=True)
 
 
 class PreviewEvents:
@@ -605,7 +607,7 @@ class ApplicationController(QObject):
                 logger.warning("Local whisper backend not found")
                 self.status_update.emit("Ready")
         except Exception as exc:
-            logger.error(f"Whisper reload failed: {exc}")
+            logger.error(f"Whisper reload failed: {exc}", exc_info=True)
             self.status_update.emit("Engine reload failed")
         finally:
             self._reload_in_flight = False
@@ -915,7 +917,10 @@ class ApplicationController(QObject):
                 target=target, name="openai-sdk-warmup", daemon=True
             ).start()
         except Exception:
-            logger.debug("Could not start the openai SDK warm-up", exc_info=True)
+            logger.warning(
+                "Could not start the openai SDK warm-up; the first request will import it",
+                exc_info=True,
+            )
 
     # ---- the selected engine ----
 
@@ -1355,7 +1360,7 @@ class ApplicationController(QObject):
                 backend.cancel_transcription()
                 backend.cleanup()
             except Exception as exc:
-                logger.debug("Error interrupting %s: %s", name, exc)
+                logger.warning("Error interrupting %s: %s", name, exc, exc_info=True)
         from services.local_asr.process import close_all_workers
         close_all_workers()
 
@@ -1373,7 +1378,7 @@ class ApplicationController(QObject):
                 logger.info(f"Cleaning up transcription backend: {backend_name}")
                 backend.cleanup()
             except Exception as exc:
-                logger.debug(f"Error cleaning up {backend_name} backend: {exc}")
+                logger.warning(f"Error cleaning up {backend_name} backend: {exc}", exc_info=True)
         self.transcription_backends.clear()
         self.current_backend = None
 
@@ -1383,7 +1388,7 @@ def _attempt(step: Callable[[], object], failure: str) -> None:
     try:
         step()
     except Exception as exc:
-        logger.debug(f"{failure}: {exc}")
+        logger.warning(f"{failure}: {exc}", exc_info=True)
 
 
 def _cleanup_if_present(resource) -> None:
@@ -1426,7 +1431,7 @@ def _reload_speech_engine(controller, selected) -> Optional[TranscriptionBackend
         elif selected.is_available() and selected.backend_id in config.SPEECH_WARMUP_BACKENDS:
             warm = selected
     except Exception as exc:
-        logger.error("Engine load failed: %s", exc)
+        logger.error("Engine load failed: %s", exc, exc_info=True)
         controller.status_update.emit(f"Engine load failed: {exc}")
         controller.device_info_update.emit(str(exc), False)
     finally:
