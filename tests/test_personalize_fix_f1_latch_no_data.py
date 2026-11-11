@@ -10,8 +10,9 @@ import time
 import pytest
 
 from services.runtime import hotkeys as runtime_module
-from services.runtime.hotkeys import HotkeyRuntime
-from tests.test_personalize_s6_runtime import WINDOW, _Controller, _drain, _tap_then_press, _wait_until
+from tests.test_personalize_s6_runtime import (
+    WINDOW, _Controller, _drain, _hotkey_runtime, _tap_then_press, _wait_until,
+)
 
 
 class _SlowFirstBlockRecorder:
@@ -28,7 +29,7 @@ class _SlowFirstBlockRecorder:
 def runtime():
     controller = _Controller()
     controller.recorder = _SlowFirstBlockRecorder()
-    instance = HotkeyRuntime(controller)
+    instance = _hotkey_runtime(controller)
     controller.runtime = instance
     yield instance
     instance.cleanup()
@@ -47,13 +48,13 @@ def test_a_double_tap_before_any_audio_latches_and_the_next_press_stops(runtime,
     runtime._queue_record_release(pressed_at + 0.08)
     _drain(runtime)
 
-    assert controller.hands_free_changed.emitted == [True]
+    assert runtime.hands_free_changed.emitted == [True]
     assert controller.calls == ["start"]
 
     runtime._queue_record_press(pressed_at + 2)
     _drain(runtime)
     assert controller.calls == ["start", "stop"]
-    assert controller.hands_free_changed.emitted == [True, False]
+    assert runtime.hands_free_changed.emitted == [True, False]
 
 
 def test_a_lone_tap_before_any_audio_still_cancels_after_the_window(runtime, latch):

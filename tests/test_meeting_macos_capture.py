@@ -187,21 +187,21 @@ class TestSourceContract(unittest.TestCase):
 
 
 class TestEngineFallbackChain(unittest.TestCase):
-    """``_start_fallback_loopback`` picks a backend without a platform switch.
+    """``start_fallback_loopback`` picks a backend without a platform switch.
 
     Each backend rules itself out through ``available()``, so the engine can
     keep one ordered list instead of branching on ``sys.platform``.
     """
 
     def _engine(self, started):
-        from meeting.engine import MeetingEngine
+        from meeting.capture_session import MeetingCapture
 
-        engine = SimpleNamespace(_sources=[])
-        engine._start_source = (
+        engine = SimpleNamespace(sources=[])
+        engine.start_source = (
             lambda source, reuse_spool=False: (started.append(source), True)[1]
         )
-        engine._start_fallback_loopback = (
-            MeetingEngine._start_fallback_loopback.__get__(engine)
+        engine.start_fallback_loopback = (
+            MeetingCapture.start_fallback_loopback.__get__(engine)
         )
         return engine
 
@@ -212,7 +212,7 @@ class TestEngineFallbackChain(unittest.TestCase):
                 patch("meeting.capture.soundcard_stream."
                       "SoundcardLoopbackSource.available",
                       return_value=soundcard_available):
-            return self._engine(started)._start_fallback_loopback(), started
+            return self._engine(started).start_fallback_loopback(), started
 
     def test_screencapturekit_is_preferred_when_available(self):
         ok, started = self._run(sck_available=True, soundcard_available=True)
@@ -232,21 +232,21 @@ class TestEngineFallbackChain(unittest.TestCase):
         self.assertEqual(started, [])
 
     def test_a_raising_backend_does_not_block_the_next_one(self):
-        from meeting.engine import MeetingEngine
+        from meeting.capture_session import MeetingCapture
 
         started = []
-        engine = SimpleNamespace(_sources=[])
-        engine._start_source = (
+        engine = SimpleNamespace(sources=[])
+        engine.start_source = (
             lambda source, reuse_spool=False: (started.append(source), True)[1]
         )
-        engine._start_fallback_loopback = (
-            MeetingEngine._start_fallback_loopback.__get__(engine)
+        engine.start_fallback_loopback = (
+            MeetingCapture.start_fallback_loopback.__get__(engine)
         )
         with patch.object(ScreenCaptureKitLoopbackSource, "available",
                           side_effect=RuntimeError("bindings exploded")), \
                 patch("meeting.capture.soundcard_stream."
                       "SoundcardLoopbackSource.available", return_value=True):
-            self.assertTrue(engine._start_fallback_loopback())
+            self.assertTrue(engine.start_fallback_loopback())
         self.assertEqual(len(started), 1)
 
 

@@ -186,13 +186,14 @@ def test_runtime_captures_target_and_waits_for_shortcut_release(monkeypatch, rel
     service = SimpleNamespace(current_identity=lambda: target)
     monkeypatch.setattr("services.focus_context.get_service", lambda: service)
     monkeypatch.setattr("services.synthetic_keys.wait_for_modifiers_released", lambda: released)
-    controller = SimpleNamespace(paste_walkthrough_requested=Mock(), status_update=Mock())
+    controller = SimpleNamespace(status_update=Mock())
     runtime = HotkeyRuntime(controller)
+    runtime.paste_walkthrough_requested = Mock()
     runtime._paste_walkthrough_after_keys_up()
     if released:
-        controller.paste_walkthrough_requested.emit.assert_called_once_with(target)
+        runtime.paste_walkthrough_requested.emit.assert_called_once_with(target)
     else:
-        controller.paste_walkthrough_requested.emit.assert_not_called()
+        runtime.paste_walkthrough_requested.emit.assert_not_called()
         controller.status_update.emit.assert_called_once()
 
 

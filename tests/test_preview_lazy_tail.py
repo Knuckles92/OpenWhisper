@@ -313,9 +313,11 @@ def _runtime(transcriber):
 
     controller = SimpleNamespace(
         streaming_transcriber=transcriber, _streaming_enabled=False,
-        recorder=SimpleNamespace(set_streaming_callback=lambda _callback: None),
-        partial_transcription=Mock(), streaming_text_update=Mock())
-    return StreamingRuntime(controller)
+        recorder=SimpleNamespace(set_streaming_callback=lambda _callback: None))
+    runtime = StreamingRuntime(controller)
+    runtime.partial_transcription = Mock()
+    runtime.streaming_text_update = Mock()
+    return runtime
 
 
 def test_runtime_finalize_uses_the_window_preview_and_skips_the_rest():

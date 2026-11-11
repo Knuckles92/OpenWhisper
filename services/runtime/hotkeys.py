@@ -8,7 +8,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Dict, Optional
 
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
 
 from config import config
 from services import synthetic_keys, text_transforms
@@ -58,7 +58,7 @@ _LATCHED = "latched"
 # backend swallows hotkeys globally, so none of this machinery is imported or
 # defined there.
 if USE_PYNPUT_BACKEND:
-    from PyQt6.QtCore import QObject, QEvent
+    from PyQt6.QtCore import QEvent
     from PyQt6.QtWidgets import QApplication
 
     from services.hotkey_manager import (
@@ -204,10 +204,29 @@ if USE_PYNPUT_BACKEND:
             )
 
 
-class HotkeyRuntime:
+class HotkeyRuntime(QObject):
     """Owns hotkey configuration and keyboard hook lifecycle."""
 
+    # Shortcut actions, emitted from the hotkey dispatcher thread and handled
+    # on the Qt thread; this object is created there. A transform shortcut
+    # carries the transform's id.
+    transform_requested = pyqtSignal(str)
+    scratchpad_toggle_requested = pyqtSignal()
+    cycle_language_requested = pyqtSignal()
+    paste_last_original_requested = pyqtSignal()
+    walkthrough_requested = pyqtSignal()
+    screenshot_requested = pyqtSignal()
+    paste_walkthrough_requested = pyqtSignal(object)
+    profile_record_requested = pyqtSignal(str)
+    # An action's shortcut, emitted from the hotkey dispatcher thread with
+    # the action's id (docs/design/automation/design.md).
+    action_record_requested = pyqtSignal(str)
+    # A push-and-hold recording latched into, or left, hands-free.
+    hands_free_changed = pyqtSignal(bool)
+    stt_state_changed = pyqtSignal(bool)
+
     def __init__(self, controller: "ApplicationController"):
+        super().__init__()
         self.controller = controller
         self._active_window_hotkey_filter: Optional[ActiveWindowHotkeyFilter] = None
         self._omarchy_controls = None
@@ -231,6 +250,29 @@ class HotkeyRuntime:
         # once the key is up.
         self._refresh_pending = False
 
+    def connect_signals(self) -> None:
+        controller = self.controller
+        self.profile_record_requested.connect(controller.toggle_profile_recording)
+        self.action_record_requested.connect(controller.toggle_action_recording)
+        self.transform_requested.connect(controller.command_runtime.run_transform)
+        # Late-bound, so a UI without one of these fails only when it fires.
+        self.scratchpad_toggle_requested.connect(
+            lambda: controller.ui_controller.toggle_scratchpad()
+        )
+        self.cycle_language_requested.connect(
+            lambda: controller.ui_controller.cycle_dictation_language()
+        )
+        self.paste_last_original_requested.connect(
+            lambda: controller.ui_controller.paste_last_original()
+        )
+        self.walkthrough_requested.connect(lambda: controller.walkthrough_runtime.toggle())
+        self.screenshot_requested.connect(lambda: controller.walkthrough_runtime.snap())
+        self.paste_walkthrough_requested.connect(controller.ui_controller.paste_latest_walkthrough)
+        self.hands_free_changed.connect(
+            lambda on: controller.ui_controller.set_hands_free(on)
+        )
+        self.stt_state_changed.connect(self.on_stt_state_changed)
+
     def setup_hotkeys(self) -> None:
         logger.info("Setting up hotkeys...")
         # Backfill any newly-introduced default actions (e.g. minimize_tray) over
@@ -250,12 +292,12 @@ class HotkeyRuntime:
             on_cancel=controller.cancel,
             on_minimize_tray=controller.minimize_to_tray,
             on_meeting_toggle=controller.toggle_meeting_mode,
-            on_scratchpad_toggle=controller.scratchpad_toggle_requested.emit,
-            on_cycle_language=controller.cycle_language_requested.emit,
+            on_scratchpad_toggle=self.scratchpad_toggle_requested.emit,
+            on_cycle_language=self.cycle_language_requested.emit,
             on_paste_last_original=self._paste_last_original_after_keys_up,
             on_route_record=controller.toggle_route_recording,
-            on_walkthrough=controller.walkthrough_requested.emit,
-            on_screenshot=controller.screenshot_requested.emit,
+            on_walkthrough=self.walkthrough_requested.emit,
+            on_screenshot=self.screenshot_requested.emit,
             on_paste_walkthrough=self._paste_walkthrough_after_keys_up,
             on_status_update=controller.update_status_with_auto_hide,
             on_status_update_auto_hide=controller.update_status_with_auto_hide,
@@ -297,7 +339,7 @@ class HotkeyRuntime:
         if not synthetic_keys.wait_for_modifiers_released():
             self.controller.status_update.emit(KEYS_STILL_HELD)
             return
-        self.controller.paste_last_original_requested.emit()
+        self.paste_last_original_requested.emit()
 
     def _paste_walkthrough_after_keys_up(self) -> None:
         from services.focus_context import get_service
@@ -306,7 +348,7 @@ class HotkeyRuntime:
         if not synthetic_keys.wait_for_modifiers_released():
             self.controller.status_update.emit("Walkthrough not pasted: the shortcut keys are still held")
             return
-        self.controller.paste_walkthrough_requested.emit(target)
+        self.paste_walkthrough_requested.emit(target)
 
     def _queue_record_press(self, at: float) -> None:
         self._dispatcher.submit(self.record_key_pressed, at)
@@ -432,7 +474,7 @@ class HotkeyRuntime:
         self.controller.status_update.emit(
             f"Hands-free · press {format_hotkey_display(hotkey)} to stop"
         )
-        self.controller.hands_free_changed.emit(True)
+        self.hands_free_changed.emit(True)
 
     def _drop_stale_latch(self) -> None:
         if (
@@ -448,7 +490,7 @@ class HotkeyRuntime:
         self._record_press_monotonic = None
         self._record_start_accepted = False
         if was_latched:
-            self.controller.hands_free_changed.emit(False)
+            self.hands_free_changed.emit(False)
 
     @staticmethod
     def _auto_paste_enabled() -> bool:
@@ -527,13 +569,13 @@ class HotkeyRuntime:
             logger.exception("Could not load action shortcuts")
             actions = {}
         manager.set_dynamic_hotkeys(
-            PROFILE, profiles, self.controller.profile_record_requested.emit
+            PROFILE, profiles, self.profile_record_requested.emit
         )
         manager.set_dynamic_hotkeys(
-            TRANSFORM, transforms, self.controller.transform_requested.emit
+            TRANSFORM, transforms, self.transform_requested.emit
         )
         manager.set_dynamic_hotkeys(
-            ACTION, actions, self.controller.action_record_requested.emit
+            ACTION, actions, self.action_record_requested.emit
         )
         if self._omarchy_controls:
             self._omarchy_controls.refresh()
@@ -669,6 +711,6 @@ class HotkeyRuntime:
         self.controller.status_update.emit(status)
 
         if status == "STT Enabled":
-            self.controller.stt_state_changed.emit(True)
+            self.stt_state_changed.emit(True)
         elif status == "STT Disabled":
-            self.controller.stt_state_changed.emit(False)
+            self.stt_state_changed.emit(False)

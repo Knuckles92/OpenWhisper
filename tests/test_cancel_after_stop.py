@@ -229,8 +229,9 @@ def test_preview_that_cannot_start_shows_no_empty_overlay():
     controller._streaming_enabled = True
     controller.streaming_transcriber.is_streaming = False  # refused to start
     runtime = StreamingRuntime(controller)
+    runtime.streaming_overlay_show = Mock()
 
     runtime.start_streaming_session()
 
-    controller.streaming_overlay_show.emit.assert_not_called()
+    runtime.streaming_overlay_show.emit.assert_not_called()
     controller.recorder.set_streaming_callback.assert_called_with(None)

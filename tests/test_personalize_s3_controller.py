@@ -133,7 +133,7 @@ def test_holding_the_command_shortcut_rewrites_the_selection_and_pastes(h):
 def test_a_transform_shortcut_rewrites_the_selection(h):
     controller, history, keyboard = h
 
-    controller.transform_requested.emit("fix-grammar")
+    controller.hotkey_runtime.transform_requested.emit("fix-grammar")
     deadline = time.monotonic() + 2
     while not controller.executor.submissions and time.monotonic() < deadline:
         time.sleep(0.005)

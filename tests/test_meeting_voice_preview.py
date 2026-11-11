@@ -90,17 +90,19 @@ def test_backend_preview_never_waits_for_model_and_rechecks_durable_priority():
 
 
 def test_engine_records_before_preview_even_if_preview_fails():
-    from meeting.engine import MeetingEngine
+    from meeting.capture_session import MeetingCapture
     calls = []
     def failed_preview(*args):
         calls.append("preview")
         raise RuntimeError("preview unavailable")
-    engine = MeetingEngine.__new__(MeetingEngine)
-    engine._active = True
-    engine.clock = SimpleNamespace(is_paused=False, meeting_time=lambda value: value)
-    engine._asr = SimpleNamespace(feed_preview=failed_preview)
+    asr = SimpleNamespace(feed_preview=failed_preview)
+    capture = MeetingCapture(
+        None, SimpleNamespace(is_paused=False, meeting_time=lambda value: value), None,
+        recording=lambda: True, asr=lambda: asr, store=lambda: None,
+        on_chunk=None, emit_status=None, emit=None,
+    )
     spool = SimpleNamespace(feed=lambda value: calls.append("record"))
-    route = engine._make_block_router("mic", spool)
+    route = capture.make_block_router("mic", spool)
     route(block(0))
     route(block(1))
     assert calls == ["record", "preview", "record", "preview"]

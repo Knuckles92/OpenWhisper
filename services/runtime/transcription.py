@@ -729,7 +729,7 @@ class TranscriptionRuntime:
         if self.controller._streaming_enabled:
             # Dismiss preview overlay immediately so the classic waveform
             # processing/transcribing states are the only post-stop UI.
-            self.controller.streaming_overlay_hide.emit()
+            self.controller.streaming_runtime.streaming_overlay_hide.emit()
 
         self.controller._pending_streaming_text = ""
         self.controller.streaming_runtime.begin_stop_streaming_session()

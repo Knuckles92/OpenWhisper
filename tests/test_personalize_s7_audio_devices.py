@@ -265,7 +265,7 @@ def test_input_device_key_is_name_and_host_api_name():
 
 class TestMeetingFailover:
     def test_a_dead_microphone_is_excluded_before_reprobing(self, make_engine, fakes, monkeypatch):  # noqa: F811 (pytest fixtures)
-        import meeting.engine as engine_module
+        import meeting.capture_session as capture_module
 
         devices = {
             "usb": {"index": 2, "name": "USB mic", "hostapi": MME, "samplerate": 48000, "channels": 1},
@@ -282,23 +282,23 @@ class TestMeetingFailover:
             return None
 
         fakes.modules["meeting.capture.devices"].find_mic_device = find_mic_device
-        monkeypatch.setattr(engine_module, "CAPTURE_WATCHDOG_INTERVAL_S", 0.01)
-        monkeypatch.setattr(engine_module, "CAPTURE_RETRY_INTERVAL_S", 0.0)
+        monkeypatch.setattr(capture_module, "CAPTURE_WATCHDOG_INTERVAL_S", 0.01)
+        monkeypatch.setattr(capture_module, "CAPTURE_RETRY_INTERVAL_S", 0.0)
         priority = ({"name": "USB mic", "hostapi": MME},)
         engine = make_engine(cloud_enabled=False, mic_priority=priority)
         engine.start()
-        original = engine._capture_source("mic")
+        original = engine._capture.source("mic")
         assert original.device_id == 2
         assert calls[0] == (list(priority), [])
 
         original.stopped = True  # unplugged: the stream went inactive
         deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline and engine._capture_source("mic") in (None, original):
+        while time.monotonic() < deadline and engine._capture.source("mic") in (None, original):
             time.sleep(0.01)
 
-        replacement = engine._capture_source("mic")
+        replacement = engine._capture.source("mic")
         assert replacement is not original and replacement.device_id == 1
-        assert engine._mic_excluded == [{"name": "USB mic", "hostapi": MME}]
+        assert engine._capture.mic_excluded == [{"name": "USB mic", "hostapi": MME}]
         assert calls[-1] == (list(priority), [{"name": "USB mic", "hostapi": MME}])
 
     def test_a_microphone_that_will_not_open_falls_to_the_next(self, make_engine, fakes):  # noqa: F811 (pytest fixtures)
@@ -325,4 +325,4 @@ class TestMeetingFailover:
         engine = make_engine(cloud_enabled=False, mic_priority=({"name": "USB mic", "hostapi": MME},))
         engine.start()
 
-        assert engine._capture_source("mic").device_id == 1
+        assert engine._capture.source("mic").device_id == 1

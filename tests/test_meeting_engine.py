@@ -441,7 +441,7 @@ class TestDeferredProcessingStartup:
             result = engine.start()
             assert entered.wait(5)
             assert result["url"]
-            assert all(source.is_active() for source in engine._sources)
+            assert all(source.is_active() for source in engine._capture.sources)
             assert fakes.servers[0].engine is engine
             assert not engine._asr_ready
             later = self._register(engine, repo, 1, 4.0)
@@ -523,7 +523,7 @@ class TestDeferredProcessingStartup:
             engine.start()
         assert repo.get_meeting(engine.meeting_id)["status"] == "failed"
         assert len(repo.get_pending_chunks(engine.meeting_id)) == 1
-        assert all(not source.is_active() for source in engine._sources)
+        assert all(not source.is_active() for source in engine._capture.sources)
         assert engine._processing_thread is None
         assert fakes.asr == []
 
@@ -821,7 +821,7 @@ class TestRequiredStartupServices:
 
         assert result["host_url"]
         assert engine.is_active() is True
-        assert {source.channel for source in engine._sources} == {"mic"}
+        assert {source.channel for source in engine._capture.sources} == {"mic"}
 
     def test_required_system_audio_fails_when_loopback_missing(
             self, make_engine, fakes, repo):
@@ -846,13 +846,13 @@ class TestRequiredStartupServices:
 
         assert result["host_url"]
         assert engine.is_active() is True
-        assert {source.channel for source in engine._sources} == {"mic"}
+        assert {source.channel for source in engine._capture.sources} == {"mic"}
         capture = engine.store.snapshot()["capture"]
         assert capture["loopback_available"] is False
         assert "microphone-only choice" in capture["message"]
         # Watchdog should not reopen loopback while disabled.
-        engine._restart_capture_channel("loopback")
-        assert engine._capture_source("loopback") is None
+        engine._capture.restart_channel("loopback")
+        assert engine._capture.source("loopback") is None
 
 
 # Intelligence health
@@ -1180,10 +1180,10 @@ class TestEndLifecycle:
 
         engine = make_engine(cloud_enabled=False)
         engine.start()
-        engine._spools["mic"].health_error = (
+        engine._capture.spools["mic"].health_error = (
             "mic audio blocks were dropped because storage fell behind."
         )
-        engine._check_spool_health()
+        engine._capture.check_spool_health()
         capture = engine.store.snapshot()["capture"]
         assert capture["audio_incomplete"] is True
         assert "dropped" in capture["integrity_error"]
@@ -1223,7 +1223,7 @@ class TestEndLifecycle:
         def boom():
             raise RuntimeError("spool flush exploded")
 
-        engine._flush_spools = boom
+        engine._capture.flush = boom
 
         engine.end()
         engine._end_thread.join(timeout=10.0)
@@ -1736,27 +1736,27 @@ class TestCaptureRecovery:
     def test_open_portaudio_stream_without_callbacks_is_restarted(
             self, make_engine, fakes, monkeypatch):
         import meeting.capture.health as health
-        import meeting.engine as engine_module
+        import meeting.capture_session as capture_module
 
         monkeypatch.setattr(FakeSource, "requires_audio_blocks", True, raising=False)
         monkeypatch.setattr(health, "FIRST_BLOCK_GRACE_S", 0.08)
-        monkeypatch.setattr(engine_module, "CAPTURE_WATCHDOG_INTERVAL_S", 0.01)
-        monkeypatch.setattr(engine_module, "CAPTURE_RETRY_INTERVAL_S", 0.0)
+        monkeypatch.setattr(capture_module, "CAPTURE_WATCHDOG_INTERVAL_S", 0.01)
+        monkeypatch.setattr(capture_module, "CAPTURE_RETRY_INTERVAL_S", 0.0)
         engine = make_engine(cloud_enabled=False)
         engine.start()
-        original = engine._capture_source("mic")
+        original = engine._capture.source("mic")
         deadline = time.monotonic() + 1.5
-        while time.monotonic() < deadline and engine._capture_source("mic") is original:
+        while time.monotonic() < deadline and engine._capture.source("mic") is original:
             time.sleep(0.01)
-        assert engine._capture_source("mic") is not original
+        assert engine._capture.source("mic") is not original
         assert original.stopped is True
-        assert "mic" in engine._capture_stall_channels
+        assert "mic" in engine._capture.stall_channels
 
     def test_quiet_callbacks_keep_capture_live_without_signal_claim(
             self, make_engine, monkeypatch):
         from meeting.interfaces import CaptureBlock
         import meeting.capture.health as health
-        import meeting.engine as engine_module
+        import meeting.capture_session as capture_module
 
         # Host scheduling can pause this test longer than its accelerated
         # 80 ms stall threshold. Advance only the monitor's clock with audio,
@@ -1768,10 +1768,10 @@ class TestCaptureRecovery:
         monkeypatch.setattr(FakeSource, "requires_audio_blocks", True, raising=False)
         monkeypatch.setattr(health, "FIRST_BLOCK_GRACE_S", 0.08)
         monkeypatch.setattr(health, "BLOCK_STALL_S", 0.08)
-        monkeypatch.setattr(engine_module, "CAPTURE_WATCHDOG_INTERVAL_S", 0.01)
+        monkeypatch.setattr(capture_module, "CAPTURE_WATCHDOG_INTERVAL_S", 0.01)
         engine = make_engine(cloud_enabled=False)
         engine.start()
-        mic = engine._capture_source("mic")
+        mic = engine._capture.source("mic")
         for _ in range(10):
             mic.callback(CaptureBlock(
                 channel="mic", frames=np.zeros(1600, np.int16),
@@ -1779,8 +1779,8 @@ class TestCaptureRecovery:
             ))
             capture_clock[0] += 0.02
             time.sleep(0.02)
-            assert engine._capture_source("mic") is mic
-        engine._update_capture_status()
+            assert engine._capture.source("mic") is mic
+        engine._capture.update_status()
         capture = engine.store.snapshot()["capture"]
         assert capture["mic_receiving"] is True
         assert capture["mic_signal_windows"] == 0
@@ -1789,33 +1789,33 @@ class TestCaptureRecovery:
             self, make_engine):
         engine = make_engine(cloud_enabled=False, system_audio_policy="disabled")
         engine.start()
-        engine._capture_stall_channels.add("mic")
-        engine._update_capture_status()
+        engine._capture.stall_channels.add("mic")
+        engine._capture.update_status()
         message = engine.store.snapshot()["capture"]["message"]
         assert "microphone-only choice" in message
         assert "no audio blocks are arriving" in message
 
     def test_default_loopback_change_restarts_only_that_channel(
             self, make_engine, fakes, monkeypatch):
-        import meeting.engine as engine_module
+        import meeting.capture_session as capture_module
 
         loopback_index = [2]
         fakes.modules["meeting.capture.devices"].find_loopback_device = lambda: {
             "index": loopback_index[0], "samplerate": 16000, "channels": 2,
         }
-        monkeypatch.setattr(engine_module, "CAPTURE_WATCHDOG_INTERVAL_S", 0.01)
-        monkeypatch.setattr(engine_module, "CAPTURE_RETRY_INTERVAL_S", 0.0)
+        monkeypatch.setattr(capture_module, "CAPTURE_WATCHDOG_INTERVAL_S", 0.01)
+        monkeypatch.setattr(capture_module, "CAPTURE_RETRY_INTERVAL_S", 0.0)
         engine = make_engine(cloud_enabled=False)
         engine.start()
-        original_mic = engine._capture_source("mic")
-        original_loopback = engine._capture_source("loopback")
-        original_spool = engine._spools["loopback"]
+        original_mic = engine._capture.source("mic")
+        original_loopback = engine._capture.source("loopback")
+        original_spool = engine._capture.spools["loopback"]
 
         loopback_index[0] = 9
         deadline = time.monotonic() + 2.0
         replacement = original_loopback
         while time.monotonic() < deadline:
-            candidate = engine._capture_source("loopback")
+            candidate = engine._capture.source("loopback")
             if candidate is not None and candidate is not original_loopback:
                 replacement = candidate
                 break
@@ -1824,10 +1824,10 @@ class TestCaptureRecovery:
         assert replacement is not original_loopback
         assert replacement.device_id == 9
         assert original_loopback.stopped is True
-        assert engine._capture_source("mic") is original_mic
+        assert engine._capture.source("mic") is original_mic
         assert original_mic.is_active() is True
         # Source swap must keep the same channel spool writer.
-        assert engine._spools["loopback"] is original_spool
+        assert engine._capture.spools["loopback"] is original_spool
         capture = engine.store.snapshot()["capture"]
         assert capture["mic_available"] is True
         assert capture["loopback_available"] is True
@@ -1894,8 +1894,8 @@ class TestCaptureRecovery:
         }
         engine = make_engine(cloud_enabled=False)
         engine.start()
-        old_source = engine._capture_source(CHANNEL_LOOPBACK)
-        old_spool = engine._spools[CHANNEL_LOOPBACK]
+        old_source = engine._capture.source(CHANNEL_LOOPBACK)
+        old_spool = engine._capture.spools[CHANNEL_LOOPBACK]
         assert old_spool is not None
 
         frames_a = (np.ones(3200, dtype=np.float32) * 0.25)
@@ -1908,9 +1908,9 @@ class TestCaptureRecovery:
         time.sleep(0.25)
 
         loopback_index[0] = 9
-        assert engine._restart_capture_channel(CHANNEL_LOOPBACK) is True
-        assert engine._spools[CHANNEL_LOOPBACK] is old_spool
-        assert engine._capture_source(CHANNEL_LOOPBACK) is not old_source
+        assert engine._capture.restart_channel(CHANNEL_LOOPBACK) is True
+        assert engine._capture.spools[CHANNEL_LOOPBACK] is old_spool
+        assert engine._capture.source(CHANNEL_LOOPBACK) is not old_source
 
         frames_b = (np.ones(3200, dtype=np.float32) * 0.5)
         old_spool.feed(CaptureBlock(
@@ -2147,7 +2147,7 @@ class TestDemoMeeting:
         assert engine.is_active()
         assert engine.options.demo_mode is True
         assert fakes.asr == []
-        assert engine._sources == []
+        assert engine._capture.sources == []
         assert engine._asr is None
         assert engine._diarizer is None
         assert fakes.schedulers and fakes.schedulers[0].started
@@ -2453,17 +2453,17 @@ class TestDirectAgentCapabilities:
 
 
 def test_capture_recovery_budget_fits_twelve_seconds():
-    import meeting.engine as engine_module
+    import meeting.capture_session as capture_module
     import meeting.capture.soundcard_stream as sc
 
     # Worst phase: one failed retry interval wait + one poll + SoundCard start.
     worst = (
-        float(engine_module.CAPTURE_RETRY_INTERVAL_S)
-        + float(engine_module.CAPTURE_WATCHDOG_INTERVAL_S)
+        float(capture_module.CAPTURE_RETRY_INTERVAL_S)
+        + float(capture_module.CAPTURE_WATCHDOG_INTERVAL_S)
         + float(sc._START_TIMEOUT_S)
     )
-    assert worst <= float(engine_module.CAPTURE_RECOVERY_BUDGET_S)
-    assert float(engine_module.CAPTURE_RECOVERY_BUDGET_S) <= 12.0
+    assert worst <= float(capture_module.CAPTURE_RECOVERY_BUDGET_S)
+    assert float(capture_module.CAPTURE_RECOVERY_BUDGET_S) <= 12.0
 
 
 def test_background_ready_waits_for_offline_pass(make_engine, fakes, monkeypatch):

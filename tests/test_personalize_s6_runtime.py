@@ -54,10 +54,6 @@ class _Controller:
         self.recorder = _Recorder()
         self.hotkey_manager = SimpleNamespace(hotkeys={"record_toggle": "f9"})
         self.status_update = _Signal()
-        self.hands_free_changed = _Signal()
-        self.transform_requested = _Signal()
-        self.profile_record_requested = _Signal()
-        self.action_record_requested = _Signal()
         self.calls = []
         self.command_threads = []
         self.runtime = None
@@ -89,6 +85,15 @@ class _Controller:
         self.command_threads.append(threading.current_thread().name)
 
 
+def _hotkey_runtime(controller):
+    """A runtime whose shortcut signals record what it emits."""
+    runtime = HotkeyRuntime(controller)
+    for name in ("hands_free_changed", "transform_requested",
+                 "profile_record_requested", "action_record_requested"):
+        setattr(runtime, name, _Signal())
+    return runtime
+
+
 @pytest.fixture
 def latch_on(monkeypatch):
     monkeypatch.setattr(runtime_module, "resolve_recording_hands_free_latch", lambda: True)
@@ -97,7 +102,7 @@ def latch_on(monkeypatch):
 @pytest.fixture
 def runtime():
     controller = _Controller()
-    instance = HotkeyRuntime(controller)
+    instance = _hotkey_runtime(controller)
     controller.runtime = instance
     yield instance
     instance.cleanup()
@@ -204,7 +209,7 @@ def test_a_second_press_soon_after_a_tap_keeps_recording(runtime, latch_on, gap)
 
     assert controller.calls == ["start"]
     assert controller.recorder.is_recording
-    assert controller.hands_free_changed.emitted == [True]
+    assert runtime.hands_free_changed.emitted == [True]
     assert controller.status_update.emitted[-1] == "Hands-free · press F9 to stop"
     time.sleep(WINDOW + 0.1)
     assert controller.calls == ["start"]
@@ -213,14 +218,14 @@ def test_a_second_press_soon_after_a_tap_keeps_recording(runtime, latch_on, gap)
     runtime._queue_record_release(pressed_at + 5.1)
     _drain(runtime)
     assert controller.calls == ["start", "stop"]
-    assert controller.hands_free_changed.emitted == [True, False]
+    assert runtime.hands_free_changed.emitted == [True, False]
 
 
 def test_a_press_after_the_window_cancels_the_tap_and_starts_over(runtime, latch_on):
     controller = runtime.controller
     _tap_then_press(runtime, 0.45)
     assert controller.calls == ["start", "cancel", "start"]
-    assert controller.hands_free_changed.emitted == []
+    assert runtime.hands_free_changed.emitted == []
 
 
 def test_a_lone_tap_cancels_only_once_the_window_closes(runtime, latch_on):
@@ -232,7 +237,7 @@ def test_a_lone_tap_cancels_only_once_the_window_closes(runtime, latch_on):
     assert controller.calls == ["start"]
     assert _wait_until(lambda: controller.calls == ["start", "cancel"])
     assert time.monotonic() - start >= 0.05 + WINDOW - 0.02
-    assert controller.hands_free_changed.emitted == []
+    assert runtime.hands_free_changed.emitted == []
 
 
 def test_without_the_latch_a_tap_cancels_at_once(runtime, monkeypatch):
@@ -256,7 +261,7 @@ def test_a_recording_that_ends_elsewhere_leaves_hands_free(runtime, latch_on):
     pressed_at = _tap_then_press(runtime, 0.15)
     controller.stop_recording()  # e.g. the tray
     _drain(runtime)
-    assert controller.hands_free_changed.emitted == [True, False]
+    assert runtime.hands_free_changed.emitted == [True, False]
 
     runtime._queue_record_press(pressed_at + 3)
     _drain(runtime)
@@ -280,7 +285,7 @@ def test_changing_the_trigger_mode_drops_the_latch(runtime, latch_on):
     controller.hotkey_manager.set_record_mode = lambda _mode: None
     _tap_then_press(runtime, 0.15)
     runtime.set_recording_trigger_mode(RecordingTriggerMode.TOGGLE)
-    assert controller.hands_free_changed.emitted == [True, False]
+    assert runtime.hands_free_changed.emitted == [True, False]
     assert controller.recorder.is_recording
 
 
@@ -302,7 +307,7 @@ def test_windows_key_events_latch_and_stop(runtime, latch_on):
     for event in (down, up, down, up):
         assert manager._handle_keyboard_event(event) is False
     _drain(runtime)
-    assert runtime.controller.hands_free_changed.emitted == [True]
+    assert runtime.hands_free_changed.emitted == [True]
     manager._handle_keyboard_event(down)
     manager._handle_keyboard_event(up)
     _drain(runtime)
@@ -321,7 +326,7 @@ def test_pynput_listener_and_carbon_events_latch_and_stop(runtime, latch_on):
         manager._on_press(key.KeyCode(char="r"))
         manager._on_release(key.KeyCode(char="r"))
     _drain(runtime)
-    assert runtime.controller.hands_free_changed.emitted == [True]
+    assert runtime.hands_free_changed.emitted == [True]
     # Carbon and Hyprland deliver the action with a released flag instead.
     manager.trigger_action("record_toggle")
     manager.trigger_action("record_toggle", released=True)
@@ -373,7 +378,7 @@ def test_transform_shortcuts_register_beside_profiles_and_skip_conflicts(runtime
     assert families["profile"][0] == {"ticket": "ctrl+alt+t"}
     assert families["transform"][0] == {"polish": "ctrl+alt+p"}
     families["transform"][1]("polish")
-    assert controller.transform_requested.emitted == ["polish"]
+    assert runtime.transform_requested.emitted == ["polish"]
 
 
 def test_a_broken_transform_library_keeps_profile_shortcuts(runtime, monkeypatch):
@@ -393,7 +398,7 @@ def test_transform_shortcut_dispatches_end_to_end_on_windows(monkeypatch):
     manager = module.HotkeyManager()
     controller = _Controller()
     controller.hotkey_manager = manager
-    runtime = HotkeyRuntime(controller)
+    runtime = _hotkey_runtime(controller)
     monkeypatch.setattr(runtime_module.settings_manager, "load_all_settings", lambda: {})
     monkeypatch.setattr(
         runtime_module.text_transforms,
@@ -402,7 +407,7 @@ def test_transform_shortcut_dispatches_end_to_end_on_windows(monkeypatch):
     )
     runtime.refresh_profile_hotkeys()
     manager._handle_keyboard_event(_key_event("down", "p", keypad=False))
-    assert _wait_until(lambda: controller.transform_requested.emitted == ["polish"])
+    assert _wait_until(lambda: runtime.transform_requested.emitted == ["polish"])
 
 
 def test_marked_windows_count_as_focused_for_window_shortcuts(_session_qt_application):

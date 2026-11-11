@@ -418,13 +418,15 @@ def test_runtime_stop_mutes_updates_but_preserves_postroll_until_worker_drains()
     controller = SimpleNamespace(
         recorder=SimpleNamespace(set_streaming_callback=lambda callback: events.append(("callback", callback))),
         streaming_transcriber=SimpleNamespace(stop_streaming=lambda: events.append(("stop", None)) or "last word"),
-        partial_transcription=Mock(), streaming_text_update=Mock(), _streaming_enabled=True)
+        _streaming_enabled=True)
     runtime = StreamingRuntime(controller)
+    runtime.partial_transcription = Mock()
+    runtime.streaming_text_update = Mock()
     runtime.begin_stop_streaming_session()
     runtime.on_partial_transcription("tail", True)
     assert events == []  # post-roll still feeds the decoder
-    controller.partial_transcription.emit.assert_not_called()
-    controller.streaming_text_update.emit.assert_not_called()
+    runtime.partial_transcription.emit.assert_not_called()
+    runtime.streaming_text_update.emit.assert_not_called()
     assert runtime.stop_streaming_session() == "last word"
     assert events == [("callback", None), ("stop", None)]
 
@@ -437,8 +439,9 @@ def test_runtime_cancel_detaches_recorder_and_uses_nonblocking_preview_cancel():
         streaming_transcriber=SimpleNamespace(
             stop_streaming=Mock(side_effect=AssertionError("cancel must not drain")),
             cancel_streaming=lambda: events.append(("cancel", None))),
-        streaming_overlay_hide=Mock(), _streaming_enabled=True)
+        _streaming_enabled=True)
     runtime = StreamingRuntime(controller)
+    runtime.streaming_overlay_hide = Mock()
     runtime.cancel_streaming_session()
     assert events == [("callback", None), ("cancel", None)]
-    controller.streaming_overlay_hide.emit.assert_called_once_with()
+    runtime.streaming_overlay_hide.emit.assert_called_once_with()
