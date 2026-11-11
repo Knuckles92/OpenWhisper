@@ -545,6 +545,16 @@ def test_ready_page_names_what_is_still_missing(make_setup, monkeypatch):
     assert setup.ready_speech.isHidden() and setup.ready_cleanup.isHidden()
 
 
+def _wait_for_queued_refresh(setup, timeout_ms=2000):
+    """Run the dialog's zero-delay refresh timer. A fixed short qWait can end
+    before it fires on Windows, whose sleeps round up to the 15.6 ms tick."""
+    waited = 0
+    while setup._refresh_timer.isActive() and waited < timeout_ms:
+        QTest.qWait(5)
+        waited += 5
+    assert not setup._refresh_timer.isActive()
+
+
 @pytest.mark.parametrize("pasted", [True, False])
 def test_ready_page_confirms_a_dictation_and_shows_text_that_was_not_pasted(make_setup, pasted):
     setup, _, _ = make_setup({SettingsKey.AUTO_PASTE: False})
@@ -554,13 +564,13 @@ def test_ready_page_confirms_a_dictation_and_shows_text_that_was_not_pasted(make
     if pasted:
         setup.try_box.setPlainText("Hello there.")
     setup._try_fill_timer.timeout.emit()
-    QTest.qWait(10)
+    _wait_for_queued_refresh(setup)
     assert setup.try_box.toPlainText() == "Hello there."
     assert "That worked" in setup.try_note.text()
     assert ("clipboard too" in setup.try_note.text()) is not pasted
     assert setup.try_note.property("tone") == "ready"
     setup.dictation_failed("No speech detected")
-    QTest.qWait(10)
+    _wait_for_queued_refresh(setup)
     assert "No speech detected" in setup.try_note.text()
     assert setup.try_note.property("tone") == "attention"
     setup.begin(welcome=False)
