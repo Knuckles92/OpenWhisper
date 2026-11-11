@@ -54,15 +54,15 @@ def plan_gpu_setup(settings: dict, supported: Iterable[str]) -> Optional[GpuSetu
         ComponentId, available_component_ids, catalog_entry_for_platform, gpu_runtime_available,
     )
     from services.hf_access import MODEL_DOWNLOAD_SIZE_MB, is_model_cached
-    from services.settings import SettingsKey, setting_value
+    from services.settings import SettingsKey
 
     if ComponentId.GPU_ACCEL not in available_component_ids():
         return None
     supported = set(supported) or {"float32"}
     gpu = nvidia_gpu()
     total = gpu.total_mib if gpu is not None else None
-    selected = setting_value(SettingsKey.WHISPER_MODEL, settings) or "auto"
-    compute_setting = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings) or "auto"
+    selected = SettingsKey.WHISPER_MODEL.read(settings) or "auto"
+    compute_setting = SettingsKey.WHISPER_COMPUTE_TYPE.read(settings) or "auto"
 
     keep = selected != "auto" and fits(selected, best_cuda_compute_type(supported), total)
     model_setting = selected if keep else "auto"

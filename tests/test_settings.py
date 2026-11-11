@@ -822,7 +822,6 @@ def test_model_selection_falls_back_to_platform_default(tmp_path):
 @pytest.fixture
 def linux_parakeet_default(monkeypatch):
     """A Linux x86_64 host, whatever this test runs on."""
-    from services import settings as module
 
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(config, "DEFAULT_BACKEND", "parakeet")
@@ -987,7 +986,6 @@ def test_speech_defaults_follow_mlx_hardware_and_os_support(
 
 
 def test_mlx_meeting_default_preserves_explicit_selections(monkeypatch):
-    from services import settings as module
     from services.settings import own_meeting_speech, resolve_meeting_whisper_model
 
     patch_setting_defaults(monkeypatch, {

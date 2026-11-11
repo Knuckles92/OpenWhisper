@@ -66,12 +66,12 @@ class SpeechWorkerEngine(HostEngine):
     @property
     def identity(self) -> tuple:
         from services.local_asr.catalog import selected_device
-        from services.settings import SettingsKey, setting_value, settings_manager
+        from services.settings import SettingsKey, settings_manager
 
         settings = settings_manager.load_all_settings()
         return ("worker", self.backend.backend_id, self.backend.model_name, self.backend.device,
                 selected_device(self.backend.backend_id, settings),
-                setting_value(SettingsKey.LOCAL_ASR_LANGUAGE, settings))
+                SettingsKey.LOCAL_ASR_LANGUAGE.read(settings))
 
     def describe(self) -> dict:
         from services.local_asr.catalog import MODELS
@@ -117,13 +117,13 @@ class WhisperEngine(HostEngine):
     def identity(self) -> tuple:
         # Device and compute type count: turbo moving from the CPU to the GPU
         # is a different engine to a client, as much as another model is.
-        from services.settings import SettingsKey, setting_value, settings_manager
+        from services.settings import SettingsKey, settings_manager
 
         settings = settings_manager.load_all_settings()
         return ("whisper", self._model_name(), self.backend.device,
                 getattr(self.backend, "compute_type", None),
-                setting_value(SettingsKey.WHISPER_DEVICE, settings),
-                setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings))
+                SettingsKey.WHISPER_DEVICE.read(settings),
+                SettingsKey.WHISPER_COMPUTE_TYPE.read(settings))
 
     def _model_name(self) -> str:
         return self.backend.last_loaded_model or getattr(self.backend, "model_name", "") or ""

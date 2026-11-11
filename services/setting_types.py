@@ -21,7 +21,8 @@ value that fails falls back to the default, never raises.
 A setting declared ``in_table=False`` has a read default but no entry in
 ``SETTING_DEFAULTS``. The ``Optional*`` kinds are for settings whose absence
 itself means something (``APP_STYLE_TONES``, ``TEXT_TRANSFORMS``, ...): they
-read as ``None`` when unset or malformed, and the owning module decides.
+read as ``None`` when unset and as an empty container when malformed, and
+the owning module decides what None means.
 """
 
 from __future__ import annotations
@@ -320,34 +321,32 @@ class DictSetting(Setting[dict[str, Any]]):
         return raw if isinstance(raw, dict) else INVALID
 
 
-class OptionalStrSetting(Setting[str | None]):
-    """Text whose absence means something: ``None`` when unset or not a string."""
-
-    def __new__(cls, key: str) -> Self:
-        return super().__new__(cls, key, None, in_table=False)
-
-    def _convert(self, raw: Any) -> str | None | _Invalid:
-        return raw if isinstance(raw, str) else INVALID
-
-
 class OptionalListSetting(Setting[list[Any] | None]):
-    """A list whose absence means something: ``None`` when unset or not a list."""
+    """A list whose absence means something (the starters, say).
+
+    Reads None when unset; a stored value that is not a list reads as an
+    empty list, as their owners have always treated one.
+    """
 
     def __new__(cls, key: str) -> Self:
         return super().__new__(cls, key, None, in_table=False)
 
     def _convert(self, raw: Any) -> list[Any] | None | _Invalid:
-        return raw if isinstance(raw, list) else INVALID
+        return raw if isinstance(raw, list) else []
 
 
 class OptionalDictSetting(Setting[dict[str, Any] | None]):
-    """An object whose absence means something: ``None`` when unset or not a dict."""
+    """An object whose absence means something.
+
+    Reads None when unset; a stored value that is not an object reads as an
+    empty one.
+    """
 
     def __new__(cls, key: str) -> Self:
         return super().__new__(cls, key, None, in_table=False)
 
     def _convert(self, raw: Any) -> dict[str, Any] | None | _Invalid:
-        return raw if isinstance(raw, dict) else INVALID
+        return raw if isinstance(raw, dict) else {}
 
 
 class RawSetting(Setting[object]):
@@ -374,7 +373,6 @@ __all__ = [
     "ListSetting",
     "OptionalDictSetting",
     "OptionalListSetting",
-    "OptionalStrSetting",
     "RawSetting",
     "Setting",
     "StrSetting",

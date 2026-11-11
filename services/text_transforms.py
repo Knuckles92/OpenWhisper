@@ -67,11 +67,9 @@ def load_transforms(settings: Mapping) -> list[Transform]:
     Malformed rows, repeated ids and anything past
     ``config.MAX_TEXT_TRANSFORMS`` are skipped rather than failing the list.
     """
-    raw = (settings or {}).get(SettingsKey.TEXT_TRANSFORMS)
+    raw = SettingsKey.TEXT_TRANSFORMS.read(settings or {})
     if raw is None:
         return list(STARTER_TRANSFORMS)
-    if not isinstance(raw, list):
-        return []
     transforms = []
     seen = set()
     for item in raw:

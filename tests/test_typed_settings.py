@@ -382,7 +382,71 @@ call_site("cleanup_profiles", SettingsKey.QUICK_RECORD_PROFILE,
           lambda s: s.get(SettingsKey.QUICK_RECORD_PROFILE) or "",
           lambda s: SettingsKey.QUICK_RECORD_PROFILE.read(s) or "")
 call_site("cleanup_profiles", SettingsKey.HOTKEYS,
-          lambda s: (lambda v: v if isinstance(v, dict) else None)(s.get(SettingsKey.HOTKEYS)))
+          lambda s: (lambda v: bool(isinstance(v, dict) and v.get("command_mode")))(
+              s.get(SettingsKey.HOTKEYS)),
+          lambda s: bool((SettingsKey.HOTKEYS.read(s) or {}).get("command_mode")),
+          result=bool)
+# What load_client_pairing goes on to read: the pairing's fields, or none.
+call_site("remote_asr.settings", SettingsKey.REMOTE_ENGINE_CLIENT,
+          lambda s: (lambda v: v if isinstance(v, dict) else {})(
+              s.get(SettingsKey.REMOTE_ENGINE_CLIENT)),
+          lambda s: SettingsKey.REMOTE_ENGINE_CLIENT.read(s) or {},
+          result=dict)
+for _key in (SettingsKey.REMOTE_HOST_ENABLED, SettingsKey.REMOTE_HOST_MODEL_MANAGEMENT,
+             SettingsKey.REMOTE_HOST_KEEP_RECORDS, SettingsKey.REMOTE_HOST_MANAGE_MCP,
+             SettingsKey.REMOTE_CLIENT_HISTORY):
+    call_site("remote_asr.settings", _key, lambda s, k=_key: s.get(k) is True)
+call_site("remote_asr.settings", SettingsKey.REMOTE_HOST_TAILSCALE_TRUST,
+          lambda s: s.get(SettingsKey.REMOTE_HOST_TAILSCALE_TRUST) is not False)
+call_site("remote_asr.settings", SettingsKey.REMOTE_RECORDS_LOCATION,
+          lambda s: (lambda v: v if v in ("local", "host", "both") else "local")(
+              s.get(SettingsKey.REMOTE_RECORDS_LOCATION)))
+
+
+def _old_host_port(s):
+    from services.remote_asr import protocol
+
+    raw = s.get(SettingsKey.REMOTE_HOST_PORT, protocol.DEFAULT_PORT)
+    try:
+        port = int(raw)
+    except (TypeError, ValueError):
+        return protocol.DEFAULT_PORT
+    return port if 1 <= port <= 65535 else protocol.DEFAULT_PORT
+
+
+call_site("remote_asr.settings", SettingsKey.REMOTE_HOST_PORT, _old_host_port)
+call_site("remote_asr.settings", SettingsKey.REMOTE_HOST_DEVICES,
+          lambda s: (lambda v: v if isinstance(v, list) else [])(
+              s.get(SettingsKey.REMOTE_HOST_DEVICES)))
+
+
+def _old_mcp_port(s):
+    from services.agent_mcp.runtime import DEFAULT_PORT, _is_valid_port
+
+    port = s.get(SettingsKey.MCP_PORT, DEFAULT_PORT)
+    return port if _is_valid_port(port) else DEFAULT_PORT
+
+
+for _module in ("agent_mcp.runtime", "agent_mcp.host_control", "automation.channel_bridge"):
+    call_site(_module, SettingsKey.MCP_PORT, _old_mcp_port)
+    call_site(_module, SettingsKey.MCP_ENABLED,
+              lambda s: s.get(SettingsKey.MCP_ENABLED, False) is True)
+    call_site(_module, SettingsKey.MCP_TAILSCALE_ENABLED,
+              lambda s: s.get(SettingsKey.MCP_TAILSCALE_ENABLED, False) is True)
+for _key in (SettingsKey.MCP_SETTINGS_ACCESS, SettingsKey.MCP_RETITLE_TRANSCRIPTIONS,
+             SettingsKey.MCP_RETITLE_MEETINGS):
+    call_site("agent_mcp.controls", _key, lambda s, k=_key: s.get(k) is True)
+call_site("agent_mcp.controls", SettingsKey.MCP_WRITABLE_SETTINGS,
+          lambda s: (lambda v: v if isinstance(v, dict) else {})(
+              s.get(SettingsKey.MCP_WRITABLE_SETTINGS, {})))
+
+
+def test_port_defaults_match_their_servers():
+    from services.agent_mcp.runtime import DEFAULT_PORT as MCP_PORT
+    from services.remote_asr.protocol import DEFAULT_PORT as REMOTE_PORT
+
+    assert SettingsKey.MCP_PORT.default == new.MCP_DEFAULT_PORT == MCP_PORT
+    assert SettingsKey.REMOTE_HOST_PORT.default == new.REMOTE_HOST_DEFAULT_PORT == REMOTE_PORT
 
 
 def test_config_is_where_the_defaults_come_from():

@@ -23,7 +23,6 @@ from services.setting_types import (
     ListSetting,
     OptionalDictSetting,
     OptionalListSetting,
-    OptionalStrSetting,
     RawSetting,
     Setting,
     StrSetting,
@@ -517,7 +516,7 @@ class SettingsKey:
         "transcript_cleanup_reasoning", config.TRANSCRIPT_CLEANUP_REASONING, TranscriptCleanupReasoning.ALL,
     )
     # Named OpenAI-compatible endpoints (custom profiles only; builtins omitted).
-    TEXT_LLM_PROFILES: Final = RawSetting("text_llm_profiles")
+    TEXT_LLM_PROFILES: Final = ListSetting("text_llm_profiles", in_table=False)
     # JSON list of user-taught rule strings appended to the cleanup prompt
     TRANSCRIPT_CLEANUP_RULES: Final = ListSetting(
         "transcript_cleanup_rules", in_table=False,
@@ -566,15 +565,16 @@ class SettingsKey:
     # Colour theme: "dark", "light", or "system" (follow the OS setting).
     UI_THEME: Final = ChoiceSetting("ui_theme", config.UI_THEME, UiTheme.ALL)
     # Optional dictation onboarding; absence on an established install is not new.
-    GUIDED_SETUP_STATE: Final = OptionalStrSetting("guided_setup_state")
+    GUIDED_SETUP_STATE: Final = StrSetting("guided_setup_state", "", in_table=False)
     MEETING_SETUP_COMPLETE: Final = BoolSetting(
         "meeting_setup_complete", False, in_table=False,
     )
     # Legacy keys kept for reading/migrating older settings files
     STREAMING_OVERLAY_ENABLED: Final = RawSetting("streaming_overlay_enabled")
     STREAMING_PASTE_ENABLED: Final = RawSetting("streaming_paste_enabled")
-    LOCAL_ASR_MODELS: Final = RawSetting("local_asr_models")
-    LOCAL_ASR_DEVICES: Final = RawSetting("local_asr_devices")
+    # {backend: model} and {backend: device}; see services/local_asr/catalog.py.
+    LOCAL_ASR_MODELS: Final = DictSetting("local_asr_models", in_table=False)
+    LOCAL_ASR_DEVICES: Final = DictSetting("local_asr_devices", in_table=False)
     LOCAL_ASR_LANGUAGE: Final = StrSetting("local_asr_language", "en")
     MEETING_ASR_MODEL: Final = StrSetting("meeting_asr_model", config.MEETING_ASR_MODEL)
     # "local" or "remote" (the paired computer).
@@ -719,12 +719,13 @@ class SettingsKey:
     MCP_SETTINGS_ACCESS: Final = BoolSetting(
         "mcp_settings_access", False, in_table=False,
     )
-    MCP_WRITABLE_SETTINGS: Final = RawSetting("mcp_writable_settings")
+    # {setting key: True} for the settings MCP agents may change.
+    MCP_WRITABLE_SETTINGS: Final = DictSetting("mcp_writable_settings", in_table=False)
     # Remote engine (services/remote_asr). Client: the paired host's address,
     # pinned certificate fingerprint and name (the token is in the OS
     # credential store). Host: sharing switch, port, and paired devices,
     # stored as token digests.
-    REMOTE_ENGINE_CLIENT: Final = RawSetting("remote_engine_client")
+    REMOTE_ENGINE_CLIENT: Final = OptionalDictSetting("remote_engine_client")
     REMOTE_HOST_ENABLED: Final = BoolSetting(
         "remote_host_enabled", False, in_table=False,
     )
@@ -735,7 +736,7 @@ class SettingsKey:
     REMOTE_HOST_PORT: Final = IntSetting(
         "remote_host_port", REMOTE_HOST_DEFAULT_PORT, valid=(1, 65535), in_table=False,
     )
-    REMOTE_HOST_DEVICES: Final = RawSetting("remote_host_devices")
+    REMOTE_HOST_DEVICES: Final = ListSetting("remote_host_devices", in_table=False)
     # Let computers signed in to the same Tailscale account pair without a code.
     REMOTE_HOST_TAILSCALE_TRUST: Final = BoolSetting(
         "remote_host_tailscale_trust", True, in_table=False,

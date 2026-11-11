@@ -255,9 +255,7 @@ WRITE_CAPABILITIES = (
 
 
 def writable_settings(settings):
-    granted = settings.get(SettingsKey.MCP_WRITABLE_SETTINGS, {})
-    if not isinstance(granted, dict):
-        return set()
+    granted = SettingsKey.MCP_WRITABLE_SETTINGS.read(settings)
     return {key for key in CONTROLS_BY_KEY if granted.get(key) is True}
 
 
@@ -316,11 +314,10 @@ class AgentControls:
 
     def capabilities(self):
         saved = self.settings.load_all_settings() if self.settings is not None else {}
-        access = saved.get(SettingsKey.MCP_SETTINGS_ACCESS) is True
+        access = SettingsKey.MCP_SETTINGS_ACCESS.read(saved)
         return {
-            "retitle_transcriptions": saved.get(SettingsKey.MCP_RETITLE_TRANSCRIPTIONS)
-            is True,
-            "retitle_meetings": saved.get(SettingsKey.MCP_RETITLE_MEETINGS) is True,
+            "retitle_transcriptions": SettingsKey.MCP_RETITLE_TRANSCRIPTIONS.read(saved),
+            "retitle_meetings": SettingsKey.MCP_RETITLE_MEETINGS.read(saved),
             "settings_access": access,
             "writable_settings": sorted(writable_settings(saved)) if access else [],
             # The live API and MCP live tools: live_events, run_actions,

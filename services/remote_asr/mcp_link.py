@@ -237,8 +237,8 @@ class HostMcpSettings:
         before = self.load_all_settings()
         after = copy.deepcopy(before)
         commit(after)
-        old = before.get(SettingsKey.MCP_WRITABLE_SETTINGS, {})
-        new = after.get(SettingsKey.MCP_WRITABLE_SETTINGS, {})
+        old = SettingsKey.MCP_WRITABLE_SETTINGS.read(before)
+        new = SettingsKey.MCP_WRITABLE_SETTINGS.read(after)
         changed = {key: new.get(key) is True for key in set(old) | set(new)
                    if (old.get(key) is True) != (new.get(key) is True)}
         if changed:

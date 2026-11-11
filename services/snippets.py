@@ -77,9 +77,7 @@ def normalize(text: str) -> str:
 
 def load_snippets(settings: Mapping) -> list[Snippet]:
     """The valid saved snippets, in their saved order."""
-    raw = (settings or {}).get(SettingsKey.DICTATION_SNIPPETS)
-    if not isinstance(raw, list):
-        return []
+    raw = SettingsKey.DICTATION_SNIPPETS.read(settings or {})
     snippets: list[Snippet] = []
     ids: set[str] = set()
     triggers: set[str] = set()

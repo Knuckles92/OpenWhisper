@@ -98,8 +98,8 @@ def _settings(settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 def load_client_pairing(settings: Optional[Dict[str, Any]] = None) -> Optional[ClientPairing]:
     from services.settings import SettingsKey
 
-    raw = _settings(settings).get(SettingsKey.REMOTE_ENGINE_CLIENT)
-    if not isinstance(raw, dict):
+    raw = SettingsKey.REMOTE_ENGINE_CLIENT.read(_settings(settings))
+    if raw is None:
         return None
     host = raw.get("host")
     fingerprint = raw.get("fingerprint")
@@ -278,28 +278,28 @@ def forget_client_pairing() -> None:
 def host_enabled(settings: Optional[Dict[str, Any]] = None) -> bool:
     from services.settings import SettingsKey
 
-    return _settings(settings).get(SettingsKey.REMOTE_HOST_ENABLED) is True
+    return SettingsKey.REMOTE_HOST_ENABLED.read(_settings(settings))
 
 
 def host_model_management(settings: Optional[Dict[str, Any]] = None) -> bool:
     """Off by default; pairing alone never grants model administration."""
     from services.settings import SettingsKey
 
-    return _settings(settings).get(SettingsKey.REMOTE_HOST_MODEL_MANAGEMENT) is True
+    return SettingsKey.REMOTE_HOST_MODEL_MANAGEMENT.read(_settings(settings))
 
 
 def host_keeps_records(settings: Optional[Dict[str, Any]] = None) -> bool:
     """Off by default; pairing alone never lets a computer store files here."""
     from services.settings import SettingsKey
 
-    return _settings(settings).get(SettingsKey.REMOTE_HOST_KEEP_RECORDS) is True
+    return SettingsKey.REMOTE_HOST_KEEP_RECORDS.read(_settings(settings))
 
 
 def host_manages_mcp(settings: Optional[Dict[str, Any]] = None) -> bool:
     """Off by default; pairing alone never lets a computer run this one's MCP."""
     from services.settings import SettingsKey
 
-    return _settings(settings).get(SettingsKey.REMOTE_HOST_MANAGE_MCP) is True
+    return SettingsKey.REMOTE_HOST_MANAGE_MCP.read(_settings(settings))
 
 
 RECORD_LOCATIONS = ("local", "host", "both")
@@ -308,40 +308,33 @@ RECORD_LOCATIONS = ("local", "host", "both")
 def client_shares_history(settings: Optional[Dict[str, Any]] = None) -> bool:
     from services.settings import SettingsKey
 
-    return _settings(settings).get(SettingsKey.REMOTE_CLIENT_HISTORY) is True
+    return SettingsKey.REMOTE_CLIENT_HISTORY.read(_settings(settings))
 
 
 def records_location(settings: Optional[Dict[str, Any]] = None) -> str:
     """Where this computer keeps its records while paired; "local" by default."""
     from services.settings import SettingsKey
 
-    value = _settings(settings).get(SettingsKey.REMOTE_RECORDS_LOCATION)
-    return value if value in RECORD_LOCATIONS else "local"
+    return SettingsKey.REMOTE_RECORDS_LOCATION.read(_settings(settings))
 
 
 def host_port(settings: Optional[Dict[str, Any]] = None) -> int:
     from services.settings import SettingsKey
 
-    raw = _settings(settings).get(SettingsKey.REMOTE_HOST_PORT, protocol.DEFAULT_PORT)
-    try:
-        port = int(raw)
-    except (TypeError, ValueError):
-        return protocol.DEFAULT_PORT
-    return port if 1 <= port <= 65535 else protocol.DEFAULT_PORT
+    return SettingsKey.REMOTE_HOST_PORT.read(_settings(settings))
 
 
 def host_tailscale_trust(settings: Optional[Dict[str, Any]] = None) -> bool:
     """On unless turned off: the owner's own Tailscale computers pair without a code."""
     from services.settings import SettingsKey
 
-    return _settings(settings).get(SettingsKey.REMOTE_HOST_TAILSCALE_TRUST) is not False
+    return SettingsKey.REMOTE_HOST_TAILSCALE_TRUST.read(_settings(settings))
 
 
 def load_host_devices() -> list:
     from services.settings import SettingsKey
 
-    raw = _settings().get(SettingsKey.REMOTE_HOST_DEVICES)
-    return raw if isinstance(raw, list) else []
+    return SettingsKey.REMOTE_HOST_DEVICES.read(_settings())
 
 
 def save_host_devices(devices: list) -> None:

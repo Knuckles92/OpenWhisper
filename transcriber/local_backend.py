@@ -91,9 +91,8 @@ class LocalWhisperBackend(TranscriptionBackend):
     ):
         super().__init__()
         if model_name is None:
-            from services.settings import SettingsKey, setting_value, settings_manager
-            settings = settings_manager.load_all_settings()
-            model_name = setting_value(SettingsKey.WHISPER_MODEL, settings)
+            from services.settings import SettingsKey, settings_manager
+            model_name = SettingsKey.WHISPER_MODEL.read(settings_manager.load_all_settings())
         self.model_name = model_name
         # What was asked for, kept apart from ``model_name`` because loading
         # replaces "auto" there with the model it resolved to.
@@ -175,18 +174,18 @@ class LocalWhisperBackend(TranscriptionBackend):
         return "float32"
 
     def _detect_hardware(self) -> Tuple[str, str, str]:
-        from services.settings import SettingsKey, setting_value, settings_manager
+        from services.settings import SettingsKey, settings_manager
         settings = settings_manager.load_all_settings()
 
         if self._override_device is not None:
             device = self._override_device
         else:
-            device = setting_value(SettingsKey.WHISPER_DEVICE, settings)
+            device = SettingsKey.WHISPER_DEVICE.read(settings)
 
         if self._override_compute_type is not None:
             compute_type = self._override_compute_type
         else:
-            compute_type = setting_value(SettingsKey.WHISPER_COMPUTE_TYPE, settings)
+            compute_type = SettingsKey.WHISPER_COMPUTE_TYPE.read(settings)
 
         # This backend's own request, not the dictation setting: Meeting Mode
         # and the live preview run their own models through this class.
@@ -538,9 +537,8 @@ class LocalWhisperBackend(TranscriptionBackend):
         if model_name:
             self.model_name = model_name
         else:
-            from services.settings import SettingsKey, setting_value, settings_manager
-            settings = settings_manager.load_all_settings()
-            self.model_name = setting_value(SettingsKey.WHISPER_MODEL, settings)
+            from services.settings import SettingsKey, settings_manager
+            self.model_name = SettingsKey.WHISPER_MODEL.read(settings_manager.load_all_settings())
         self._requested_model = self.model_name
         self.cleanup()
         self._load_model()

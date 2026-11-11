@@ -273,9 +273,7 @@ def _parse(item: Any) -> Optional[Action]:
 
 def load_actions(settings: Mapping) -> list[Action]:
     """Saved actions; malformed rows, repeated ids and extras past the limit are skipped."""
-    raw = (settings or {}).get(SettingsKey.ACTIONS)
-    if not isinstance(raw, list):
-        return []
+    raw = SettingsKey.ACTIONS.read(settings or {})
     actions, seen = [], set()
     for item in raw:
         action = _parse(item)

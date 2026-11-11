@@ -67,11 +67,9 @@ STARTER_STYLES = (
 
 def saved_styles(settings: dict) -> list[WriteUpStyle]:
     """The user's styles, without the default; the starters until any is saved."""
-    raw = (settings or {}).get(SettingsKey.WALKTHROUGH_WRITE_UP_STYLES)
+    raw = SettingsKey.WALKTHROUGH_WRITE_UP_STYLES.read(settings or {})
     if raw is None:
         return list(STARTER_STYLES)
-    if not isinstance(raw, list):
-        return []
     styles: list[WriteUpStyle] = []
     seen: set[str] = set()
     for item in raw:

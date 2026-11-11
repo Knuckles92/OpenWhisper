@@ -46,7 +46,6 @@ def test_annotated_selection_emits_canonical_name_and_syncs_silently(monkeypatch
 
 
 def test_fresh_mac_settings_select_mlx_for_dictation_and_meetings(monkeypatch, tmp_path):
-    from services import settings as settings_module
     from tests.test_settings_models import _Host, _isolated_settings
     from ui_qt.dialogs import settings_models as models_module
 

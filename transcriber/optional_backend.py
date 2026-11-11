@@ -300,7 +300,9 @@ class LocalSpeechBackend(TranscriptionBackend):
     def request_language(self) -> str:
         """The language a request made without one asks the worker for."""
         from services.local_asr.languages import selected_language
-        return selected_language(self.backend_id, self._settings().get("local_asr_language", "en"))
+        from services.settings import SettingsKey
+
+        return selected_language(self.backend_id, SettingsKey.LOCAL_ASR_LANGUAGE.read(self._settings()))
 
     def _phrases_reach_model(self) -> bool:
         from services.recognition_context import SUPPORT_MODEL, engine_support

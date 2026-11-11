@@ -375,13 +375,9 @@ def _load_settings(settings: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _custom_payload(settings: Dict[str, Any]) -> List[Any]:
-    try:
-        from services.settings import SettingsKey
+    from services.settings import SettingsKey
 
-        raw = settings.get(SettingsKey.TEXT_LLM_PROFILES)
-    except Exception:
-        raw = settings.get("text_llm_profiles")
-    return raw if isinstance(raw, list) else []
+    return SettingsKey.TEXT_LLM_PROFILES.read(settings)
 
 
 def parse_custom_profile(raw: Any) -> Optional[TextLLMProfile]:
