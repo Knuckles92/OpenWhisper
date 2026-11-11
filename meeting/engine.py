@@ -23,12 +23,13 @@ import re
 import secrets
 import threading
 import time
+import wave
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
-from meeting.capture_session import MeetingCapture
+from meeting.capture_session import FailureLog, MeetingCapture, where_it_failed
 from meeting.clock import MeetingClock
 from meeting.end_run import EndRun
 from meeting.finalization import POLISH_TIMEOUT_S, speaker_pass_gate
@@ -254,6 +255,9 @@ class MeetingEngine:
 
         self._hb_stop: Optional[threading.Event] = None
         self._hb_thread: Optional[threading.Thread] = None
+        # Handlers on per-chunk, per-heartbeat and per-judgment paths warn on
+        # the first failure of a run and log repeats at debug.
+        self._failures = FailureLog(logger)
 
     def add_listener(self, cb: Listener) -> None:
         """Register an event listener ``cb(kind, payload)``.
@@ -705,6 +709,10 @@ class MeetingEngine:
             if not self._processing_stop.is_set():
                 logger.exception("Meeting processing initialization failed")
                 self._emit("error", {"code": "processing_unavailable", "message": str(exc)})
+            else:
+                # End/Quit tore the pipeline down under this worker.
+                logger.debug("Meeting processing initialization stopped by End; "
+                             "ignoring its error", exc_info=True)
         finally:
             self._processing_complete.set()
 
@@ -739,6 +747,9 @@ class MeetingEngine:
         except Exception:
             if not self._processing_stop.is_set():
                 logger.exception("Speaker separation initialization failed")
+            else:
+                logger.debug("Speaker separation initialization stopped by End; "
+                             "ignoring its error", exc_info=True)
         finally:
             if not self._processing_stop.is_set():
                 # Readiness landed on its own thread; tell the dashboard.
@@ -1440,16 +1451,23 @@ class MeetingEngine:
     def _heartbeat_loop(self) -> None:
         stop = self._hb_stop
         while stop is not None and not stop.wait(HEARTBEAT_INTERVAL_S):
+            # Thread loop every HEARTBEAT_INTERVAL_S: it must outlive any
+            # failure, and a lasting one warns once rather than every pass.
             try:
                 self.repository.heartbeat(self.meeting_id)
+                self._failures.recovered("heartbeat")
             except Exception:
-                logger.exception("Meeting heartbeat failed")
+                self._failures.failed("heartbeat", "Meeting heartbeat failed")
             try:
                 self._start_fast_features()
                 if self._refresh_live_highlights_status():
                     self._emit_status()
+                self._failures.recovered("fast_features")
             except Exception:
-                logger.exception("Fast meeting features could not start")
+                # Fast features hold judge clients and excerpts: type only.
+                self._failures.failed("fast_features",
+                                      "Fast meeting features could not start",
+                                      type_only=True)
 
     def _stop_heartbeat(self) -> None:
         if self._hb_stop is not None:
@@ -1471,8 +1489,12 @@ class MeetingEngine:
                 # SQLite row; its refill worker will pick it up.
                 self._asr.enqueue(chunk)
                 self._enqueued_chunk_ids.add(chunk.chunk_id)
+                self._failures.recovered("enqueue")
             except Exception:
-                logger.exception("Failed to enqueue chunk %s", chunk.chunk_id)
+                # Spool callback, once per chunk. The row stays pending in
+                # SQLite, so the meeting goes on.
+                self._failures.failed("enqueue", "Failed to enqueue chunk %s",
+                                      chunk.chunk_id)
 
     def _start_asr(self, *, defer_load: bool = False) -> None:
         try:
@@ -1616,8 +1638,10 @@ class MeetingEngine:
         self._enqueued_chunk_ids.add(chunk.chunk_id)
         try:
             self._assign_speakers(segments)
+            self._failures.recovered("assign_speakers")
         except Exception:
-            logger.exception("Speaker assignment failed")
+            # Diarization is optional; the chunk still commits unlabeled.
+            self._failures.failed("assign_speakers", "Speaker assignment failed")
         rows, committed = self.repository.commit_chunk_transcription(
             self.meeting_id, chunk.chunk_id, segments
         )
@@ -1633,8 +1657,9 @@ class MeetingEngine:
         if scheduler is not None:
             try:
                 scheduler.notify_segments(len(rows))
+                self._failures.recovered("scheduler_notify")
             except Exception:
-                logger.exception("Scheduler notify failed")
+                self._failures.failed("scheduler_notify", "Scheduler notify failed")
         if rows:
             self._emit("segments", {"items": rows})
             self._broadcast({"type": "segments", "items": rows})
@@ -1642,8 +1667,12 @@ class MeetingEngine:
             if listener is not None:
                 try:
                     listener.observe(rows)
+                    self._failures.recovered("voice_observe")
                 except Exception:
-                    logger.exception("Voice command observe failed")
+                    # The listener reads spoken text: log the type only.
+                    self._failures.failed("voice_observe",
+                                          "Voice command observe failed",
+                                          type_only=True)
         self._start_fast_features()
         signals = getattr(self, "_live_signals", None)
         if signals is not None:
@@ -1658,7 +1687,9 @@ class MeetingEngine:
             from meeting.asr.audio import load_wav_int16
             from meeting.diarize.assign import assign_from_frames, refresh_labels
         except Exception:
-            logger.exception("meeting.asr.audio unavailable; skipping diarization")
+            # Import-time failure persists, and this runs once per chunk.
+            self._failures.failed("diarize_import",
+                                  "meeting.asr.audio unavailable; skipping diarization")
             return
 
         def _on_unlabeled() -> None:
@@ -1672,9 +1703,13 @@ class MeetingEngine:
                 continue
             try:
                 frames, rate = load_wav_int16(chunk.file_path)
-            except Exception:
-                logger.exception("Failed to reload chunk %s for diarization",
-                                 chunk_id)
+                self._failures.recovered("reload_chunk")
+            except (OSError, EOFError, wave.Error, ValueError):
+                # What load_wav_int16 raises for a missing, truncated or
+                # non-16-bit file; this chunk stays unlabeled.
+                self._failures.failed("reload_chunk",
+                                      "Failed to reload chunk %s for diarization",
+                                      chunk_id)
                 continue
             labeled.extend(assign_from_frames(
                 self._diarizer, chunk_segments, frames, rate, chunk.start_s,
@@ -1818,8 +1853,10 @@ class MeetingEngine:
             return
         try:
             self.store.apply("system", "diarizer", ops)
+            self._failures.recovered("diarizer_relabel")
         except Exception:
-            logger.exception("Diarizer relabel batch failed")
+            # Diarizer callback thread; runs after every relabel pass.
+            self._failures.failed("diarizer_relabel", "Diarizer relabel batch failed")
 
     def _start_server(self) -> str:
         try:
@@ -2352,8 +2389,12 @@ class MeetingEngine:
         from services.typesafe import route_is_local
         try:
             local = route_is_local()
+            self._failures.recovered("judgment_route")
         except Exception:
-            logger.exception("Fast judgments route lookup failed")
+            # Asked before every judgment; the route names an endpoint and key.
+            self._failures.failed("judgment_route",
+                                  "Fast judgments route lookup failed; treating it as remote",
+                                  type_only=True)
             local = False
         return local or self._cloud_enabled_now()
 
@@ -2412,8 +2453,9 @@ class MeetingEngine:
                              self._fast_features_allowed)
         try:
             worker.finalize()
-        except Exception:
-            logger.exception("Final highlight check failed")
+        except Exception as exc:
+            # The judge reads transcript excerpts: where it failed, not its message.
+            logger.error("Final highlight check failed (%s)", where_it_failed(exc))
         finally:
             worker.shutdown()
 
@@ -2491,11 +2533,16 @@ class MeetingEngine:
                         message = "Recap added to the live notes."
                     else:
                         message = "The recap produced no saved notes. Try again from the notes request box."
-                except Exception:
+                except Exception as exc:
+                    # Agent result: its error could quote the spoken request.
+                    logger.warning("Spoken recap failed (%s)", where_it_failed(exc))
                     message = "The recap could not finish. Try again from the notes request box."
                 self._voice_feedback(message, "saved" if message.startswith("Recap added") else "error")
             future.add_done_callback(finished)
-        except Exception:
+        except Exception as exc:
+            # Usually the note agent being offline (RuntimeError); the request
+            # quotes speech, so where it failed and not its message.
+            logger.warning("Spoken recap could not start (%s)", where_it_failed(exc))
             self._voice_feedback("Recap is unavailable while the note agent is offline.", "error")
         return []
 
@@ -2513,6 +2560,7 @@ class MeetingEngine:
                 if not resolve_typesafe_enabled():
                     return None
                 judge = judge_from_settings()
+                self._failures.recovered("typesafe_judge")
                 if judge is None:
                     return None
                 cached = getattr(self, "_typesafe_judge_cache", None)
@@ -2522,7 +2570,10 @@ class MeetingEngine:
                 self._typesafe_judge_cache = judge
                 return judge
             except Exception:
-                logger.exception("TypeSafe judge unavailable")
+                # Built from settings that hold the API key, and looked up on
+                # every status emit and judgment: type only, warn once.
+                self._failures.failed("typesafe_judge", "TypeSafe judge unavailable",
+                                      type_only=True)
                 return None
 
     def _cloud_enabled_now(self) -> bool:
@@ -2532,7 +2583,9 @@ class MeetingEngine:
         try:
             return bool(store.with_state(lambda state: state.cloud_enabled))
         except Exception:
-            logger.exception("Cloud consent check failed")
+            # Asked before every judgment; failing closed keeps excerpts local.
+            self._failures.failed("cloud_consent",
+                                  "Cloud consent check failed; treating insights as off")
             return False
 
     def _typesafe_topic_judge(self):
@@ -2588,7 +2641,9 @@ class MeetingEngine:
                 self._voice_commands = listener
                 return listener
             except Exception:
-                logger.exception("Voice command listener unavailable")
+                # Retried for every chunk and preview: type only, warn once.
+                self._failures.failed("voice_listener", "Voice command listener unavailable",
+                                      type_only=True)
                 return None
 
     def _shutdown_voice_commands(self) -> None:
@@ -2633,7 +2688,10 @@ class MeetingEngine:
                 item.to_dict() for item in state.cards.get("user_notes", [])
             ))
         except Exception:
-            logger.exception("Could not read meeting term corrections")
+            # Once per chunk, and the notes are the host's own words: type only.
+            self._failures.failed("term_rules",
+                                  "Could not read meeting term corrections; decoding without them",
+                                  type_only=True)
             return {}
 
     def _apply_diarizer_pins(self, results: List[OpResult]) -> None:

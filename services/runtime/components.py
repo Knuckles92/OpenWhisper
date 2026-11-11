@@ -112,7 +112,7 @@ class ComponentRuntime(QObject):
                 uninstall_component(component_id)
             controller.status_update.emit("Component removed")
         except Exception as exc:
-            logger.error("Failed to remove component '%s': %s", component_id, exc)
+            logger.error("Failed to remove component '%s': %s", component_id, exc, exc_info=True)
             controller.status_update.emit(f"Could not remove the component: {exc}")
         finally:
             self.component_state_changed.emit()

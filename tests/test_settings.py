@@ -1018,3 +1018,39 @@ def test_a_separate_meeting_engine_with_no_model_saved_takes_dictation_parakeet(
     assert resolve({**choices, SettingsKey.MEETING_WHISPER_MODEL: "auto"}) == "auto"
     assert resolve({**choices, SettingsKey.MEETING_ASR_MODEL: "nemotron-3.5"}) == "nemotron-3.5"
     assert resolve({**choices, SettingsKey.SELECTED_MODEL: "parakeet_unified"}) != "parakeet-unified-en"
+
+
+_UNREADABLE_SETTINGS = {
+    "not json": (b"{not-json", json.JSONDecodeError),
+    "not utf-8": (b'{"a": "\xff\xfe"}', UnicodeDecodeError),
+    "not an object": (b"[1, 2]", ValueError),
+    "nested too deeply": (b"[" * 200_000 + b"]" * 200_000, RecursionError),
+}
+
+
+@pytest.mark.parametrize("content,error", _UNREADABLE_SETTINGS.values(),
+                         ids=list(_UNREADABLE_SETTINGS))
+def test_unreadable_settings_load_as_empty_and_block_writes(tmp_path, caplog, content, error):
+    """A bad file is an empty mapping to readers and stops read-modify-write saves."""
+    path = tmp_path / "settings.json"
+    path.write_bytes(content)
+    manager = SettingsManager(str(path))
+
+    with caplog.at_level("WARNING", logger="services.settings"):
+        assert manager.load_all_settings() == {}
+    assert "Failed to load all settings" in caplog.text
+
+    with pytest.raises(error):
+        manager.save_setting("new", "value")
+    assert path.read_bytes() == content
+
+
+def test_settings_path_that_cannot_be_read_loads_as_empty(tmp_path):
+    """An OSError on open (here, a directory in the file's place) never reaches a reader."""
+    path = tmp_path / "settings.json"
+    path.mkdir()
+    manager = SettingsManager(str(path))
+
+    assert manager.load_all_settings() == {}
+    with pytest.raises(OSError):
+        manager.update_settings({"new": "value"})

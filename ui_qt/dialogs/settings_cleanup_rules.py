@@ -10,6 +10,7 @@ window.
 from __future__ import annotations
 
 import itertools
+import logging
 import os
 import tempfile
 import threading
@@ -35,6 +36,8 @@ from ui_qt.widgets import Button, InfoTile, PrimaryButton
 from ui_qt.widgets.buttons import neutral_button
 from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets.rule_activity import ItemGlow, RuleActivityStrip
+
+logger = logging.getLogger(__name__)
 
 #: A dictated rule stops recording on its own after this long.
 RULE_DICTATION_CAP_MS = 60_000
@@ -129,6 +132,9 @@ def _transcribe_rule_dictation(recorder, transcribe, audio_path: str):
             if not text.strip():
                 error = "Nothing was transcribed."
     except Exception as exc:
+        # Recording and speech-engine code: anything may fail, and the page
+        # shows the error. Type only in the log: it could quote the rule.
+        logger.warning("Rule dictation failed (%s)", type(exc).__name__)
         error = str(exc) or "Transcription failed."
     finally:
         recorder.clear_recording_data()
@@ -425,6 +431,9 @@ class CleanupRulesSection(QObject):
                     raw, provider=provider, model=model, reasoning=reasoning
                 )
             except Exception as exc:
+                # Type only: the error could quote the rule or the prompt.
+                logger.warning("Polishing a cleanup rule failed (%s); keeping it unpolished",
+                               type(exc).__name__)
                 polished, error = raw, str(exc)
             done.emit(token, raw, polished or raw, error or "")
 

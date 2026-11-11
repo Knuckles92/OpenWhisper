@@ -437,6 +437,11 @@ class ApiKeysSection(QObject):
             key = validate_api_key(self.api_key_edit.text())
             credential_store().set(name, key)
         except (ValueError, CredentialStoreError) as exc:
+            if isinstance(exc, CredentialStoreError):
+                # A ValueError is the typed key failing validation, shown to
+                # the user; a store failure also goes to the log, type only.
+                logger.warning("Couldn't save %s to the credential store (%s)",
+                               name, type(exc).__name__)
             self.message.emit(str(exc))
             return
         self._clear_input()
@@ -465,6 +470,8 @@ class ApiKeysSection(QObject):
         try:
             removed = credential_store().delete(name)
         except CredentialStoreError as exc:
+            logger.warning("Couldn't remove %s from the credential store (%s)",
+                           name, type(exc).__name__)
             self.message.emit(str(exc))
             return
         self._clear_input()

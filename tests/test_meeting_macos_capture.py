@@ -6,6 +6,7 @@ the source already has -- ``available()`` for the capability gate and
 ``_decode_mono_int16`` for buffer conversion -- with fakes standing in for
 CoreMedia.
 """
+import logging
 import sys
 import time
 import unittest
@@ -194,9 +195,9 @@ class TestEngineFallbackChain(unittest.TestCase):
     """
 
     def _engine(self, started):
-        from meeting.capture_session import MeetingCapture
+        from meeting.capture_session import FailureLog, MeetingCapture
 
-        engine = SimpleNamespace(sources=[])
+        engine = SimpleNamespace(sources=[], _failures=FailureLog(logging.getLogger(__name__)))
         engine.start_source = (
             lambda source, reuse_spool=False: (started.append(source), True)[1]
         )
@@ -232,10 +233,10 @@ class TestEngineFallbackChain(unittest.TestCase):
         self.assertEqual(started, [])
 
     def test_a_raising_backend_does_not_block_the_next_one(self):
-        from meeting.capture_session import MeetingCapture
+        from meeting.capture_session import FailureLog, MeetingCapture
 
         started = []
-        engine = SimpleNamespace(sources=[])
+        engine = SimpleNamespace(sources=[], _failures=FailureLog(logging.getLogger(__name__)))
         engine.start_source = (
             lambda source, reuse_spool=False: (started.append(source), True)[1]
         )

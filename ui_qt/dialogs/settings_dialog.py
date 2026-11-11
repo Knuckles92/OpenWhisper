@@ -2425,7 +2425,9 @@ class SettingsDialog(QDialog):
         try:
             self.on_api_keys_changed()
         except Exception as exc:
-            logger.error("API key change callback failed: %s", exc)
+            # Type only: the callback rebuilds clients from the saved keys,
+            # and its error could quote one.
+            logger.error("API key change callback failed (%s)", type(exc).__name__)
 
     def _build_hotkeys_page(self, layout: QVBoxLayout) -> None:
         instruction_card = QFrame()
@@ -3132,7 +3134,7 @@ class SettingsDialog(QDialog):
                 return True
             settings_manager.save_setting(key, value)
         except Exception as exc:
-            logger.error("Couldn't save setting %s: %s", key, exc)
+            logger.error("Couldn't save setting %s: %s", key, exc, exc_info=True)
             self.message_label.setText(f"Couldn't save setting: {exc}")
             return False
         self.message_label.setText(message)
@@ -3145,7 +3147,7 @@ class SettingsDialog(QDialog):
         try:
             settings_manager.update_settings(updates, remove=tuple(drops))
         except Exception as exc:
-            logger.error("Couldn't save settings: %s", exc)
+            logger.error("Couldn't save settings: %s", exc, exc_info=True)
             self.message_label.setText(f"Couldn't save settings: {exc}")
             return False
         self.message_label.setText("")
@@ -3273,6 +3275,8 @@ class SettingsDialog(QDialog):
                 for info in component_coordinator.list_components()
             ]
         except Exception:
+            logger.warning("Couldn't list components for the overview; showing none",
+                           exc_info=True)
             components = []
         policy = settings.get(SettingsKey.HF_ACCESS_POLICY, HuggingFaceAccessPolicy.ASK)
         self.home.update_summary(HomeSummary(
@@ -3297,6 +3301,9 @@ class SettingsDialog(QDialog):
         try:
             return settings_manager.load_all_settings()
         except Exception:
+            # The loader never raises for a bad file, so this is a bug.
+            logger.warning("Couldn't read settings for the page; showing defaults",
+                           exc_info=True)
             return {}
 
     @staticmethod
@@ -3305,6 +3312,8 @@ class SettingsDialog(QDialog):
         try:
             profile = get_text_llm_profile(provider)
         except Exception:
+            logger.warning("Couldn't look up text provider %r; treating it as remote",
+                           provider, exc_info=True)
             return True
         return profile is None or not profile.is_local
 
@@ -3314,6 +3323,8 @@ class SettingsDialog(QDialog):
             try:
                 hotkeys = settings_manager.load_hotkey_settings()
             except Exception:
+                logger.warning("Couldn't load hotkeys for the rail; showing the defaults",
+                               exc_info=True)
                 hotkeys = config.DEFAULT_HOTKEYS
         raw = (hotkeys or {}).get("record_toggle", "")
         return format_hotkey_display(raw) or "Not set"
@@ -3399,7 +3410,7 @@ class SettingsDialog(QDialog):
                 max_recordings, max_bytes
             )
         except Exception as exc:
-            logger.error("Couldn't preview recording retention: %s", exc)
+            logger.error("Couldn't preview recording retention: %s", exc, exc_info=True)
             self.message_label.setText(f"Couldn't check saved recordings: {exc}")
             return False
         if not removed:
@@ -3453,7 +3464,7 @@ class SettingsDialog(QDialog):
                 resolve_max_saved_recordings_bytes(settings),
             )
         except Exception as exc:
-            logger.error("Couldn't apply recording retention: %s", exc)
+            logger.error("Couldn't apply recording retention: %s", exc, exc_info=True)
         self._refresh_recordings_usage()
 
     def _update_recording_retention_ui(self) -> None:
@@ -3981,7 +3992,10 @@ class SettingsDialog(QDialog):
             else:
                 settings_manager.save_hotkey_settings(updated)
         except Exception as exc:
-            logger.error("Couldn't save hotkeys: %s", exc)
+            # A ValueError is a shortcut clash or a refused shortcut, shown
+            # to the user; anything else is unexpected.
+            logger.error("Couldn't save hotkeys: %s", exc,
+                         exc_info=not isinstance(exc, ValueError))
             error = f"Couldn't save hotkeys: {exc}"
             self.message_label.setText(error)
             self._update_hotkey_displays()
@@ -4022,7 +4036,7 @@ class SettingsDialog(QDialog):
         try:
             hotkeys.update(settings_manager.load_hotkey_settings() or {})
         except Exception as exc:
-            logger.warning("Couldn't load hotkeys: %s", exc)
+            logger.warning("Couldn't load hotkeys: %s; using the defaults", exc, exc_info=True)
         self.current_hotkeys = hotkeys
         self._update_hotkey_displays()
 

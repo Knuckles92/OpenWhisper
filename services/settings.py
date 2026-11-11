@@ -31,6 +31,19 @@ from services.setting_types import (
 logger = logging.getLogger(__name__)
 SettingsMutationResult = TypeVar("SettingsMutationResult")
 
+#: Fallbacks already reported at warning; repeats go to debug, because the
+#: resolvers that hit them run on every settings read.
+_reported_fallbacks: set[str] = set()
+
+
+def _log_fallback(message: str) -> None:
+    """Log the exception being handled: the first time at warning, then at debug."""
+    if message in _reported_fallbacks:
+        logger.debug(message, exc_info=True)
+        return
+    _reported_fallbacks.add(message)
+    logger.warning(message, exc_info=True)
+
 LEGACY_API_MODELS = {
     "api_whisper": "whisper-1",
     "api_gpt4o": "gpt-4o-transcribe",
@@ -1042,6 +1055,10 @@ class SettingsManager:
             if not isinstance(settings, dict):
                 raise ValueError("settings root must be a JSON object")
             return settings
+        # Deliberately broad. Every reader in the app relies on a non-strict
+        # load never raising, whatever is wrong with the file (unreadable, not
+        # UTF-8, not JSON, not an object, nested too deeply, too large); a
+        # missed case here would break all of them at once.
         except Exception as exc:
             logger.warning(f"Failed to load all settings: {exc}")
             if strict:
@@ -1227,7 +1244,8 @@ class SettingsManager:
                 SettingsKey.HOTKEYS, config.DEFAULT_HOTKEYS.copy())
             return hotkeys
         except Exception as e:
-            logger.warning(f"Failed to load settings: {e}")
+            logger.warning(f"Failed to load settings: {e}; using the default hotkeys",
+                           exc_info=True)
 
         return config.DEFAULT_HOTKEYS.copy()
 
@@ -1253,7 +1271,8 @@ class SettingsManager:
             if isinstance(selected_model, str) and selected_model in config.MODEL_VALUE_MAP.values():
                 return selected_model
         except Exception as e:
-            logger.warning(f"Failed to load model selection: {e}")
+            logger.warning(f"Failed to load model selection: {e}; using the default",
+                           exc_info=True)
 
         return SettingsKey.SELECTED_MODEL.default
 
@@ -1303,7 +1322,8 @@ class SettingsManager:
                 )
                 logger.info(f"Migrated HuggingFace access policy to '{migrated}'")
             except Exception as e:
-                logger.warning(f"Failed to persist HF policy migration: {e}")
+                logger.warning(f"Failed to persist HF policy migration: {e}",
+                               exc_info=True)
         return migrated
 
     def save_hf_access_policy(self, policy: str) -> None:
@@ -1354,7 +1374,7 @@ def seed_new_install_settings(manager: Optional["SettingsManager"] = None) -> bo
     try:
         return bool(manager.mutate_settings(seed))
     except Exception as exc:
-        logger.warning("Could not seed new-install settings: %s", exc)
+        logger.warning("Could not seed new-install settings: %s", exc, exc_info=True)
         return False
 
 
@@ -1390,7 +1410,7 @@ def keep_unchosen_engine(manager: Optional["SettingsManager"] = None) -> bool:
     try:
         return bool(manager.mutate_settings(keep))
     except Exception as exc:
-        logger.warning("Could not save the install's engine: %s", exc)
+        logger.warning("Could not save the install's engine: %s", exc, exc_info=True)
         return False
 
 
@@ -1603,6 +1623,7 @@ def _known_text_llm_profile_ids(
 
         return known_profile_ids(settings)
     except Exception:
+        _log_fallback("Could not list text-model profiles; using the built-in ones")
         return TranscriptCleanupProvider.ALL
 
 
@@ -1617,7 +1638,8 @@ def default_transcript_cleanup_model(provider: str) -> str:
         if profile is not None:
             return default_model_for_profile(profile)
     except Exception:
-        pass
+        _log_fallback("Could not look up a text-model profile's default model; "
+                      "using the built-in default")
     if provider == TranscriptCleanupProvider.OPENROUTER:
         return config.TRANSCRIPT_CLEANUP_OPENROUTER_MODEL
     return config.TRANSCRIPT_CLEANUP_MODEL
@@ -1807,7 +1829,8 @@ def keep_separate_meeting_speech(manager: Optional["SettingsManager"] = None) ->
     try:
         return bool(manager.mutate_settings(keep))
     except Exception as exc:
-        logger.warning("Could not save the install's meeting engine: %s", exc)
+        logger.warning("Could not save the install's meeting engine: %s", exc,
+                       exc_info=True)
         return False
 
 

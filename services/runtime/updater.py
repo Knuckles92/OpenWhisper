@@ -82,7 +82,10 @@ class UpdaterRuntime(QObject):
         try:
             wait_s = seconds_until_auto_check()
         except Exception as exc:
-            logger.warning("Could not read the update-check schedule: %s", exc)
+            logger.warning(
+                "Could not read the update-check schedule: %s; not scheduling an "
+                "automatic check", exc, exc_info=True,
+            )
             return None
         return None if wait_s is None else int(wait_s * 1000)
 
@@ -92,7 +95,10 @@ class UpdaterRuntime(QObject):
         try:
             result = check_for_update()
         except Exception as exc:
-            logger.warning("Update check failed: %s", exc)
+            # AppUpdateError is the expected, user-facing kind (offline, rate
+            # limited); anything else is a bug and gets its traceback.
+            logger.warning("Update check failed: %s", exc,
+                           exc_info=not isinstance(exc, AppUpdateError))
             message = str(exc) if isinstance(exc, AppUpdateError) else (
                 "Could not check for updates."
             )
@@ -161,7 +167,7 @@ class UpdaterRuntime(QObject):
             if is_current() and not token.is_set():
                 self.update_download_progress.emit(attempt, phase, done, total)
 
-        from services.app_update import apply_update
+        from services.app_update import AppUpdateError, apply_update
 
         try:
             with self._download_lock:
@@ -172,7 +178,10 @@ class UpdaterRuntime(QObject):
                     force_setup=force_setup,
                 )
         except Exception as exc:
-            logger.warning("Update download failed: %s", exc)
+            # AppUpdateError carries a user-facing reason (including a
+            # cancel); anything else is unexpected and gets its traceback.
+            logger.warning("Update download failed: %s", exc,
+                           exc_info=not isinstance(exc, AppUpdateError))
             message = str(exc) if str(exc) else "The download failed."
             if is_current():
                 self.update_download_finished.emit(attempt, None, message)
