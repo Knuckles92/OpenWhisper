@@ -171,7 +171,8 @@ class IntSetting(Setting[int]):
         else:
             try:
                 value = int(raw)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
+                # OverflowError: JSON allows Infinity, which int() cannot hold.
                 return INVALID
         low, high = self.valid
         if (low is not None and value < low) or (high is not None and value > high):
@@ -291,7 +292,8 @@ class IntChoiceSetting(Setting[int]):
         else:
             try:
                 value = int(raw)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, OverflowError):
+                # OverflowError: JSON allows Infinity, which int() cannot hold.
                 return INVALID
         return value if value in self.choices else INVALID
 

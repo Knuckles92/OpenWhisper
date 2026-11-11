@@ -465,6 +465,86 @@ for _key in (SettingsKey.WHISPER_DEVICE, SettingsKey.WHISPER_COMPUTE_TYPE,
     call_site("ui_qt.dialogs.settings_models", _key,
               lambda s, k=_key: old.setting_value(k, s))
 
+# The reads left in the controller's runtimes and the settings dialog while
+# those were being split (migrated afterwards).
+for _key in (SettingsKey.LOCAL_ASR_DEVICES, SettingsKey.LOCAL_ASR_MODELS):
+    call_site("runtime.remote", _key,
+              lambda s, k=_key: dict(s.get(k) or {}),
+              lambda s, k=_key: dict(k.read(s)), result=dict)
+for _module in ("runtime.components", "runtime.models"):
+    call_site(_module, SettingsKey.WHISPER_DEVICE,
+              lambda s: s.get(SettingsKey.WHISPER_DEVICE, D[SettingsKey.WHISPER_DEVICE]))
+call_site("runtime.models", SettingsKey.WHISPER_GPU_OFFER_DECLINED,
+          lambda s: s.get(SettingsKey.WHISPER_GPU_OFFER_DECLINED,
+                          D[SettingsKey.WHISPER_GPU_OFFER_DECLINED]))
+call_site("runtime.models", SettingsKey.STREAMING_ENABLED,
+          lambda s: old.setting_value(SettingsKey.STREAMING_ENABLED, s))
+call_site("ui_qt.dialogs.settings_meeting_after", SettingsKey.MEETING_INSIGHT_REVIEW,
+          lambda s: s.get(SettingsKey.MEETING_INSIGHT_REVIEW) is True, result=bool)
+call_site("ui_qt.dialogs.settings_meeting_after", SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT,
+          lambda s: s.get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT) == old.INSIGHT_REVIEW_CONSENT,
+          lambda s: (SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT.read(s)
+                     == new.INSIGHT_REVIEW_CONSENT),
+          result=bool)
+# Topic shifts is not here: it is the one of these that defaults to on, and
+# its page read changed on purpose (see the test below).
+for _key in (SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED,
+             SettingsKey.TYPESAFE_CITATIONS_ENABLED, SettingsKey.TYPESAFE_SEMANTIC_SEARCH_ENABLED,
+             SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED, SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED):
+    call_site("ui_qt.dialogs.settings_fast_judgments", _key,
+              lambda s, k=_key: old.setting_value(k, s) is True)
+for _key in (SettingsKey.AUTO_PASTE, SettingsKey.COPY_CLIPBOARD, SettingsKey.RESTORE_CLIPBOARD,
+             SettingsKey.MINIMIZE_TRAY, SettingsKey.STREAMING_ENABLED,
+             SettingsKey.TRANSCRIPT_CLEANUP_ENABLED):
+    call_site("ui_qt.dialogs.settings_dialog", _key,
+              lambda s, k=_key: old.setting_value(k, s))
+call_site("ui_qt.dialogs.settings_dialog", SettingsKey.HF_ACCESS_POLICY,
+          lambda s: s.get(SettingsKey.HF_ACCESS_POLICY, old.HuggingFaceAccessPolicy.ASK))
+call_site("ui_qt.dialogs.settings_dialog", SettingsKey.RECORDING_RETENTION_MODE,
+          lambda s: old.setting_value(SettingsKey.RECORDING_RETENTION_MODE, s))
+
+
+def _spinbox_value(raw: Any, default: int, *, floor: int | None) -> int:
+    """What the retention page showed for a stored count before it read typed."""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if floor is None else max(floor, value)
+
+
+call_site("ui_qt.dialogs.settings_dialog", SettingsKey.MAX_SAVED_RECORDINGS,
+          lambda s: _spinbox_value(old.setting_value(SettingsKey.MAX_SAVED_RECORDINGS, s),
+                                   config.MAX_SAVED_RECORDINGS, floor=1))
+# The megabyte spin box has a minimum of 1, which did the clamping the read does now.
+call_site("ui_qt.dialogs.settings_dialog", SettingsKey.MAX_SAVED_RECORDINGS_MB,
+          lambda s: _spinbox_value(old.setting_value(SettingsKey.MAX_SAVED_RECORDINGS_MB, s),
+                                   config.MAX_SAVED_RECORDINGS_MB, floor=1))
+
+
+def test_the_topic_shift_switch_shows_what_the_meeting_uses():
+    # The Fast judgments page showed a topic-shift value that was not a real
+    # true/false as off, while the meeting read it as its default, on. The
+    # page now reads it the way the meeting does. Real values are unchanged.
+    key = SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED
+    for stored in (True, False):
+        assert key.read({key: stored}) is stored is (old.setting_value(key, {key: stored}) is True)
+    assert key.read({}) is True and old.setting_value(key, {}) is True
+    for junk in (None, "yes", 1, 0, [], {}):
+        settings = {SettingsKey.TYPESAFE_ENABLED: True, key: junk}
+        assert key.read(settings) is True
+        assert new.resolve_typesafe_topic_shift_enabled(settings) is True
+
+
+def test_an_integer_setting_saved_as_infinity_reads_as_its_default():
+    # JSON allows Infinity and int() cannot hold it: a read must not raise.
+    saved = json.loads('{"max_saved_recordings": Infinity, "meeting_server_port": -Infinity,'
+                       ' "walkthrough_capture_delay": Infinity}')
+    assert SettingsKey.MAX_SAVED_RECORDINGS.read(saved) == config.MAX_SAVED_RECORDINGS
+    assert SettingsKey.MEETING_SERVER_PORT.read(saved) == config.MEETING_SERVER_PORT
+    assert (SettingsKey.WALKTHROUGH_CAPTURE_DELAY.read(saved)
+            == SettingsKey.WALKTHROUGH_CAPTURE_DELAY.default)
+
 
 def test_config_is_where_the_defaults_come_from():
     # The same check as tests/test_setting_defaults.py, on the declarations.

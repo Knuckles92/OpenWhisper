@@ -23,7 +23,6 @@ from services.settings import (
     TypeSafeTextModel,
     resolve_typesafe_enabled,
     resolve_typesafe_text_model,
-    setting_value,
 )
 from services.typesafe import OPENROUTER_ROUTE as JEV_OPENROUTER_ROUTE
 from services.typesafe import TEXT_MODEL_TIMEOUT_S
@@ -231,7 +230,7 @@ class FastJudgmentsSection(QObject):
         self._bindings.checkbox(
             self.typesafe_topic_shift_check,
             SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED,
-            lambda settings: setting_value(SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, settings) is True,
+            SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED.read,
         )
 
         self.typesafe_voice_commands_tile = SettingTile(
@@ -251,7 +250,7 @@ class FastJudgmentsSection(QObject):
         self._bindings.checkbox(
             self.typesafe_voice_commands_check,
             SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED,
-            lambda settings: setting_value(SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED, settings) is True,
+            SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED.read,
         )
         self.typesafe_feature_tiles = {}
         for feature, key, title, description in (
@@ -522,7 +521,7 @@ class FastJudgmentsSection(QObject):
         keys = (SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED, SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED,
                 SettingsKey.TYPESAFE_CITATIONS_ENABLED, SettingsKey.TYPESAFE_SEMANTIC_SEARCH_ENABLED,
                 SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED, SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED)
-        active = sum(setting_value(key, settings) is True for key in keys)
+        active = sum(key.read(settings) for key in keys)
         value = "On · no features" if active == 0 else f"On · {active}"
         route = typesafe_route_from_settings(settings)
         return value if route is JEV_TYPESAFE_ROUTE else f"{value} · {route.name}"
