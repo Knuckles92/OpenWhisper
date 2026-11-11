@@ -33,7 +33,7 @@ def runtime_state(engine: dict) -> dict:
         import ctranslate2
 
         cuda = bool(ctranslate2.get_cuda_device_count())
-    except Exception:
+    except Exception:  # no CTranslate2 or no CUDA driver: judge by the GPU instead
         cuda = gpu is not None or engine.get("device") == "cuda"
     if family == WHISPER_BACKEND:
         cuda = cuda and gpu_runtime_available()

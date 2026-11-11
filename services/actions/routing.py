@@ -865,7 +865,7 @@ def status(settings: Mapping) -> RoutingStatus:
     try:
         return _status(settings or {})
     except Exception as exc:
-        logger.debug("Route by voice status unavailable: %s", type(exc).__name__)
+        logger.warning("Route by voice status unavailable: %s", type(exc).__name__)
         return RoutingStatus(False, False, "Route by voice isn't available right now.")
 
 

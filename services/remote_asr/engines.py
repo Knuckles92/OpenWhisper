@@ -9,12 +9,15 @@ lists the models a paired computer may switch the host to.
 """
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Optional
 
 import numpy as np
 
 from config import config
+
+logger = logging.getLogger(__name__)
 
 
 class HostEngine:
@@ -208,6 +211,7 @@ def host_models() -> list:
     try:
         cached = scan_cached_models(max_age_seconds=30.0)
     except Exception:
+        logger.warning("Could not scan cached Whisper models for the remote engine", exc_info=True)
         cached = {}
     for name in config.WHISPER_MODEL_CHOICES:
         if name != "auto" and resolve_model_repo(name) in cached:

@@ -2,6 +2,7 @@
 
 import asyncio
 import ipaddress
+import logging
 import secrets
 import socket
 import sys
@@ -10,6 +11,8 @@ from dataclasses import dataclass
 
 from services.asyncio_utils import quiet_connection_lost
 from services.settings import SettingsKey
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 8767
 CREDENTIAL_NAME = "OPENWHISPER_MCP_TOKEN"
@@ -260,8 +263,9 @@ class McpRuntime:
             error = f"Could not listen on port {port}. Choose another port or close the app using it."
         except ImportError:
             error = "MCP dependencies are missing. Update OpenWhisper or install its requirements."
-        except (Exception, SystemExit):
+        except (Exception, SystemExit) as exc:
             # Never display/log credentials, SQL, transcript data, or DB paths.
+            logger.warning("MCP could not start: %s", type(exc).__name__)
             error = "Could not start MCP. Verify that OpenWhisper's history database is available, then retry."
         finally:
             for sock in sockets:

@@ -105,6 +105,7 @@ class HostModelManager:
                         name="remote-model-download", daemon=True,
                     ).start()
             except Exception:
+                logger.warning("Could not start the remote model download", exc_info=True)
                 coordinator.end_request(model)
                 # A worker could not be started; don't leave a permanent busy job.
                 if self._job.get("model") == model and self._job.get("state") == "downloading":

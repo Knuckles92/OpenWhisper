@@ -229,7 +229,7 @@ def _hotkey(value: Any) -> str:
         from services.cleanup_profiles import normalize_hotkey
 
         return normalize_hotkey(value)
-    except Exception:
+    except Exception:  # an unreadable or unsupported shortcut reads as none
         return ""
 
 

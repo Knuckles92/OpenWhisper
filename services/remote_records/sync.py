@@ -147,7 +147,7 @@ class RecordSync:
             try:
                 listener(kind)
             except Exception:
-                logger.debug("Record sync listener raised", exc_info=True)
+                logger.warning("Record sync listener raised", exc_info=True)
 
     def _set(self, **fields) -> None:
         changed = False
@@ -620,6 +620,7 @@ class RecordSync:
         try:
             return handler.digest(record_id)
         except Exception:
+            logger.debug("Could not take a record's digest before sending it", exc_info=True)
             return None
 
     def _uploaded(self, kind: str, record_id: str, action: str,
@@ -673,7 +674,8 @@ class RecordSync:
         attempts = (row.attempts or 0) + 1
         self._put(row.kind, row.record_id, attempts=attempts, last_error=message[:500],
                   state="failed" if attempts >= 5 else "pending")
-        logger.warning("Could not send %s record %s to the host: %s", row.kind, row.record_id, message)
+        logger.warning("Could not send %s record %s to the host: %s", row.kind, row.record_id, message,
+                       exc_info=exc)
         self._set(error=message)
 
     def _return_checkout(self, connection, row) -> None:
@@ -689,7 +691,7 @@ class RecordSync:
         except RecordsUnavailable:
             raise
         except Exception as exc:
-            logger.warning("Could not return a viewing copy to the host: %s", exc)
+            logger.warning("Could not return a viewing copy to the host: %s", exc, exc_info=True)
 
     # ---- sending one record ----
 
@@ -959,6 +961,7 @@ class RecordSync:
         try:
             digest = self.kinds[kind].digest(record_id)
         except Exception:
+            logger.debug("Could not take a fetched record's digest", exc_info=True)
             digest = "fetched"
         self._put(kind, record_id, host_fingerprint=pairing.fingerprint if pairing else "",
                   action=action, state="done", content_digest=digest, attempts=0, last_error=None)

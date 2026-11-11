@@ -461,7 +461,7 @@ class RemoteConnection:
         ws = self._ws
         try:
             return ws is not None and ws.close_code == protocol.CLOSE_ENGINE_CHANGED
-        except Exception:
+        except Exception:  # a socket that can't say why it closed: not an engine change
             return False
 
     @property
@@ -576,8 +576,9 @@ class RemoteConnection:
 
             # The host lists where it is now; a saved pairing follows it.
             remote_settings.remember_host_addresses(self._fingerprint, host, self.port, addresses)
-        except Exception:
-            logger.debug("Could not save the remote engine's addresses", exc_info=True)
+        except Exception as exc:
+            # Type only: the pairing being saved holds the access token.
+            logger.warning("Could not save the remote engine's addresses: %s", type(exc).__name__)
 
     def _connect_to(self, host: str, timeout: float) -> dict:
         from websockets.exceptions import ConnectionClosed
