@@ -597,6 +597,7 @@ class TranscriptionRuntime:
             route=route,
             include_selection=action is not None and _reads_selection(action),
         )
+        self._prepare_backend(backend)
         # Publish before streaming can show the overlay, using the action
         # resolved for this capture rather than re-reading mutable settings.
         self.controller.recording_destination_changed.emit(_recording_destination(action, mode))
@@ -626,6 +627,19 @@ class TranscriptionRuntime:
         ):
             self.controller.ui_controller.prefetch_clipboard_snapshot()
         return True
+
+    @staticmethod
+    def _prepare_backend(backend) -> None:
+        """Let an engine that asks for it get ready while its recording is made.
+
+        On a thread of its own, so the recording never waits for it: the API
+        engine starts its upload's worker here, which takes over a second.
+        """
+        if getattr(backend, "prepares_for_transcription", False) is not True:
+            return
+        threading.Thread(
+            target=backend.prepare_for_transcription, name="engine-prepare", daemon=True,
+        ).start()
 
     def _release_remote_recording(self) -> None:
         recording, self._remote_recording = self._remote_recording, None

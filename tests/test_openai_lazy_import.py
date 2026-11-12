@@ -233,6 +233,16 @@ def test_api_session_builds_its_client_in_the_background(warmups, monkeypatch):
     assert warmups == [("openai-sdk-warmup", backend.prepare_client)]
 
 
+def test_api_session_that_cleans_up_also_imports_the_sdk_here(warmups, monkeypatch):
+    """Uploads load the SDK in their own process; cleanup needs it in this one."""
+    backend = SimpleNamespace(prepare_client=lambda: None)
+    _warm(backend, monkeypatch, {SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True})
+    assert warmups == [
+        ("openai-sdk-warmup", backend.prepare_client),
+        ("openai-sdk-warmup", application_controller._import_openai_sdk),
+    ]
+
+
 def test_cleanup_session_imports_the_sdk_in_the_background(warmups, monkeypatch):
     _warm(SimpleNamespace(), monkeypatch, {SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True})
     assert warmups == [("openai-sdk-warmup", application_controller._import_openai_sdk)]

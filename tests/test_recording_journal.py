@@ -137,6 +137,34 @@ def test_slow_disk_never_blocks_enqueue_and_overflow_is_reported(tmp_path):
         journal.close()
 
 
+def test_finish_wakes_a_writer_waiting_for_the_next_block(tmp_path, monkeypatch):
+    # A poll far longer than the wait below: only finish()'s wake can end it.
+    monkeypatch.setattr('services.recording_journal.POLL_SECONDS', 30.0)
+    journal = RecordingJournal(str(tmp_path / 'capture.wav'), 16000, 1, 2, lambda message: None)
+    pcm = b'\x12\x00' * 1024
+    try:
+        assert journal.append(pcm)
+        journal._queue.join()
+        assert journal.finish(timeout=2)
+        assert journal.written_bytes == len(pcm)
+    finally:
+        journal.close()
+
+
+def test_finish_writes_every_block_queued_before_it(tmp_path, monkeypatch):
+    monkeypatch.setattr('services.recording_journal.POLL_SECONDS', 30.0)
+    output = str(tmp_path / 'capture.wav')
+    journal = RecordingJournal(output, 16000, 1, 2, lambda message: None)
+    blocks = [bytes([index]) * 2048 for index in range(40)]
+    for block in blocks:
+        assert journal.append(block)
+    assert journal.finish(timeout=2)
+    assert journal.close()
+    recovered = recover_recordings(output, str(tmp_path / 'saved'))
+    with wave.open(recovered[0]) as audio:
+        assert audio.readframes(audio.getnframes()) == b''.join(blocks)
+
+
 def test_explicit_cancel_removes_journal(tmp_path):
     output = str(tmp_path / 'capture.wav')
     journal = RecordingJournal(output, 16000, 1, 2, lambda message: None)

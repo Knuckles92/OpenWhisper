@@ -363,6 +363,60 @@ def test_engines_outside_the_warmup_list_are_not_warmed(workers):
     assert ("engine_busy_changed", False) in events
 
 
+# The module ApplicationController was imported from at collection, which
+# test_application_controller may since have replaced in sys.modules.
+_CONTROLLER_GLOBALS = ApplicationController._reload_worker.__globals__
+
+
+@pytest.fixture
+def reader_preloads(monkeypatch):
+    """Each backend the reload preloaded the recording reader for."""
+    preload = _CONTROLLER_GLOBALS["_preload_recording_reader"]
+    seen = []
+
+    def spy(backend):
+        seen.append(backend)
+        preload(backend)
+
+    monkeypatch.setitem(_CONTROLLER_GLOBALS, "_preload_recording_reader", spy)
+    return seen
+
+
+@pytest.mark.parametrize("family", ["parakeet", "moonshine"])
+def test_a_loaded_engine_has_its_recording_reader_ready(workers, reader_preloads, family):
+    """Whether or not the engine is one that gets a warm-up decode."""
+    import sys
+
+    backend = LocalSpeechBackend(family, device="cuda" if family == "parakeet" else "cpu")
+    controller = _controller(backend, [])
+
+    controller._reload_worker()
+
+    assert reader_preloads == [backend] and backend.is_available()
+    assert "av" in sys.modules
+
+
+def test_recording_reader_is_not_loaded_for_an_engine_that_did_not_load(workers, monkeypatch):
+    import builtins
+
+    imported = []
+    native_import = builtins.__import__
+
+    def spy(name, *args, **kwargs):
+        imported.append(name)
+        return native_import(name, *args, **kwargs)
+
+    workers.options["fail_load"] = True
+    backend = LocalSpeechBackend("parakeet", device="cuda")
+    controller = _controller(backend, [])
+    controller._reload_worker()
+    assert not backend.is_available()
+
+    monkeypatch.setattr(builtins, "__import__", spy)
+    _CONTROLLER_GLOBALS["_preload_recording_reader"](backend)
+    assert "av" not in imported
+
+
 def test_engine_switched_during_load_is_released_not_warmed(workers):
     events = []
     backend = LocalSpeechBackend("parakeet", device="cuda")

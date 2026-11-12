@@ -3,9 +3,18 @@ from __future__ import annotations
 
 import numpy as np
 
+from services.wav_metadata import is_mono_pcm16
+
 SAMPLE_RATE = 16000
 MAX_SAMPLES = 30 * SAMPLE_RATE
 MIN_SAMPLES = 24 * SAMPLE_RATE
+# Before it decodes 16-bit PCM from a WAV, FFmpeg searches the first 32
+# packets for a compressed stream carried inside it (DTS or AC-3, as on a
+# surround CD), which takes two channels. A one-channel recording has
+# nothing to find, and the search cost every dictation of five seconds or
+# more 17 ms at its stop (November 2026). This ends it after one packet;
+# the frames decoded are the same.
+_MONO_PCM_OPTIONS = {"probesize": "4096"}
 
 
 def split_point(audio: np.ndarray) -> int:
@@ -77,12 +86,18 @@ class WindowSplitter:
         return [window]
 
 
-def windows(audio_path: str):
+def _open(audio_path: str):
     import av
 
+    if is_mono_pcm16(audio_path):
+        return av.open(audio_path, options=_MONO_PCM_OPTIONS)
+    return av.open(audio_path)
+
+
+def windows(audio_path: str):
     splitter = WindowSplitter()
     convert = resampler()
-    with av.open(audio_path) as container:
+    with _open(audio_path) as container:
         for frame in container.decode(audio=0):
             frame.pts = None
             yield from splitter.push(convert.resample(frame))

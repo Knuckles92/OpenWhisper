@@ -335,9 +335,14 @@ def host_tailscale_trust(settings: Optional[Dict[str, Any]] = None) -> bool:
 
 
 def load_host_devices() -> list:
-    from services.settings import SettingsKey
+    from services.settings import SettingsKey, settings_manager
 
-    return SettingsKey.REMOTE_HOST_DEVICES.read(_settings())
+    # Read on its own: the host checks the paired devices for every request
+    # a paired computer sends, and a copy of every setting cost each one
+    # 0.7 ms with a 45 KB settings file and 3.9 ms with a 226 KB one, which
+    # a long dictionary makes (November 2026).
+    return SettingsKey.REMOTE_HOST_DEVICES.read(
+        settings_manager.load_settings((SettingsKey.REMOTE_HOST_DEVICES,)))
 
 
 def save_host_devices(devices: list) -> None:

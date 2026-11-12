@@ -71,7 +71,9 @@ class SpeechWorkerEngine(HostEngine):
         from services.local_asr.catalog import selected_device
         from services.settings import SettingsKey, settings_manager
 
-        settings = settings_manager.load_all_settings()
+        # Read for every request: only the two settings an identity holds.
+        settings = settings_manager.load_settings(
+            (SettingsKey.LOCAL_ASR_DEVICES, SettingsKey.LOCAL_ASR_LANGUAGE))
         return ("worker", self.backend.backend_id, self.backend.model_name, self.backend.device,
                 selected_device(self.backend.backend_id, settings),
                 SettingsKey.LOCAL_ASR_LANGUAGE.read(settings))
@@ -122,7 +124,8 @@ class WhisperEngine(HostEngine):
         # is a different engine to a client, as much as another model is.
         from services.settings import SettingsKey, settings_manager
 
-        settings = settings_manager.load_all_settings()
+        settings = settings_manager.load_settings(
+            (SettingsKey.WHISPER_DEVICE, SettingsKey.WHISPER_COMPUTE_TYPE))
         return ("whisper", self._model_name(), self.backend.device,
                 getattr(self.backend, "compute_type", None),
                 SettingsKey.WHISPER_DEVICE.read(settings),

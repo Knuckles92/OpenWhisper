@@ -101,6 +101,83 @@ class TestSettingsManager:
         loaded_settings = self.settings_manager.load_all_settings()
         assert loaded_settings == {}
 
+    def test_each_whole_load_is_an_independent_copy_of_what_was_saved(self):
+        saved = {
+            "hotkeys": {"record_toggle": "f1"},
+            "dictation_dictionary": [{"term": "Kubernetes", "starred": True, "uses": 3}],
+            "ratio": 0.5, "count": 12, "big": 2 ** 70, "nothing": None, "text": "naïve ☕",
+        }
+        self.settings_manager.save_all_settings(saved)
+
+        first = self.settings_manager.load_all_settings()
+        first["hotkeys"]["record_toggle"] = "f9"
+        first["dictation_dictionary"][0]["term"] = "changed"
+        first["added"] = True
+        second = self.settings_manager.load_all_settings()
+
+        assert second == saved
+        assert [type(second[key]) for key in ("ratio", "count", "big", "nothing")] == [
+            float, int, int, type(None)]
+        assert list(second) == list(saved)
+
+    def test_load_settings_returns_only_the_saved_keys_asked_for(self):
+        self.settings_manager.save_all_settings({
+            "auto_paste": False, "remote_host_devices": [{"id": "a"}], "other": 1,
+        })
+
+        loaded = self.settings_manager.load_settings(
+            (SettingsKey.AUTO_PASTE, SettingsKey.REMOTE_HOST_DEVICES, SettingsKey.HOST_MODE))
+
+        assert loaded == {"auto_paste": False, "remote_host_devices": [{"id": "a"}]}
+        assert SettingsKey.AUTO_PASTE.read(loaded) is False
+        # Not saved, so its declared default applies.
+        assert SettingsKey.HOST_MODE.read(loaded) is False
+
+    def test_load_settings_copies_what_it_returns(self):
+        self.settings_manager.save_all_settings({"remote_host_devices": [{"id": "a"}]})
+
+        loaded = self.settings_manager.load_settings(("remote_host_devices",))
+        loaded["remote_host_devices"][0]["id"] = "changed"
+        loaded["remote_host_devices"].append({"id": "b"})
+
+        assert self.settings_manager.load_settings(("remote_host_devices",)) == {
+            "remote_host_devices": [{"id": "a"}]}
+        assert self.settings_manager.load_all_settings() == {
+            "remote_host_devices": [{"id": "a"}]}
+        assert self.settings_manager.get("remote_host_devices") == [{"id": "a"}]
+
+    def test_load_settings_follows_saves_and_outside_edits_without_rereading_between(self):
+        self.settings_manager.save_all_settings({"auto_paste": True})
+        native_open = open
+        reads = []
+
+        def counting_open(path, mode="r", *args, **kwargs):
+            if str(path) == self.test_settings_file and mode == "r":
+                reads.append(path)
+            return native_open(path, mode, *args, **kwargs)
+
+        with patch("builtins.open", counting_open):
+            for _ in range(5):
+                assert self.settings_manager.load_settings(("auto_paste",)) == {"auto_paste": True}
+                assert self.settings_manager.get("auto_paste") is True
+            assert len(reads) == 1
+
+            self.settings_manager.save_setting("auto_paste", False)
+            assert self.settings_manager.load_settings(("auto_paste",)) == {"auto_paste": False}
+
+            replacement = os.path.join(self.temp_dir, "replacement.json")
+            with native_open(replacement, "w", encoding="utf-8") as handle:
+                json.dump({"auto_paste": True, "added_outside": 1}, handle)
+            os.replace(replacement, self.test_settings_file)
+            assert self.settings_manager.load_settings(("auto_paste", "added_outside")) == {
+                "auto_paste": True, "added_outside": 1}
+
+    def test_get_returns_the_default_for_a_key_that_is_not_saved(self):
+        self.settings_manager.save_all_settings({"saved_none": None})
+        assert self.settings_manager.get("missing", "fallback") == "fallback"
+        assert self.settings_manager.get("missing") is None
+        assert self.settings_manager.get("saved_none", "fallback") is None
+
     def test_save_all_settings(self):
         test_settings = {
             'hotkeys': {'record_toggle': 'f1'},

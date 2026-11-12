@@ -499,6 +499,66 @@ def test_audio_windows_preserve_resampled_stereo_samples(tmp_path):
     assert chunks[1][0] == len(chunks[0][1])/16000
 
 
+def _write_recording(path, seconds: float, *, channels: int = 1) -> None:
+    """A WAV as Quick Record saves it: 16-bit PCM at 44.1 kHz with its origination tags."""
+    import wave
+    from datetime import datetime
+    from services.wav_metadata import append_origination
+
+    samples = np.random.default_rng(5).integers(-9000, 9000, int(seconds * 44100) * channels)
+    with open(path, "wb") as handle:
+        with wave.open(handle, "wb") as w:
+            w.setnchannels(channels)
+            w.setsampwidth(2)
+            w.setframerate(44100)
+            w.writeframesraw(samples.astype(np.int16).tobytes())
+        append_origination(handle, datetime(2026, 11, 12, 9, 30))
+
+
+def _opened_with(monkeypatch) -> list:
+    """Record the options each ``av.open`` in ``windows()`` is given."""
+    import av
+
+    seen = []
+    native_open = av.open
+
+    def spy(file, *args, **kwargs):
+        seen.append(kwargs.get("options"))
+        return native_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(av, "open", spy)
+    return seen
+
+
+@pytest.mark.parametrize("seconds", [0.4, 12.0, 61.0])
+def test_a_mono_recording_decodes_the_same_without_the_codec_search(tmp_path, monkeypatch, seconds):
+    from services.local_asr import audio
+
+    path = str(tmp_path / "recorded.wav")
+    _write_recording(path, seconds)
+    opened = _opened_with(monkeypatch)
+
+    fast = list(audio.windows(path))
+    monkeypatch.setattr(audio, "is_mono_pcm16", lambda _path: False)
+    full = list(audio.windows(path))
+
+    assert opened == [audio._MONO_PCM_OPTIONS, None]
+    assert [offset for offset, _ in fast] == [offset for offset, _ in full]
+    assert all(np.array_equal(a, b) for (_, a), (_, b) in zip(fast, full, strict=True))
+    assert sum(len(window) for _, window in fast) == round(seconds * 16000)
+
+
+def test_a_stereo_file_keeps_ffmpegs_full_stream_analysis(tmp_path, monkeypatch):
+    from services.local_asr import audio
+
+    path = str(tmp_path / "upload.wav")
+    _write_recording(path, 2.0, channels=2)
+    opened = _opened_with(monkeypatch)
+
+    assert list(audio.windows(path))
+    assert opened == [None]
+
+
 def test_chunk_results_keep_offsets_and_silence_is_empty(monkeypatch):
     monkeypatch.setattr(LocalSpeechBackend, "_settings", staticmethod(lambda: {}))
     backend = LocalSpeechBackend("parakeet")

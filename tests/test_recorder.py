@@ -155,7 +155,7 @@ class TestAudioRecorder:
         self._feed(audio)
 
         with patch(
-            "services.recorder.stamp_wav_origination",
+            "services.recorder.append_origination",
             side_effect=OSError("disk full"),
         ):
             assert self.recorder.save_recording(self.test_audio_file)
@@ -163,6 +163,28 @@ class TestAudioRecorder:
         with wave.open(self.test_audio_file, "rb") as wf:
             assert wf.readframes(len(audio)) == audio.tobytes()
         assert read_info_icrd(self.test_audio_file) is None
+
+    def test_save_recording_writes_the_tagged_wav_once(self):
+        self._feed(np.arange(500, dtype=np.int16))
+        native_replace, native_fsync = os.replace, os.fsync
+        replaced, synced = [], []
+
+        def counting_replace(source, target):
+            replaced.append(target)
+            return native_replace(source, target)
+
+        def counting_fsync(fd):
+            synced.append(fd)
+            return native_fsync(fd)
+
+        # The journal's own checkpoint is not part of the save.
+        assert self.recorder._audio_spool.finish()
+        with patch("os.replace", counting_replace), patch("os.fsync", counting_fsync):
+            assert self.recorder.save_recording(self.test_audio_file)
+
+        assert replaced == [self.test_audio_file]
+        assert len(synced) == 1
+        assert read_info_icrd(self.test_audio_file) is not None
 
     def test_save_recording_default_filename(self):
         audio = np.arange(32, dtype=np.int16)
