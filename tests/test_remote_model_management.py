@@ -16,7 +16,7 @@ from services.remote_asr.client import (
 from services.remote_asr.model_management import HostModelManager
 from services.remote_asr.service import RemoteEngineService
 from services.settings import HuggingFaceAccessPolicy, SettingsKey, settings_manager
-from tests.test_remote_engine import FakeEngine, _connect, _wait_for
+from tests.fakes.remote import FakeEngine, _connect, _wait_for
 
 
 @pytest.fixture

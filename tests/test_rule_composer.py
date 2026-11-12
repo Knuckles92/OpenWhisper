@@ -132,10 +132,6 @@ def _pump_until(predicate, timeout: float = 3.0) -> bool:
 
 
 class TestLevelTrace(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
     def test_level_scale_is_logarithmic_between_floor_and_ceiling(self):
         self.assertEqual(level_to_height(0.0), 0.0)
         self.assertEqual(level_to_height(10 ** (-60 / 20)), 0.0)
@@ -241,10 +237,6 @@ class TestRuleActivityStrip(unittest.TestCase):
 
 
 class TestItemGlow(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
     def test_flash_washes_the_row_then_fades_away(self):
         view = QListWidget()
         view.addItems(["First rule", "Second rule"])

@@ -15,6 +15,8 @@ from services.settings import (
     UiFontScale,
     resolve_recording_trigger_mode,
     resolve_ui_font_scale,
+    resolve_update_check_enabled,
+    resolve_update_notify_enabled,
     setting_value,
 )
 from config import config
@@ -716,23 +718,12 @@ class TestUpdatePreferences:
     """Resolvers for automatic update check / notify preferences."""
 
     def test_defaults_are_on(self):
-        from services.settings import (
-            resolve_update_check_enabled,
-            resolve_update_notify_enabled,
-        )
-
         assert config.UPDATE_CHECK_ENABLED is True
         assert config.UPDATE_NOTIFY_ENABLED is True
         assert resolve_update_check_enabled({})
         assert resolve_update_notify_enabled({})
 
     def test_saved_false_round_trips(self):
-        from services.settings import (
-            SettingsKey,
-            resolve_update_check_enabled,
-            resolve_update_notify_enabled,
-        )
-
         saved = {
             SettingsKey.UPDATE_CHECK_ENABLED: False,
             SettingsKey.UPDATE_NOTIFY_ENABLED: False,
@@ -741,12 +732,6 @@ class TestUpdatePreferences:
         assert not resolve_update_notify_enabled(saved)
 
     def test_notify_off_with_check_on(self):
-        from services.settings import (
-            SettingsKey,
-            resolve_update_check_enabled,
-            resolve_update_notify_enabled,
-        )
-
         saved = {
             SettingsKey.UPDATE_CHECK_ENABLED: True,
             SettingsKey.UPDATE_NOTIFY_ENABLED: False,
@@ -755,12 +740,6 @@ class TestUpdatePreferences:
         assert not resolve_update_notify_enabled(saved)
 
     def test_non_bool_falls_back_to_default(self):
-        from services.settings import (
-            SettingsKey,
-            resolve_update_check_enabled,
-            resolve_update_notify_enabled,
-        )
-
         saved = {
             SettingsKey.UPDATE_CHECK_ENABLED: "yes",
             SettingsKey.UPDATE_NOTIFY_ENABLED: 0,

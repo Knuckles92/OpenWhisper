@@ -7,20 +7,25 @@ on the old engine, which the client's link watch notices and reconnects
 from, and the share line names the compute type like the main window.
 Real TLS WebSockets on 127.0.0.1; only the engine is fake.
 """
+# Pytest resolves the imported fixtures by name in test parameters.
+# ruff: noqa: F811
 from __future__ import annotations
 
 import threading
-import time
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from services.remote_asr import tailscale
 from services.remote_asr.client import RemoteConnection, RemoteEngineError, pair_with_host
 from services.remote_asr.engines import HostEngine, SpeechWorkerEngine, WhisperEngine
-from services.remote_asr.host import DeviceRegistry, SpeechHost
-from services.remote_asr.tls import ensure_host_identity
+from tests.fakes.remote import (  # noqa: F401
+    _wait_for,
+    host,
+    identity,
+    no_real_tailscale,
+    store,
+)
 
 
 class SwitchableEngine(HostEngine):
@@ -44,40 +49,9 @@ class SwitchableEngine(HostEngine):
         return {"text": "ok", "segments": []}
 
 
-class ListStore:
-    def __init__(self):
-        self.devices = []
-
-    def load(self):
-        return list(self.devices)
-
-    def save(self, devices):
-        self.devices = [dict(d) for d in devices]
-
-
-@pytest.fixture(autouse=True)
-def no_real_tailscale(monkeypatch):
-    monkeypatch.setattr(tailscale, "status", lambda timeout=4.0: tailscale.TailscaleStatus("not_installed"))
-    monkeypatch.setattr(tailscale, "whois", lambda address, timeout=4.0: None)
-
-
 @pytest.fixture
 def engine():
     return SwitchableEngine()
-
-
-@pytest.fixture
-def host(engine, tmp_path):
-    store = ListStore()
-    speech_host = SpeechHost(
-        engine_provider=lambda: engine,
-        registry=DeviceRegistry(store.load, store.save),
-        identity=ensure_host_identity(str(tmp_path / "host")),
-        host_name="jed",
-    )
-    speech_host.start(port=0, bind="127.0.0.1")
-    yield speech_host
-    speech_host.stop()
 
 
 def _connected(host) -> RemoteConnection:
@@ -86,15 +60,6 @@ def _connected(host) -> RemoteConnection:
     connection.connect()
     assert _wait_for(lambda: len(host.connected_clients()) == 1)
     return connection
-
-
-def _wait_for(predicate, timeout=3.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.02)
-    return predicate()
 
 
 def _tone():

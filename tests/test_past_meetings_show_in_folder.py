@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
 
 from ui_qt.utils import file_reveal
 from ui_qt.widgets.past_meetings_panel import PastMeetingItem
@@ -44,10 +43,6 @@ def _find(actions, text):
 
 class TestShowInFolderAction:
     """Listed on every card, live only while the spool folder survives."""
-
-    @classmethod
-    def setup_class(cls):
-        cls.app = QApplication.instance() or QApplication([])
 
     def test_action_is_enabled_when_the_spool_folder_exists(self, tmp_path):
         spool = tmp_path / "m_abc1234567"

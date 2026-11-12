@@ -3,55 +3,32 @@
 Hosts and clients talk over real TLS sockets on 127.0.0.1; only the speech
 engine is fake. Each side's name for the other is its own: nothing is sent.
 """
+# Pytest resolves the imported fixtures by name in test parameters.
+# ruff: noqa: F811
 from __future__ import annotations
 
 from dataclasses import replace
 
-import pytest
 from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtWidgets import QApplication, QDialog, QLineEdit
 
-from services.remote_asr import protocol, tailscale
+from services.remote_asr import protocol
 from services.remote_asr import settings as remote_settings
 from services.remote_asr.client import PairingResult
-from services.remote_asr.host import DeviceRegistry, SpeechHost
+from services.remote_asr.host import DeviceRegistry
 from services.remote_asr.settings import ClientPairing
-from services.remote_asr.tls import ensure_host_identity
 from services.settings import SettingsKey, settings_manager
-from tests.test_remote_engine import (
-    FakeEngine,
-    ListStore,
+from tests.fakes.remote import (  # noqa: F401
     _connect,
     _pair,
     _tone,
     _wait_for,
+    engine,
+    host,
+    identity,
+    no_real_tailscale,
+    store,
 )
-
-
-@pytest.fixture(autouse=True)
-def no_real_tailscale(monkeypatch):
-    """Keep every test off this computer's real tailnet."""
-    monkeypatch.setattr(tailscale, "status", lambda timeout=4.0: tailscale.TailscaleStatus("not_installed"))
-    monkeypatch.setattr(tailscale, "whois", lambda address, timeout=4.0: None)
-
-
-@pytest.fixture
-def store():
-    return ListStore()
-
-
-@pytest.fixture
-def host(store, tmp_path):
-    engine = FakeEngine()
-    speech_host = SpeechHost(
-        engine_provider=lambda: engine,
-        registry=DeviceRegistry(store.load, store.save),
-        identity=ensure_host_identity(str(tmp_path / "host")),
-        host_name="devbox",
-    )
-    speech_host.start(port=0, bind="127.0.0.1")
-    yield speech_host
-    speech_host.stop()
 
 
 def _service(tmp_path):

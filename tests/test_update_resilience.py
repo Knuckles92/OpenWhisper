@@ -1,6 +1,5 @@
 """Regressions for interruptions across download, setup, and restart."""
 import hashlib
-import io
 import os
 import shutil
 import sqlite3
@@ -23,6 +22,7 @@ from services.update_contract import (
     TransactionState,
     transaction_dir,
 )
+from tests.fakes.http import Response
 from tests.test_app_update_apply import TestCommitAndRecover as _JournalBuilder
 from tests.test_app_update_apply import _bundle, _registration
 
@@ -48,13 +48,6 @@ def journal(tmp_path):
     result = _JournalBuilder()._journal(tmp_path, app, candidate)
     apply.save_journal(result)
     return result
-
-
-class Response(io.BytesIO):
-    def __init__(self, body, status=200, headers=None):
-        super().__init__(body)
-        self.status = status
-        self.headers = headers or {}
 
 
 def fetch(tmp_path, body=b"complete-update"):

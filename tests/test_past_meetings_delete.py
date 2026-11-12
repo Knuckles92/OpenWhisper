@@ -5,7 +5,8 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
+import pytest
+from PyQt6.QtWidgets import QDialog, QMessageBox
 
 from services.settings import SettingsKey
 from ui_qt.dialogs.meeting_delete_dialog import MeetingDeleteDialog
@@ -37,10 +38,6 @@ def _accept_without_future_confirmation(dialog):
 
 
 class TestPastMeetingsDelete:
-    @classmethod
-    def setup_class(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
     def setup_method(self):
         self.panel = PastMeetingsPanel(
             meeting_provider=lambda: [_meeting("m_done")]
@@ -50,7 +47,15 @@ class TestPastMeetingsDelete:
     def teardown_method(self):
         self.panel.deleteLater()
 
-    def test_delete_is_canceled_when_confirmation_is_rejected(self):
+    @pytest.mark.parametrize("answer, expected", [
+        pytest.param(lambda dialog: QDialog.DialogCode.Rejected, [],
+                     id="canceled_when_confirmation_is_rejected"),
+        pytest.param(lambda dialog: QDialog.DialogCode.Accepted, [("m_done", False)],
+                     id="keeps_recordings_by_default"),
+        pytest.param(_accept_with_recordings, [("m_done", True)],
+                     id="audio_spool_can_be_deleted_with_meeting"),
+    ])
+    def test_delete_follows_the_confirmation(self, answer, expected):
         deleted = []
         self.panel.delete_meeting_requested.connect(
             lambda meeting_id, delete_recordings: deleted.append(
@@ -63,61 +68,11 @@ class TestPastMeetingsDelete:
                 "ui_qt.widgets.past_meetings_panel.settings_manager.load_all_settings",
                 return_value={SettingsKey.CONFIRM_MEETING_DELETE: True},
             ),
-            patch.object(
-                MeetingDeleteDialog,
-                "exec",
-                return_value=QDialog.DialogCode.Rejected,
-            ),
+            patch.object(MeetingDeleteDialog, "exec", new=answer),
         ):
             self.panel._confirm_delete("m_done")
 
-        assert deleted == []
-
-    def test_delete_keeps_recordings_by_default(self):
-        deleted = []
-        self.panel.delete_meeting_requested.connect(
-            lambda meeting_id, delete_recordings: deleted.append(
-                (meeting_id, delete_recordings)
-            )
-        )
-
-        with (
-            patch(
-                "ui_qt.widgets.past_meetings_panel.settings_manager.load_all_settings",
-                return_value={SettingsKey.CONFIRM_MEETING_DELETE: True},
-            ),
-            patch.object(
-                MeetingDeleteDialog,
-                "exec",
-                return_value=QDialog.DialogCode.Accepted,
-            ),
-        ):
-            self.panel._confirm_delete("m_done")
-
-        assert deleted == [("m_done", False)]
-
-    def test_audio_spool_can_be_deleted_with_meeting(self):
-        deleted = []
-        self.panel.delete_meeting_requested.connect(
-            lambda meeting_id, delete_recordings: deleted.append(
-                (meeting_id, delete_recordings)
-            )
-        )
-
-        with (
-            patch(
-                "ui_qt.widgets.past_meetings_panel.settings_manager.load_all_settings",
-                return_value={SettingsKey.CONFIRM_MEETING_DELETE: True},
-            ),
-            patch.object(
-                MeetingDeleteDialog,
-                "exec",
-                new=_accept_with_recordings,
-            ),
-        ):
-            self.panel._confirm_delete("m_done")
-
-        assert deleted == [("m_done", True)]
+        assert deleted == expected
 
     def test_dont_ask_again_preference_is_saved(self):
         with (
