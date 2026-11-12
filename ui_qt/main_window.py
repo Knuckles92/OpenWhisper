@@ -1284,6 +1284,13 @@ class MainWindow(QMainWindow):
 
     def _page_content_height(self, page: QWidget, width: int) -> int:
         """The height ``page`` needs to show all of its content ``width`` wide without scrolling."""
+        split = getattr(page, "split", None)
+        if split is not None and split.width() > 0:
+            # Measure the side-by-side layout a wider window will show, not the
+            # stacked one a narrow window still holds, which is far taller.
+            split.place_for_width(
+                split.width() + width - page.scroll_area.contentsRect().width()
+            )
         layout = page.scroll_area.widget().layout()
         if layout.hasHeightForWidth() and width > 0:
             return max(layout.minimumHeightForWidth(width), layout.heightForWidth(width))
