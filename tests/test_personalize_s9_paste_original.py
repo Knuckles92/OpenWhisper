@@ -1,7 +1,6 @@
 """Paste original of last dictation: the tray item and its shortcut."""
 
 import importlib
-import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -130,14 +129,13 @@ def test_the_controller_gives_the_ui_its_paste(monkeypatch):
     stubs = harness._install_module_stubs(
         settings, harness.FakeHistoryManager(), harness.FakeKeyboard(), {"closed": False}
     )
+    reimport = (
+        "services.runtime", "services.runtime.hotkeys", "services.runtime.streaming",
+        "services.runtime.transcription", "services.runtime.meeting",
+        "services.application_controller",
+    )
     try:
-        with patch.dict(sys.modules, stubs):
-            for name in (
-                "services.runtime", "services.runtime.hotkeys", "services.runtime.streaming",
-                "services.runtime.transcription", "services.runtime.meeting",
-                "services.application_controller",
-            ):
-                sys.modules.pop(name, None)
+        with harness._stubbed_modules(stubs, reimport):
             module = importlib.import_module("services.application_controller")
             hotkeys = importlib.import_module("services.runtime.hotkeys")
             with patch.object(hotkeys.HotkeyRuntime, "setup_hook_watchdog", lambda _self: None):

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import types
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -896,6 +897,79 @@ def _install_module_stubs(settings_manager, history_manager, keyboard, db_state)
     }
 
 
+class _LoadedModules:
+    """A meta path entry that finds nothing; it notes what gets loaded."""
+
+    def __init__(self):
+        self.names = []
+
+    def find_spec(self, name, path=None, target=None):
+        self.names.append(name)
+        return None
+
+
+@contextmanager
+def _stubbed_modules(module_stubs, reimport):
+    """Run the block with the stubs in sys.modules and ``reimport`` unloaded.
+
+    Importing ``reimport`` inside the block binds the stubs. Leaving it puts
+    back sys.modules and also what the block's imports bound on packages:
+    loading ``pkg.mod`` sets the attribute ``pkg.mod``, which patch.dict leaves
+    behind. ``from pkg import mod`` reads that attribute, so later tests would
+    get this block's copy from it and another from ``from pkg.mod import
+    name``, and a patch on one would never reach the other.
+    """
+    # Import them for real first, so only they bind the stubs. Otherwise every
+    # module that nothing has imported yet binds them too, and that set
+    # depends on which other test files were collected.
+    for name in reimport:
+        importlib.import_module(name)
+    loaded = _LoadedModules()
+    sys.meta_path.insert(0, loaded)
+    try:
+        with patch.dict(sys.modules, module_stubs):
+            for name in reimport:
+                sys.modules.pop(name, None)
+            yield
+    finally:
+        sys.meta_path.remove(loaded)
+        # Noted as they load, not read from sys.modules at the end: a
+        # patch.dict nested in a test has already dropped what it imported.
+        for name in loaded.names:
+            package_name, _, child = name.rpartition(".")
+            package = sys.modules.get(package_name)
+            bound = getattr(package, "__dict__", {}).get(child)
+            current = sys.modules.get(name)
+            if getattr(bound, "__name__", None) == name and bound is not current:
+                if current is None:
+                    delattr(package, child)
+                else:
+                    setattr(package, child, current)
+
+
+def test_stubbed_modules_leave_no_copies_on_their_packages(tmp_path, monkeypatch):
+    package_dir = tmp_path / "stub_swap_probe"
+    package_dir.mkdir()
+    for name in ("__init__", "reimported", "first_loaded", "nested"):
+        (package_dir / f"{name}.py").write_text("")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    package = importlib.import_module("stub_swap_probe")
+    original = importlib.import_module("stub_swap_probe.reimported")
+    try:
+        with _stubbed_modules({}, ["stub_swap_probe.reimported"]):
+            assert importlib.import_module("stub_swap_probe.reimported") is not original
+            importlib.import_module("stub_swap_probe.first_loaded")
+            with patch.dict(sys.modules):
+                importlib.import_module("stub_swap_probe.nested")
+
+        assert package.reimported is original is sys.modules["stub_swap_probe.reimported"]
+        assert "stub_swap_probe.first_loaded" not in sys.modules
+        assert not hasattr(package, "first_loaded")
+        assert not hasattr(package, "nested")
+    finally:
+        del sys.modules["stub_swap_probe"], sys.modules["stub_swap_probe.reimported"]
+
+
 class TestApplicationController:
     @pytest.fixture(autouse=True)
     def _setup(self, monkeypatch):
@@ -910,14 +984,10 @@ class TestApplicationController:
             str(Path(self.temp_dir.name) / "recorded_audio.wav"),
         )
 
-        # Import the controller for real first, so only the modules popped
-        # below bind the stubs. Otherwise every module that nothing has
-        # imported yet binds them too, and that set depends on which other
-        # test files were collected.
-        importlib.import_module("services.application_controller")
-        # patch.dict restores sys.modules, but not child attributes on packages.
-        # Load the adapter and its cache before the snapshot so later tests
-        # cannot retain an orphan cache module that their mocks never reach.
+        # Load the adapter and its cache for real before the stubs go in, so
+        # the controller uses these copies, with model_dir patched, rather
+        # than ones it would import under the stubs when no other test file
+        # has loaded them.
         importlib.import_module("transcriber.optional_backend")
         importlib.import_module("services.local_asr.process")
         importlib.import_module("services.isolated")
@@ -933,26 +1003,24 @@ class TestApplicationController:
             self.keyboard,
             self.db_state,
         )
+        reimport = [
+            "services.runtime",
+            "services.runtime.hotkeys",
+            "services.runtime.streaming",
+            "services.runtime.transcription",
+            # Without this, the real import leaves MeetingRuntime bound to
+            # the REAL settings_manager, so consent-dependent tests read the
+            # process-wide store instead of the fake.
+            "services.runtime.meeting",
+            "services.runtime.updater",
+            "services.runtime.models",
+            "services.runtime.components",
+            "services.runtime.remote",
+            "services.application_controller",
+        ]
         # One block owns the stubs, so a failed setup still removes them; a
         # stub services.settings left behind fails every later test.
-        with self.temp_dir, patch.dict(sys.modules, module_stubs):
-            for module_name in [
-                "services.runtime",
-                "services.runtime.hotkeys",
-                "services.runtime.streaming",
-                "services.runtime.transcription",
-                # Without this, the real import above leaves MeetingRuntime
-                # bound to the REAL settings_manager, so consent-dependent
-                # tests read the process-wide store instead of the fake.
-                "services.runtime.meeting",
-                "services.runtime.updater",
-                "services.runtime.models",
-                "services.runtime.components",
-                "services.runtime.remote",
-                "services.application_controller",
-            ]:
-                sys.modules.pop(module_name, None)
-
+        with self.temp_dir, _stubbed_modules(module_stubs, reimport):
             self.app_controller_module = importlib.import_module("services.application_controller")
             self.updater_module = importlib.import_module("services.runtime.updater")
             self.models_module = importlib.import_module("services.runtime.models")

@@ -76,13 +76,12 @@ def h(monkeypatch):
     monkeypatch.setattr(speech_cache, "model_dir",
                         lambda key: Path(temp_dir.name) / "speech-models" / key)
     stubs = harness._install_module_stubs(settings, history, keyboard, {"closed": False})
-    with patch.dict(sys.modules, stubs):
-        for name in (
-            "services.runtime", "services.runtime.hotkeys", "services.runtime.streaming",
-            "services.runtime.transcription", "services.runtime.meeting",
-            "services.runtime.command", "services.application_controller",
-        ):
-            sys.modules.pop(name, None)
+    reimport = (
+        "services.runtime", "services.runtime.hotkeys", "services.runtime.streaming",
+        "services.runtime.transcription", "services.runtime.meeting",
+        "services.runtime.command", "services.application_controller",
+    )
+    with harness._stubbed_modules(stubs, reimport):
         module = importlib.import_module("services.application_controller")
         hotkeys = importlib.import_module("services.runtime.hotkeys")
         with patch.object(hotkeys.HotkeyRuntime, "setup_hook_watchdog", lambda _self: None):
