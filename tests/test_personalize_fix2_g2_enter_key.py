@@ -7,9 +7,7 @@ tests need a shown, active window: an unshown dialog has no default button and
 hides the bug.
 """
 import os
-import tempfile
-from contextlib import ExitStack
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,14 +15,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QAbstractButton, QApplication, QPushButton
 
 from services import app_styles, dictionary
-from services.settings import SettingsKey, SettingsManager
-from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs import settings_downloads as downloads_module
+from services.settings import SettingsKey
 from ui_qt.dialogs import settings_metadata
-from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs import settings_styles
 from ui_qt.dialogs.settings_destinations import (
     CLEANUP_RULES,
@@ -34,6 +29,7 @@ from ui_qt.dialogs.settings_destinations import (
     SNIPPETS,
     STYLES,
 )
+from tests.fakes.personalize import settings_dialogs
 
 KEYPAD_ENTER = (Qt.Key.Key_Enter, Qt.KeyboardModifier.KeypadModifier)
 RETURN = (Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier)
@@ -64,36 +60,19 @@ def _windows_text(monkeypatch):
 @pytest.fixture(params=["classic", "omarchy"])
 def make_dialog(request, monkeypatch):
     monkeypatch.setenv("OPENWHISPER_UI", request.param)
-    stacks, dialogs = [], []
-    temp = tempfile.TemporaryDirectory()
+    with settings_dialogs(defaults={SettingsKey.SELECTED_MODEL: "parakeet"},
+                          mocks=("on_settings_changed",), get_loaded_model=lambda: None) as new:
+        def build(values=None):
+            dialog, store = new(values)
+            dialog.resize(1100, 820)
+            dialog.show()
+            dialog.activateWindow()
+            assert QTest.qWaitForWindowActive(dialog)
+            return dialog, store
 
-    def build(values=None):
-        store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SELECTED_MODEL: "parakeet", **(values or {})})
-        stack = ExitStack()
-        for module in (settings_dialog_module, models_module, downloads_module):
-            stack.enter_context(patch.object(module, "settings_manager", store))
-        stack.enter_context(patch.object(settings_dialog_module.history_manager, "set_retention"))
-        for module in (models_module, downloads_module):
-            stack.enter_context(patch.object(module, "scan_cached_models", return_value={}))
-        stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
-        stacks.append(stack)
-        dialog = settings_dialog_module.SettingsDialog(
-            get_loaded_model=lambda: None, background_cache_scan=False)
-        dialog.on_settings_changed = MagicMock()
-        dialogs.append(dialog)
-        dialog.resize(1100, 820)
-        dialog.show()
-        dialog.activateWindow()
-        assert QTest.qWaitForWindowActive(dialog)
-        return dialog, store
-
-    yield build
-    for dialog in dialogs:
-        dialog.hide()
-    for stack in reversed(stacks):
-        stack.close()
-    temp.cleanup()
+        yield build
+        for dialog in new.dialogs:
+            dialog.hide()
 
 
 def _go(dialog, key):
@@ -245,3 +224,38 @@ def test_escape_still_closes_settings(make_dialog):
     _press(dialog.dictionary_term_edit, (Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier))
 
     assert not dialog.isVisible()
+
+
+# Settings Home: a button's accessible name says what its label says.
+#
+# Home rows name their control after the row title, which for a button with
+# text replaced "Add word" with "Dictionary": a screen reader announced the
+# wrong action and voice control could not find the button by its label.
+
+
+def _label(button) -> str:
+    return " ".join(button.text().replace("&&", "\0").replace("&", "").replace("\0", "&").split())
+
+
+def test_add_word_is_named_after_its_label(make_dialog):
+    dialog, _store = make_dialog({})
+    page = dialog.home
+
+    button = page.findChild(QPushButton, "homeDictionaryAddButton")
+
+    assert button.text() == "Add word"
+    assert button.accessibleName().startswith("Add word")
+
+
+def test_every_home_button_with_a_label_keeps_it_in_its_name(make_dialog):
+    dialog, _store = make_dialog({})
+    dialog.show_home()
+    QApplication.processEvents()
+    page = dialog.home
+
+    labelled = [button for button in page.findChildren(QAbstractButton) if _label(button)]
+
+    assert labelled
+    for button in labelled:
+        name = button.accessibleName()
+        assert not name or _label(button).casefold() in name.casefold(), (_label(button), name)

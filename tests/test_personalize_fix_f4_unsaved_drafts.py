@@ -1,8 +1,5 @@
 """Snippet and transform edits save on leaving, as "Changes save automatically" says."""
 import os
-import tempfile
-from contextlib import ExitStack
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,14 +9,11 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QMessageBox
 
-from services.settings import SettingsManager
 from services.snippets import load_snippets
 from services.text_transforms import load_transforms
-from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
-from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import COMMANDS, GENERAL, SNIPPETS
+from tests.fakes.personalize import settings_dialogs
 
 
 @pytest.fixture(autouse=True)
@@ -53,34 +47,16 @@ def questions(monkeypatch):
 
 @pytest.fixture
 def make_dialog(questions):
-    stacks, dialogs = [], []
-    temp = tempfile.TemporaryDirectory()
+    with settings_dialogs(mocks=("on_settings_changed",), get_loaded_model=lambda: None) as new:
+        def build():
+            dialog, store = new()
+            dialog.show()
+            return dialog, store
 
-    def build():
-        store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({})
-        stack = ExitStack()
-        for module in (settings_dialog_module, models_module, downloads_module):
-            stack.enter_context(patch.object(module, "settings_manager", store))
-        stack.enter_context(patch.object(settings_dialog_module.history_manager, "set_retention"))
-        for module in (models_module, downloads_module):
-            stack.enter_context(patch.object(module, "scan_cached_models", return_value={}))
-        stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
-        stacks.append(stack)
-        dialog = settings_dialog_module.SettingsDialog(
-            get_loaded_model=lambda: None, background_cache_scan=False)
-        dialog.on_settings_changed = MagicMock()
-        dialogs.append(dialog)
-        dialog.show()
-        return dialog, store
-
-    yield build
-    questions.answer = QMessageBox.StandardButton.Discard
-    for dialog in dialogs:
-        dialog.close()
-    for stack in reversed(stacks):
-        stack.close()
-    temp.cleanup()
+        yield build
+        questions.answer = QMessageBox.StandardButton.Discard
+        for dialog in new.dialogs:
+            dialog.close()
 
 
 def _snippet_draft(dialog, trigger="my address", text="1 Main St"):

@@ -84,6 +84,15 @@ def test_command_mode_never_copies_from_a_newly_known_terminal(h, session, app_c
     assert h.ui.captures == [] and h.released == []
 
 
+def _hyprland_mods(monkeypatch, window_class, send=hyprland.send_paste):
+    monkeypatch.setattr(hyprland, "query", lambda _: {"address": "0x1", "class": window_class})
+    evaluate = Mock()
+    monkeypatch.setattr(hyprland, "evaluate", evaluate)
+    send()
+    code = evaluate.call_args.args[0]
+    return code.split('mods="', 1)[1].split('"', 1)[0]
+
+
 @pytest.mark.parametrize("window_class, mods", [
     ("org.gnome.ptyxis", "CTRL SHIFT"),
     ("konsole", "CTRL SHIFT"),
@@ -92,12 +101,33 @@ def test_command_mode_never_copies_from_a_newly_known_terminal(h, session, app_c
     ("firefox", "CTRL"),
 ])
 def test_hyprland_uses_ctrl_shift_in_every_known_terminal(monkeypatch, window_class, mods):
-    monkeypatch.setattr(
-        hyprland, "query", lambda _: {"address": "0x1", "class": window_class}
-    )
-    evaluate = Mock()
-    monkeypatch.setattr(hyprland, "evaluate", evaluate)
+    assert _hyprland_mods(monkeypatch, window_class) == mods
 
-    hyprland.send_paste()
 
-    assert f'mods="{mods}"' in evaluate.call_args.args[0]
+# Hyprland's paste and copy keys, Command Mode and app awareness agree on what a terminal is.
+# Tabby's Linux window class, and ids WezTerm, Warp and foot also go by.
+@pytest.mark.parametrize("window_class", [
+    "tabby", "Tabby", "wezterm-gui", "warp", "org.codeberg.dnkl.foot",
+])
+def test_every_check_knows_these_terminals(monkeypatch, window_class):
+    identity = _identity("hyprland", window_class)
+
+    assert catalog.is_terminal(identity)
+    assert synthetic_keys.is_terminal(identity)
+    assert _hyprland_mods(monkeypatch, window_class) == "CTRL SHIFT"
+    assert _hyprland_mods(monkeypatch, window_class, hyprland.send_copy) == "CTRL SHIFT"
+
+
+_CLASSES = sorted(
+    {app_id for app in catalog._APPS for app_id in app.ids if not app_id.endswith(".exe")}
+    | {"terminal", "iterm2", "mintty", "pwsh", "obsidian", "unknown-app"}
+)
+
+
+@pytest.mark.parametrize("window_class", _CLASSES)
+def test_the_paste_keys_follow_the_same_terminal_check(monkeypatch, window_class):
+    identity = _identity("hyprland", window_class)
+    terminal = catalog.is_terminal(identity)
+
+    assert synthetic_keys.is_terminal(identity) is terminal
+    assert _hyprland_mods(monkeypatch, window_class) == ("CTRL SHIFT" if terminal else "CTRL")

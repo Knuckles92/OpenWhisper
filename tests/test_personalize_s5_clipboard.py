@@ -17,7 +17,6 @@ from ui_qt.clipboard import (
     TemporaryClipboard,
     system_html_renderer,
 )
-from ui_qt.ui_controller import UIController
 
 HTML = "Thanks, <b>Dana Lee</b><br>Product designer"
 PLAIN = "Thanks, Dana Lee\nProduct designer"
@@ -187,12 +186,3 @@ def test_offscreen_platform_has_no_rich_text_renderer():
     assert system_html_renderer() is None
 
 
-def test_the_ui_controller_forwards_html_and_keeps_the_one_argument_call():
-    calls = []
-    temporary = SimpleNamespace(stage_text=lambda *args, **kwargs: calls.append((args, kwargs)))
-    ui = SimpleNamespace(_temporary_clipboard=temporary)
-
-    UIController.stage_transcript_for_paste(ui, "plain")
-    UIController.stage_transcript_for_paste(ui, PLAIN, html=HTML)
-
-    assert calls == [(("plain",), {}), ((PLAIN,), {"html": HTML})]

@@ -17,19 +17,14 @@ import pytest
 
 from PyQt6.QtCore import QByteArray, QCoreApplication, QEventLoop, QMimeData, QObject, QTimer, pyqtSignal
 
-from services import focus_context, synthetic_keys, text_rewrite
+from services import focus_context
 from services.focus_context import FocusSnapshot
-from services.runtime import command
-from services.runtime.command import CommandRefused, CommandRuntime
-from services.settings import RecordingTriggerMode, SettingsKey
-from tests.fakes.settings import InMemorySettings
+from services.runtime.command import CommandRefused
 from tests.test_personalize_s3_command_runtime import (
     NOTEPAD,
-    FakeRuntime,
     FakeService,
-    FakeUI,
-    Signal,
     _settle,
+    bare_commands,
 )
 from ui_qt import clipboard as clipboard_module
 from ui_qt.clipboard import TemporaryClipboard
@@ -305,30 +300,12 @@ def test_the_app_asks_before_qt_starts(monkeypatch):
 
 @pytest.fixture
 def h(monkeypatch):
-    settings = InMemorySettings({
-        SettingsKey.RECORDING_TRIGGER_MODE: RecordingTriggerMode.PUSH_HOLD,
-    })
-    monkeypatch.setattr(command, "settings_manager", settings)
-    monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: True)
-    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: True)
-    monkeypatch.setattr(synthetic_keys, "wait_for_modifiers_released", lambda timeout_s=0.8: True)
+    h = bare_commands(monkeypatch)
     focus_context.set_service(FakeService(FocusSnapshot(NOTEPAD, None)))
-    recorder = SimpleNamespace(is_recording=False)
-    controller = SimpleNamespace(
-        recorder=recorder,
-        status_update=Signal(),
-        overlay_state_update=Signal(),
-        stop_recording=lambda: setattr(recorder, "is_recording", False),
-        cancel=lambda: setattr(recorder, "is_recording", False),
-        ui_controller=FakeUI(),
-    )
-    runtime = FakeRuntime(controller, settings)
-    controller.transcription_runtime = runtime
-    commands = CommandRuntime(controller)
     # What capture_selection hands back where Qt can't see the copy.
-    controller.ui_controller.clipboard_selection = None
-    yield SimpleNamespace(controller=controller, runtime=runtime, commands=commands)
-    commands.cleanup()
+    h.ui.clipboard_selection = None
+    yield h
+    h.commands.cleanup()
 
 
 def test_command_mode_says_so_instead_of_writing_over_the_selection(h):

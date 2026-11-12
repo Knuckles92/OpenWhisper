@@ -1,9 +1,7 @@
 """Settings → Personalize → Dictionary: adding, starring, editing, learning and layout."""
 import os
-import tempfile
-from contextlib import ExitStack
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
@@ -14,14 +12,12 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QLineEdit, QPushButton
 
 from services import dictionary
-from services.settings import SettingsKey, SettingsManager
-from ui_qt.dialogs import settings_dialog as settings_dialog_module
+from services.settings import SettingsKey
 from ui_qt.dialogs import settings_dictionary as page_module
-from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
-from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import DICTIONARY, STYLES
 from ui_qt.widgets.setting_tile import TileBase
+from tests.fakes.personalize import assert_page_ends_in_view, large_fonts, settings_dialogs
 
 KEY = SettingsKey.DICTATION_DICTIONARY
 WORDS = [
@@ -47,29 +43,9 @@ def _restore_metadata():
 
 @pytest.fixture
 def make_dialog():
-    stacks = []
-    temp = tempfile.TemporaryDirectory()
-
-    def build(values=None):
-        store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SELECTED_MODEL: "parakeet", **(values or {})})
-        stack = ExitStack()
-        for module in (settings_dialog_module, models_module, downloads_module):
-            stack.enter_context(patch.object(module, "settings_manager", store))
-        stack.enter_context(patch.object(settings_dialog_module.history_manager, "set_retention"))
-        for module in (models_module, downloads_module):
-            stack.enter_context(patch.object(module, "scan_cached_models", return_value={}))
-        stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
-        stacks.append(stack)
-        dialog = settings_dialog_module.SettingsDialog(get_loaded_model=lambda: None,
-                                                       background_cache_scan=False)
-        dialog.on_settings_changed = Mock()
-        return dialog, store
-
-    yield build
-    for stack in reversed(stacks):
-        stack.close()
-    temp.cleanup()
+    with settings_dialogs(defaults={SettingsKey.SELECTED_MODEL: "parakeet"},
+                          mocks=("on_settings_changed",), get_loaded_model=lambda: None) as build:
+        yield build
 
 
 def saved(store):
@@ -337,14 +313,9 @@ class TestBasicRow:
 @pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
 def test_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale
-    from ui_qt.utils.theme_manager import ThemeManager
-
-    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
-    app = QApplication.instance()
+    app = large_fonts(monkeypatch, ui_mode)
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog, _store = make_dialog({
             KEY: WORDS, SettingsKey.TRANSCRIPT_CLEANUP_RULES: ['Always spell my name "Alex Rivera"'],
         })
@@ -373,10 +344,7 @@ def test_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mo
         # The bounds checks above are what must hold either way.
         if ui_mode == "classic":
             assert not any(row.layout_row.stacked for row in rows)
-        scroll = dialog._page_scrolls[DICTIONARY]
-        scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
-        app.processEvents()
-        assert page.mapTo(scroll.viewport(), page.rect().bottomRight()).y() <= scroll.viewport().height()
+        assert_page_ends_in_view(dialog, DICTIONARY)
     finally:
         if dialog is not None:
             dialog.close()

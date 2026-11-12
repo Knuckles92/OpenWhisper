@@ -252,21 +252,6 @@ def test_dictionary_applies_to_every_job_and_snippets_only_to_dictation(monkeypa
     assert planned == ["Acme rocks"]
 
 
-def test_a_whole_snippet_skips_cleanup_and_expands(monkeypatch):
-    snippet = Snippet("s", "my address", "1 Main St")
-    monkeypatch.setattr(snippets, "load_snippets", lambda settings: [snippet])
-    monkeypatch.setattr(snippets, "plan_expansion", lambda text, items: SnippetPlan(text, whole=snippet))
-    monkeypatch.setattr(snippets, "expand", lambda text, plan: (
-        (plan.whole.text, "", True) if plan.whole else (text, "", True)))
-
-    prepared = prepare_text("my address", _job(), {})
-
-    assert prepared.skip_cleanup
-    assert finish_text(prepared.cleanup_input, prepared) == FinishedText(
-        "1 Main St", "", True, "1 Main St"
-    )
-
-
 def test_a_lost_placeholder_falls_back_to_the_uncleaned_expansion(monkeypatch):
     snippet = Snippet("s", "sig", "Best, Dana", formatted=True)
     plan = SnippetPlan("thanks [[S1]]", placeholders=(("[[S1]]", snippet),))

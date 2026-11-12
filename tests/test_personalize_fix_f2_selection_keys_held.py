@@ -10,24 +10,18 @@ import sys
 import threading
 import types
 from concurrent.futures import Future
-from types import SimpleNamespace
 
 import pytest
 
-from services import focus_context, synthetic_keys, text_rewrite
+from services import focus_context, synthetic_keys
 from services.dictation_pipeline import DictationJob, JobMode
 from services.focus_context import FocusSnapshot
-from services.runtime import command
-from services.runtime.command import CommandRefused, CommandRuntime, UnreadSelection
-from services.settings import RecordingTriggerMode, SettingsKey
-from tests.fakes.settings import InMemorySettings
+from services.runtime.command import CommandRefused, UnreadSelection
 from tests.test_personalize_s3_command_runtime import (
     NOTEPAD,
-    FakeRuntime,
     FakeService,
-    FakeUI,
-    Signal,
     _settle,
+    bare_commands,
 )
 
 KEYS_HELD = "Release the shortcut keys, then try again"
@@ -35,31 +29,11 @@ KEYS_HELD = "Release the shortcut keys, then try again"
 
 @pytest.fixture
 def h(monkeypatch, _session_qt_application):
-    settings = InMemorySettings({
-        SettingsKey.RECORDING_TRIGGER_MODE: RecordingTriggerMode.PUSH_HOLD,
-    })
-    monkeypatch.setattr(command, "settings_manager", settings)
-    monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: True)
-    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: True)
-    monkeypatch.setattr(synthetic_keys, "wait_for_modifiers_released", lambda timeout_s=0.8: False)
-    service = FakeService(FocusSnapshot(NOTEPAD, None))
-    focus_context.set_service(service)
-    recorder = SimpleNamespace(is_recording=False)
-    controller = SimpleNamespace(
-        recorder=recorder,
-        status_update=Signal(),
-        overlay_state_update=Signal(),
-        stop_recording=lambda: setattr(recorder, "is_recording", False),
-        cancel=lambda: setattr(recorder, "is_recording", False),
-        ui_controller=FakeUI(),
-    )
-    runtime = FakeRuntime(controller, settings)
-    controller.transcription_runtime = runtime
-    commands = CommandRuntime(controller)
-    controller.ui_controller.clipboard_selection = "would be read"
-    yield SimpleNamespace(controller=controller, runtime=runtime, ui=controller.ui_controller,
-                          commands=commands)
-    commands.cleanup()
+    h = bare_commands(monkeypatch, keys_released=False)
+    focus_context.set_service(FakeService(FocusSnapshot(NOTEPAD, None)))
+    h.ui.clipboard_selection = "would be read"
+    yield h
+    h.commands.cleanup()
 
 
 def test_command_mode_refuses_instead_of_copying_with_keys_held(h):

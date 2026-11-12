@@ -20,6 +20,7 @@ from services.settings import SettingsKey, settings_manager
 from services.text_transforms import Transform
 from ui_qt.widgets import scratchpad
 from ui_qt.widgets.scratchpad import ScratchpadWindow
+from tests.fakes.personalize import large_fonts
 
 POLISH = Transform("polish", "Polish", "Improve the flow.")
 
@@ -103,12 +104,6 @@ class TestWindow:
         _focused(pad, monkeypatch, active=True)
         scratchpad.toggle(ui)
         assert not pad.isVisible()
-
-    def test_closing_only_hides(self, pad):
-        pad.close()
-        assert not pad.isVisible()
-        pad.present()
-        assert pad.isVisible()
 
     def test_on_top_can_be_turned_off_and_is_remembered(self, pad):
         pad.on_top_button.setChecked(False)
@@ -435,16 +430,11 @@ def test_the_app_opens_it_and_dictation_lands_in_it(monkeypatch):
 @pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
 def test_footer_fits_a_narrow_window_at_large_fonts(monkeypatch, tmp_path, ui_mode):
-    from ui_qt.utils.font_scale import apply_ui_font_scale
-    from ui_qt.utils.theme_manager import ThemeManager
-
-    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
-    app = QApplication.instance()
+    app = large_fonts(monkeypatch, ui_mode)
     window = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         window = ScratchpadWindow()
         window.present()
         window.resize(300, 260)

@@ -10,20 +10,17 @@ import sys
 import threading
 from concurrent.futures import Future
 from ctypes import byref
-from types import SimpleNamespace
 
 import pytest
 
-from services import focus_context, synthetic_keys, text_rewrite
+from services import focus_context
 from services.dictation_pipeline import DictationJob, JobMode
 from services.focus_context import AppIdentity, FocusSnapshot, TextContext
 from services.focus_context._capture import CaptureService
-from services.runtime import command
-from services.runtime.command import CommandRefused, CommandRuntime, UnreadSelection
-from services.settings import RecordingTriggerMode, SettingsKey
-from tests.fakes.settings import InMemorySettings
+from services.runtime.command import CommandRefused, UnreadSelection
+from services.settings import SettingsKey
 from tests.test_personalize_s1_service import FakePlatform
-from tests.test_personalize_s3_command_runtime import FakeRuntime, FakeUI, Signal, _settle
+from tests.test_personalize_s3_command_runtime import _settle, bare_commands
 
 KEEPASS = AppIdentity("keepassxc.exe", "KeePassXC", pid=21, window="0x21")
 NOTEPAD = AppIdentity("notepad.exe", "Notepad", pid=4, window="0x4")
@@ -71,32 +68,13 @@ def test_other_apps_are_still_read():
 
 @pytest.fixture
 def h(monkeypatch, _session_qt_application):
-    settings = InMemorySettings({
-        SettingsKey.RECORDING_TRIGGER_MODE: RecordingTriggerMode.PUSH_HOLD,
-    })
-    monkeypatch.setattr(command, "settings_manager", settings)
-    monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: True)
-    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: True)
-    monkeypatch.setattr(synthetic_keys, "wait_for_modifiers_released", lambda timeout_s=0.8: True)
-    platform = FakePlatform(KEEPASS)
-    service = _capture(platform)
+    h = bare_commands(monkeypatch)
+    h.platform = FakePlatform(KEEPASS)
+    service = _capture(h.platform)
     focus_context.set_service(service)
-    recorder = SimpleNamespace(is_recording=False)
-    controller = SimpleNamespace(
-        recorder=recorder,
-        status_update=Signal(),
-        overlay_state_update=Signal(),
-        stop_recording=lambda: setattr(recorder, "is_recording", False),
-        cancel=lambda: setattr(recorder, "is_recording", False),
-        ui_controller=FakeUI(),
-    )
-    controller.ui_controller.clipboard_selection = "Bank PIN 4321"
-    runtime = FakeRuntime(controller, settings)
-    controller.transcription_runtime = runtime
-    commands = CommandRuntime(controller)
-    yield SimpleNamespace(controller=controller, runtime=runtime, ui=controller.ui_controller,
-                          commands=commands, platform=platform, settings=settings)
-    commands.cleanup()
+    h.ui.clipboard_selection = "Bank PIN 4321"
+    yield h
+    h.commands.cleanup()
     service.shutdown()
 
 

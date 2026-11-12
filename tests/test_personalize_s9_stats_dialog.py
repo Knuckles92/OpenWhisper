@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PyQt6 import sip
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QLabel, QMessageBox
+from tests.fakes.personalize import assert_wrapped_labels_fit, large_fonts
 
 TODAY = date.today()
 
@@ -215,15 +216,11 @@ def test_show_stats_keeps_one_window_and_leaves_settings_alone(synchronous, monk
 @pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 460), ("classic", 460)])
 def test_it_fits_narrow_windows_at_large_fonts(synchronous, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale
-    from ui_qt.utils.theme_manager import ThemeManager
 
     _seed()
-    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
-    app = QApplication.instance()
+    app = large_fonts(monkeypatch, ui_mode)
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog = synchronous.StatsDialog()
         dialog.show()
         dialog.resize(width, 640)
@@ -237,9 +234,7 @@ def test_it_fits_narrow_windows_at_large_fonts(synchronous, monkeypatch, ui_mode
             right = control.mapTo(dialog, control.rect().bottomRight()).x()
             assert control.mapTo(dialog, control.rect().topLeft()).x() >= 0
             assert right < dialog.width(), control.objectName()
-        for label in page.findChildren(QLabel):
-            if label.isVisible() and label.wordWrap():
-                assert label.height() >= label.heightForWidth(label.width())
+        assert_wrapped_labels_fit(page)
     finally:
         if dialog is not None:
             dialog.close()

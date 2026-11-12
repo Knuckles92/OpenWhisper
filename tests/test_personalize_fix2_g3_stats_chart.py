@@ -1,18 +1,11 @@
 """The Stats charts give screen readers each column's words."""
-import importlib
 from datetime import date, datetime, timedelta, timezone
 
-import pytest
+from tests import test_personalize_s9_stats_dialog as stats_tests
 
 TODAY = date.today()
-
-
-def _dialog_module():
-    return importlib.import_module("ui_qt.dialogs.stats_dialog")
-
-
-def _stats():
-    return importlib.import_module("services.dictation_stats")
+_stats = stats_tests._stats
+synchronous = stats_tests.synchronous
 
 
 def _seed():
@@ -27,16 +20,6 @@ def _seed():
             "entry_kind": "dictation", "audio_duration": 3.0, "app_name": "Slack",
             "timestamp": moment.isoformat(),
         }, None)
-
-
-@pytest.fixture
-def synchronous(monkeypatch):
-    module = _dialog_module()
-    monkeypatch.setattr(
-        module, "_run",
-        lambda work, token: module._relay().loaded.emit(token, work(), ""),
-    )
-    return module
 
 
 def test_the_chart_reads_out_every_day(synchronous):

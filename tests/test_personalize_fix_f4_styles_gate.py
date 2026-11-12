@@ -1,8 +1,5 @@
 """Apps & styles follows AI cleanup wherever it changes, through the shared gate."""
 import os
-import tempfile
-from contextlib import ExitStack
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,11 +9,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QPushButton
 
-from services.settings import SettingsKey, SettingsManager
-from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs import settings_downloads as downloads_module
+from services.settings import SettingsKey
 from ui_qt.dialogs import settings_metadata
-from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs import settings_styles
 from ui_qt.dialogs.settings_destinations import (
     CLEANUP,
@@ -26,6 +20,7 @@ from ui_qt.dialogs.settings_destinations import (
     STYLES,
 )
 from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput
+from tests.fakes.personalize import settings_dialogs
 
 CLEANUP_ON = {SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True}
 OPENROUTER = {SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openrouter",
@@ -50,33 +45,14 @@ def _windows_text(monkeypatch):
 
 @pytest.fixture
 def make_dialog():
-    stacks, dialogs = [], []
-    temp = tempfile.TemporaryDirectory()
+    with settings_dialogs(mocks=("on_settings_changed",), close=True,
+                          get_loaded_model=lambda: None) as new:
+        def build(values=None):
+            dialog, store = new(values)
+            dialog.show()
+            return dialog, store
 
-    def build(values=None):
-        store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({**(values or {})})
-        stack = ExitStack()
-        for module in (settings_dialog_module, models_module, downloads_module):
-            stack.enter_context(patch.object(module, "settings_manager", store))
-        stack.enter_context(patch.object(settings_dialog_module.history_manager, "set_retention"))
-        for module in (models_module, downloads_module):
-            stack.enter_context(patch.object(module, "scan_cached_models", return_value={}))
-        stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
-        stacks.append(stack)
-        dialog = settings_dialog_module.SettingsDialog(
-            get_loaded_model=lambda: None, background_cache_scan=False)
-        dialog.on_settings_changed = MagicMock()
-        dialogs.append(dialog)
-        dialog.show()
-        return dialog, store
-
-    yield build
-    for dialog in dialogs:
-        dialog.close()
-    for stack in reversed(stacks):
-        stack.close()
-    temp.cleanup()
+        yield build
 
 
 def _go(dialog, key):
