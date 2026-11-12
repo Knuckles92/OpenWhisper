@@ -580,7 +580,7 @@ class WalkthroughTab(QWidget):
         page.setSpacing(0)
 
         self.stage = Stage()
-        self.split = StudioSplit(self._column(), self.stage)
+        self.split = StudioSplit(self._column(), self.stage, hug_column=True)
         page.addWidget(self.split, 1)
         self._build_stage()
         self.prompt_popover = PromptPopover(self, self._prompt_area())
@@ -707,7 +707,6 @@ class WalkthroughTab(QWidget):
         self.copy_field = Field(self.copy_menu, "Copy when it finishes")
         body.addWidget(self._row("On finish, copy", self.copy_field))
 
-        body.addStretch(1)
         foot = QHBoxLayout()
         foot.setContentsMargins(0, 10, 0, 0)
         self.settings_link = QPushButton("Walkthrough settings  →")

@@ -5,7 +5,7 @@ moves the other, and the stage changing what it shows never resizes the window.
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import QSize
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtWidgets import QBoxLayout, QSizePolicy, QWidget
 
 from ui_qt.utils.font_scale import current_ui_font_scale
@@ -77,10 +77,14 @@ class StudioSplit(QWidget):
     Its own minimum width is ignored, as ``Reflow``'s is: the width comes
     from the page, so a narrow tiled window stacks the two instead of
     clipping the stage at the right edge.
+
+    ``hug_column`` ends the column under its last control instead of
+    stretching it to the stage's height, for a column with nothing to put in
+    the space.
     """
 
     def __init__(self, column: QWidget, stage: Stage, parent=None,
-                 object_name: str = "walkthroughStudio"):
+                 object_name: str = "walkthroughStudio", hug_column: bool = False):
         super().__init__(parent)
         self.setObjectName(object_name)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
@@ -92,6 +96,9 @@ class StudioSplit(QWidget):
         self._box.setSpacing(GAP)
         self._box.addWidget(column)
         self._box.addWidget(stage, 1)
+        if hug_column:
+            # Top only: the column still fills the width when the two stack.
+            self._box.setAlignment(column, Qt.AlignmentFlag.AlignTop)
         self._stacked: bool | None = None
         self._place(False)
 
