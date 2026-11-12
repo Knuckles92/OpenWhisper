@@ -1128,3 +1128,46 @@ def test_a_recording_that_wont_pause_leaves_the_column_recording(h):
 
     assert h.ui.walkthrough_panel.paused == []
     session.end()
+
+
+def test_done_does_not_wait_out_a_capture_delay_for_a_pending_click(h, auto):
+    h.settings.values[SettingsKey.WALKTHROUGH_CAPTURE_DELAY] = 10
+    auto.click(20, 40)
+    assert h.runtime._auto_timer.interval() == 10000
+
+    h.runtime.finish()
+
+    # The click is still captured, after the usual settle, not ten seconds on.
+    assert h.runtime._auto_timer.isActive()
+    assert h.runtime._auto_timer.interval() == walkthrough_module.AUTO_SETTLE_MS
+    assert h.ui.drawing.countdown == 0
+    h.runtime._auto_timer.timeout.emit()
+    (snap,) = h.ui.snaps
+    snap.keep()
+    h.controller.stop_recording.assert_called_once()
+
+
+def test_canceling_drops_the_screenshot_before_the_recorder_says_canceled(h):
+    _begin(h)
+    h.runtime.snap()
+    # As TranscriptionRuntime._cancel_recording announces the stop: the
+    # recorder is only told to cancel afterwards.
+    h.transcription.canceling_recording = True
+    h.transcription.recording_walkthrough = None
+    h.runtime.on_recording_state_changed(False)
+
+    assert h.ui.snaps[0].drops == 1
+    assert h.ui.copied == []
+
+
+def test_a_snap_menu_pick_during_the_countdown_takes_that_kind(h):
+    _begin(h)
+    h.settings.values[SettingsKey.WALKTHROUGH_SNAP_MODE] = WalkthroughSnapMode.DELAYED
+    h.runtime.snap("ui")
+    assert h.runtime._countdown_left and not h.ui.snaps
+
+    h.runtime.choose_snap_mode(WalkthroughSnapMode.SCREEN)
+
+    assert not h.runtime._countdown_left
+    (snap,) = h.ui.snaps
+    assert snap.take == WalkthroughSnapMode.SCREEN

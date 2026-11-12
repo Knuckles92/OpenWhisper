@@ -216,6 +216,13 @@ class WalkthroughRuntime(QObject):
                 self._live_drawing.set_busy(True)
             if self._auto_draw_pending is not None and not self._live_drawing.interacting:
                 self._capture_click()
+            elif (self._auto_position is not None and not self._live_drawing.interacting
+                  and self._auto_timer.remainingTime() > AUTO_SETTLE_MS):
+                # Done doesn't wait out a capture delay: the click's screenshot
+                # is taken once the clicked app has had its moment to update.
+                self._auto_progress.stop()
+                self._live_drawing.set_capture_countdown(0)
+                self._auto_timer.start(AUTO_SETTLE_MS)
             return
         self.controller.stop_recording()
 
@@ -522,6 +529,9 @@ class WalkthroughRuntime(QObject):
         settings_manager.save_setting(SettingsKey.WALKTHROUGH_SNAP_MODE, mode)
         if self._panel is not None:
             self._panel.set_snap_mode(mode)
+        # A pick is taken at once, also while "In 3 seconds" counts down;
+        # snap() would read that as "pressed again" and take a region.
+        self._stop_countdown()
         self.snap("ui")
 
     def _snap_mode(self) -> str:
@@ -736,7 +746,11 @@ class WalkthroughRuntime(QObject):
             self._out_of_screenshots = False
             self._ui.keep_overlay_out_of_screenshots(False)
         if self._snap is not None and self._snap.active and self._snap_for is not None:
-            if self.controller.recorder.capture_canceled is True:
+            # Cancel says the recording stopped before the recorder marks it
+            # canceled, so the transcription runtime says which this is.
+            if (self.controller.recorder.capture_canceled is True
+                    or getattr(self.controller.transcription_runtime,
+                               "canceling_recording", False) is True):
                 self._snap.drop()
             else:
                 self._snap.keep()

@@ -819,7 +819,8 @@ class WalkthroughPanel(QWidget):
             cancel = QRectF(cancel.left() + (inner.left() - cancel.left()) * widen, bottom,
                             FOOT_ICON_W + (inner.width() - FOOT_ICON_W) * widen, FOOT_H)
         return {
-            "snap": (snap, recording),
+            # Paused, Auto Mode's drawing is off: Draw would do nothing.
+            "snap": (snap, recording and not (self._auto_mode and self.paused)),
             "snap-menu": (snap_menu, recording),
             "note": (note, recording and self._notes_on and not self.paused),
             "pause": (pause, recording),

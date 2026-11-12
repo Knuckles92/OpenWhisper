@@ -104,7 +104,8 @@ class LiveAnnotations(QObject):
         self._toolbar.keep_marks_clicked.connect(self.toggle_keep_marks)
         self._toolbar.drop_clicked.connect(self.cancel_capture)
         self._toolbar.capture_delay.changed.connect(self.capture_delay_changed)
-        self._toolbar.capture_delay.cancelled.connect(self.cancel_capture)
+        # The chip's × cancels only the screenshot; the tool stays in hand.
+        self._toolbar.capture_delay.cancelled.connect(self.capture_cancelled)
         self._toolbar.clear_clicked.connect(self.clear)
         self._toolbar.region_clicked.connect(self.select_region)
         self._toolbar.set_keep_marks(self._keep_marks)
@@ -595,7 +596,8 @@ class _Canvas(QWidget):
         editor.move(label_origin(self.rect(), point, editor.size()))
         editor.refit()
         editor.committed.connect(self._commit_label)
-        editor.cancelled.connect(self.live.disarm)
+        # Esc in a label is Esc on the canvas: it also cancels a pending screenshot.
+        editor.cancelled.connect(self.live.cancel_capture)
         editor.show()
         editor.setFocus()
 

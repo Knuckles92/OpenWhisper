@@ -594,3 +594,21 @@ def test_the_column_stands_in_for_the_overlay_only_while_it_records_or_writes(pa
 
     # Its last seconds on screen don't hide the next dictation's overlay.
     assert panel.isVisible() and not panel.shows_recording()
+
+
+def test_draw_is_off_while_auto_mode_is_paused():
+    from ui_qt.widgets.walkthrough_panel import WalkthroughPanel
+
+    panel = WalkthroughPanel()
+    try:
+        panel.begin()
+        panel.set_auto_mode(True)
+        assert panel._footer()["snap"][1]
+        panel.set_paused(True)
+        # Live drawing is off while paused; the manual menu and Resume stay.
+        assert not panel._footer()["snap"][1]
+        assert panel._footer()["snap-menu"][1] and panel._footer()["pause"][1]
+        panel.set_auto_mode(False)
+        assert panel._footer()["snap"][1]
+    finally:
+        panel.close()

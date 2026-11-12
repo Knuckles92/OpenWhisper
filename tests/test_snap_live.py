@@ -505,3 +505,24 @@ def test_mac_live_toolbar_explains_command_to_pin(monkeypatch):
         assert tooltips and all("Hold Cmd to pin" in tip for tip in tooltips)
     finally:
         drawing.close()
+
+
+def test_delay_chip_cancel_keeps_the_tool_and_label_escape_cancels_the_shot(no_focus_moves):
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        cancelled = Mock()
+        drawing.capture_cancelled.connect(cancelled)
+        drawing.arm(Tool.PEN)
+        drawing._toolbar.capture_delay.cancelled.emit()
+        cancelled.assert_called_once()
+        assert drawing.tool is Tool.PEN
+
+        drawing.arm(Tool.TEXT)
+        canvas = drawing._canvases[live.capture.screen_under_cursor()]
+        QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, pos=QPoint(80, 60))
+        canvas.label_editor.cancelled.emit()
+        assert cancelled.call_count == 2
+        assert not drawing.armed
+    finally:
+        drawing.close()
