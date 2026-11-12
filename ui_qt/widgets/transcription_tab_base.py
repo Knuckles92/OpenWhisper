@@ -130,6 +130,7 @@ class TranscriptionTabBase(QWidget):
     engine_downloads_requested = pyqtSignal()
     transcription_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
     live_preview_changed = pyqtSignal()  # Live preview checkbox persisted a change
+    cleanup_toggled = pyqtSignal()  # AI cleanup checkbox persisted a change
 
     CONTENT_OBJECT_NAME = "transcriptionTabContent"
     INITIAL_STATUS = ""
@@ -451,6 +452,7 @@ class TranscriptionTabBase(QWidget):
         settings_manager.save_setting(
             SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, checked
         )
+        self.cleanup_toggled.emit()
 
     def load_cleanup_setting(self):
         enabled = SettingsKey.TRANSCRIPT_CLEANUP_ENABLED.read(
