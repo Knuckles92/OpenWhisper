@@ -75,10 +75,7 @@ def _layout(
 
     for tool, tip in _TOOLS:
         if live:
-            if tool is Tool.REDACT:
-                tip += " · Stays until Clear marks"
-            else:
-                tip += f" · Hold {'Cmd' if sys.platform == 'darwin' else 'Ctrl'} to pin"
+            tip += f" · Hold {'Cmd' if sys.platform == 'darwin' else 'Ctrl'} to pin"
         add("tool", tool.value, tip)
     separate()
     if not live:
@@ -99,7 +96,7 @@ def _layout(
         clear_key = mark_shortcuts.get("clear", "C while drawing")
         add("keep_marks", "keep_marks", f"Keep marks ({keep_key})", label="Keep marks")
         add("clear", "clear", f"Clear marks ({clear_key})", label="Clear marks")
-        add("drop", "drop", "Return to the desktop (Esc)")
+        add("drop", "drop", "Put the tool down and return to the desktop (Esc)")
     else:
         add("drop", "drop", "Cancel (Esc)")
         add("keep", "keep", "Keep (Enter)")
@@ -179,6 +176,7 @@ class SnapToolbar(QWidget):
         self._box_infill = False
         self._keep_marks = False
         self._region_active = False
+        self._drop_enabled = True
         self._hover: _Button | None = None
         self._pressed: _Button | None = None
         self._signals = {
@@ -228,6 +226,15 @@ class SnapToolbar(QWidget):
         self._region_active = active
         self.update()
 
+    def set_drop_enabled(self, enabled: bool) -> None:
+        """Whether × has anything to put down or cancel (the live toolbar only)."""
+        if enabled != self._drop_enabled:
+            self._drop_enabled = enabled
+            if not enabled and self._hover is not None and self._hover.kind == "drop":
+                self._hover = None
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.update()
+
     def button_rect(self, kind: str, value: str = "") -> QRect:
         """Where a control is, for tests and for anchoring popups; empty if unknown."""
         for button in self._buttons:
@@ -238,7 +245,8 @@ class SnapToolbar(QWidget):
     def _enabled(self, button: _Button) -> bool:
         return {"undo": self._can_undo, "redo": self._can_redo,
                 "infill": self._tool in (Tool.BOX, Tool.ELLIPSE),
-                "color": self._tool is not Tool.REDACT}.get(button.kind, True)
+                "color": self._tool is not Tool.REDACT,
+                "drop": self._drop_enabled}.get(button.kind, True)
 
     def _button_at(self, pos: QPoint, *, enabled_only: bool = True) -> _Button | None:
         return next(
@@ -297,8 +305,13 @@ class SnapToolbar(QWidget):
             if button is None:
                 QToolTip.hideText()
             else:
-                tip = ("Redactions always use an opaque cover."
-                       if button.kind == "color" and self._tool is Tool.REDACT else button.tip)
+                if button.kind == "color" and self._tool is Tool.REDACT:
+                    tip = "Redactions always use an opaque cover."
+                elif button.kind == "drop" and not self._drop_enabled:
+                    tip = ("No tool is selected, so there is nothing to put down. "
+                           "Cancel or Done on the walkthrough column ends the walkthrough.")
+                else:
+                    tip = button.tip
                 QToolTip.showText(event.globalPos(), tip, self, button.rect)
             return True
         return super().event(event)

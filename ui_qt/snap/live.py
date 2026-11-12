@@ -20,7 +20,6 @@ from ui_qt.snap import affinity, capture, macos, pointed
 from ui_qt.snap.annotations import (
     SWATCHES,
     Annotation,
-    Redaction,
     Step,
     Tool,
     extend_draft,
@@ -76,6 +75,7 @@ class LiveAnnotations(QObject):
         self._enabled = False
         self.busy = False
         self._capture_pending = False
+        self._counting_down = False
         self.tool: Tool | None = None
         self.selecting_region = False
         self.capture_region: tuple[QScreen, QRect] | None = None
@@ -128,11 +128,20 @@ class LiveAnnotations(QObject):
 
     def set_capture_countdown(self, remaining: float, total: float = 0.0) -> None:
         self._toolbar.capture_delay.set_countdown(remaining, total)
+        self._counting_down = remaining > 0
+        self._sync_drop()
+
+    def _sync_drop(self) -> None:
+        # × puts a tool down or cancels a screenshot that is coming; with
+        # neither it has nothing to do, and says so instead of ignoring clicks.
+        self._toolbar.set_drop_enabled(
+            self.armed or self._capture_pending or self._counting_down)
 
     def set_capture_pending(self, pending: bool, *, captured: bool = False) -> None:
         if self._capture_pending == pending:
             return
         self._capture_pending = pending
+        self._sync_drop()
         for canvas in self._canvases.values():
             if pending:
                 canvas._expire.stop()
@@ -307,6 +316,7 @@ class LiveAnnotations(QObject):
         self._toolbar.set_box_infill(self.box_infill)
         self._toolbar.set_state(self.tool, self.color, False, False)
         self._toolbar.set_region_active(self.selecting_region or self.capture_region is not None)
+        self._sync_drop()
 
     def set_region(self, screen: QScreen, rect: QRect) -> None:
         bounds = QRect(0, 0, screen.geometry().width(), screen.geometry().height())
@@ -362,8 +372,7 @@ class LiveAnnotations(QObject):
             self.disarm()
 
     def complete(self, canvas: _Canvas, mark: Annotation, pinned: bool) -> None:
-        # Privacy covers must not expire between automatic screenshots.
-        canvas.add(mark, pinned or self._keep_marks or isinstance(mark, Redaction))
+        canvas.add(mark, pinned or self._keep_marks)
         self.drawn.emit(canvas.screen, canvas.items())
 
     def pinned_at(self, position: tuple[int, int]) -> tuple[Annotation, ...]:

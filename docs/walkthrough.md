@@ -156,8 +156,9 @@ Boxes and ellipses start as outlines. With either tool selected, toggle
 **Infill** for a light tint inside; the choice is saved for future
 screenshots and walkthroughs. Hold **Shift** while dragging for a square,
 circle, or arrow aligned to a 45° angle. **Redact** draws an opaque cover
-over private details, baked into the kept screenshot. In Auto Mode,
-redactions stay until **Clear marks**, even when other marks fade.
+over private details, baked into the kept screenshot. In Auto Mode a
+redaction leaves the desktop with its screenshot, like any other mark; pin
+it or turn on **Keep marks** to cover the same spot in later screenshots.
 The toolbar wraps into rows on smaller screens.
 Press **S** or use the snapping button to toggle
 alignment to nearby screen corners and window edges when selecting a region
@@ -223,7 +224,10 @@ any monitor and release the mouse to save an annotated screenshot of that
 monitor, after the chosen delay. For text, press **Enter** after typing. The tool stays selected so
 you can draw again, with the crosshair or text cursor restored after each
 capture. Choose another tool to switch, or click the selected
-tool again or press **Esc** to return to the desktop.
+tool again, click the toolbar's **×** or press **Esc** to return to the
+desktop. The **×** also cancels a screenshot that is counting down. It is
+dimmed when no tool is selected and nothing is counting down; it never ends
+the walkthrough, which **Cancel** and **Done** on the column do.
 
 Marks disappear after about 1.5 seconds by default. Click **Keep marks** in
 the drawing toolbar or press **F8** to pin each new mark. Auto Mode remembers
