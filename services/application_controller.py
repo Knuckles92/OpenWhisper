@@ -45,6 +45,23 @@ logger = logging.getLogger(__name__)
 #: What the user's Cancel says when it found nothing to cancel.
 NOTHING_TO_CANCEL = "Nothing to cancel"
 
+def _preload_recording_reader(backend) -> None:
+    """Load PyAV once an optional or remote engine has loaded.
+
+    Those engines read every recording through it (services/local_asr/audio.py),
+    and a session's first dictation otherwise waited for the import at its
+    stop: 51 ms from a warm disk (November 2026), longer from a cold one.
+    Loading it with the engine also keeps the import out of a recording,
+    where it would hold the interpreter while audio blocks arrive.
+    """
+    if not backend.is_available():
+        return
+    try:
+        import av  # noqa: F401 - loaded ahead of the first transcription
+    except Exception:
+        logger.debug("PyAV preload failed; the first transcription imports it", exc_info=True)
+
+
 def _import_openai_sdk() -> None:
     """Warm-up target: a later client build then only constructs the client."""
     try:
@@ -899,24 +916,29 @@ class ApplicationController(QObject):
             self.backup_coordinator.start()
 
     def _warm_openai_sdk(self) -> None:
-        """Import the openai SDK on a worker when this session is set to use it.
+        """Build what this session's OpenAI clients need, on worker threads.
 
         Neither the API engine nor transcript cleanup builds its client at
-        startup, so without this the first API dictation or cleanup would
-        wait out the SDK's import, most of a second. Sessions that use
-        neither never load it.
+        startup. The API engine's is built here; its uploads load the SDK in
+        a worker process of their own (IsolatedOpenAIClient.warm). Cleanup
+        runs in this process whichever engine transcribes, so a session that
+        may clean up imports the SDK here, or its first cleanup would wait
+        out that import, most of a second. Sessions that use neither never
+        load it.
         """
         try:
-            target = getattr(self.current_backend, "prepare_client", None)
-            if not callable(target):
-                from services.cleanup_profiles import cleanup_may_run
+            from services.cleanup_profiles import cleanup_may_run
 
-                if not cleanup_may_run(settings_manager.load_all_settings()):
-                    return
-                target = _import_openai_sdk
-            threading.Thread(
-                target=target, name="openai-sdk-warmup", daemon=True
-            ).start()
+            targets = []
+            prepare = getattr(self.current_backend, "prepare_client", None)
+            if callable(prepare):
+                targets.append(prepare)
+            if cleanup_may_run(settings_manager.load_all_settings()):
+                targets.append(_import_openai_sdk)
+            for target in targets:
+                threading.Thread(
+                    target=target, name="openai-sdk-warmup", daemon=True
+                ).start()
         except Exception:
             logger.warning(
                 "Could not start the openai SDK warm-up; the first request will import it",
@@ -1427,6 +1449,7 @@ def _reload_speech_engine(controller, selected) -> Optional[TranscriptionBackend
             selected.cleanup()
             return None
         _announce_speech_engine(controller, selected)
+        _preload_recording_reader(selected)
         if selected.is_model_missing:
             controller.ensure_local_model_available()
         elif selected.is_available() and selected.backend_id in config.SPEECH_WARMUP_BACKENDS:
