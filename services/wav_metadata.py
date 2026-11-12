@@ -2,20 +2,18 @@
 
 Python's ``wave`` module writes bare PCM. Windows Details columns such as
 Media created read LIST INFO ``ICRD`` and Broadcast Wave ``bext`` dates, so
-Quick Record stamps those after the PCM file is in place.
+Quick Record adds those to each recording as it saves it.
 """
 from __future__ import annotations
 
 import os
 import struct
-import tempfile
 from datetime import datetime
 from typing import Iterator, Optional, Tuple
 
 ORIGINATOR = "OpenWhisper"
 SOFTWARE = "OpenWhisper"
 BEXT_SIZE = 602
-COPY_BLOCK_BYTES = 1024 * 1024
 # RIFF stores its size as an unsigned 32-bit field.
 _MAX_RIFF_SIZE = 0xFFFFFFFF
 
@@ -28,95 +26,86 @@ class WavMetadataError(ValueError):
     """The file is not a RIFF WAVE we can tag."""
 
 
-def stamp_wav_origination(path: str, when: datetime) -> bool:
-    """Append LIST INFO and bext origination. Return True if the file changed.
+def append_origination(wav, when: datetime) -> None:
+    """Tag the RIFF/WAVE just written to ``wav``, in place.
 
-    Files that are not RIFF/WAVE, or that already have ``bext`` or LIST INFO,
-    are left untouched. Scan chunk headers and stream-copy the original audio
-    into an atomic replacement, keeping memory bounded for long recordings.
+    ``wav`` is the open binary file a ``wave`` writer has finished with, so
+    its last chunk ends where the file does. LIST INFO and bext go after
+    that chunk and the RIFF size is set to match; nothing more may be
+    written through ``wav`` afterwards. In place, because the tags are 700
+    bytes and rewriting the file to add them means a second copy of every
+    recording, with its own fsync and rename, before it can be transcribed.
+
+    A failure is raised with the file put back as the untagged WAV it was.
     """
-    temp_path = None
-    fd = None
+    wav.flush()
+    # The descriptor, not the file object: a buffered writer keeps a failed
+    # write and tries it again, so a partial tag could not be taken back.
+    fd = wav.fileno()
+    end = os.lseek(fd, 0, os.SEEK_END)
+    # Python's wave writer can omit the final pad byte for odd-length 8-bit
+    # PCM. Insert it before adding another RIFF chunk.
+    padding = b"\x00" if end & 1 else b""
+    metadata = padding + _list_info_chunk(when) + _bext_chunk(when)
+    if end + len(metadata) - 8 > _MAX_RIFF_SIZE:
+        raise WavMetadataError("Recording is too large for RIFF metadata")
     try:
-        with open(path, "rb") as source:
-            header = source.read(12)
-            if not _is_wave(header):
-                return False
-            source_size = os.fstat(source.fileno()).st_size
-            aligned_end = _untagged_aligned_end(source, source_size)
-            if aligned_end is None:
-                return False
-            # Python's wave writer can omit the final pad byte for odd-length
-            # 8-bit PCM. Insert it before adding another RIFF chunk.
-            padding = b"\x00" if aligned_end > source_size else b""
-            metadata = padding + _list_info_chunk(when) + _bext_chunk(when)
-            riff_size = source_size + len(metadata) - 8
-            if riff_size > _MAX_RIFF_SIZE:
-                raise WavMetadataError("Recording is too large for RIFF metadata")
-            directory = os.path.dirname(os.path.abspath(path)) or os.curdir
-            fd, temp_path = tempfile.mkstemp(suffix=".wav", dir=directory)
-            destination = os.fdopen(fd, "wb")
-            fd = None  # ownership transferred to destination
-            with destination:
-                destination.write(header[:4] + struct.pack("<I", riff_size) + header[8:])
-                _copy_chunks(source, destination, source_size)
-                destination.write(metadata)
-                destination.flush()
-                os.fsync(destination.fileno())
-        # Close the source before replacing it, including on Windows.
-        os.replace(temp_path, path)
-    except Exception:
-        if fd is not None:
-            os.close(fd)
-        if temp_path is not None and os.path.exists(temp_path):
-            os.remove(temp_path)
+        _write_all(fd, metadata)
+        _write_riff_size(fd, end + len(metadata))
+    except BaseException:
+        os.ftruncate(fd, end)
+        _write_riff_size(fd, end)
         raise
-    return True
 
 
-def _untagged_aligned_end(source, source_size: int) -> Optional[int]:
-    """Return where the last chunk's padding ends, or None if already tagged."""
-    aligned_end = 12
-    for chunk_id, offset, size in _scan_chunk_headers(source, source_size):
-        if chunk_id == b"bext":
-            return None
-        if chunk_id == b"LIST" and size >= 4:
-            source.seek(offset)
-            if source.read(4) == b"INFO":
-                return None
-        aligned_end = offset + size + (size & 1)
-    return aligned_end
+def _write_all(fd: int, data: bytes) -> None:
+    view = memoryview(data)
+    while view:
+        written = os.write(fd, view)
+        if not written:
+            raise OSError("Recording storage accepted no more data")
+        view = view[written:]
 
 
-def _copy_chunks(source, destination, source_size: int) -> None:
-    """Stream everything after the RIFF header from ``source`` to ``destination``."""
-    source.seek(12)
-    remaining = source_size - 12
-    while remaining:
-        block = source.read(min(COPY_BLOCK_BYTES, remaining))
-        if not block:
-            raise WavMetadataError("Recording was truncated during metadata copy")
-        destination.write(block)
-        remaining -= len(block)
+def _write_riff_size(fd: int, file_size: int) -> None:
+    """Record ``file_size`` in the RIFF header and leave the descriptor at the end."""
+    os.lseek(fd, 4, os.SEEK_SET)
+    _write_all(fd, struct.pack("<I", file_size - 8))
+    os.lseek(fd, 0, os.SEEK_END)
 
 
-def _scan_chunk_headers(handle, length: int) -> Iterator[Tuple[bytes, int, int]]:
-    """Yield chunk ID, payload offset and size without reading audio payloads."""
-    offset = 12
-    while offset < length:
-        if offset + 8 > length:
-            raise WavMetadataError("Truncated RIFF chunk header")
-        handle.seek(offset)
-        header = handle.read(8)
-        if len(header) != 8:
-            raise WavMetadataError("Truncated RIFF chunk header")
-        chunk_id, size = struct.unpack("<4sI", header)
-        start = offset + 8
-        end = start + size
-        if end > length:
-            raise WavMetadataError("Truncated RIFF chunk payload")
-        yield chunk_id, start, size
-        offset = end + (size & 1)
+#: Chunks read while looking for ``fmt``; it is nearly always the first.
+_FORMAT_SEARCH_CHUNKS = 16
+_WAVE_FORMAT_PCM = 1
+
+
+def is_mono_pcm16(path) -> bool:
+    """Whether ``path`` is a RIFF/WAVE of 16-bit integer PCM with one channel.
+
+    What Quick Record saves. Reads only the chunk headers before ``data``;
+    a file that can't be read, or isn't a WAV, is simply not one.
+    """
+    try:
+        with open(path, "rb") as handle:
+            if not _is_wave(handle.read(12)):
+                return False
+            for _ in range(_FORMAT_SEARCH_CHUNKS):
+                header = handle.read(8)
+                if len(header) != 8:
+                    return False
+                chunk_id, size = struct.unpack("<4sI", header)
+                if chunk_id == b"fmt ":
+                    fields = handle.read(16)
+                    if len(fields) != 16:
+                        return False
+                    tag, channels, _rate, _byte_rate, _align, bits = struct.unpack("<HHIIHH", fields)
+                    return (tag, channels, bits) == (_WAVE_FORMAT_PCM, 1, 16)
+                if chunk_id == b"data":
+                    return False
+                handle.seek(size + (size & 1), os.SEEK_CUR)
+    except OSError:
+        return False
+    return False
 
 
 def read_info_icrd(path: str) -> Optional[str]:

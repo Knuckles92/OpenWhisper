@@ -16,7 +16,7 @@ from config import config
 from services import audio_devices
 from services.audio_devices import InputDevice
 from services.recording_journal import FINISH_TIMEOUT, RecordingJournal
-from services.wav_metadata import stamp_wav_origination
+from services.wav_metadata import append_origination
 
 logger = logging.getLogger(__name__)
 
@@ -170,15 +170,12 @@ class PostRollGate:
         return float(min(index, len(counts) - 1) + LEVEL_HISTOGRAM_MIN_DB)
 
 
-def _stamp_origination(filename: str) -> None:
+def _stamp_origination(wav_file) -> None:
+    """Tag the WAV just written to ``wav_file``; a failure costs only the tags."""
     try:
-        stamp_wav_origination(filename, datetime.now())
+        append_origination(wav_file, datetime.now())
     except Exception:
-        logger.warning(
-            "Failed to stamp WAV origination metadata on %s",
-            filename,
-            exc_info=True,
-        )
+        logger.warning("Failed to stamp WAV origination metadata", exc_info=True)
 
 
 class AudioRecorder:
@@ -960,7 +957,6 @@ class AudioRecorder:
 
                 os.replace(temp_path, filename)
                 temp_path = ""
-                _stamp_origination(filename)
                 self._log_saved(filename, recorded_bytes, recorded_sample_frames, padding_bytes)
                 return True
 
@@ -1016,6 +1012,7 @@ class AudioRecorder:
             journal.copy_into(wf)
             if padding_bytes:
                 wf.writeframesraw(padding_bytes)
+        _stamp_origination(temp_file)
         temp_file.flush()
         os.fsync(temp_file.fileno())
 
