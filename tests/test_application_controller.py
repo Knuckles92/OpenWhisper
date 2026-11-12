@@ -1040,6 +1040,10 @@ class TestApplicationController:
         controller._startup_executor.shutdown(wait=True)
         controller._startup_executor = FakeExecutor()
         controller.persistence_executor = FakeExecutor()
+        # notify_main_ui_ready queues work here. On the real pool it can
+        # outlive the test and still be importing once the stubs are gone.
+        controller.component_executor.shutdown(wait=True)
+        controller.component_executor = FakeExecutor()
         return controller
 
     def test_backup_reservation_blocks_capture_jobs_and_meetings(self):
