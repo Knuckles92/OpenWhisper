@@ -118,6 +118,9 @@ class FakeSettingsManager:
     def load_all_settings(self):
         return dict(self.all_settings)
 
+    def load_settings(self, keys):
+        return {key: self.all_settings[key] for key in keys if key in self.all_settings}
+
 
 class FakeRecorder:
     def __init__(self, device_id=None):

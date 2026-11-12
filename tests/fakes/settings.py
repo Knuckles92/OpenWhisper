@@ -20,6 +20,9 @@ class InMemorySettings:
     def load_all_settings(self):
         return dict(self.values)
 
+    def load_settings(self, keys):
+        return {key: self.values[key] for key in keys if key in self.values}
+
     def save_all_settings(self, settings):
         self.values.clear()
         self.values.update(settings)
