@@ -22,7 +22,7 @@ from services.update_contract import (
     TransactionState,
     transaction_dir,
 )
-from tests.fakes.http import Response
+from tests.fakes.http_response import Response
 from tests.test_app_update_apply import TestCommitAndRecover as _JournalBuilder
 from tests.test_app_update_apply import _bundle, _registration
 

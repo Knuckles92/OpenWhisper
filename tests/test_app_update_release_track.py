@@ -17,7 +17,7 @@ from services.app_update import (
     select_newest_release,
 )
 from services.settings import SettingsKey, SettingsManager
-from tests.fakes.http import Response
+from tests.fakes.http_response import Response
 
 DIGEST = "cd" * 32
 DOWNLOAD = f"https://github.com/{app_update.GITHUB_REPO}/releases/download"

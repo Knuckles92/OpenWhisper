@@ -8,7 +8,7 @@ import pytest
 
 from services import components
 from services.components import ComponentCanceled, ComponentError
-from tests.fakes.http import Response
+from tests.fakes.http_response import Response
 
 BODY = b"component-payload"
 URL = "https://files.pythonhosted.org/packages/example.whl"
