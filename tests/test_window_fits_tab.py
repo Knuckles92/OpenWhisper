@@ -147,6 +147,49 @@ def test_an_open_transcript_keeps_the_height_the_user_gives_it(window):
     assert window.height() == 900
 
 
+def test_dragging_an_edge_of_a_maximized_window_leaves_maximized(window):
+    """The platform places a maximized window, so a drag there fought it."""
+    window.title_bar._toggle_maximize()
+    _settle()
+    assert window.isMaximized()
+
+    geometry = window.geometry()
+    start = geometry.topRight()
+    window._begin_resize((1, 0), start)
+    assert not window.isMaximized()
+    assert not window.title_bar._is_maximized
+    assert window.title_bar.maximize_btn.glyph == "maximize"
+    assert window.geometry() == geometry
+
+    window._apply_resize_delta(start - QPoint(100, 0))
+    window._finish_resize()
+    assert window.geometry().topLeft() == geometry.topLeft()
+    assert window.width() == max(window.minimumWidth(), geometry.width() - 100)
+
+
+def test_restoring_from_maximized_leaves_the_maximized_state(window):
+    normal = window.geometry()
+    window.title_bar._toggle_maximize()
+    _settle()
+    window.title_bar._toggle_maximize()
+    _settle()
+
+    assert not window.isMaximized()
+    assert window.geometry().topLeft() == normal.topLeft()
+    assert window.width() == normal.width()
+
+
+def test_the_left_edge_stops_at_the_width_cap_without_sliding(window):
+    right = window.geometry().right()
+    start = window.geometry().topLeft()
+    window._begin_resize((-1, 0), start)
+    window._apply_resize_delta(start - QPoint(5000, 0))
+    window._finish_resize()
+
+    assert window.width() == window.maximumWidth()
+    assert window.geometry().right() == right
+
+
 def test_quick_record_fits_wrapped_text_and_shrinks_after_a_long_result(
     window, isolated_app_theme,
 ):

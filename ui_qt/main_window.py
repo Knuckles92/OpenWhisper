@@ -259,6 +259,9 @@ class CustomTitleBar(QFrame):
             if getattr(self.parent_window, "_compact_mode", False):
                 return
             if self._is_maximized:
+                # Leave the maximized state itself: geometry set on a window
+                # the platform still holds maximized does not stay put.
+                self.parent_window.showNormal()
                 if self._normal_geometry:
                     self.parent_window.setGeometry(self._normal_geometry)
                 self.maximize_btn.set_glyph(WindowGlyphButton.MAXIMIZE)
@@ -310,6 +313,9 @@ class CustomTitleBar(QFrame):
             event.accept()
             return
         if event.buttons() == Qt.MouseButton.LeftButton and self._drag_position and self.parent_window:
+            leave_maximized = getattr(self.parent_window, "_leave_maximized_in_place", None)
+            if leave_maximized is not None:
+                leave_maximized()
             self.parent_window.move(event.globalPosition().toPoint() - self._drag_position)
             event.accept()
             return
@@ -2149,7 +2155,25 @@ class MainWindow(QMainWindow):
         else:  # (h == -1 and v == 1) or (h == 1 and v == -1)
             self.setCursor(Qt.CursorShape.SizeBDiagCursor)
 
+    def _leave_maximized_in_place(self) -> None:
+        """Drop the maximized state, keeping the window where it is.
+
+        A maximized window is the platform's to place: dragging its edge
+        fought that, and the window jumped about the screen. The width cap
+        keeps a maximized window narrower than a wide screen, so its edges
+        look as draggable as any other's.
+        """
+        if self._compositor_managed:
+            return
+        if not (self.isMaximized() or self.title_bar._is_maximized):
+            return
+        geometry = QRect(self.geometry())
+        self.showNormal()
+        self.setGeometry(geometry)
+        self.title_bar.sync_maximized(False)
+
     def _begin_resize(self, edge: tuple, global_pos) -> None:
+        self._leave_maximized_in_place()
         self._resizing = True
         self._resize_edge = edge
         self._resize_start_pos = global_pos
@@ -2169,7 +2193,8 @@ class MainWindow(QMainWindow):
         new_height = geo.height()
 
         if h == -1:
-            new_width = max(self.minimumWidth(), geo.width() - delta.x())
+            # Capped like the right edge, or the window slides once it is.
+            new_width = min(self.maximumWidth(), max(self.minimumWidth(), geo.width() - delta.x()))
             new_x = geo.x() + geo.width() - new_width
         elif h == 1:
             new_width = min(self.maximumWidth(), max(self.minimumWidth(), geo.width() + delta.x()))
