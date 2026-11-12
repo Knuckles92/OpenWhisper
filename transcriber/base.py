@@ -18,6 +18,10 @@ class TranscriptionBackend(ABC):
     #: the context is not empty.
     supports_recognition: bool = False
 
+    #: Whether ``prepare_for_transcription`` has work to do. The runtime then
+    #: calls it on a thread of its own each time a recording starts.
+    prepares_for_transcription: bool = False
+
     def __init__(self):
         self.is_transcribing = False
         self.should_cancel = False
@@ -48,6 +52,13 @@ class TranscriptionBackend(ABC):
     def reset_cancel_flag(self):
         """Reset the cancellation flag."""
         self.should_cancel = False
+
+    def prepare_for_transcription(self) -> None:
+        """Get ready, while a recording is made, to transcribe it when it stops.
+
+        May block; must not touch the network, since the recording may yet
+        be canceled.
+        """
 
     def large_file_size_mb(self, audio_path: str) -> Optional[float]:
         """Return the file's size in MiB if ``transcribe`` will split it.

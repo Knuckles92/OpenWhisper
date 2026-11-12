@@ -74,6 +74,7 @@ class OpenAIBackend(TranscriptionBackend):
     """
 
     supports_recognition = True
+    prepares_for_transcription = True
 
     def __init__(self, model_type: str = "api"):
         super().__init__()
@@ -132,6 +133,22 @@ class OpenAIBackend(TranscriptionBackend):
             except Exception as e:
                 logger.error(f"Failed to initialize the {endpoint.name} client: {e}", exc_info=True)
                 self._failed_connection = connection
+
+    def prepare_for_transcription(self) -> None:
+        """Ready the upload's worker while the recording is made (see ``warm``).
+
+        Never raises: without it the upload only starts later.
+        """
+        try:
+            self.prepare_client()
+            with self._client_lock:
+                client = self.client
+            if client is not None:
+                client.warm()
+        except Exception as exc:
+            # Type only: a client's errors can quote the server's address.
+            logger.info("Could not ready the upload worker (%s); the upload starts its own",
+                        type(exc).__name__)
 
     def _get_api_model_name(self) -> str:
         return self._target()[1]

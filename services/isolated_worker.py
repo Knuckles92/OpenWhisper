@@ -18,16 +18,55 @@ import traceback
 _OPENAI_HINTS = ("prompt", "language", "languages", "keywords")
 
 
-def openai_transcribe(request: dict) -> dict:
+def _openai_client(request: dict):
     import httpx
     from openai import OpenAI
 
-    hints = {name: request[name] for name in _OPENAI_HINTS if request.get(name)}
     # The parent enforces an absolute deadline as well. Disabling
     # automatic retries avoids duplicate paid requests on cancel.
     # No base_url means OpenAI (or the SDK's OPENAI_BASE_URL).
-    with OpenAI(api_key=request["api_key"], base_url=request.get("base_url"), max_retries=0,
-                timeout=httpx.Timeout(request["read_timeout"], connect=10.)) as client:
+    return OpenAI(api_key=request["api_key"], base_url=request.get("base_url"), max_retries=0,
+                  timeout=httpx.Timeout(request["read_timeout"], connect=10.))
+
+
+def _connection(request: dict) -> tuple:
+    return request["api_key"], request.get("base_url"), request["read_timeout"]
+
+
+class PreparedUpload:
+    """The client an ``openai_prepare`` built, kept for the upload that follows it."""
+
+    def __init__(self):
+        self._client = None
+        self._connection = None
+
+    def prepare(self, request: dict) -> dict:
+        """Load the SDK and build the upload's client. Nothing is sent anywhere."""
+        self.take(None)
+        client = _openai_client(request)
+        # The SDK loads this part of itself when it is first touched, which
+        # took the first upload in a process 0.38 s (November 2026).
+        _ = client.audio.transcriptions
+        self._client, self._connection = client, _connection(request)
+        return {"ready": True}
+
+    def take(self, request):
+        """The prepared client if it connects where ``request`` goes, else None.
+
+        Either way it is no longer kept; one made for another server or key
+        is closed.
+        """
+        client, self._client = self._client, None
+        if client is not None and (request is None or self._connection != _connection(request)):
+            client.close()
+            return None
+        return client
+
+
+def openai_transcribe(request: dict, client=None) -> dict:
+    """Upload one file; ``client`` is the prepared one, when there is one."""
+    hints = {name: request[name] for name in _OPENAI_HINTS if request.get(name)}
+    with (client if client is not None else _openai_client(request)) as client:
         with open(request["audio_path"], "rb") as audio:
             response = client.audio.transcriptions.create(
                 file=audio, model=request["model"], response_format=request["response_format"],
@@ -96,7 +135,7 @@ def _transcribe_whisper(model, request: dict) -> dict:
                      "language_probability": info.language_probability}}
 
 
-def _run_operation(op, request: dict, model, protocol) -> dict:
+def _run_operation(op, request: dict, model, protocol, prepared: PreparedUpload) -> dict:
     """Every operation but ``whisper_load``, which replaces the worker's model."""
     if op == "discover_whisper_models":
         from services.whisper_sources import discover_hub_models_in_process
@@ -108,8 +147,10 @@ def _run_operation(op, request: dict, model, protocol) -> dict:
         from services.hf_access import _download_model_files_in_process
         progress = _progress_writer(protocol, request)
         return {"path": _download_model_files_in_process(request["model"], progress)}
+    if op == "openai_prepare":
+        return prepared.prepare(request)
     if op == "openai_transcribe":
-        return openai_transcribe(request)
+        return openai_transcribe(request, prepared.take(request))
     if op == "ping":
         return {"ready": True}
     raise ValueError("Unknown isolated worker operation")
@@ -129,6 +170,7 @@ def main():
         target=_watch_parent, args=(connection,), name="worker-parent-watch", daemon=True
     ).start()
     model = None
+    prepared = PreparedUpload()
     for line in incoming:
         request = {}
         try:
@@ -138,7 +180,7 @@ def main():
                 model = _load_whisper(request)
                 result = {}
             else:
-                result = _run_operation(op, request, model, protocol)
+                result = _run_operation(op, request, model, protocol, prepared)
             response = {"id": request["id"], "result": result}
         except Exception as exc:
             # The parent keeps the last stderr lines and logs them if this
