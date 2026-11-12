@@ -117,6 +117,12 @@ def pytest_configure(config):
     trylast: pytest attaches its tmp_path factory in its own configure hook.
     """
     os.environ["OPENWHISPER_DATA_DIR"] = str(config._tmp_path_factory.mktemp("data"))
+    # A proxy in the developer's environment would carry loopback connections
+    # that the no-proxy list does not name exactly (127.0.0.2 under a
+    # "127.0.0.0/8" entry, which Python does not read as a range).
+    for name in list(os.environ):
+        if name.lower() in ("http_proxy", "https_proxy", "all_proxy"):
+            del os.environ[name]
 
 
 def pytest_collection_modifyitems(items):
