@@ -231,8 +231,6 @@ class SoundcardLoopbackSource:
             return False
 
     def _run(self) -> None:
-        if sys.platform.startswith("win"):
-            _coinitialize()
         linux = sys.platform.startswith("linux")
         try:
             if linux:
@@ -298,7 +296,11 @@ class SoundcardLoopbackSource:
 
     def _open_default_loopback(self) -> tuple[Any, Any, str, str, str]:
         """The default speaker's loopback, outside Linux (same tuple as above)."""
+        # Import before initializing COM: a first import initializes it on
+        # this thread itself and raises if the thread already did.
         import soundcard as sc
+
+        _coinitialize()
 
         speaker = sc.default_speaker()
         self.device_id = str(getattr(speaker, "id", None) or speaker.name)
@@ -393,9 +395,10 @@ def _monitor_recorder(linux: bool, sc: Any, monitor: Any, channels: int) -> Any:
 def _coinitialize() -> None:
     """Best-effort per-thread COM initialization (Windows only).
 
-    ``soundcard`` initializes COM when first imported, which happens on the
-    recorder thread here; this guards restarts where the import is already
-    cached but the new thread has no COM apartment.
+    ``soundcard`` initializes COM when first imported and raises if the
+    importing thread already initialized it, so this runs after the import.
+    It covers a later recorder thread, where the import is cached and the
+    thread has no COM apartment yet.
     """
     if not sys.platform.startswith("win"):
         return

@@ -69,6 +69,18 @@ def runtime(qapp, monkeypatch):
     return rt, controller
 
 
+class _ClockedEngine:
+    """The engine surface status events read: its clock and liveness."""
+
+    def __init__(self):
+        from meeting.clock import MeetingClock
+
+        self.clock = MeetingClock()
+
+    def is_active(self):
+        return True
+
+
 def _record_launch(rt, monkeypatch):
     launched = []
 
@@ -228,7 +240,9 @@ def test_start_releases_the_dictation_engine_before_loading_its_own(
 
     class RecordingEngine:
         def __init__(self, *args, **kwargs):
-            pass
+            from meeting.clock import MeetingClock
+
+            self.clock = MeetingClock()
 
         def add_listener(self, listener):
             self.listener = listener
@@ -282,6 +296,7 @@ def test_remote_connection_status_reaches_desktop(runtime):
     rt.meeting_state_changed.connect(payloads.append)
     speech = {"source": "remote", "host": "devbox", "model": "base", "connected": False,
               "message": "Host offline; audio saved locally."}
+    rt._engine = _ClockedEngine()
     rt._on_engine_event("status", {"status": "active", "speech": speech})
     assert payloads[-1]["speech"] == speech
 
@@ -426,14 +441,23 @@ def test_engine_pause_status_mirrors_onto_the_tab(runtime):
     rt, controller = runtime
     states = []
     rt.meeting_state_changed.connect(lambda p: states.append(dict(p)))
+    rt._engine = engine = _ClockedEngine()
+    engine.clock.start()
 
+    engine.clock.pause()
     rt._on_engine_event("status", {"status": "paused"})
+    engine.clock.resume()
     rt._on_engine_event("status", {"status": "active"})
     rt._on_engine_event("status", {"status": "ending"})
 
     assert states[0]["paused"] is True
     assert states[1]["paused"] is False
     assert "paused" not in states[2]
+    # Dashboard pause and resume carry the engine clock, so the tab neither
+    # resets nor counts the paused span.
+    for state in states[:2]:
+        assert {"elapsed_s", "elapsed_at"} <= state.keys()
+    assert "elapsed_s" not in states[2]
 
 
 def test_failed_finalization_is_non_modal(runtime):

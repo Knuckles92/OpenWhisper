@@ -1452,7 +1452,8 @@ class MeetingModeTab(QWidget):
         Args:
             payload: Dict with any of ``active`` (bool), ``paused`` (bool),
                 ``status`` (str), ``cloud_enabled`` (bool), ``elapsed_s``
-                (float; resets the elapsed timer base), ``finalization``
+                (float; resets the elapsed timer base) with ``elapsed_at``
+                (monotonic time it was read), ``finalization``
                 (``{status, message}`` or ``None`` to clear), and
                 ``dashboard_available`` (bool).
         """
@@ -1463,11 +1464,13 @@ class MeetingModeTab(QWidget):
         self._apply_cloud_choice(payload)
         self._apply_speech_destination(payload.get("speech"))
 
-        if "elapsed_s" in payload:
-            self._restart_elapsed(payload["elapsed_s"])
-
+        # Paused first: the elapsed value then anchors on the state it
+        # describes, not the one being left.
         if "paused" in payload:
             self._set_paused(bool(payload["paused"]))
+
+        if "elapsed_s" in payload:
+            self._restart_elapsed(payload["elapsed_s"], payload.get("elapsed_at"))
 
         if "status" in payload:
             self._apply_status(str(payload["status"]), payload)
@@ -1519,14 +1522,26 @@ class MeetingModeTab(QWidget):
             f"Remote speech · {speech.get('host', '')} · {speech.get('model', '')}. " + state
         )
 
-    def _restart_elapsed(self, elapsed_s) -> None:
-        """Restart the elapsed clock from the runtime's count."""
+    def _restart_elapsed(self, elapsed_s, elapsed_at=None) -> None:
+        """Set the clock to the runtime's meeting time.
+
+        Args:
+            elapsed_s: Meeting seconds, pauses excluded.
+            elapsed_at: ``time.monotonic()`` when ``elapsed_s`` was read; None
+                means now. Anchoring there lets the main window replay a
+                retained payload later without rewinding the clock.
+        """
         try:
             self._elapsed_base_s = float(elapsed_s)
         except (TypeError, ValueError):
             self._elapsed_base_s = 0.0
-        # A paused meeting's clock stays where the runtime put it.
-        self._running_since = None if self._paused else time.monotonic()
+        if self._paused:
+            # A paused meeting's clock stays where the runtime put it.
+            self._running_since = None
+        elif isinstance(elapsed_at, (int, float)):
+            self._running_since = float(elapsed_at)
+        else:
+            self._running_since = time.monotonic()
         self._refresh_elapsed()
 
     def _apply_status(self, status: str, payload: Dict[str, Any]) -> None:

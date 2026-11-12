@@ -365,6 +365,43 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.tab.set_meeting_state({"paused": False})
         self.assertIsNotNone(self.tab._running_since)
 
+    def test_retained_state_keeps_the_clock_through_pause_and_resume(self):
+        # The main window merges each payload into the retained state and
+        # passes the merge on, so every call below re-sends older fields.
+        now = [1000.0]
+        retained = {}
+
+        def deliver(payload):
+            retained.update(payload)
+            self.tab.set_meeting_state(dict(retained))
+
+        with patch("ui_qt.widgets.meeting_mode_tab.time.monotonic", lambda: now[0]):
+            deliver({"active": True, "paused": False, "status": "active",
+                     "elapsed_s": 0.0, "elapsed_at": now[0]})
+            now[0] += 89
+            deliver({"active": True, "paused": True, "status": "paused",
+                     "elapsed_s": 89.0, "elapsed_at": now[0]})
+            self.assertEqual(self.tab.elapsed_label.text(), "01:29")
+            now[0] += 10
+            self.tab._refresh_elapsed()
+            self.assertEqual(self.tab.elapsed_label.text(), "01:29")
+            deliver({"active": True, "paused": False, "status": "active",
+                     "elapsed_s": 89.0, "elapsed_at": now[0]})
+            now[0] += 21
+            deliver({"cloud_enabled": True})
+            self.assertEqual(self.tab.elapsed_label.text(), "01:50")
+
+    def test_state_replayed_into_a_new_tab_counts_from_when_it_was_read(self):
+        now = [1000.0]
+        with patch("ui_qt.widgets.meeting_mode_tab.time.monotonic", lambda: now[0]):
+            self.tab.set_meeting_state({"active": True, "paused": False, "status": "active",
+                                        "elapsed_s": 30.0, "elapsed_at": now[0] - 60})
+            self.assertEqual(self.tab.elapsed_label.text(), "01:30")
+            self.tab.set_meeting_state({"paused": True, "status": "paused",
+                                        "elapsed_s": 95.0, "elapsed_at": now[0] - 40})
+            self.assertEqual(self.tab.elapsed_label.text(), "01:35")
+            self.assertIsNone(self.tab._running_since)
+
     def test_idle_shows_start_controls(self):
         """Idle layout exposes Start Meeting and hides session controls."""
         self.assertFalse(self.tab.idle_card.isHidden())
