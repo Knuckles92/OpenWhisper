@@ -1,18 +1,14 @@
 """Settings → Automate → Actions, after the UI review: one section per finding."""
 
-import itertools
 import os
-import tempfile
-import time
-from contextlib import ExitStack
 from dataclasses import replace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from services.actions import routing
 from services.actions.model import (
@@ -21,12 +17,9 @@ from services.actions.model import (
     find_action,
     save_action,
 )
-from services.settings import SettingsKey, SettingsManager
+from services.settings import SettingsKey
+from tests import test_automation_ui_actions_page as base
 from ui_qt.dialogs import settings_actions
-from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs import settings_downloads as downloads_module
-from ui_qt.dialogs import settings_metadata
-from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import ACTIONS
 
 pytestmark = pytest.mark.qt
@@ -54,114 +47,12 @@ def routing_status(monkeypatch):
     return state
 
 
-@pytest.fixture(autouse=True)
-def _restore_metadata():
-    controls = dict(settings_metadata.CONTROL_DESTINATIONS)
-    fields = dict(settings_metadata.PAGE_SEARCH_FIELDS)
-    yield
-    settings_metadata.CONTROL_DESTINATIONS.clear()
-    settings_metadata.CONTROL_DESTINATIONS.update(controls)
-    settings_metadata.PAGE_SEARCH_FIELDS.clear()
-    settings_metadata.PAGE_SEARCH_FIELDS.update(fields)
-
-
-class _Asked(list):
-    answer = QMessageBox.StandardButton.Yes
-
-
-@pytest.fixture
-def questions(monkeypatch):
-    """Every question asked; answers come from ``questions.answer``."""
-    asked = _Asked()
-
-    def question(_parent, title, text, *_args):
-        asked.append((title, text))
-        return asked.answer
-
-    monkeypatch.setattr(QMessageBox, "question", staticmethod(question))
-    return asked
-
-
-@pytest.fixture
-def agents(monkeypatch):
-    """What ``agents.available()`` reports; tests change ``agents.found``."""
-    state = MagicMock()
-    state.found = {"claude_code": True, "codex": True, "opencode_cli": False}
-    monkeypatch.setattr("services.actions.agents.available", lambda: dict(state.found))
-    return state
-
-
-@pytest.fixture
-def secrets(monkeypatch):
-    """The runtime's signing-secret calls over a dict."""
-    from services.actions import runtime
-
-    state = MagicMock()
-    state.saved = {}
-    numbers = itertools.count(1)
-
-    def ensure(action_id):
-        return state.saved.setdefault(action_id, f"whsec_{next(numbers)}")
-
-    def delete(action_id):
-        state.saved.pop(action_id, None)
-
-    monkeypatch.setattr(runtime, "ensure_action_secret", ensure, raising=False)
-    monkeypatch.setattr(runtime, "delete_action_secret", delete, raising=False)
-    return state
-
-
-@pytest.fixture
-def make_dialog(questions, agents):
-    stacks, dialogs = [], []
-    temp = tempfile.TemporaryDirectory()
-
-    def build(values=None, *, select=True, size=None):
-        store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({**(values or {})})
-        stack = ExitStack()
-        for module in (settings_dialog_module, models_module, downloads_module):
-            stack.enter_context(patch.object(module, "settings_manager", store))
-        stack.enter_context(patch.object(settings_dialog_module.history_manager, "set_retention"))
-        for module in (models_module, downloads_module):
-            stack.enter_context(patch.object(module, "scan_cached_models", return_value={}))
-        stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
-        stacks.append(stack)
-        dialog = settings_dialog_module.SettingsDialog(
-            get_loaded_model=lambda: None, background_cache_scan=False)
-        dialog.on_settings_changed = MagicMock()
-        dialog.on_profile_hotkey_capture = MagicMock()
-        dialogs.append(dialog)
-        if size is not None:
-            dialog.resize(*size)
-        if select:
-            dialog.select_destination(ACTIONS)
-        dialog.show()
-        pump()
-        return dialog, store
-
-    yield build
-    questions.answer = QMessageBox.StandardButton.Discard
-    for dialog in dialogs:
-        dialog.close()
-    for stack in reversed(stacks):
-        stack.close()
-    temp.cleanup()
-
-
-def pump(times=6):
-    for _ in range(times):
-        QApplication.processEvents()
-
-
-def wait_for(condition, timeout=5.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        QApplication.processEvents()
-        if condition():
-            return True
-        time.sleep(0.01)
-    return condition()
+# The Actions page suite's harness, used here by name: a dialog over its own
+# settings file, with message boxes, the agent scan and signing secrets faked.
+_restore_metadata = base._restore_metadata
+questions, agents, secrets = base.questions, base.agents, base.secrets
+make_dialog = base.make_dialog
+pump, wait_for = base.pump, base.wait_for
 
 
 def stored(store, action_id):

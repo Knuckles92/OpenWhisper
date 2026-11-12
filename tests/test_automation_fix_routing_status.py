@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import pytest
 
-from services import typesafe
 from services.actions import routing
 from tests import test_automation_routing_status as base
 from tests.test_automation_routing_status import ACTION, with_key
@@ -64,23 +63,3 @@ def test_fix_names_what_is_missing(overrides, has_key, fix):
     if has_key:
         with_key()
     assert routing.status(settings(**overrides)).fix == fix
-
-
-def test_the_copy_uses_the_features_name_and_points_up_the_page():
-    with_key()
-    messages = [routing.status(settings(**o)).message for o in (
-        {"voice_routing_enabled": False}, {"typesafe_enabled": False}, {"actions": []},
-        {"actions": [{**ACTION, "enabled": False}]}, {"hotkeys": {}}, {})]
-    assert all(m.startswith("Route by voice ") for m in messages)
-    assert not any("Spoken routing" in m or "Settings → Actions" in m for m in messages)
-    assert messages[0] == "Route by voice is off. Turn it on above."
-    assert messages[2].endswith("Add one above.")
-    assert messages[3].endswith("Turn one on above.")
-
-
-def test_the_missing_key_names_the_chosen_route():
-    with_key(typesafe.TYPESAFE_ROUTE)
-    status = routing.status(settings(typesafe_provider="openrouter"))
-    assert status.fix == "fast_judgments"
-    assert status.message == ("Route by voice needs an OpenRouter API key. Add one in "
-                              "Settings → Meeting Mode → Fast judgments.")

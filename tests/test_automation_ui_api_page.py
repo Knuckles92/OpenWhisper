@@ -11,15 +11,15 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QPoint
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QScrollArea, QVBoxLayout, QWidget
 
 from services.agent_mcp import events_ext, setup
 from services.agent_mcp.runtime import DEFAULT_PORT, ServerStatus
-from services.automation import events
+from services.automation import events, permissions
 from services.remote_asr.client import RemoteRequestError
-from services.settings import SettingsKey, SettingsManager
+from services.settings import SETTING_DEFAULTS, SettingsKey, SettingsManager
 from tests.test_mcp_host_tabs import FakeRemoteService, make_view, tick
 from tests.test_mcp_settings_page import TOKEN, FakeServer
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
@@ -37,6 +37,7 @@ PERMISSIONS = (
     SettingsKey.API_TEXT_FILTERS,
     SettingsKey.API_AGENT_PROMPTS,
 )
+AGENT = permissions.AGENT_PROMPTS
 
 
 @pytest.fixture(autouse=True)
@@ -401,3 +402,89 @@ def test_settings_page_wires_mcp_events_to_the_app(make_dialog):
         assert changes == ["mcp_events"]
     finally:
         dialog.close()
+
+
+# ---- the live cards say plainly what each switch exposes ----
+
+def test_mcp_events_says_the_agent_picks_the_address_and_gets_what_you_dictate(view):
+    line = view.live.mcp_events_switch.accessibleDescription()
+    assert "chooses the web address" in line
+    assert "what you dictate" in line and "subscribes to" in line
+    # One or two lines on the card, not a paragraph.
+    assert len(line) <= 140
+
+
+def test_follow_live_events_names_what_it_shares_while_on_by_default(view):
+    check = view.live.api_permission_checks[SettingsKey.API_LIVE_EVENTS]
+    assert check.isChecked()
+    line = check.accessibleDescription()
+    for shared in ("finished dictations", "actions", "meeting lines"):
+        assert shared in line
+
+
+def test_the_channel_card_says_words_a_program_sends_are_marked_and_need_permission(view):
+    note = view.live.channel_programs.text()
+    assert "Send words to my coding agents" in note
+    assert "program" in note and "Claude" in note
+    assert view.live.channel_card.isAncestorOf(view.live.channel_programs)
+
+
+# Review round 2: filters change the words sent to actions too, not only what is
+# pasted, and words for coding agents also need "Send words to my coding agents".
+def test_change_dictated_text_names_actions_and_the_agents_switch(view):
+    description = view.live.api_permission_checks[permissions.TEXT_FILTERS].accessibleDescription()
+    assert "pasted or sent to an action" in description
+    assert "coding agents also need the switch below" in description
+
+
+# ---- the fifth permission: sending a program's words to the user's coding agents ----
+
+def row_of(check):
+    return check.parentWidget()
+
+
+def test_every_permission_has_a_row_in_order(view):
+    checks = view.live.api_permission_checks
+    assert list(checks) == list(permissions.ALL)
+    assert AGENT == SettingsKey.API_AGENT_PROMPTS
+
+
+def test_sending_words_to_agents_is_off_by_default_and_says_what_it_needs(view):
+    check = view.live.api_permission_checks[AGENT]
+    assert SETTING_DEFAULTS[AGENT] is False
+    assert not check.isChecked()
+    assert check.accessibleName() == "Send words to my coding agents"
+    description = check.accessibleDescription()
+    assert "Agent hotkey" in description and "Claude Code session" in description
+    assert "Needs Run actions too." in description
+    texts = [label.text() for label in row_of(check).findChildren(type(view.live.notice))]
+    assert "Send words to my coding agents" in texts
+
+
+def test_the_switch_and_the_row_save_it(view):
+    check = view.live.api_permission_checks[AGENT]
+    check.click()
+    assert view.settings.get(AGENT) is True
+    QTest.mouseClick(row_of(check), Qt.MouseButton.LeftButton, pos=QPoint(4, 4))
+    assert view.settings.get(AGENT) is False
+    assert not view.live.notice.isVisible()
+
+
+def test_a_failed_save_rolls_back_and_says_so(view, monkeypatch):
+    def fail(_mutator):
+        raise OSError("read only")
+
+    monkeypatch.setattr(view.settings, "mutate_settings", fail)
+    check = view.live.api_permission_checks[AGENT]
+    check.click()
+    assert not check.isChecked()
+    assert view.live.notice.text() == "Couldn't save that permission. Try again."
+
+
+def test_saved_choice_is_reread(view):
+    view.settings.save_setting(AGENT, True)
+    view.live.refresh()
+    assert view.live.api_permission_checks[AGENT].isChecked()
+    view.settings.save_setting(AGENT, "yes")  # malformed: its default
+    view.live.refresh()
+    assert not view.live.api_permission_checks[AGENT].isChecked()

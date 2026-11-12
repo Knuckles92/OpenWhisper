@@ -130,27 +130,13 @@ def test_a_second_cancel_while_recording_is_quiet(app):
     assert h.runtime.cancel() is False
 
 
-def test_a_second_cancel_in_post_roll_is_quiet(app):
+@pytest.mark.parametrize("post_roll_over", [False, True], ids=["in-post-roll", "before-transcription"])
+def test_a_second_cancel_after_the_stop_is_quiet(app, post_roll_over):
     h = app
     assert h.runtime.start_recording()
     h.runtime.stop_recording()  # the slot is claimed; post-roll goes on
-    assert h.runtime.cancel() is True
-    before = shown(h)
-
-    assert h.runtime.cancelable is False
-    assert h.runtime.cancel() is True
-    assert shown(h) == before
-    run_worker(h)
-
-    assert kinds(h) == STOPPED + CANCELED
-    assert not h.runtime.has_active_job
-
-
-def test_a_second_cancel_before_transcription_is_quiet(app):
-    h = app
-    assert h.runtime.start_recording()
-    h.runtime.stop_recording()
-    h.controller.recorder.is_recording = False  # post-roll over; the WAV is next
+    if post_roll_over:
+        h.controller.recorder.is_recording = False  # the WAV is next
     assert h.runtime.cancel() is True
     before = shown(h)
 

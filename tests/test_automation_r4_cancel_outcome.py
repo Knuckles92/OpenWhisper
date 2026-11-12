@@ -12,19 +12,13 @@ import threading
 import pytest
 
 from services.actions import agents, runtime
-from services.actions.model import Action, ActionKind
 from services.actions.runtime import ActionResult
 from services.automation import programs
 from tests import test_automation_actions_runtime as base
+from tests.test_automation_r3_cancel_finished import QUICK, TICKET
 
 h = base.h  # the runtime harness: fake UI, settings and event bus
 _job, _ran, _wait = base._job, base._ran, base._wait
-
-TICKET = Action("p1", "Make a ticket", ActionKind.PROGRAM,
-                {"program": "C:/nowhere/ticket.exe", "args": [], "timeout_s": 5,
-                 "output": "notice"})
-QUICK = Action("q1", "Quick answer", ActionKind.AGENT,
-               {"agent": "claude_code", "mode": "ask", "output": "notice"})
 
 
 class _Drained:
@@ -77,8 +71,10 @@ def test_a_try_it_program_that_already_exited_reports_its_answer(h, drained):
 
 def test_a_program_the_cancel_kills_is_canceled(h, monkeypatch):
     started = threading.Event()
+    seen = []
 
     def run_once(argv, stdin, *, timeout_s, cwd="", env=None, cancel=None):
+        seen.append(cancel)
         started.set()
         cancel.wait(5)
         return None, b"", programs.CANCELED
@@ -90,6 +86,7 @@ def test_a_program_the_cancel_kills_is_canceled(h, monkeypatch):
     _wait(started.is_set)
 
     assert h.rt.cancel() == 1
+    assert seen[0].is_set()
     _wait(lambda: _ran(h))
 
     assert [(r["ok"], r["message"], r["output"]) for r in _ran(h)] == [

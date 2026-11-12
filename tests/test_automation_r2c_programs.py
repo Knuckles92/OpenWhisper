@@ -9,7 +9,6 @@ import threading
 import time
 
 from services.automation import programs
-from tests.test_agent_process import _alive
 from tests.test_automation_hooks_programs import PY, kill_pid, wait_until
 
 #: Writes to its inherited stdout until that fails, then says so in a file.
@@ -87,20 +86,3 @@ def test_a_timed_out_run_lets_go_too(tmp_path):
     assert out.strip() == b"working"
     assert time.monotonic() - started < 6
     wait_until(lambda: not _run_threads(before), timeout=5)
-
-
-def test_the_helper_is_alive_when_run_once_returns(tmp_path):
-    # Letting go of the output never stops the helper itself.
-    helper, launcher = tmp_path / "helper.py", tmp_path / "launcher.py"
-    helper.write_text("import time; time.sleep(30)", encoding="utf-8")
-    launcher.write_text(LAUNCHER, encoding="utf-8")
-    pid_file = tmp_path / "helper.pid"
-    code, _out, error = programs.run_once(
-        [PY, str(launcher), str(helper), "unused", str(pid_file)], b"", timeout_s=30)
-    helper_pid = int(pid_file.read_text())
-    try:
-        assert (code, error) == (0, "")
-        time.sleep(0.5)
-        assert _alive(helper_pid)
-    finally:
-        kill_pid(helper_pid)

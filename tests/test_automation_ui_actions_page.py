@@ -108,7 +108,7 @@ def make_dialog(questions, agents):
     stacks, dialogs = [], []
     temp = tempfile.TemporaryDirectory()
 
-    def build(values=None, *, select=True):
+    def build(values=None, *, select=True, size=None):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
         store.save_all_settings({**(values or {})})
         stack = ExitStack()
@@ -126,6 +126,8 @@ def make_dialog(questions, agents):
         dialogs.append(dialog)
         if select:
             dialog.select_destination(ACTIONS)
+        if size is not None:
+            dialog.resize(*size)
         dialog.show()
         pump()
         return dialog, store

@@ -20,19 +20,11 @@ from services.runtime import transcription
 from services.runtime.transcription import TranscriptionRuntime
 from services.settings import SettingsKey
 from tests.fakes.settings import InMemorySettings
+from tests.test_automation_foundation_pipeline import FakeHistory, Signal
 
 EDITOR = AppIdentity("code.exe", "Code", pid=7, window="0x7")
 FIX = Action("fix", "Fix grammar", ActionKind.PROGRAM,
              {"program": "C:\\fix.exe", "output": "paste"}, shaping="raw")
-
-
-class Signal:
-    def __init__(self, handler=None):
-        self.handler = handler
-
-    def emit(self, *args):
-        if self.handler is not None:
-            self.handler(*args)
 
 
 class FakeUI:
@@ -91,15 +83,6 @@ class FakeService(ContextCaptureService):
 
     def shutdown(self):
         pass
-
-
-class FakeHistory:
-    def __init__(self):
-        self.entries = []
-
-    def add_entry(self, **fields):
-        self.entries.append(fields)
-        return SimpleNamespace(id=len(self.entries), audio_file=None)
 
 
 @pytest.fixture

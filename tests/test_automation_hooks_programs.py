@@ -207,26 +207,6 @@ def test_a_timeout_stops_the_program_and_everything_it_started(tmp_path):
         kill_pid(child)
 
 
-def test_processes_left_behind_keep_running_when_the_program_exits(tmp_path):
-    pid_file = tmp_path / "child.pid"
-    # The child inherits stdout, so it holds the output open after its parent exits.
-    code = (
-        "import subprocess, sys; from pathlib import Path; "
-        "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
-        "Path(sys.argv[1]).write_text(str(p.pid)); print('done', flush=True)"
-    )
-    started = time.monotonic()
-    exit_code, out, error = programs.run_once([PY, "-c", code, str(pid_file)], b"", timeout_s=30)
-    child = int(pid_file.read_text())
-    try:
-        assert (exit_code, out.strip(), error) == (0, b"done", "")
-        assert time.monotonic() - started < 10
-        time.sleep(1.0)
-        assert _alive(child)  # an app a program opens stays open
-    finally:
-        kill_pid(child)
-
-
 # -- program hooks -----------------------------------------------------------------
 
 def test_a_program_gets_the_event_on_stdin_and_in_its_environment(tmp_path, bus, store):

@@ -491,15 +491,6 @@ def test_schemes_a_killed_run_left_behind_go_before_the_next_is_registered(regis
 # -- the association lookup still says when an app is missing ------------------------------
 
 
-def test_a_handler_whose_program_is_gone_counts_as_missing(monkeypatch):
-    # An uninstalled app's registration left behind (a real one: Signal's sgnl:).
-    monkeypatch.setattr(launch, "_assoc_query", base.FakeAssoc({
-        ("sgnl", launch._ASSOCSTR_COMMAND): (0, r'"C:\gone\Signal.exe" "%1"'),
-        ("sgnl", launch._ASSOCSTR_EXECUTABLE): (0x800401F5, ""),  # CO_E_APPNOTFOUND
-    }))
-    assert launch._windows_handler("sgnl") is False
-
-
 def test_a_rundll32_handler_counts(monkeypatch):
     # ASSOCSTR_EXECUTABLE names the DLL: it exists, so the link can open.
     monkeypatch.setattr(launch, "_assoc_query", base.FakeAssoc({

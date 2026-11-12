@@ -310,16 +310,3 @@ def test_an_empty_dictation_with_filters_reports_no_speech(h, monkeypatch):
     assert h.ui.statuses[-1] == "No speech detected (empty after VAD)"
     failed, = _events(h, "transcription.failed")
     assert failed.data["error"] == "no_speech"
-
-
-def test_a_real_no_match_still_says_no_action_matched(h, monkeypatch):
-    monkeypatch.setattr(routing, "decide", lambda *a, **k: None)
-    assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION, route="hotkey"))
-    h.runtime.transcribe_audio_file(h.audio)
-    assert h.ui.notices == ["No action matched — pasted instead"]
-
-    # The next job starts without the earlier one's failure.
-    h.ui.notices.clear()
-    assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION, route="auto"))
-    h.runtime.transcribe_audio_file(h.audio)
-    assert h.ui.notices == []

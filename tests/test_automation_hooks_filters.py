@@ -113,11 +113,17 @@ def test_only_dictation_and_action_jobs_are_filtered(receiver, the_job):
     assert receiver.requests == []
 
 
-@pytest.mark.parametrize("silence", ["", "   "])
-def test_no_words_are_never_sent_to_a_filter(receiver, silence):
-    settings = settings_with(http_filter("f", receiver.url("/f")))
-    assert filters.apply(BEFORE_CLEANUP, silence, job(), settings) == filters.FilterOutcome(silence)
-    assert receiver.requests == []
+@pytest.mark.parametrize("stage", [BEFORE_CLEANUP, AFTER_CLEANUP])
+@pytest.mark.parametrize("silence", ["", " ", "   ", "\n\t"])
+def test_no_words_are_never_sent_to_a_filter(receiver, stage, silence):
+    # Nor are they a filter cancel (review: an empty transcript was reported as
+    # "Not pasted — a text filter handled it").
+    receiver.answer("/f", Answer(body=b'{"cancel": true}'))
+    outcome = filters.apply(stage, silence, job(),
+                            settings_with(http_filter("f", receiver.url("/f"), stage)))
+    assert outcome == filters.FilterOutcome(silence)
+    assert outcome.canceled is False
+    assert receiver.requests == [] and receiver.arrivals == []
 
 
 def test_an_http_filter_gets_the_contract_request_and_replaces_the_text(receiver):
@@ -201,14 +207,15 @@ def test_replies_that_keep_the_text(receiver, failures, answer):
     assert failures == []
 
 
-@pytest.mark.parametrize("body", [b'{"cancel": true}', b'{"text": ""}', b'{"text": "  "}'])
+@pytest.mark.parametrize("body", [b'{"cancel": true}', b'{"text": ""}', b'{"text": "  "}',
+                                  b'{"text": " \\n "}'])
 def test_a_cancel_stops_the_chain_and_delivers_nothing(receiver, body):
     receiver.answer("/cancel", Answer(body=body))
     receiver.answer("/later", Answer(reply=reply_text(str.upper)))
     settings = settings_with(http_filter("c", receiver.url("/cancel")),
                              http_filter("later", receiver.url("/later")))
     outcome = filters.apply(BEFORE_CLEANUP, TEXT, job(), settings)
-    assert outcome.canceled
+    assert outcome.canceled is True
     assert receiver.at("/later") == []
 
 

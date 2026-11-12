@@ -389,7 +389,7 @@ def test_route_by_voice_says_when_no_action_matched(h, monkeypatch):
     assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION, route="hotkey"))
     h.runtime.transcribe_audio_file(h.audio)
     h.paste.assert_called_once_with()
-    assert h.ui.notices[-1] == "No action matched — pasted instead"
+    assert h.ui.notices == ["No action matched — pasted instead"]
 
     # A plain dictation that merely could have been routed stays silent.
     h.ui.notices.clear()

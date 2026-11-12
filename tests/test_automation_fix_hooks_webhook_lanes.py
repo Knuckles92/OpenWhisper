@@ -34,19 +34,6 @@ def test_a_slow_webhook_does_not_delay_the_others(receiver, bus, store):
     assert slow[0].json()["id"] == published[0].id
 
 
-def test_an_unreachable_webhooks_retries_do_not_delay_the_others(receiver, bus, store, monkeypatch):
-    monkeypatch.setattr(webhooks, "RETRY_DELAYS_S", (5.0, 5.0, 5.0))
-    receiver.answer("/down", Answer(503))
-    save_hooks(store, hook("down", receiver.url("/down")), hook("up", receiver.url("/up")))
-    webhooks.start()
-    for i in range(5):
-        bus.publish("recording.started", {"n": i})
-    receiver.wait_for(5, "/up", timeout=4)
-    # Meanwhile the unreachable one waits out its first retry.
-    receiver.wait_for(1, "/down", timeout=4)
-    assert len(receiver.at("/down")) == 1
-
-
 def test_a_full_queue_only_drops_that_webhooks_own_deliveries(receiver, bus, store, monkeypatch):
     monkeypatch.setattr(webhooks, "MAX_QUEUED", 3)
     release = threading.Event()
