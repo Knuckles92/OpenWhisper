@@ -143,9 +143,11 @@ class FakeDrawing(QObject):
     def set_capture_countdown(self, remaining, total=0):
         self.countdown = remaining
 
-    def set_capture_pending(self, pending, *, captured=False):
+    def set_capture_pending(self, pending, *, captured=False, screen=None):
         self.pending = pending
         self.captured = captured
+        if not pending:
+            self.captured_screen = screen
 
     def arm(self):
         if self.enabled and not self.busy:
@@ -1171,3 +1173,27 @@ def test_a_snap_menu_pick_during_the_countdown_takes_that_kind(h):
     assert not h.runtime._countdown_left
     (snap,) = h.ui.snaps
     assert snap.take == WalkthroughSnapMode.SCREEN
+
+
+def test_a_delayed_drawing_on_another_monitor_gets_its_own_screenshot(h, auto):
+    h.settings.values[SettingsKey.WALKTHROUGH_CAPTURE_DELAY] = 3
+    drawing = h.ui.drawing
+    left, right = QGuiApplication.primaryScreen(), object()
+    drawing.drawn.emit(left, ())
+    assert h.runtime._auto_draw_pending == (left, ())
+
+    drawing.drawn.emit(right, ())
+
+    # The first monitor's drawing is taken now, not replaced by the second's.
+    (first,) = h.ui.snaps
+    assert first.screen is left
+    first.keep()
+    assert drawing.captured_screen is left
+    # The second then waits out its own countdown.
+    assert h.runtime._auto_draw_pending == (right, ())
+    assert drawing.pending and h.runtime._auto_timer.isActive()
+    h.runtime._auto_timer.timeout.emit()
+    assert h.ui.snaps[1].screen is right
+    h.ui.snaps[1].keep()
+    assert len(auto.session.saved_shots()) == 2
+    assert not drawing.pending and h.runtime._auto_draw_next is None

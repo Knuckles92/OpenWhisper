@@ -321,6 +321,8 @@ class UIController(QObject):
         self.on_walkthrough: Optional[Callable[[str], None]] = None
         self.on_screenshot: Optional[Callable[[str], None]] = None
         self.on_recover_walkthrough = None
+        # Whether a finished walkthrough's AI write-up is running; set by the app.
+        self.walkthrough_writing_up = None
         self.acquire_walkthrough_library = None
         self.release_walkthrough_library = None
         self.submit_walkthrough_library = None
@@ -694,8 +696,7 @@ class UIController(QObject):
         else:
             self.main_window.clear_transcription()
         self.hide_overlay()
-        if self._walkthrough_panel is not None:
-            self._walkthrough_panel.dismiss()
+        self._dismiss_walkthrough_panel_for_job()
 
     def _apply_status_to_main_window(self, status: str):
         if self.main_window.quick_record_tab.engine_loading:
@@ -881,8 +882,7 @@ class UIController(QObject):
 
         if state is OverlayState.CANCELING:
             self.tray_manager.set_recording(False)
-            if self._walkthrough_panel is not None:
-                self._walkthrough_panel.dismiss()
+            self._dismiss_walkthrough_panel_for_job()
             self._start_cancel_animation()
             return
 
@@ -1159,7 +1159,30 @@ class UIController(QObject):
         # can't be, a screenshot hides the column for a moment (start_snap).
         keep_out_of_screenshots(panel, True)
         # The column shows the recording, so the recording overlay steps aside.
-        self.overlay.set_stand_in(panel.shows_recording)
+        self.overlay.set_stand_in(self._walkthrough_panel_stands_in)
+
+    def _writing_walkthrough_up(self) -> bool:
+        writing = self.walkthrough_writing_up
+        return writing is not None and writing() is True
+
+    def _walkthrough_panel_stands_in(self) -> bool:
+        """Whether the column shows what the overlay would: the walkthrough's own job.
+
+        During the AI write-up that job is over, so a recording or
+        transcription then is a dictation, which the overlay shows.
+        """
+        panel = self._walkthrough_panel
+        return (panel is not None and panel.shows_recording()
+                and not self._writing_walkthrough_up())
+
+    def _dismiss_walkthrough_panel_for_job(self) -> None:
+        """A job was cancelled or failed: close the column, unless it belongs to a write-up.
+
+        A dictation made during the write-up is not the walkthrough's; the
+        column stays, with its Cancel, until the write-up ends.
+        """
+        if self._walkthrough_panel is not None and not self._writing_walkthrough_up():
+            self._walkthrough_panel.dismiss()
 
     @property
     def walkthrough_panel(self):

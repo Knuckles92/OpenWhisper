@@ -188,7 +188,9 @@ Use **Capture delay** on the tab before starting, or in the drawing toolbar
 while recording, to choose **Instant**, **1s**, **2s**, **3s**, **5s** or
 **10s**. The choice is remembered. A delay groups successive clicks or marks
 into one screenshot: each completed mark restarts the countdown, giving you
-time to add several annotations. The small delay chip shows **Snap in…**
+time to add several annotations. A screenshot is of one monitor, so a mark
+drawn on another monitor saves the waiting one at once and starts its own
+countdown. The small delay chip shows **Snap in…**
 with a shrinking ring; starting another stroke or typing a label waits until
 you finish. Temporary marks stay visible through the countdown, then disappear
 as the screenshot is captured. **Keep marks** and individually pinned marks

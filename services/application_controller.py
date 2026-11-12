@@ -323,6 +323,7 @@ class ApplicationController(QObject):
         )
         self.ui_controller.on_retranscribe = self.retranscribe_audio
         self.ui_controller.on_recover_walkthrough = self.transcription_runtime.recover_walkthrough
+        self.ui_controller.walkthrough_writing_up = lambda: self.transcription_runtime.writing_up
         self.ui_controller.acquire_walkthrough_library = self._acquire_walkthrough_library
         self.ui_controller.release_walkthrough_library = self._release_walkthrough_library
         self.ui_controller.submit_walkthrough_library = self.walkthrough_executor.submit

@@ -526,3 +526,23 @@ def test_delay_chip_cancel_keeps_the_tool_and_label_escape_cancels_the_shot(no_f
         assert not drawing.armed
     finally:
         drawing.close()
+
+
+def test_a_captured_delayed_shot_clears_only_its_own_monitors_marks(no_focus_moves):
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        drawing.arm(Tool.PEN)
+        canvas = drawing._canvases[live.capture.screen_under_cursor()]
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(80, 60))
+        QTest.mouseMove(canvas, QPoint(120, 90))
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=QPoint(180, 120))
+        drawing.set_capture_pending(True)
+        # The screenshot was of another monitor: this one's marks were not in it.
+        drawing.set_capture_pending(False, captured=True, screen=object())
+        assert len(canvas.items()) == 1
+        drawing.set_capture_pending(True)
+        drawing.set_capture_pending(False, captured=True, screen=canvas.screen)
+        assert canvas.items() == ()
+    finally:
+        drawing.close()

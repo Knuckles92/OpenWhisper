@@ -138,16 +138,22 @@ class LiveAnnotations(QObject):
         self._toolbar.set_drop_enabled(
             self.armed or self._capture_pending or self._counting_down)
 
-    def set_capture_pending(self, pending: bool, *, captured: bool = False) -> None:
+    def set_capture_pending(self, pending: bool, *, captured: bool = False,
+                            screen: QScreen | None = None) -> None:
+        """A delayed screenshot is coming, or came (``captured``) or was dropped.
+
+        ``screen`` is the monitor the screenshot was of: marks drawn on
+        another one were not in it, so they stay. None: every monitor.
+        """
         if self._capture_pending == pending:
             return
         self._capture_pending = pending
         self._sync_drop()
-        for canvas in self._canvases.values():
+        for on_screen, canvas in self._canvases.items():
             if pending:
                 canvas._expire.stop()
             else:
-                if captured:
+                if captured and (screen is None or on_screen is screen):
                     # Delayed marks leave the desktop with their screenshot;
                     # Keep marks and individually pinned marks stay put.
                     canvas._marks = [(mark, expires) for mark, expires in canvas._marks
