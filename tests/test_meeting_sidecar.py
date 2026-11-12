@@ -8,6 +8,7 @@ import sys
 import textwrap
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -341,21 +342,28 @@ def _patch_cmd(agent, stub_path, env_extra=None):
     agent._build_env = build_env
 
 
+@contextmanager
+def _running_agent(stub_dir, tools=None, mode=None):
+    """Yield an initialized stub-backed agent and always shut it down."""
+    payload_dir, stub = stub_dir
+    agent = PiSidecarAgent(str(payload_dir))
+    _patch_cmd(agent, stub, env_extra={"SIDECAR_STUB_MODE": mode} if mode else None)
+    # Keep the health loop from interfering with the request under test.
+    with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
+        agent.initialize(_cfg(), tools or FakeTools())
+        try:
+            yield agent
+        finally:
+            agent.shutdown()
+
+
 class TestSidecarHandshake:
     def test_hello_initialize_and_ping(self, stub_dir):
-        payload_dir, stub = stub_dir
-        agent = PiSidecarAgent(str(payload_dir))
-        _patch_cmd(agent, stub)
-        # Keep health loop from interfering; short shutdown is enough
-        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
-            agent.initialize(_cfg(), FakeTools())
-            try:
-                assert agent.is_healthy()
-                assert agent._pi_version == "stub-1"
-                result = agent._rpc("ping", {}, timeout_s=5.0)
-                assert result.get("ok") is True
-            finally:
-                agent.shutdown()
+        with _running_agent(stub_dir) as agent:
+            assert agent.is_healthy()
+            assert agent._pi_version == "stub-1"
+            result = agent._rpc("ping", {}, timeout_s=5.0)
+            assert result.get("ok") is True
         assert not agent.is_healthy()
 
     def test_auth_failure_on_bad_hello_token(self, stub_dir):
@@ -462,37 +470,23 @@ class TestSidecarHandshake:
 
 class TestCheckpointResults:
     def test_applied_and_rejected_counts_reach_the_caller(self, stub_dir):
-        payload_dir, stub = stub_dir
-        agent = PiSidecarAgent(str(payload_dir))
-        _patch_cmd(agent, stub)
-        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
-            agent.initialize(_cfg(), FakeTools())
-            try:
-                result = agent.checkpoint(CheckpointPayload(
-                    request_id="req-1", state_snapshot={}, new_segments=[],
-                ))
-            finally:
-                agent.shutdown()
+        with _running_agent(stub_dir) as agent:
+            result = agent.checkpoint(CheckpointPayload(
+                request_id="req-1", state_snapshot={}, new_segments=[],
+            ))
         assert result.ok
         assert result.usage == {"totalTokens": 42}
         assert len(result.op_results) == 5
         assert sum(1 for r in result.op_results if r.ok) == 3
 
     def test_polish_flag_reaches_the_sidecar(self, stub_dir):
-        payload_dir, stub = stub_dir
-        agent = PiSidecarAgent(str(payload_dir))
-        _patch_cmd(agent, stub)
-        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
-            agent.initialize(_cfg(), FakeTools())
-            try:
-                result = agent.checkpoint(CheckpointPayload(
-                    request_id="req-polish",
-                    state_snapshot={},
-                    new_segments=[],
-                    is_polish=True,
-                ))
-            finally:
-                agent.shutdown()
+        with _running_agent(stub_dir) as agent:
+            result = agent.checkpoint(CheckpointPayload(
+                request_id="req-polish",
+                state_snapshot={},
+                new_segments=[],
+                is_polish=True,
+            ))
         assert result.ok
         assert sum(1 for item in result.op_results if item.ok) == 7
 
@@ -668,27 +662,18 @@ class TestCheckpointResults:
         assert "applied=3" in caplog.text
         assert "rejected=1" in caplog.text
 
-    def test_progress_notification_uses_thinking_delta(self, tmp_path):
+    @pytest.mark.parametrize("extra", [
+        {"delta": "thinking_delta", "streaming": True},
+        {"delta": "thinking_start"},
+    ])
+    def test_progress_notification_uses_thinking_events(self, tmp_path, extra):
         agent = PiSidecarAgent(str(tmp_path))
         seen = []
         agent.set_progress_callback(seen.append)
-        agent._handle_notification("progress", {
-            "event": "message_update",
-            "delta": "thinking_delta",
-            "streaming": True,
-        })
+        agent._handle_notification(
+            "progress", {"event": "message_update", **extra})
         assert seen == ["Model is thinking through the transcript…"]
         assert agent._last_progress_mono > 0
-
-    def test_progress_notification_uses_thinking_start(self, tmp_path):
-        agent = PiSidecarAgent(str(tmp_path))
-        seen = []
-        agent.set_progress_callback(seen.append)
-        agent._handle_notification("progress", {
-            "event": "message_update",
-            "delta": "thinking_start",
-        })
-        assert seen == ["Model is thinking through the transcript…"]
 
 
 def _track_pass(agent, payload):
@@ -1123,25 +1108,18 @@ _NOTES_STATE = {
 
 class TestNotesPass:
     def test_notes_flag_and_persona_prompt_reach_the_sidecar(self, stub_dir):
-        payload_dir, stub = stub_dir
-        agent = PiSidecarAgent(str(payload_dir))
-        _patch_cmd(agent, stub, env_extra={"SIDECAR_STUB_MODE": "notes_flag"})
-        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
-            agent.initialize(_cfg(), FakeTools())
-            try:
-                notes = agent.checkpoint(CheckpointPayload(
-                    request_id="req-notes",
-                    state_snapshot=dict(_NOTES_STATE),
-                    new_segments=[],
-                    is_notes=True,
-                ))
-                plain = agent.checkpoint(CheckpointPayload(
-                    request_id="req-plain",
-                    state_snapshot=dict(_NOTES_STATE),
-                    new_segments=[],
-                ))
-            finally:
-                agent.shutdown()
+        with _running_agent(stub_dir, mode="notes_flag") as agent:
+            notes = agent.checkpoint(CheckpointPayload(
+                request_id="req-notes",
+                state_snapshot=dict(_NOTES_STATE),
+                new_segments=[],
+                is_notes=True,
+            ))
+            plain = agent.checkpoint(CheckpointPayload(
+                request_id="req-plain",
+                state_snapshot=dict(_NOTES_STATE),
+                new_segments=[],
+            ))
         assert notes.ok
         assert notes.usage["is_notes"] is True
         assert notes.usage["notes_prompt"] is True
@@ -1153,21 +1131,14 @@ class TestNotesPass:
 
     def test_notes_tool_bridge_filters_to_live_notes_ops(self, stub_dir):
         """Even a bundle that ignores is_notes cannot escape the notes gate."""
-        payload_dir, stub = stub_dir
-        agent = PiSidecarAgent(str(payload_dir))
-        _patch_cmd(agent, stub, env_extra={"SIDECAR_STUB_MODE": "notes_tools"})
         tools = _RecordingTools()
-        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
-            agent.initialize(_cfg(), tools)
-            try:
-                result = agent.checkpoint(CheckpointPayload(
-                    request_id="req-notes-tools",
-                    state_snapshot=dict(_NOTES_STATE),
-                    new_segments=[],
-                    is_notes=True,
-                ))
-            finally:
-                agent.shutdown()
+        with _running_agent(stub_dir, tools, mode="notes_tools") as agent:
+            result = agent.checkpoint(CheckpointPayload(
+                request_id="req-notes-tools",
+                state_snapshot=dict(_NOTES_STATE),
+                new_segments=[],
+                is_notes=True,
+            ))
 
         assert result.ok
         # Only the two live_notes ops (add + known-id update) reached the host.
@@ -1181,63 +1152,31 @@ class TestNotesPass:
         assert result.usage["q_rejected"] is True
 
 
-class TestRecallPolish:
+class TestReadToolsDuringPolish:
+    @pytest.mark.parametrize("kind,searched,calls,citation", [
+        ("recall", "searches",
+         [{"query": "budget", "meeting_id": None, "limit": 5}], "past:m_old:1"),
+        ("folder", "folder_searches",
+         [{"query": "roadmap", "relative_path": "plan.md", "limit": 5}],
+         "file:plan.md:1"),
+    ])
     def test_search_is_allowed_during_polish_and_does_not_tally_writes(
-        self, stub_dir,
+        self, stub_dir, kind, searched, calls, citation,
     ):
-        payload_dir, stub = stub_dir
-        agent = PiSidecarAgent(str(payload_dir))
-        _patch_cmd(agent, stub, env_extra={"SIDECAR_STUB_MODE": "recall_polish"})
         tools = _RecordingTools()
-        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
-            agent.initialize(_cfg(), tools)
-            try:
-                result = agent.checkpoint(CheckpointPayload(
-                    request_id="req-recall-polish",
-                    state_snapshot={"meeting_id": "m_live"},
-                    new_segments=[],
-                    is_polish=True,
-                ))
-            finally:
-                agent.shutdown()
+        with _running_agent(stub_dir, tools, mode=f"{kind}_polish") as agent:
+            result = agent.checkpoint(CheckpointPayload(
+                request_id=f"req-{kind}-polish",
+                state_snapshot={"meeting_id": "m_live"},
+                new_segments=[],
+                is_polish=True,
+            ))
 
         assert result.ok
-        assert tools.searches == [
-            {"query": "budget", "meeting_id": None, "limit": 5},
-        ]
+        assert getattr(tools, searched) == calls
         assert tools.ops == []
-        assert result.usage["recall_ok"] is True
-        assert "past:m_old:1" in result.usage["recall_text"]
-        assert sum(1 for r in result.op_results if r.ok) == 0
-
-
-class TestContextFolderPolish:
-    def test_search_is_allowed_during_polish_and_does_not_tally_writes(
-        self, stub_dir,
-    ):
-        payload_dir, stub = stub_dir
-        agent = PiSidecarAgent(str(payload_dir))
-        _patch_cmd(agent, stub, env_extra={"SIDECAR_STUB_MODE": "folder_polish"})
-        tools = _RecordingTools()
-        with patch.object(pi_mod, "_PING_INTERVAL_S", 60.0):
-            agent.initialize(_cfg(), tools)
-            try:
-                result = agent.checkpoint(CheckpointPayload(
-                    request_id="req-folder-polish",
-                    state_snapshot={"meeting_id": "m_live"},
-                    new_segments=[],
-                    is_polish=True,
-                ))
-            finally:
-                agent.shutdown()
-
-        assert result.ok
-        assert tools.folder_searches == [
-            {"query": "roadmap", "relative_path": "plan.md", "limit": 5},
-        ]
-        assert tools.ops == []
-        assert result.usage["folder_ok"] is True
-        assert "file:plan.md:1" in result.usage["folder_text"]
+        assert result.usage[f"{kind}_ok"] is True
+        assert citation in result.usage[f"{kind}_text"]
         assert sum(1 for r in result.op_results if r.ok) == 0
 
 

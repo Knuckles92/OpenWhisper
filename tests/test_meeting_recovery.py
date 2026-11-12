@@ -144,17 +144,23 @@ def test_mark_ended_normalizes_interrupted_finalization():
     assert "interrupted" in patched["finalization"]["message"].lower()
 
 
-def test_mark_ended_pending_becomes_unavailable():
+@pytest.mark.parametrize("meeting_id,status,cloud_enabled,expected", [
+    ("m_pending", "paused", True, "unavailable"),
+    ("m_off", "active", False, "disabled"),
+])
+def test_mark_ended_settles_a_pending_finalization(
+    meeting_id, status, cloud_enabled, expected,
+):
     state = MeetingState(
-        meeting_id="m_pending",
-        status="paused",
-        cloud_enabled=True,
+        meeting_id=meeting_id,
+        status=status,
+        cloud_enabled=cloud_enabled,
     )
     payload = state.to_dict()
     payload["finalization"] = {"status": "pending", "message": ""}
     meeting = {
-        "id": "m_pending",
-        "cloud_enabled": True,
+        "id": meeting_id,
+        "cloud_enabled": cloud_enabled,
         "state_json": json.dumps(payload),
     }
     repo = FakeRepository()
@@ -162,28 +168,7 @@ def test_mark_ended_pending_becomes_unavailable():
     _mark_ended(repo, meeting)
 
     patched = json.loads(repo.updates[0][1]["state_json"])
-    assert patched["finalization"]["status"] == "unavailable"
-
-
-def test_mark_ended_cloud_off_becomes_disabled():
-    state = MeetingState(
-        meeting_id="m_off",
-        status="active",
-        cloud_enabled=False,
-    )
-    payload = state.to_dict()
-    payload["finalization"] = {"status": "pending", "message": ""}
-    meeting = {
-        "id": "m_off",
-        "cloud_enabled": False,
-        "state_json": json.dumps(payload),
-    }
-    repo = FakeRepository()
-
-    _mark_ended(repo, meeting)
-
-    patched = json.loads(repo.updates[0][1]["state_json"])
-    assert patched["finalization"]["status"] == "disabled"
+    assert patched["finalization"]["status"] == expected
 
 
 def test_mark_ended_keeps_permanent_capture_gap_after_transcription():

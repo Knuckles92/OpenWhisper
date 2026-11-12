@@ -8,9 +8,9 @@ from datetime import datetime
 import pytest
 
 
-from meeting.interfaces import TranscriptSegment
 from meeting.reinsight import rerun_insights
 from tests.fakes.agent_core import ReplayAgentCore
+from tests.test_meeting_refinalize import add_transcript
 
 
 def make_meeting(repo, meeting_id="m_rerun", state_json=None):
@@ -23,17 +23,6 @@ def make_meeting(repo, meeting_id="m_rerun", state_json=None):
         state_json=state_json, state_seq=0,
     )
     return meeting_id
-
-
-def add_transcript(repo, meeting_id):
-    repo.add_segments([
-        TranscriptSegment(segment_id="sg_1", meeting_id=meeting_id, chunk_id=None,
-                          channel="mic", start_s=0.0, end_s=2.0,
-                          text="We should ship the budget review on Friday."),
-        TranscriptSegment(segment_id="sg_2", meeting_id=meeting_id, chunk_id=None,
-                          channel="loopback", start_s=2.0, end_s=4.0,
-                          text="Agreed, Friday works."),
-    ])
 
 
 def install_core(monkeypatch, core):

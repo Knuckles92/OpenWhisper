@@ -385,17 +385,22 @@ class TestHostOnlyAuthz:
                          params={"token": GUEST_TOKEN})
         assert blocked.status_code == 403
 
+@pytest.mark.parametrize("endpoint", ["respeakers", "reinsights"])
+@pytest.mark.parametrize("meeting_id,token,ended,status", [
+    ("m_test", GUEST_TOKEN, False, 403),
+    ("m_test", HOST_TOKEN, False, 409),
+    ("m_gone", HOST_TOKEN, True, 404),
+], ids=["guest-cannot-rerun", "active-meeting-conflicts", "unknown-meeting-is-404"])
+def test_rerun_endpoints_share_their_guards(
+    client, endpoint, meeting_id, token, ended, status,
+):
+    tc, engine, _ = client
+    engine.ended = ended
+    r = tc.post(f"/api/meetings/{meeting_id}/{endpoint}", params={"token": token})
+    assert r.status_code == status
+
+
 class TestRerunSpeakers:
-    def test_guest_cannot_rerun(self, client):
-        tc, _, _ = client
-        r = tc.post("/api/meetings/m_test/respeakers", params={"token": GUEST_TOKEN})
-        assert r.status_code == 403
-
-    def test_active_meeting_conflicts(self, client):
-        tc, _, _ = client
-        r = tc.post("/api/meetings/m_test/respeakers", params={"token": HOST_TOKEN})
-        assert r.status_code == 409
-
     def _ended(self, client):
         tc, engine, _ = client
         engine.ended = True
@@ -443,11 +448,6 @@ class TestRerunSpeakers:
         r = tc.post("/api/meetings/m_test/respeakers", params={"token": HOST_TOKEN})
         assert r.status_code == 400
         assert r.json()["detail"] == "No OpenAI API key is configured."
-
-    def test_unknown_meeting_is_404(self, client):
-        tc = self._ended(client)
-        r = tc.post("/api/meetings/m_gone/respeakers", params={"token": HOST_TOKEN})
-        assert r.status_code == 404
 
     def test_meeting_without_system_audio_is_400(self, client):
         tc, engine, repo = client
@@ -528,22 +528,6 @@ class TestRerunSpeakers:
         assert uploads == []
 
 class TestRerunInsights:
-    def test_guest_cannot_rerun(self, client):
-        tc, _, _ = client
-        r = tc.post("/api/meetings/m_test/reinsights", params={"token": GUEST_TOKEN})
-        assert r.status_code == 403
-
-    def test_active_meeting_conflicts(self, client):
-        tc, _, _ = client
-        r = tc.post("/api/meetings/m_test/reinsights", params={"token": HOST_TOKEN})
-        assert r.status_code == 409
-
-    def test_unknown_meeting_is_404(self, client):
-        tc, engine, _ = client
-        engine.ended = True
-        r = tc.post("/api/meetings/m_gone/reinsights", params={"token": HOST_TOKEN})
-        assert r.status_code == 404
-
     def test_host_rerun_returns_result(self, client, monkeypatch):
         tc, engine, _ = client
         engine.ended = True

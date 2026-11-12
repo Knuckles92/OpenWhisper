@@ -116,6 +116,23 @@ class TestArchitecturePolicy(unittest.TestCase):
             self.assertTrue(meeting_mode_supported("darwin"))
 
 
+def _probe(sc, server="pulse", verify_open=False, **kwargs):
+    """Probe ``sc`` on x86_64 Linux with libpulse loadable and ``server`` detected."""
+    with patch(
+        "meeting.capture.linux_audio.detect_linux_audio_server",
+        return_value=server,
+    ), patch(
+        "meeting.capture.linux_audio._libpulse_available", return_value=True
+    ):
+        return probe_linux_audio(
+            platform="linux",
+            machine="x86_64",
+            soundcard_module=sc,
+            verify_open=verify_open,
+            **kwargs,
+        )
+
+
 class TestLinuxProbe(unittest.TestCase):
     def test_unsupported_architecture(self):
         result = probe_linux_audio(platform="linux", machine="ppc64")
@@ -176,19 +193,9 @@ class TestLinuxProbe(unittest.TestCase):
         monitor = _FakeMic("sink0.monitor", "Speakers Monitor", loopback=True)
         sc = _FakeSoundcard(SimpleNamespace(id="sink0", name="Speakers"), [monitor])
         with patch(
-            "meeting.capture.linux_audio.detect_linux_audio_server",
-            return_value="pipewire-pulse",
-        ), patch(
-            "meeting.capture.linux_audio._libpulse_available", return_value=True
-        ), patch(
             "meeting.capture.linux_audio._pactl_monitor_for_sink"
         ) as pactl_monitor:
-            result = probe_linux_audio(
-                platform="linux",
-                machine="x86_64",
-                soundcard_module=sc,
-                verify_open=True,
-            )
+            result = _probe(sc, server="pipewire-pulse", verify_open=True)
         self.assertTrue(result.ready)
         self.assertEqual(result.reason, REASON_READY)
         self.assertEqual(result.default_sink, "sink0")
@@ -222,41 +229,21 @@ class TestLinuxProbe(unittest.TestCase):
         monitor = _FakeMic("custom.monitor.name", "Speakers Monitor", loopback=True)
         sc = _FakeSoundcard(SimpleNamespace(id="sink0", name="Speakers"), [monitor])
         with patch(
-            "meeting.capture.linux_audio.detect_linux_audio_server",
-            return_value="pulse",
-        ), patch(
-            "meeting.capture.linux_audio._libpulse_available", return_value=True
-        ), patch(
             "meeting.capture.linux_audio._pactl_monitor_for_sink", return_value=None
         ), patch(
             "meeting.capture.linux_audio.shutil.which", return_value=None
         ):
-            result = probe_linux_audio(
-                platform="linux",
-                machine="x86_64",
-                soundcard_module=sc,
-                verify_open=False,
-            )
+            result = _probe(sc)
         self.assertEqual(result.reason, REASON_PACTL_MISSING)
 
     def test_non_loopback_rejected(self):
         mic = _FakeMic("mic0", "USB Mic", loopback=False)
         sc = _FakeSoundcard(SimpleNamespace(id="sink0", name="Speakers"), [mic])
         with patch(
-            "meeting.capture.linux_audio.detect_linux_audio_server",
-            return_value="pulse",
-        ), patch(
-            "meeting.capture.linux_audio._libpulse_available", return_value=True
-        ), patch(
             "meeting.capture.linux_audio._pactl_monitor_for_sink",
             return_value="sink0.monitor",
         ):
-            result = probe_linux_audio(
-                platform="linux",
-                machine="x86_64",
-                soundcard_module=sc,
-                verify_open=False,
-            )
+            result = _probe(sc)
         self.assertEqual(result.reason, REASON_MONITOR_SOURCE_MISSING)
 
     def test_name_only_monitor_device_without_flag_is_rejected(self):
@@ -269,73 +256,32 @@ class TestLinuxProbe(unittest.TestCase):
 
         sc.get_microphone = get_microphone
         with patch(
-            "meeting.capture.linux_audio.detect_linux_audio_server",
-            return_value="pulse",
-        ), patch(
-            "meeting.capture.linux_audio._libpulse_available", return_value=True
-        ), patch(
             "meeting.capture.linux_audio._pactl_monitor_for_sink",
             return_value="sink0.monitor",
         ):
-            result = probe_linux_audio(
-                platform="linux",
-                machine="x86_64",
-                soundcard_module=sc,
-                verify_open=False,
-            )
+            result = _probe(sc)
         self.assertEqual(result.reason, REASON_MONITOR_SOURCE_MISSING)
 
     def test_pipewire_without_pulse(self):
         sc = _FakeSoundcard(None, [])
         with patch(
-            "meeting.capture.linux_audio.detect_linux_audio_server",
-            return_value="unavailable",
-        ), patch(
             "meeting.capture.linux_audio._unit_active",
             side_effect=lambda unit: True if unit == "pipewire" else False,
-        ), patch(
-            "meeting.capture.linux_audio._libpulse_available", return_value=True
         ):
-            result = probe_linux_audio(
-                platform="linux",
-                machine="x86_64",
-                soundcard_module=sc,
-                verify_open=False,
-            )
+            result = _probe(sc, server="unavailable")
         self.assertEqual(result.reason, REASON_PIPEWIRE_PULSE_MISSING)
 
     def test_audio_server_unavailable(self):
         sc = _FakeSoundcard(None, [])
         with patch(
-            "meeting.capture.linux_audio.detect_linux_audio_server",
-            return_value="unavailable",
-        ), patch(
             "meeting.capture.linux_audio._unit_active", return_value=False
-        ), patch(
-            "meeting.capture.linux_audio._libpulse_available", return_value=True
         ):
-            result = probe_linux_audio(
-                platform="linux",
-                machine="x86_64",
-                soundcard_module=sc,
-                verify_open=False,
-            )
+            result = _probe(sc, server="unavailable")
         self.assertEqual(result.reason, REASON_AUDIO_SERVER_UNAVAILABLE)
 
     def test_default_sink_missing(self):
         sc = _FakeSoundcard(None, [])
-        with patch(
-            "meeting.capture.linux_audio.detect_linux_audio_server",
-            return_value="pulse",
-        ), patch(
-            "meeting.capture.linux_audio._libpulse_available", return_value=True
-        ):
-            result = probe_linux_audio(
-                platform="linux",
-                machine="x86_64",
-                soundcard_module=sc,
-                verify_open=False,
-            )
+        result = _probe(sc)
         self.assertEqual(result.reason, REASON_DEFAULT_SINK_MISSING)
 
     def test_monitor_open_failed(self):
@@ -346,20 +292,10 @@ class TestLinuxProbe(unittest.TestCase):
         monitor = BrokenMic("sink0.monitor", "Speakers Monitor", loopback=True)
         sc = _FakeSoundcard(SimpleNamespace(id="sink0", name="Speakers"), [monitor])
         with patch(
-            "meeting.capture.linux_audio.detect_linux_audio_server",
-            return_value="pulse",
-        ), patch(
-            "meeting.capture.linux_audio._libpulse_available", return_value=True
-        ), patch(
             "meeting.capture.linux_audio._pactl_monitor_for_sink",
             return_value="sink0.monitor",
         ):
-            result = probe_linux_audio(
-                platform="linux",
-                machine="x86_64",
-                soundcard_module=sc,
-                verify_open=True,
-            )
+            result = _probe(sc, verify_open=True)
         self.assertEqual(result.reason, REASON_MONITOR_OPEN_FAILED)
 
     def test_monitor_open_timeout_classified(self):
@@ -380,21 +316,10 @@ class TestLinuxProbe(unittest.TestCase):
         monitor = BlockingMic("sink0.monitor", "Speakers Monitor", loopback=True)
         sc = _FakeSoundcard(SimpleNamespace(id="sink0", name="Speakers"), [monitor])
         with patch(
-            "meeting.capture.linux_audio.detect_linux_audio_server",
-            return_value="pulse",
-        ), patch(
-            "meeting.capture.linux_audio._libpulse_available", return_value=True
-        ), patch(
             "meeting.capture.linux_audio._pactl_monitor_for_sink",
             return_value="sink0.monitor",
         ):
-            result = probe_linux_audio(
-                platform="linux",
-                machine="x86_64",
-                soundcard_module=sc,
-                verify_open=True,
-                open_timeout_s=0.2,
-            )
+            result = _probe(sc, verify_open=True, open_timeout_s=0.2)
         self.assertEqual(result.reason, REASON_MONITOR_OPEN_FAILED)
 
     def test_resolve_linux_monitor_ids(self):
@@ -457,21 +382,10 @@ class TestLinuxProbe(unittest.TestCase):
             t.ident for t in threading.enumerate() if t.is_alive() and not t.daemon
         }
         with patch(
-            "meeting.capture.linux_audio.detect_linux_audio_server",
-            return_value="pulse",
-        ), patch(
-            "meeting.capture.linux_audio._libpulse_available", return_value=True
-        ), patch(
             "meeting.capture.linux_audio._pactl_monitor_for_sink",
             return_value="sink0.monitor",
         ):
-            result = probe_linux_audio(
-                platform="linux",
-                machine="x86_64",
-                soundcard_module=sc,
-                verify_open=True,
-                open_timeout_s=0.15,
-            )
+            result = _probe(sc, verify_open=True, open_timeout_s=0.15)
         self.assertEqual(result.reason, REASON_MONITOR_OPEN_FAILED)
         after_non_daemon = {
             t.ident for t in threading.enumerate() if t.is_alive() and not t.daemon
