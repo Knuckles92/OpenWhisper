@@ -175,3 +175,83 @@ def test_recovery_requests_the_selected_draft(capture):
     widget.review.recover_button.click()
     recover.assert_called_once_with(str(capture.folder))
     widget.close()
+
+
+def _yes(monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+
+    asked = Mock(return_value=QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(QMessageBox, "question", asked)
+    return asked
+
+
+def test_a_failed_redo_after_saving_shows_what_was_saved(dialog, monkeypatch, capture):
+    monkeypatch.setattr(library, "written_up", lambda folder: False)
+    monkeypatch.setattr(library, "retry_write_up", Mock(side_effect=RuntimeError("agent missing")))
+    review = dialog.review
+    review._editors[0].setPlainText("corrected")
+    review._save(redo=True)
+    _wait(dialog)
+    # The words are on disk, so the board is reloaded and nothing is unsaved:
+    # a second save would otherwise repeat the same edit and reordering.
+    assert not review._dirty
+    assert review._editors[0].toPlainText() == "corrected"
+    assert review.notice.text() == "Saved, but the write-up wasn't redone: agent missing"
+
+
+def test_closing_with_discarded_edits_really_drops_them(dialog, monkeypatch):
+    _yes(monkeypatch)
+    dialog.show()
+    dialog.review._editors[0].setPlainText("EDITED")
+    dialog.reject()
+    assert not dialog.isVisible()
+    assert not dialog.review._dirty
+    assert dialog.review._editors[0].toPlainText() == "first"
+
+
+def test_refresh_asks_about_unsaved_edits_only_once(dialog, monkeypatch):
+    asked = _yes(monkeypatch)
+    dialog.review._editors[0].setPlainText("EDITED")
+    dialog._refresh_requested()
+    asked.assert_called_once()
+    assert dialog.list.currentRow() == 0
+    assert dialog.review._editors[0].toPlainText() == "first"
+
+
+def test_keeping_forever_asks_before_dropping_unsaved_edits(dialog, monkeypatch, capture):
+    from PyQt6.QtWidgets import QMessageBox
+
+    library.set_retention(capture.root, 30)
+    dialog._show_retention()
+    monkeypatch.setattr(QMessageBox, "question", Mock(return_value=QMessageBox.StandardButton.No))
+    dialog.review._editors[0].setPlainText("EDITED")
+    dialog.keep.setCurrentIndex(dialog.keep.findData(0))
+    assert not dialog.review._busy
+    assert dialog.review._editors[0].toPlainText() == "EDITED"
+    assert library.retention_days(capture.root) == 30
+    assert dialog.keep.currentData() == 30
+
+
+def test_delete_does_not_say_saved(dialog, monkeypatch):
+    _yes(monkeypatch)
+    dialog.review._delete()
+    _wait(dialog)
+    assert "Saved" not in dialog.review.notice.text()
+
+
+def test_a_draft_shows_that_it_is_recovering(capture):
+    (capture.folder / library.DRAFT_NAME).write_text("{}", encoding="utf-8")
+    (capture.folder / library.AUDIO_NAME).write_bytes(b"RIFF")
+    (capture.folder / "walkthrough.json").unlink()
+    recover = Mock()
+    widget = WalkthroughLibraryDialog(root=capture.root, recover=recover)
+    try:
+        widget.show()
+        review = widget.review
+        assert review.recover_button.isEnabled()
+        review.recover_button.click()
+        recover.assert_called_once()
+        assert review.notice.isVisible() and "Recovering" in review.notice.text()
+        assert not review.recover_button.isEnabled()
+    finally:
+        widget.close()

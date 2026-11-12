@@ -493,6 +493,7 @@ class UIController(QObject):
         self.overlay.walkthrough_finish_requested.connect(self._on_overlay_finish)
         self.main_window.walkthrough_requested.connect(self._on_window_walkthrough)
         self.main_window.walkthrough_library_requested.connect(self.show_walkthrough_library)
+        self.main_window.walkthroughs_changed.connect(self._refresh_walkthrough_library)
 
         self.record_started.connect(self._show_recording_overlay)
         self.record_stopped.connect(self._show_processing_overlay)
@@ -1199,6 +1200,9 @@ class UIController(QObject):
         if self._walkthrough_panel is not None:
             self._walkthrough_panel.complete(result)
         self.main_window.walkthrough_finished(result.folder)
+        # A write-up lands long after History was written: its card's title
+        # and "AI write-up" label are only on disk until the panel reloads.
+        self.main_window.refresh_history()
         dialog = getattr(self, "_walkthrough_library", None)
         if (dialog is not None and dialog.isVisible()
                 and not dialog.review._busy and not dialog.review._dirty):
@@ -1271,6 +1275,13 @@ class UIController(QObject):
         if walkthrough_tab is not None:
             walkthrough_tab.review.cancel()
 
+    def _refresh_walkthrough_library(self) -> None:
+        """The tab saved or deleted a walkthrough: an open library shows it as it is now."""
+        dialog = self._walkthrough_library
+        if (dialog is not None and dialog.isVisible()
+                and not dialog.review._busy and not dialog.review._dirty):
+            dialog.refresh(dialog.review.folder)
+
     def show_walkthrough_library(self, folder=None) -> None:
         from ui_qt.dialogs.walkthrough_library import WalkthroughLibraryDialog
 
@@ -1283,6 +1294,8 @@ class UIController(QObject):
                 submit=self.submit_walkthrough_library)
             # The side panel lists walkthroughs while their tab is open.
             self._walkthrough_library.changed.connect(self.main_window.refresh_history)
+            # The tab's storyboard may show what the library just saved or deleted.
+            self._walkthrough_library.changed.connect(self.main_window.reload_walkthrough)
         dialog = self._walkthrough_library
         if not dialog.review._busy and not dialog.review._dirty:
             dialog.refresh(folder)
