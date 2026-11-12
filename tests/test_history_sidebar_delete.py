@@ -2,12 +2,13 @@
 
 import pytest
 import os
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QCheckBox, QMessageBox
+from PyQt6.QtWidgets import QCheckBox, QMessageBox
 
 from services.settings import SettingsKey
 from ui_qt.widgets.history_sidebar import HistorySidebar
@@ -15,10 +16,6 @@ from ui_qt.widgets.history_sidebar import HistorySidebar
 
 class TestHistorySidebarDelete:
     """Confirmation behavior for context-menu deletion requests."""
-
-    @classmethod
-    def setup_class(cls):
-        cls.app = QApplication.instance() or QApplication([])
 
     @pytest.fixture(autouse=True)
     def _setup(self):
@@ -29,25 +26,29 @@ class TestHistorySidebarDelete:
         yield
         self.sidebar.deleteLater()
 
-    def test_delete_is_canceled_when_confirmation_is_rejected(self):
+    @contextmanager
+    def _asked(self, answer, *, entry=None, dont_ask_again=False):
+        """Confirmation is on and the user gives ``answer``; yields the delete call."""
         with (
             patch(
                 "ui_qt.widgets.history_sidebar.settings_manager.load_all_settings",
                 return_value={SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE: True},
             ),
-            patch.object(
-                QMessageBox,
-                "exec",
-                return_value=QMessageBox.StandardButton.No,
-            ),
+            patch.object(QMessageBox, "exec", return_value=answer),
             patch(
                 "ui_qt.widgets.history_sidebar.history_manager.get_entry_by_id",
-                return_value=None,
+                return_value=entry,
             ),
+            patch.object(QCheckBox, "isChecked", return_value=dont_ask_again),
             patch(
-                "ui_qt.widgets.history_sidebar.history_manager.delete_entry"
+                "ui_qt.widgets.history_sidebar.history_manager.delete_entry",
+                return_value=True,
             ) as delete_entry,
         ):
+            yield delete_entry
+
+    def test_delete_is_canceled_when_confirmation_is_rejected(self):
+        with self._asked(QMessageBox.StandardButton.No) as delete_entry:
             self.sidebar._on_delete_requested("entry-test-id")
 
         delete_entry.assert_not_called()
@@ -56,26 +57,7 @@ class TestHistorySidebarDelete:
         deleted = []
         self.sidebar.entry_deleted.connect(deleted.append)
 
-        with (
-            patch(
-                "ui_qt.widgets.history_sidebar.settings_manager.load_all_settings",
-                return_value={SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE: True},
-            ),
-            patch.object(
-                QMessageBox,
-                "exec",
-                return_value=QMessageBox.StandardButton.Yes,
-            ),
-            patch(
-                "ui_qt.widgets.history_sidebar.history_manager.get_entry_by_id",
-                return_value=None,
-            ),
-            patch.object(QCheckBox, "isChecked", return_value=False),
-            patch(
-                "ui_qt.widgets.history_sidebar.history_manager.delete_entry",
-                return_value=True,
-            ) as delete_entry,
-        ):
+        with self._asked(QMessageBox.StandardButton.Yes) as delete_entry:
             self.sidebar._on_delete_requested("entry-test-id")
 
         delete_entry.assert_called_once_with(
@@ -88,19 +70,6 @@ class TestHistorySidebarDelete:
         entry = SimpleNamespace(audio_file="recording.wav")
         with (
             patch(
-                "ui_qt.widgets.history_sidebar.settings_manager.load_all_settings",
-                return_value={SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE: True},
-            ),
-            patch.object(
-                QMessageBox,
-                "exec",
-                return_value=QMessageBox.StandardButton.Yes,
-            ),
-            patch(
-                "ui_qt.widgets.history_sidebar.history_manager.get_entry_by_id",
-                return_value=entry,
-            ),
-            patch(
                 "ui_qt.widgets.history_sidebar.history_manager.get_recording_path",
                 return_value=r"C:\recordings\recording.wav",
             ),
@@ -108,11 +77,7 @@ class TestHistorySidebarDelete:
                 "ui_qt.widgets.history_sidebar.QComboBox.currentData",
                 return_value=True,
             ),
-            patch.object(QCheckBox, "isChecked", return_value=False),
-            patch(
-                "ui_qt.widgets.history_sidebar.history_manager.delete_entry",
-                return_value=True,
-            ) as delete_entry,
+            self._asked(QMessageBox.StandardButton.Yes, entry=entry) as delete_entry,
         ):
             self.sidebar._on_delete_requested("entry-test-id")
 
@@ -124,26 +89,9 @@ class TestHistorySidebarDelete:
     def test_dont_ask_again_preference_is_saved(self):
         with (
             patch(
-                "ui_qt.widgets.history_sidebar.settings_manager.load_all_settings",
-                return_value={SettingsKey.CONFIRM_HISTORY_ENTRY_DELETE: True},
-            ),
-            patch.object(
-                QMessageBox,
-                "exec",
-                return_value=QMessageBox.StandardButton.Yes,
-            ),
-            patch(
-                "ui_qt.widgets.history_sidebar.history_manager.get_entry_by_id",
-                return_value=None,
-            ),
-            patch.object(QCheckBox, "isChecked", return_value=True),
-            patch(
                 "ui_qt.widgets.history_sidebar.settings_manager.save_setting"
             ) as save_setting,
-            patch(
-                "ui_qt.widgets.history_sidebar.history_manager.delete_entry",
-                return_value=True,
-            ),
+            self._asked(QMessageBox.StandardButton.Yes, dont_ask_again=True),
         ):
             self.sidebar._on_delete_requested("entry-test-id")
 

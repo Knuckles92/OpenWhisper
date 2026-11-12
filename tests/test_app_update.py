@@ -151,14 +151,13 @@ class TestCompareVersions:
         assert setup_asset_name("v2.6.01") == "OpenWhisper-Setup-2.6.01.exe"
         assert archive_asset_name("v2.6.01") == "OpenWhisper-2.6.01-win64.tar.xz"
 
-    def test_equal_tag_is_up_to_date(self):
-        assert compare_versions("2.1.1", "v2.1.1") == UpdateStatus.UP_TO_DATE
-
-    def test_behind_is_update_available(self):
-        assert compare_versions("2.1.1", "v2.2.0") == UpdateStatus.UPDATE_AVAILABLE
-
-    def test_ahead_is_development(self):
-        assert compare_versions("2.2.0", "v2.1.1") == UpdateStatus.DEVELOPMENT
+    @pytest.mark.parametrize("current, latest, status", [
+        ("2.1.1", "v2.1.1", UpdateStatus.UP_TO_DATE),
+        ("2.1.1", "v2.2.0", UpdateStatus.UPDATE_AVAILABLE),
+        ("2.2.0", "v2.1.1", UpdateStatus.DEVELOPMENT),
+    ])
+    def test_equal_behind_and_ahead(self, current, latest, status):
+        assert compare_versions(current, latest) == status
 
     def test_prerelease_suffix_is_ignored_for_ordering(self):
         assert parse_version("2.2.0-rc.1") == (2, 2, 0)
@@ -235,19 +234,14 @@ class TestShowsUpdateNotice:
     def test_update_available_shows_by_default(self):
         assert shows_update_notice(UpdateStatus.UPDATE_AVAILABLE, {})
 
-    def test_up_to_date_shows_nothing(self):
-        assert not shows_update_notice(UpdateStatus.UP_TO_DATE, {})
-
-    def test_development_shows_nothing(self):
-        assert not shows_update_notice(UpdateStatus.DEVELOPMENT, {})
-
-    def test_notify_off(self):
-        settings = {SettingsKey.UPDATE_NOTIFY_ENABLED: False}
-        assert not shows_update_notice(UpdateStatus.UPDATE_AVAILABLE, settings)
-
-    def test_check_off(self):
-        settings = {SettingsKey.UPDATE_CHECK_ENABLED: False}
-        assert not shows_update_notice(UpdateStatus.UPDATE_AVAILABLE, settings)
+    @pytest.mark.parametrize("status, settings", [
+        (UpdateStatus.UP_TO_DATE, {}),
+        (UpdateStatus.DEVELOPMENT, {}),
+        (UpdateStatus.UPDATE_AVAILABLE, {SettingsKey.UPDATE_NOTIFY_ENABLED: False}),
+        (UpdateStatus.UPDATE_AVAILABLE, {SettingsKey.UPDATE_CHECK_ENABLED: False}),
+    ])
+    def test_nothing_new_or_an_opt_out_shows_nothing(self, status, settings):
+        assert not shows_update_notice(status, settings)
 
 
 class TestParseReleasePayload:
@@ -342,24 +336,25 @@ class TestCanApplyAndHints:
         assert source_update_hint(InstallChannel.INSTALLER) is None
 
 
+class _LatestReleaseResponse:
+    def read(self):
+        return json.dumps(LATEST_RELEASE_FIXTURE).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
 class TestFetchLatestRelease:
     def test_requests_github_latest_not_the_website(self, monkeypatch):
         captured = {}
 
-        class _Response:
-            def read(self):
-                return json.dumps(LATEST_RELEASE_FIXTURE).encode("utf-8")
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
         def _open(url, extra_headers=None):
             captured["url"] = url
             captured["headers"] = extra_headers
-            return _Response()
+            return _LatestReleaseResponse()
 
         monkeypatch.setattr(app_update, "_open", _open)
         release = app_update.fetch_latest_release()
@@ -371,19 +366,9 @@ class TestFetchLatestRelease:
     def test_feed_override_replaces_github(self, monkeypatch):
         captured = {}
 
-        class _Response:
-            def read(self):
-                return json.dumps(LATEST_RELEASE_FIXTURE).encode("utf-8")
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
         def _open(url, extra_headers=None):
             captured["url"] = url
-            return _Response()
+            return _LatestReleaseResponse()
 
         monkeypatch.setattr(app_update, "_open", _open)
         monkeypatch.setenv(

@@ -3,20 +3,12 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QLabel, QPushButton
+from PyQt6.QtWidgets import QLabel, QPushButton
 
 from ui_qt.dialogs.cleanup_rule_dialog import CleanupRuleDialog
 
-_APP = QApplication.instance() or QApplication([])
 
-
-class _QtTestCase:
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
-
-class TestCleanupRuleDialogChoice(_QtTestCase):
+class TestCleanupRuleDialogChoice:
     """Confirm flow offers polished vs exactly-as-typed when polish succeeds."""
 
     def _labels(self, dialog):

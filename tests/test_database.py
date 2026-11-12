@@ -1,16 +1,49 @@
 import json
 import os
 import pytest
+import sqlite3
 import uuid
 from datetime import datetime
+
+from services.database import SCHEMA_VERSION, DatabaseManager
+
+_HISTORY_COLUMNS = "PRAGMA table_info(transcription_history)"
+
+
+def _legacy_db(tmp_path, version, *statements):
+    """A database file left at ``version`` by an older build."""
+    db_path = str(tmp_path / f"legacy_v{version}.db")
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
+        conn.execute(f"INSERT INTO schema_version(version) VALUES ({version})")
+        for statement in statements:
+            conn.execute(statement)
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
+def _migrated(db_path, query, column):
+    """Open with the current build; return ``query``'s names and the schema version."""
+    manager = DatabaseManager(db_path=db_path)
+    try:
+        with manager.engine.connect() as connection:
+            names = {row[column] for row in connection.exec_driver_sql(query)}
+            version = connection.exec_driver_sql(
+                "SELECT version FROM schema_version"
+            ).scalar_one()
+        return names, version
+    finally:
+        manager.close()
+
 
 class TestDatabaseManager:
     @pytest.fixture
     def temp_db(self, tmp_path):
         """Create a temporary database for testing."""
         db_path = str(tmp_path / "test.db")
-
-        from services.database import DatabaseManager
 
         manager = DatabaseManager(db_path=db_path)
         yield manager
@@ -82,82 +115,51 @@ class TestDatabaseManager:
 
     def test_migration_removes_meeting_tables(self, tmp_path):
         """Legacy meeting tables stay dropped; schema reaches current version."""
-        db_path = str(tmp_path / "legacy.db")
-
-        import sqlite3
-
-        conn = sqlite3.connect(db_path)
-        try:
-            conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-            conn.execute("INSERT INTO schema_version(version) VALUES (5)")
-            conn.execute(
-                """
-                CREATE TABLE meetings (
-                    id TEXT PRIMARY KEY,
-                    title TEXT,
-                    start_time TEXT
-                )
-                """
+        db_path = _legacy_db(
+            tmp_path, 5,
+            """
+            CREATE TABLE meetings (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                start_time TEXT
             )
-            conn.execute(
-                """
-                CREATE TABLE meeting_chunks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    meeting_id TEXT NOT NULL,
-                    chunk_index INTEGER NOT NULL,
-                    text TEXT NOT NULL,
-                    timestamp TEXT NOT NULL
-                )
-                """
+            """,
+            """
+            CREATE TABLE meeting_chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                meeting_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                timestamp TEXT NOT NULL
             )
-            conn.execute(
-                """
-                CREATE TABLE meeting_insights (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    meeting_id TEXT NOT NULL,
-                    insight_type TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    custom_prompt TEXT,
-                    generated_at TEXT NOT NULL
-                )
-                """
+            """,
+            """
+            CREATE TABLE meeting_insights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                meeting_id TEXT NOT NULL,
+                insight_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                custom_prompt TEXT,
+                generated_at TEXT NOT NULL
             )
-            conn.execute(
-                "CREATE INDEX idx_insights_meeting_id ON meeting_insights(meeting_id)"
-            )
-            conn.execute(
-                "CREATE UNIQUE INDEX idx_insights_unique "
-                "ON meeting_insights(meeting_id, insight_type, COALESCE(custom_prompt, ''))"
-            )
-            conn.execute("CREATE INDEX idx_meetings_start_time ON meetings(start_time)")
-            conn.execute("CREATE INDEX idx_chunks_meeting_id ON meeting_chunks(meeting_id)")
-            conn.commit()
-        finally:
-            conn.close()
+            """,
+            "CREATE INDEX idx_insights_meeting_id ON meeting_insights(meeting_id)",
+            "CREATE UNIQUE INDEX idx_insights_unique "
+            "ON meeting_insights(meeting_id, insight_type, COALESCE(custom_prompt, ''))",
+            "CREATE INDEX idx_meetings_start_time ON meetings(start_time)",
+            "CREATE INDEX idx_chunks_meeting_id ON meeting_chunks(meeting_id)",
+        )
 
-        from services.database import SCHEMA_VERSION, DatabaseManager
+        tables, version = _migrated(
+            db_path, "SELECT name FROM sqlite_master WHERE type='table'", 0
+        )
 
-        manager = DatabaseManager(db_path=db_path)
-        try:
-            with manager.engine.connect() as connection:
-                tables = {
-                    row[0]
-                    for row in connection.exec_driver_sql(
-                        "SELECT name FROM sqlite_master WHERE type='table'"
-                    )
-                }
-                version = connection.exec_driver_sql(
-                    "SELECT version FROM schema_version"
-                ).scalar_one()
-
-            # Legacy names must remain absent (startup drop + never recreated).
-            assert "meeting_insights" not in tables
-            assert "meeting_chunks" not in tables
-            assert "meetings" not in tables
-            assert "meeting_sessions" in tables
-            assert version == SCHEMA_VERSION
-        finally:
-            manager.close()
+        # Legacy names must remain absent (startup drop + never recreated).
+        assert "meeting_insights" not in tables
+        assert "meeting_chunks" not in tables
+        assert "meetings" not in tables
+        assert "meeting_sessions" in tables
+        assert version == SCHEMA_VERSION
 
     def test_history_raw_text_crud(self, temp_db):
         """History entries can store distinct raw and fixed text."""
@@ -179,54 +181,29 @@ class TestDatabaseManager:
 
     def test_migration_adds_raw_text_column(self, tmp_path):
         """Verify schema v8 adds raw_text to transcription_history."""
-        db_path = str(tmp_path / "legacy_v7.db")
-
-        import sqlite3
-
-        conn = sqlite3.connect(db_path)
-        try:
-            conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-            conn.execute("INSERT INTO schema_version(version) VALUES (7)")
-            conn.execute(
-                """
-                CREATE TABLE transcription_history (
-                    id TEXT PRIMARY KEY,
-                    text TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    model TEXT NOT NULL,
-                    audio_file TEXT,
-                    transcription_time REAL,
-                    audio_duration REAL,
-                    file_size INTEGER
-                )
-                """
+        db_path = _legacy_db(
+            tmp_path, 7,
+            """
+            CREATE TABLE transcription_history (
+                id TEXT PRIMARY KEY,
+                text TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                model TEXT NOT NULL,
+                audio_file TEXT,
+                transcription_time REAL,
+                audio_duration REAL,
+                file_size INTEGER
             )
-            conn.commit()
-        finally:
-            conn.close()
+            """,
+        )
 
-        from services.database import DatabaseManager, SCHEMA_VERSION
+        columns, version = _migrated(db_path, _HISTORY_COLUMNS, 1)
 
-        manager = DatabaseManager(db_path=db_path)
-        try:
-            with manager.engine.connect() as connection:
-                columns = {
-                    row[1]
-                    for row in connection.exec_driver_sql(
-                        "PRAGMA table_info(transcription_history)"
-                    )
-                }
-                version = connection.exec_driver_sql(
-                    "SELECT version FROM schema_version"
-                ).scalar_one()
-
-            assert "raw_text" in columns
-            assert "cleanup_provider" in columns
-            assert "cleanup_model" in columns
-            assert "source_name" in columns
-            assert version == SCHEMA_VERSION
-        finally:
-            manager.close()
+        assert "raw_text" in columns
+        assert "cleanup_provider" in columns
+        assert "cleanup_model" in columns
+        assert "source_name" in columns
+        assert version == SCHEMA_VERSION
 
     def test_history_cleanup_metadata_crud(self, temp_db):
         """History entries can store the cleanup provider/model used."""
@@ -250,54 +227,29 @@ class TestDatabaseManager:
 
     def test_migration_adds_cleanup_columns(self, tmp_path):
         """Verify schema v9 adds cleanup_provider/cleanup_model to a v8 DB."""
-        db_path = str(tmp_path / "legacy_v8.db")
-
-        import sqlite3
-
-        conn = sqlite3.connect(db_path)
-        try:
-            conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-            conn.execute("INSERT INTO schema_version(version) VALUES (8)")
-            conn.execute(
-                """
-                CREATE TABLE transcription_history (
-                    id TEXT PRIMARY KEY,
-                    text TEXT NOT NULL,
-                    raw_text TEXT,
-                    timestamp TEXT NOT NULL,
-                    model TEXT NOT NULL,
-                    audio_file TEXT,
-                    transcription_time REAL,
-                    audio_duration REAL,
-                    file_size INTEGER
-                )
-                """
+        db_path = _legacy_db(
+            tmp_path, 8,
+            """
+            CREATE TABLE transcription_history (
+                id TEXT PRIMARY KEY,
+                text TEXT NOT NULL,
+                raw_text TEXT,
+                timestamp TEXT NOT NULL,
+                model TEXT NOT NULL,
+                audio_file TEXT,
+                transcription_time REAL,
+                audio_duration REAL,
+                file_size INTEGER
             )
-            conn.commit()
-        finally:
-            conn.close()
+            """,
+        )
 
-        from services.database import DatabaseManager, SCHEMA_VERSION
+        columns, version = _migrated(db_path, _HISTORY_COLUMNS, 1)
 
-        manager = DatabaseManager(db_path=db_path)
-        try:
-            with manager.engine.connect() as connection:
-                columns = {
-                    row[1]
-                    for row in connection.exec_driver_sql(
-                        "PRAGMA table_info(transcription_history)"
-                    )
-                }
-                version = connection.exec_driver_sql(
-                    "SELECT version FROM schema_version"
-                ).scalar_one()
-
-            assert "cleanup_provider" in columns
-            assert "cleanup_model" in columns
-            assert "source_name" in columns
-            assert version == SCHEMA_VERSION
-        finally:
-            manager.close()
+        assert "cleanup_provider" in columns
+        assert "cleanup_model" in columns
+        assert "source_name" in columns
+        assert version == SCHEMA_VERSION
 
     def test_history_source_name_crud(self, temp_db):
         """History entries can store an uploaded filename as source_name."""
@@ -318,113 +270,61 @@ class TestDatabaseManager:
 
     def test_migration_adds_source_name_column(self, tmp_path):
         """Verify schema v12 adds source_name to a v9 DB."""
-        db_path = str(tmp_path / "legacy_v9.db")
-
-        import sqlite3
-
-        conn = sqlite3.connect(db_path)
-        try:
-            conn.execute("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)")
-            conn.execute("INSERT INTO schema_version(version) VALUES (9)")
-            conn.execute(
-                """
-                CREATE TABLE transcription_history (
-                    id TEXT PRIMARY KEY,
-                    text TEXT NOT NULL,
-                    raw_text TEXT,
-                    timestamp TEXT NOT NULL,
-                    model TEXT NOT NULL,
-                    audio_file TEXT,
-                    transcription_time REAL,
-                    audio_duration REAL,
-                    file_size INTEGER,
-                    cleanup_provider TEXT,
-                    cleanup_model TEXT
-                )
-                """
+        db_path = _legacy_db(
+            tmp_path, 9,
+            """
+            CREATE TABLE transcription_history (
+                id TEXT PRIMARY KEY,
+                text TEXT NOT NULL,
+                raw_text TEXT,
+                timestamp TEXT NOT NULL,
+                model TEXT NOT NULL,
+                audio_file TEXT,
+                transcription_time REAL,
+                audio_duration REAL,
+                file_size INTEGER,
+                cleanup_provider TEXT,
+                cleanup_model TEXT
             )
-            conn.commit()
-        finally:
-            conn.close()
+            """,
+        )
 
-        from services.database import DatabaseManager, SCHEMA_VERSION
+        columns, version = _migrated(db_path, _HISTORY_COLUMNS, 1)
 
-        manager = DatabaseManager(db_path=db_path)
-        try:
-            with manager.engine.connect() as connection:
-                columns = {
-                    row[1]
-                    for row in connection.exec_driver_sql(
-                        "PRAGMA table_info(transcription_history)"
-                    )
-                }
-                version = connection.exec_driver_sql(
-                    "SELECT version FROM schema_version"
-                ).scalar_one()
-
-            assert "source_name" in columns
-            assert version == SCHEMA_VERSION
-        finally:
-            manager.close()
+        assert "source_name" in columns
+        assert version == SCHEMA_VERSION
 
     def test_migration_adds_agent_endpoint_json(self, tmp_path):
         """Verify schema v11 adds agent_endpoint_json to a v10 meeting DB."""
-        db_path = str(tmp_path / "legacy_v10.db")
-
-        import sqlite3
-
-        conn = sqlite3.connect(db_path)
-        try:
-            conn.execute(
-                "CREATE TABLE schema_version (version INTEGER PRIMARY KEY)"
+        db_path = _legacy_db(
+            tmp_path, 10,
+            """
+            CREATE TABLE meeting_sessions (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                paused_total_s REAL NOT NULL DEFAULT 0,
+                host_token TEXT NOT NULL,
+                guest_token TEXT NOT NULL,
+                cloud_enabled BOOLEAN NOT NULL DEFAULT 0,
+                asr_model TEXT,
+                agent_provider TEXT,
+                agent_model TEXT,
+                spool_dir TEXT NOT NULL,
+                state_json TEXT,
+                state_seq INTEGER NOT NULL DEFAULT 0,
+                app_pid INTEGER,
+                app_heartbeat_at TEXT
             )
-            conn.execute("INSERT INTO schema_version(version) VALUES (10)")
-            conn.execute(
-                """
-                CREATE TABLE meeting_sessions (
-                    id TEXT PRIMARY KEY,
-                    title TEXT NOT NULL DEFAULT '',
-                    status TEXT NOT NULL,
-                    started_at TEXT NOT NULL,
-                    ended_at TEXT,
-                    paused_total_s REAL NOT NULL DEFAULT 0,
-                    host_token TEXT NOT NULL,
-                    guest_token TEXT NOT NULL,
-                    cloud_enabled BOOLEAN NOT NULL DEFAULT 0,
-                    asr_model TEXT,
-                    agent_provider TEXT,
-                    agent_model TEXT,
-                    spool_dir TEXT NOT NULL,
-                    state_json TEXT,
-                    state_seq INTEGER NOT NULL DEFAULT 0,
-                    app_pid INTEGER,
-                    app_heartbeat_at TEXT
-                )
-                """
-            )
-            conn.commit()
-        finally:
-            conn.close()
+            """,
+        )
 
-        from services.database import DatabaseManager, SCHEMA_VERSION
+        columns, version = _migrated(db_path, "PRAGMA table_info(meeting_sessions)", 1)
 
-        manager = DatabaseManager(db_path=db_path)
-        try:
-            with manager.engine.connect() as connection:
-                columns = {
-                    row[1]
-                    for row in connection.exec_driver_sql(
-                        "PRAGMA table_info(meeting_sessions)"
-                    )
-                }
-                version = connection.exec_driver_sql(
-                    "SELECT version FROM schema_version"
-                ).scalar_one()
-
-            assert "agent_endpoint_json" in columns
-            assert version == SCHEMA_VERSION
-        finally:
-            manager.close()
+        assert "agent_endpoint_json" in columns
+        assert version == SCHEMA_VERSION
 
 class TestJsonMigration:
     def test_history_migration(self, tmp_path):

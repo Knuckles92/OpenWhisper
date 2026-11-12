@@ -1,6 +1,5 @@
 """The opt-in beta release track: who is offered GitHub prereleases, and how."""
 
-import io
 import json
 import urllib.error
 from datetime import UTC, datetime, timedelta
@@ -18,6 +17,7 @@ from services.app_update import (
     select_newest_release,
 )
 from services.settings import SettingsKey, SettingsManager
+from tests.fakes.http import Response
 
 DIGEST = "cd" * 32
 DOWNLOAD = f"https://github.com/{app_update.GITHUB_REPO}/releases/download"
@@ -47,17 +47,6 @@ def _release(version, *, prerelease=False, draft=False, digest=DIGEST, url=None)
 
 STABLE = _release("2.8.9")
 BETA = _release("2.9.0", prerelease=True)
-
-
-class Response(io.BytesIO):
-    def __init__(self, body=b"", *, url="", status=200, size=None):
-        super().__init__(body)
-        self.url = url
-        self.status = status
-        self.headers = {"Content-Length": str(size)} if size is not None else {}
-
-    def geturl(self):
-        return self.url
 
 
 @pytest.fixture
@@ -93,7 +82,7 @@ def github(monkeypatch, manager):
             name = f"OpenWhisper-Setup-{tag[1:]}.exe"
             return Response(f"{DIGEST}  {name}\n".encode(), url=url)
         if url.startswith(DOWNLOAD):
-            return Response(url=url, size=4096)
+            return Response(url=url, headers={"Content-Length": "4096"})
         raise AssertionError(f"unexpected request {url}")
 
     monkeypatch.setattr(app_update, "_open", open_url)

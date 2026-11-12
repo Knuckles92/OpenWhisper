@@ -7,6 +7,7 @@ import tarfile
 import threading
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -33,6 +34,12 @@ def component_root(tmp_path, monkeypatch):
     monkeypatch.setattr(components, "speaker_model_cache_dir", lambda: str(speaker_cache))
     monkeypatch.delenv("OPENWHISPER_SPEAKER_MODEL", raising=False)
     return root
+
+
+def _node_reports(monkeypatch, version: str) -> None:
+    """Answer ``node --version`` with ``version`` instead of running node."""
+    result = SimpleNamespace(returncode=0, stdout=version + "\n", stderr="")
+    monkeypatch.setattr(components.subprocess, "run", lambda *a, **k: result)
 
 
 def _make_installed(root: Path, component_id: str, manifest: dict) -> Path:
@@ -931,16 +938,9 @@ def _zip_with_member(path: Path, member_name: str) -> Path:
     return path
 
 
-def test_safe_extract_rejects_parent_traversal(tmp_path):
-    archive = _zip_with_member(tmp_path / "evil.zip", "../escaped.txt")
-    with pytest.raises(ComponentError, match="unsafe path"):
-        components._safe_extract(
-            str(archive), str(tmp_path / "out"), lambda *a: None, threading.Event()
-        )
-
-
-def test_safe_extract_rejects_absolute_paths(tmp_path):
-    archive = _zip_with_member(tmp_path / "evil.zip", "/etc/passwd")
+@pytest.mark.parametrize("member", ["../escaped.txt", "/etc/passwd"])
+def test_safe_extract_rejects_traversal_and_absolute_paths(tmp_path, member):
+    archive = _zip_with_member(tmp_path / "evil.zip", member)
     with pytest.raises(ComponentError, match="unsafe path"):
         components._safe_extract(
             str(archive), str(tmp_path / "out"), lambda *a: None, threading.Event()
@@ -1073,17 +1073,7 @@ def test_validate_meeting_agent_payload_requires_node_and_bundle(tmp_path, monke
 
         (tmp_path / "bundle.cjs").write_text("// stub", encoding="utf-8")
 
-        class _Result:
-            def __init__(self, code=0, stdout="v22.23.2\n"):
-                self.returncode = code
-                self.stdout = stdout
-                self.stderr = ""
-
-        monkeypatch.setattr(
-            components.subprocess,
-            "run",
-            lambda *a, **k: _Result(),
-        )
+        _node_reports(monkeypatch, "v22.23.2")
         components._validate_component_payload(
             ComponentId.MEETING_AGENT, str(tmp_path)
         )
@@ -1110,13 +1100,7 @@ def test_install_component_accepts_verified_meeting_agent_archives(
 
     monkeypatch.setattr(components, "_download_verified", fake_download)
 
-    class _Result:
-        def __init__(self, code=0, stdout="v22.23.2\n"):
-            self.returncode = code
-            self.stdout = stdout
-            self.stderr = ""
-
-    monkeypatch.setattr(components.subprocess, "run", lambda *a, **k: _Result())
+    _node_reports(monkeypatch, "v22.23.2")
     monkeypatch.setattr(components.sys, "platform", "win32")
     monkeypatch.setattr(
         components, "current_platform_tag", lambda **kwargs: "win_amd64"
@@ -1386,14 +1370,8 @@ def test_validate_node_version_requires_exact_match(tmp_path, monkeypatch):
     os.chmod(tmp_path / "node", 0o755)
     (tmp_path / "bundle.cjs").write_text("//", encoding="utf-8")
 
-    class _Result:
-        def __init__(self, code=0, stdout="v22.23.20\n"):
-            self.returncode = code
-            self.stdout = stdout
-            self.stderr = ""
-
     monkeypatch.setattr(components.sys, "platform", "linux")
-    monkeypatch.setattr(components.subprocess, "run", lambda *a, **k: _Result())
+    _node_reports(monkeypatch, "v22.23.20")
     with pytest.raises(ComponentError, match="unexpected version|reported"):
         components._validate_component_payload(
             ComponentId.MEETING_AGENT, str(tmp_path)

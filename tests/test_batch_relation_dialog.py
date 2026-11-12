@@ -2,12 +2,10 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtWidgets import QLabel
 
 from config import config
 from ui_qt.dialogs.batch_relation_dialog import BatchRelationDialog
-
-_APP = QApplication.instance() or QApplication([])
 
 
 class TestBatchRelationDialog:

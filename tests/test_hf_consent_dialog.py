@@ -3,6 +3,8 @@ import os
 import tempfile
 from unittest.mock import patch
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
@@ -87,25 +89,20 @@ class TestConsentDialogButtons(_QtTestCase):
         assert self._button(dialog, "consentAlwaysAllowButton") is None
         assert self._button(dialog, "consentCloseButton") is not None
 
-    def test_download_once_result(self):
-        dialog = HuggingFaceConsentDialog("base", HuggingFaceAccessPolicy.ASK)
-        self._button(dialog, "consentDownloadOnceButton").click()
-        assert dialog.result_action == HuggingFaceConsentDialog.RESULT_DOWNLOAD_ONCE
-
-    def test_always_allow_result(self):
-        dialog = HuggingFaceConsentDialog("base", HuggingFaceAccessPolicy.ASK)
-        self._button(dialog, "consentAlwaysAllowButton").click()
-        assert dialog.result_action == HuggingFaceConsentDialog.RESULT_ALWAYS_ALLOW
-
-    def test_open_settings_result(self):
-        dialog = HuggingFaceConsentDialog("base", HuggingFaceAccessPolicy.NEVER)
-        self._button(dialog, "consentOpenSettingsButton").click()
-        assert dialog.result_action == HuggingFaceConsentDialog.RESULT_OPEN_SETTINGS
-
-    def test_cancel_result(self):
-        dialog = HuggingFaceConsentDialog("base", HuggingFaceAccessPolicy.ASK)
-        self._button(dialog, "consentCancelButton").click()
-        assert dialog.result_action == HuggingFaceConsentDialog.RESULT_CANCEL
+    @pytest.mark.parametrize("policy, button, result", [
+        (HuggingFaceAccessPolicy.ASK, "consentDownloadOnceButton",
+         HuggingFaceConsentDialog.RESULT_DOWNLOAD_ONCE),
+        (HuggingFaceAccessPolicy.ASK, "consentAlwaysAllowButton",
+         HuggingFaceConsentDialog.RESULT_ALWAYS_ALLOW),
+        (HuggingFaceAccessPolicy.NEVER, "consentOpenSettingsButton",
+         HuggingFaceConsentDialog.RESULT_OPEN_SETTINGS),
+        (HuggingFaceAccessPolicy.ASK, "consentCancelButton",
+         HuggingFaceConsentDialog.RESULT_CANCEL),
+    ])
+    def test_each_button_gives_its_result(self, policy, button, result):
+        dialog = HuggingFaceConsentDialog("base", policy)
+        self._button(dialog, button).click()
+        assert dialog.result_action == result
 
     def test_cancel_is_the_default_and_focused_button(self):
         for policy in (HuggingFaceAccessPolicy.ASK, HuggingFaceAccessPolicy.NEVER):
@@ -198,7 +195,6 @@ class TestSettingsDialogNavigation(_QtTestCase):
 
 
 def test_optional_model_consent_explains_required_runtime():
-    _app = QApplication.instance() or QApplication([])
     with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
             patch('services.local_asr.catalog.gpu_runtime_offer', return_value=None):
         dialog = HuggingFaceConsentDialog('parakeet-v3', HuggingFaceAccessPolicy.ASK)
@@ -210,7 +206,6 @@ def test_optional_model_consent_explains_required_runtime():
 
 
 def test_optional_model_consent_names_both_runtimes_when_the_gpu_is_offered():
-    _app = QApplication.instance() or QApplication([])
     with patch('services.local_asr.catalog.missing_runtime', return_value='asr-nvidia-cpu'), \
             patch('services.local_asr.catalog.gpu_runtime_offer', return_value='asr-nvidia-cuda'):
         dialog = HuggingFaceConsentDialog('parakeet-v3', HuggingFaceAccessPolicy.ASK)
@@ -223,7 +218,6 @@ def test_optional_model_consent_names_both_runtimes_when_the_gpu_is_offered():
 
 def _gpu_runtime_dialog(model_name, gpu_component, gpu):
     from ui_qt.dialogs.required_runtime_dialog import GpuRuntimeDialog
-    _app = QApplication.instance() or QApplication([])
     with patch('services.gpu_info.nvidia_gpu', return_value=gpu):
         return GpuRuntimeDialog(model_name, gpu_component, 'asr-nvidia-cpu')
 
@@ -272,7 +266,6 @@ def test_gpu_runtime_offer_cpu_and_later_answers():
 
 def test_runtime_prompt_has_explicit_install_and_later_actions():
     from ui_qt.dialogs.required_runtime_dialog import RequiredRuntimeDialog
-    _app = QApplication.instance() or QApplication([])
     dialog = RequiredRuntimeDialog('parakeet-v3', 'asr-nvidia-cpu')
     assert 'needs both its model files and NVIDIA Speech CPU to work' in dialog.body.text()
     buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}

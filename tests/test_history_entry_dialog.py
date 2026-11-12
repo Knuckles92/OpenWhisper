@@ -12,12 +12,6 @@ from ui_qt.dialogs.history_entry_dialog import HistoryEntryDialog
 from ui_qt.widgets.history_sidebar import HistoryItemWidget
 
 
-class _QtTestCase:
-    @classmethod
-    def setup_class(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
-
 def _make_entry(
     text: str = "Fixed transcript text",
     raw_text: str | None = None,
@@ -44,7 +38,7 @@ def _make_entry(
     )
 
 
-class TestHistoryEntryDialog(_QtTestCase):
+class TestHistoryEntryDialog:
     """Rendering, Fixed/Raw toggle, and action requests."""
 
     def test_shows_full_transcript_text(self):
