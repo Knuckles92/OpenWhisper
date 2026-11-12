@@ -45,11 +45,6 @@ CLEANUP_ON = {
 WORD = {"id": "a", "term": "Ksenia", "starred": False, "heard": [], "learned": False, "new": False}
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture(autouse=True)
 def _restore_metadata():
     controls = dict(settings_metadata.CONTROL_DESTINATIONS)

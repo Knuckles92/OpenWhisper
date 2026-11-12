@@ -27,11 +27,6 @@ DOCUMENT = (
 )
 
 
-@pytest.fixture(scope="module", autouse=True)
-def qapp():
-    return QApplication.instance() or QApplication([])
-
-
 class FakeClipboard:
     """Stands in for QClipboard; never the system clipboard."""
 

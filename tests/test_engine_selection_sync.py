@@ -124,11 +124,6 @@ class TestWatch:
 
 
 @pytest.fixture
-def qapp(_session_qt_application):
-    return _session_qt_application
-
-
-@pytest.fixture
 def tabs(qapp):
     from ui_qt.widgets.quick_record_tab import QuickRecordTab
     from ui_qt.widgets.upload_file_tab import UploadFileTab

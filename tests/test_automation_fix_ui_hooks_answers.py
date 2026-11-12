@@ -28,11 +28,6 @@ PROGRAM_A = {"id": "proga00", "name": "Journal", "program": os.path.abspath("jou
 PROGRAM_B = dict(PROGRAM_A, id="progb00", name="Logger")
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture
 def store(tmp_path):
     manager = SettingsManager(str(tmp_path / "settings.json"))

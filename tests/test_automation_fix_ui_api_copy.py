@@ -14,11 +14,6 @@ from services.settings import SettingsKey
 from tests.test_mcp_host_tabs import make_view
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture(autouse=True)
 def bus():
     replacement = events.EventBus()

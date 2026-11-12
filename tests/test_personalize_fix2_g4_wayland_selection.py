@@ -41,11 +41,6 @@ PARAGRAPH = "Selected paragraph to make formal."
 
 
 @pytest.fixture(autouse=True)
-def qt_app(_session_qt_application):
-    return _session_qt_application
-
-
-@pytest.fixture(autouse=True)
 def no_data_control_variable(monkeypatch):
     # Set first so the variable a test leaves behind is removed afterwards.
     monkeypatch.setenv(DATA_CONTROL, "")

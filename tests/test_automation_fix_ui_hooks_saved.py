@@ -6,17 +6,11 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
 
 from services.automation import catalog, models
 from services.settings import SettingsManager
 from tests.test_automation_fix_ui_hooks_answers import close
 from ui_qt.widgets import hooks_panel
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture

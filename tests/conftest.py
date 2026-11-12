@@ -179,6 +179,12 @@ def _session_qt_application():
     app.removeEventFilter(style_filter)
 
 
+@pytest.fixture
+def qapp(_session_qt_application):
+    """The session's QApplication, for tests that pump or query it directly."""
+    return _session_qt_application
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _session_data_root():
     """Name every config path under this process's data root, relative to it.

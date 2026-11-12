@@ -37,11 +37,6 @@ MODEL = {
 }
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture
 def make_dialog():
     """Build Settings against a throwaway store with no model cache."""

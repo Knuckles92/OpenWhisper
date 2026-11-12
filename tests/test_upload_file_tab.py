@@ -40,12 +40,6 @@ from ui_qt.widgets.upload_file_tab import (
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 
 
-@pytest.fixture(scope="module", autouse=True)
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
 def _inline_threads():
     """Run the preview worker on the calling thread so results land at once."""
     return patch(

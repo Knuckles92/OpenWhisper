@@ -7,7 +7,6 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -15,11 +14,6 @@ from PyQt6.QtWidgets import QApplication
 
 from services.backup import BackupCancelled, BackupInfo
 from services.backup_manager import BackupCoordinator, PREFERENCES_FILE
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 def _wait_for(predicate, timeout=3):

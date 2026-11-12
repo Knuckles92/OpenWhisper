@@ -3,19 +3,13 @@ from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
+from PyQt6.QtWidgets import QSystemTrayIcon
 
 import ui_qt.system_tray as system_tray
 from ui_qt.system_tray import SystemTrayManager
 
 Reason = QSystemTrayIcon.ActivationReason
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 def _make_tray(click_to_restore: bool):

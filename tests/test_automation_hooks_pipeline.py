@@ -20,7 +20,6 @@ from tests import test_automation_foundation_pipeline as foundation
 from tests.test_automation_hooks_webhooks import Answer, Receiver
 
 # The foundation's harness fixtures, used here by name.
-_qapp = foundation._qapp
 h = foundation.h
 _events = foundation._events
 

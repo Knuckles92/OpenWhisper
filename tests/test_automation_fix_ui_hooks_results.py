@@ -7,7 +7,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QBoxLayout, QScrollArea, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QBoxLayout, QScrollArea, QVBoxLayout, QWidget
 
 from services.automation import programs, webhooks
 from services.settings import SettingsKey, SettingsManager
@@ -24,11 +24,6 @@ from ui_qt.widgets import hooks_panel
 
 LONG_ERROR = ("Couldn't connect: [WinError 10061] No connection could be made because the "
               "target machine actively refused it")
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture

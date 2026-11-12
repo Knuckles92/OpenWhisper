@@ -78,11 +78,6 @@ class DelayedCopy(QObject):
         self.clipboard.copy_from_app(self.text)
 
 
-@pytest.fixture(autouse=True)
-def qt_app(_session_qt_application):
-    return _session_qt_application
-
-
 def _wait_for(predicate, timeout_s=2.0):
     deadline = time.monotonic() + timeout_s
     while not predicate() and time.monotonic() < deadline:

@@ -15,7 +15,6 @@ import sys
 import time
 import types
 
-import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -74,11 +73,6 @@ class AppAnswersCopy(QObject):
 
     def _land(self):
         self.clipboard.copy_from_other_app(self.text)
-
-
-@pytest.fixture(autouse=True)
-def qt_app(_session_qt_application):
-    return _session_qt_application
 
 
 def _wait_for(predicate, timeout_s=3.0):

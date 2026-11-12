@@ -13,7 +13,7 @@ from config import config
 from services import cleanup_prompts, hyprland, synthetic_keys
 from services.focus_context import FocusSnapshot, _linux, catalog
 from services.settings import SettingsKey
-from tests.test_personalize_s3_command_runtime import _qapp, _stop_and_read, h  # noqa: F401  (fixtures)
+from tests.test_personalize_s3_command_runtime import _stop_and_read, h  # noqa: F401  (fixtures)
 
 # (session, the class X11 WM_CLASS or Hyprland reports)
 LINUX_TERMINALS = [

@@ -8,7 +8,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QMenu
+from PyQt6.QtWidgets import QMenu
 
 import services
 from config import config
@@ -21,11 +21,6 @@ from ui_qt.overlays import waveform_overlay
 from ui_qt.ui_controller import UIController
 from ui_qt.widgets import language_menu, scratchpad
 from ui_qt.widgets.transcription_progress import ProgressStage, stage_for_overlay_state
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture

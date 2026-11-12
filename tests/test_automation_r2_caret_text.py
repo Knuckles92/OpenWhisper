@@ -32,7 +32,6 @@ from services.focus_context import AppIdentity, ContextCaptureService, FocusSnap
 from services.settings import SettingsKey
 from tests import test_automation_foundation_pipeline as foundation
 
-_qapp = foundation._qapp
 h = foundation.h
 
 NOTEPAD = AppIdentity("notepad.exe", "Notepad", pid=20, window="0x9")

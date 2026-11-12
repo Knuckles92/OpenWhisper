@@ -15,7 +15,6 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
 
 from config import config
 from services import synthetic_keys, text_rewrite
@@ -26,11 +25,6 @@ from services.runtime.transcription import TranscriptionRuntime
 from services.settings import SettingsKey
 from tests.fakes.settings import InMemorySettings
 from tests.test_personalize_s3_command_delivery import FakeCleaner, FakeHistory, FakeUI, Signal
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 class TimingOutCleaner(FakeCleaner):

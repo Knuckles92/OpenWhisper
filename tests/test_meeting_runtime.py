@@ -52,11 +52,6 @@ class _Controller(QObject):
 
 
 @pytest.fixture
-def qapp(_session_qt_application):
-    return _session_qt_application
-
-
-@pytest.fixture
 def runtime(qapp, monkeypatch):
     runtime_settings = _RUNTIME_GLOBALS["settings_manager"]
     monkeypatch.setattr(runtime_settings, "save_setting", lambda *args, **kwargs: None)

@@ -8,19 +8,12 @@ from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
 from PyQt6.QtWidgets import QApplication
 
 from config import config
 from services.settings import LEGACY_STREAMING_KEYS, SettingsKey
 from ui_qt.widgets.quick_record_tab import QuickRecordTab
 from ui_qt.widgets.upload_file_tab import UploadFileTab
-
-
-@pytest.fixture(scope="module", autouse=True)
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 def _settings(stored=None):

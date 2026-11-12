@@ -50,11 +50,6 @@ NEW_PAGES = (DICTIONARY, SNIPPETS, STYLES, COMMANDS)
 INTRO_SEEN = "whats_new_seen"
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture(autouse=True)
 def _restore_metadata():
     # Registering a page module writes its routes into these shared maps.

@@ -29,11 +29,6 @@ TERMINAL = AppIdentity("WindowsTerminal.exe", "Windows Terminal", pid=5, window=
 VS_CODE = AppIdentity("Code.exe", "Visual Studio Code", pid=6, window="0x6")
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 def _settle(predicate, timeout=2.0):
     """Pump Qt until ``predicate()`` holds; helper threads hop back through it."""
     deadline = time.monotonic() + timeout

@@ -24,7 +24,6 @@ from services.dictation_pipeline import DictationJob, JobMode
 from services.runtime import transcription
 from tests import test_automation_foundation_pipeline as foundation
 
-_qapp = foundation._qapp
 h = foundation.h
 
 

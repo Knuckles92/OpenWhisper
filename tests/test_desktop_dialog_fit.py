@@ -10,16 +10,9 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
-from PyQt6.QtWidgets import QApplication, QDialog, QLabel, QMessageBox, QVBoxLayout
+from PyQt6.QtWidgets import QDialog, QLabel, QMessageBox, QVBoxLayout
 
 from ui_qt.utils.desktop import fit_desktop_dialog
-
-
-@pytest.fixture(scope="module", autouse=True)
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 def _room(dialog):

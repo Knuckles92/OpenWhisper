@@ -22,7 +22,6 @@ from tests import test_automation_fix2_pipeline as fix2
 from tests import test_automation_foundation_pipeline as foundation
 from tests import test_automation_r2_program_words_pipeline as words
 
-_qapp = foundation._qapp
 h = foundation.h
 
 CHANNEL = Action("ch", "Tell my session", ActionKind.CHANNEL)

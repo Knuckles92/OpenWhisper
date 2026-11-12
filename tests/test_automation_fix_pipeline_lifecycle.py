@@ -17,7 +17,6 @@ from services.dictation_pipeline import DictationJob, JobMode
 from tests import test_automation_foundation_pipeline as foundation
 
 # The foundation's harness fixtures, used here by name.
-_qapp = foundation._qapp
 h = foundation.h
 _events = foundation._events
 
@@ -133,7 +132,7 @@ def _previews(sent, count, timeout=2.0):
     return [(text, final) for _job, text, final in sent]
 
 
-def test_the_last_throttled_preview_still_goes_out(_qapp, sent):
+def test_the_last_throttled_preview_still_goes_out(qapp, sent):
     from services.application_controller import PreviewEvents
 
     previews = PreviewEvents(lambda *preview: sent.append(preview))
@@ -145,7 +144,7 @@ def test_the_last_throttled_preview_still_goes_out(_qapp, sent):
     assert all(preview[0] is job for preview in sent)
 
 
-def test_a_final_preview_goes_out_at_once_and_drops_the_held_one(_qapp, sent):
+def test_a_final_preview_goes_out_at_once_and_drops_the_held_one(qapp, sent):
     from services.application_controller import PreviewEvents
 
     previews = PreviewEvents(lambda *preview: sent.append(preview))

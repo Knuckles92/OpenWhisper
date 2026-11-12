@@ -6,7 +6,6 @@ Offscreen only: every clipboard here is a stand-in, never the system one.
 import os
 from pathlib import Path
 
-import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -14,11 +13,6 @@ from PyQt6.QtCore import QMimeData
 from PyQt6.QtGui import QColor, QImage
 
 from ui_qt.clipboard import ClipboardRestoreOutcome, TemporaryClipboard
-
-
-@pytest.fixture(autouse=True)
-def qt_app(_session_qt_application):
-    return _session_qt_application
 
 
 class FakeClipboard:

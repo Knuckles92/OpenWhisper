@@ -21,7 +21,6 @@ from tests.test_personalize_s7_settings import DEVICES, LAPEL, MME, SNOWBALL, US
 from ui_qt.dialogs.settings_microphones import entry_token
 
 WEBCAM = {"name": "Microphone (Webcam)", "hostapi": MME}
-_qapp = s7._qapp
 make_dialog = s7.make_dialog
 
 

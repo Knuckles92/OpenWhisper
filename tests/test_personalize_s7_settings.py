@@ -40,11 +40,6 @@ DEVICES = [
 ]
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 def _pump_until(predicate, timeout=2.0):
     deadline = time.monotonic() + timeout
     while not predicate() and time.monotonic() < deadline:

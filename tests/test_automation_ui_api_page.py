@@ -39,11 +39,6 @@ PERMISSIONS = (
 )
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture(autouse=True)
 def bus():
     """A private event bus, so listener counts are this test's own."""

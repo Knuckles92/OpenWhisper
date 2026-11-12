@@ -10,7 +10,6 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
 
 from services import focus_context
 from services.actions import routing
@@ -30,11 +29,6 @@ from tests.fakes.settings import InMemorySettings
 ASK = Action("a1", "Ask Claude", ActionKind.OPEN_LINK,
              {"template": "claude://claude.ai/new?q={text}"}, spoken_names=("Claude",))
 RAW = Action("a2", "Raw notes", ActionKind.SCRIPTS, {}, shaping="raw")
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 class Signal:

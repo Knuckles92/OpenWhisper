@@ -6,7 +6,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PyQt6.QtCore import QRectF
-from PyQt6.QtWidgets import QApplication
 
 from services.settings import (
     SettingsKey,
@@ -18,11 +17,6 @@ from ui_qt.overlays.waveform_overlay import WaveformOverlay
 
 HEADER, FOOTER = StreamingOverlayLayout.HEADER, StreamingOverlayLayout.FOOTER
 WORDS = "So I was thinking about the launch plan and June works if we freeze the API by May fifteenth."
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture

@@ -25,11 +25,6 @@ NOTEPAD = AppIdentity("notepad.exe", "Notepad", pid=4, window="0x4")
 BROWSER = AppIdentity("chrome.exe", "Chrome", pid=9, window="0x9")
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 class Signal:
     def __init__(self, handler=None):
         self.calls = []

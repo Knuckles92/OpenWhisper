@@ -33,11 +33,6 @@ SIGN_OFF = Snippet("sig", "my sign-off", "**Dana Lee**\nDesigner", formatted=Tru
 QUESTION = "ui_qt.widgets.snippets_panel.QMessageBox.question"
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture(autouse=True)
 def _restore_metadata():
     controls = dict(settings_metadata.CONTROL_DESTINATIONS)

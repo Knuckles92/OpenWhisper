@@ -17,11 +17,6 @@ from services.automation import events, permissions
 from tests.test_mcp_host_tabs import make_view
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture
 def view(tmp_path, monkeypatch):
     monkeypatch.setattr(events_ext, "subscription_count", lambda: 0)
