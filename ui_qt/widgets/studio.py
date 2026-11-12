@@ -120,8 +120,16 @@ class StudioSplit(QWidget):
         self.updateGeometry()
 
     def refit(self) -> None:
+        self.place_for_width(self.width())
+
+    def place_for_width(self, width: int) -> None:
+        """Lay the two out as they sit once this is ``width`` wide.
+
+        The window calls it before measuring a page it is about to widen, so
+        it measures the layout it will show and goes there in one move.
+        """
         needed = self.column_width + GAP + self.stage.minimumSizeHint().width()
-        self._place(0 < self.width() < needed)
+        self._place(0 < width < needed)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -507,6 +507,21 @@ def test_a_storyboard_widens_the_window_and_the_next_tab_gives_the_width_back(wi
     assert window.width() == config.MAIN_WINDOW_DEFAULT_WIDTH
 
 
+def test_opening_a_studio_tab_resizes_the_window_in_one_move(window):
+    """A narrow window measures the side-by-side page it is about to show."""
+    from ui_qt.widgets.tabbed_content import TabbedContentWidget
+
+    moves = []
+    animate = window._animate_resize
+    window._animate_resize = lambda width, height: (
+        moves.append((width, height)), animate(width, height))
+    for index in (TabbedContentWidget.TAB_WALKTHROUGH, TabbedContentWidget.TAB_MEETING_MODE):
+        _open_tab(window, TabbedContentWidget.TAB_QUICK_RECORD)
+        moves.clear()
+        _open_tab(window, index)
+        assert moves == [(window.width(), window.height())]
+
+
 def test_the_window_keeps_one_size_whatever_the_stage_shows(window):
     from ui_qt.widgets.tabbed_content import TabbedContentWidget
 
