@@ -214,3 +214,49 @@ def test_a_failed_download_is_reported_on_the_card_that_asked(device, slow_host,
     for card in (asked, other):
         assert card.playback.button.text() == "Play" and card.playback.button.isEnabled()
     assert _playback()._fetched == {}
+
+
+# A History refresh that rebuilds a card in place keeps the click waiting on its download.
+
+
+@pytest.fixture
+def sidebar():
+    from ui_qt.widgets.history_sidebar import HistorySidebar
+
+    sidebar = HistorySidebar()
+    sidebar.expand()
+    yield sidebar
+    sidebar.deleteLater()
+
+
+def _click_then_rebuild(sidebar):
+    _show(sidebar, {"entries": [_remote()], "notice": ""})
+    card = sidebar._history_cards["h1"][1]
+    card.playback.button.click()
+    # Edited on the host while the download runs: one refresh rebuilds the card.
+    edited = _remote()
+    edited.text = "Edited on the host."
+    _show(sidebar, {"entries": [edited], "notice": ""})
+    rebuilt = sidebar._history_cards["h1"][1]
+    assert rebuilt is not card
+    assert rebuilt.playback.button.text() == "Getting it…"
+    return rebuilt
+
+
+def test_an_in_place_rebuild_mid_download_still_plays_the_click(device, slow_host, sidebar):
+    rebuilt = _click_then_rebuild(sidebar)
+
+    slow_host.release.set()
+    assert player_tests._wait(lambda: (_pump(10) or True) and bool(device.streams))
+    assert rebuilt.playback.is_playing and rebuilt.playback.button.text() == "Stop"
+    assert slow_host.calls == 1
+
+
+def test_stopping_before_a_rebuilt_cards_download_finishes_plays_nothing(device, slow_host, sidebar):
+    rebuilt = _click_then_rebuild(sidebar)
+    _playback().stop_all()
+
+    slow_host.release.set()
+    _pump(300)
+    assert device.streams == []
+    assert rebuilt.playback.button.text() == "Play" and rebuilt.playback.button.isEnabled()

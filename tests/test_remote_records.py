@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from services.database import DatabaseManager
-from services.remote_asr import protocol, tailscale
+from services.remote_asr import protocol
 from services.remote_asr import settings as remote_settings
 from services.remote_asr.client import RemoteConnection, pair_with_host
 from services.remote_asr.host import DeviceRegistry, SpeechHost
@@ -25,13 +25,7 @@ from services.remote_records import sync as sync_module
 from services.remote_records.host_store import HostRecordStore, safe_name
 from services.remote_records.kinds import DictationRecords, MeetingRecords
 from services.remote_records.sync import RecordSync
-from tests.test_remote_engine import FakeEngine, ListStore
-
-
-@pytest.fixture(autouse=True)
-def no_real_tailscale(monkeypatch):
-    monkeypatch.setattr(tailscale, "status", lambda timeout=4.0: tailscale.TailscaleStatus("not_installed"))
-    monkeypatch.setattr(tailscale, "whois", lambda address, timeout=4.0: None)
+from tests.fakes.remote import FakeEngine, ListStore, no_real_tailscale  # noqa: F401
 
 
 def _wav(path, seconds=0.5, rate=16000):

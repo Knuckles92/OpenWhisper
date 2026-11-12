@@ -5,8 +5,6 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication  # noqa: E402
-
 from services import dictionary, focus_context  # noqa: E402
 from services.settings import SettingsKey, settings_manager  # noqa: E402
 from tests.test_personalize_s4_learning import (  # noqa: E402
@@ -107,7 +105,6 @@ def test_no_protected_words_leaves_the_prompt_unchanged():
 
 
 def test_a_protected_word_shows_its_badge():
-    QApplication.instance() or QApplication([])
     from ui_qt.widgets.dictionary_library import DictionaryRow
 
     row = DictionaryRow(dictionary.DictionaryTerm("k", "Ksenia", learned=True, protected=True))

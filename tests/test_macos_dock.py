@@ -7,16 +7,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QDialog, QWidget
+from PyQt6.QtWidgets import QDialog, QWidget
 
 from ui_qt.utils.macos_dock import DockIconSync
 
 REGULAR, ACCESSORY = 0, 1
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture

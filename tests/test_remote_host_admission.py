@@ -14,6 +14,7 @@ from services.remote_asr.client import (
 from services.remote_asr.engines import HostEngine
 from services.remote_asr.host import DeviceRegistry, SpeechHost
 from services.remote_asr.tls import ensure_host_identity
+from tests.fakes.remote import _wait_for
 
 
 class _BlockingEngine(HostEngine):
@@ -40,15 +41,6 @@ class _BlockingEngine(HostEngine):
 
     def stream(self, session, audio, language, finish):
         return {"events": []}
-
-
-def _wait_for(predicate, timeout=3):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return True
-        time.sleep(0.01)
-    return predicate()
 
 
 def _host(tmp_path, *, connections=5, handshakes=5, active=1, queued=1, records=None):

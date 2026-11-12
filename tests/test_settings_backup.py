@@ -75,11 +75,6 @@ def _info(path: str):
     )
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 def test_manual_backup_uses_selected_path_and_reports_progress(monkeypatch):
     coordinator = FakeCoordinator()
     page = BackupSettingsPage(coordinator)

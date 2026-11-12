@@ -7,7 +7,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtGui import QTextCursor
-from PyQt6.QtWidgets import QApplication, QTextEdit
+from PyQt6.QtWidgets import QTextEdit
 
 from services import dictation_pipeline, focus_context
 from services.dictation_pipeline import DictationJob, JobMode
@@ -21,11 +21,6 @@ CALENDAR = {
     "text": "**[my calendar](https://cal.example/sam)**", "formatted": True,
 }
 SIGNATURE = {"id": "sig", "trigger": "my sign off", "text": "**Dana Lee**", "formatted": True}
-
-
-@pytest.fixture(scope="module", autouse=True)
-def qapp():
-    return QApplication.instance() or QApplication([])
 
 
 def _caret(before, after=""):

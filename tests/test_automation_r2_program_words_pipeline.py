@@ -24,7 +24,6 @@ from services.settings import SettingsKey
 from tests import test_automation_foundation_pipeline as foundation
 from tests.test_automation_hooks_webhooks import Answer, Receiver
 
-_qapp = foundation._qapp
 h = foundation.h
 
 CHANNEL = Action("ch", "Tell my session", ActionKind.CHANNEL)

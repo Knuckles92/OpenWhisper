@@ -1,7 +1,5 @@
 """Hotkeys page: new rows, conflicts, the hands-free switch, side-button capture."""
 
-import os
-import tempfile
 import threading
 import types
 from contextlib import ExitStack
@@ -14,15 +12,14 @@ from PyQt6.QtWidgets import QApplication
 
 from services import text_transforms
 from services.hotkey_manager import format_hotkey_display
-from services.settings import RecordingTriggerMode, SettingsKey, SettingsManager
+from services.settings import RecordingTriggerMode, SettingsKey
 from services.text_transforms import Transform
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs import settings_downloads as downloads_module
-from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_dialog import HOTKEYS, WALKTHROUGHS
 from ui_qt.widgets import hotkey_capture
 from ui_qt.widgets.hotkey_capture import HotkeyCaptureInput
 from ui_qt.widgets.profile_hotkey_input import ProfileHotkeyInput
+from tests.fakes.personalize import assert_wrapped_labels_fit, large_fonts, settings_dialogs
 
 NEW_ROWS = ("command_mode", "scratchpad_toggle", "cycle_language", "paste_last_original")
 
@@ -55,35 +52,19 @@ class _FakeCaptureThread:
 
 @pytest.fixture
 def make_dialog():
-    stacks = []
-    temp = tempfile.TemporaryDirectory()
+    with settings_dialogs(mocks=("on_profile_hotkey_capture",)) as new, ExitStack() as patches:
+        def build(values=None, *, wayland=False):
+            patches.enter_context(
+                patch.object(settings_dialog_module, "HotkeyCaptureThread", _FakeCaptureThread)
+            )
+            patches.enter_context(
+                patch.object(settings_dialog_module, "is_native_wayland_session", return_value=wayland)
+            )
+            dialog, store = new(values)
+            dialog.select_destination(HOTKEYS)
+            return dialog, store
 
-    def build(values=None, *, wayland=False):
-        store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({**(values or {})})
-        stack = ExitStack()
-        for module in (settings_dialog_module, models_module, downloads_module):
-            stack.enter_context(patch.object(module, "settings_manager", store))
-        stack.enter_context(patch.object(settings_dialog_module.history_manager, "set_retention"))
-        for module in (models_module, downloads_module):
-            stack.enter_context(patch.object(module, "scan_cached_models", return_value={}))
-        stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
-        stack.enter_context(
-            patch.object(settings_dialog_module, "HotkeyCaptureThread", _FakeCaptureThread)
-        )
-        stack.enter_context(
-            patch.object(settings_dialog_module, "is_native_wayland_session", return_value=wayland)
-        )
-        stacks.append(stack)
-        dialog = settings_dialog_module.SettingsDialog(background_cache_scan=False)
-        dialog.on_profile_hotkey_capture = MagicMock()
-        dialog.select_destination(HOTKEYS)
-        return dialog, store
-
-    yield build
-    for stack in reversed(stacks):
-        stack.close()
-    temp.cleanup()
+        yield build
 
 
 def _note(dialog, key):
@@ -534,21 +515,16 @@ def test_windows_capture_treats_escape_as_cancel(_session_qt_application):
 @pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 720), ("omarchy", 460)])
 def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from PyQt6.QtWidgets import QAbstractButton, QLabel, QLineEdit
+    from PyQt6.QtWidgets import QAbstractButton, QLineEdit
     from ui_qt.widgets.hotkey_bindings import bindings
     from ui_qt.widgets.hotkey_row import ReflowCard
-    from ui_qt.utils.font_scale import apply_ui_font_scale
-    from ui_qt.utils.theme_manager import ThemeManager
 
-    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
+    app = large_fonts(monkeypatch, ui_mode)
     # The Windows backend, whose side-button note is the longest; X11 shows
     # none for a side button with modifiers.
     monkeypatch.setattr(hotkey_capture, "USE_PYNPUT_BACKEND", False)
-    app = QApplication.instance()
-    manager = ThemeManager()
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=manager)
         dialog, store = make_dialog({
             SettingsKey.RECORDING_TRIGGER_MODE: RecordingTriggerMode.PUSH_HOLD,
             SettingsKey.HOTKEYS: {"command_mode": "ctrl+alt+shift+mouse4"},
@@ -589,9 +565,7 @@ def test_hotkey_rows_fit_narrow_windows_and_large_fonts(make_dialog, monkeypatch
                 if control.isVisible():
                     assert control.mapTo(page, control.rect().bottomRight()).x() < page.width(), (
                         control.objectName() or control.text())
-        for label in page.findChildren(QLabel):
-            if label.isVisible() and label.wordWrap():
-                assert label.height() >= label.heightForWidth(label.width())
+        assert_wrapped_labels_fit(page)
     finally:
         if dialog is not None:
             dialog.close()

@@ -10,7 +10,7 @@ from services.remote_asr import settings as remote_settings
 from services.remote_asr.client import PairingResult, RemoteRequestError
 from services.remote_asr.service import RemoteEngineService
 from services.settings import SettingsKey, SettingsManager, settings_manager
-from tests.test_remote_engine import FakeEngine, _connect
+from tests.fakes.remote import FakeEngine, _connect
 
 TOKEN = "host-mcp-token-" + "b" * 30
 

@@ -1,6 +1,5 @@
 """Component and model downloads through the shared verified downloader."""
 import hashlib
-import io
 import ssl
 import threading
 import urllib.error
@@ -9,16 +8,10 @@ import pytest
 
 from services import components
 from services.components import ComponentCanceled, ComponentError
+from tests.fakes.http_response import Response
 
 BODY = b"component-payload"
 URL = "https://files.pythonhosted.org/packages/example.whl"
-
-
-class Response(io.BytesIO):
-    def __init__(self, body, status=200, headers=None):
-        super().__init__(body)
-        self.status = status
-        self.headers = headers or {}
 
 
 def fetch(tmp_path, progress=None, cancel=None, url=URL, **kwargs):

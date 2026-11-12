@@ -19,7 +19,6 @@ from services.settings import SettingsKey
 from tests import test_personalize_fix2_g2_enter_key as shared
 from ui_qt.dialogs.settings_destinations import DICTIONARY
 
-_qapp = shared._qapp
 _restore_metadata = shared._restore_metadata
 _windows_text = shared._windows_text
 make_dialog = shared.make_dialog

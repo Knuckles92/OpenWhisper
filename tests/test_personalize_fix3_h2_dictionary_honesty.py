@@ -5,9 +5,6 @@ spellings are fixed. The page says so, offers to turn AI cleanup on, and
 doesn't offer a "Steer the speech model" switch that can't do anything.
 """
 import os
-import tempfile
-from contextlib import ExitStack
-from unittest.mock import Mock, patch
 
 import pytest
 
@@ -15,13 +12,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QLabel
 
-from services.settings import SettingsKey, SettingsManager
-from ui_qt.dialogs import settings_dialog as settings_dialog_module
+from services.settings import SettingsKey
 from ui_qt.dialogs import settings_dictionary as page_module
-from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
-from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import DICTIONARY
+from tests.fakes.personalize import settings_dialogs
 
 KEY = SettingsKey.DICTATION_DICTIONARY
 CLEANUP = SettingsKey.TRANSCRIPT_CLEANUP_ENABLED
@@ -43,30 +38,10 @@ def _restore_metadata():
 
 @pytest.fixture
 def make_dialog():
-    stacks = []
-    temp = tempfile.TemporaryDirectory()
-
-    def build(values=None):
-        store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({SettingsKey.SELECTED_MODEL: "parakeet", **(values or {})})
-        stack = ExitStack()
-        for module in (settings_dialog_module, models_module, downloads_module):
-            stack.enter_context(patch.object(module, "settings_manager", store))
-        stack.enter_context(patch.object(settings_dialog_module.history_manager, "set_retention"))
-        for module in (models_module, downloads_module):
-            stack.enter_context(patch.object(module, "scan_cached_models", return_value={}))
-        stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
-        stacks.append(stack)
-        dialog = settings_dialog_module.SettingsDialog(get_loaded_model=lambda: None,
-                                                       background_cache_scan=False)
-        dialog.on_settings_changed = Mock()
-        dialog.on_cleanup_changed = Mock()
-        return dialog, store
-
-    yield build
-    for stack in reversed(stacks):
-        stack.close()
-    temp.cleanup()
+    with settings_dialogs(defaults={SettingsKey.SELECTED_MODEL: "parakeet"},
+                          mocks=("on_settings_changed", "on_cleanup_changed"),
+                          get_loaded_model=lambda: None) as build:
+        yield build
 
 
 def open_page(dialog):

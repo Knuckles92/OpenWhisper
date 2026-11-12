@@ -40,12 +40,6 @@ from ui_qt.widgets.upload_file_tab import (
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 
 
-@pytest.fixture(scope="module", autouse=True)
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
 def _inline_threads():
     """Run the preview worker on the calling thread so results land at once."""
     return patch(
@@ -98,10 +92,11 @@ class TestDropZoneWidget:
         assert not widget._is_valid_audio("image.png")
         assert not widget._is_valid_audio("video.mp4")
 
-    def test_drag_enter_accepts_valid_audio(self):
+    @pytest.mark.parametrize("name, accepted", [("test.wav", True), ("test.txt", False)])
+    def test_drag_enter_accepts_only_audio(self, name, accepted):
         widget = DropZoneWidget()
         mime_data = QMimeData()
-        mime_data.setUrls([QUrl.fromLocalFile("/path/to/test.wav")])
+        mime_data.setUrls([QUrl.fromLocalFile(f"/path/to/{name}")])
 
         event = QDragEnterEvent(
             QPointF(10, 10).toPoint(),
@@ -111,22 +106,7 @@ class TestDropZoneWidget:
             Qt.KeyboardModifier.NoModifier,
         )
         widget.dragEnterEvent(event)
-        assert event.isAccepted()
-
-    def test_drag_enter_rejects_invalid_file(self):
-        widget = DropZoneWidget()
-        mime_data = QMimeData()
-        mime_data.setUrls([QUrl.fromLocalFile("/path/to/test.txt")])
-
-        event = QDragEnterEvent(
-            QPointF(10, 10).toPoint(),
-            Qt.DropAction.CopyAction,
-            mime_data,
-            Qt.MouseButton.NoButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-        widget.dragEnterEvent(event)
-        assert not event.isAccepted()
+        assert event.isAccepted() is accepted
 
     def test_drop_event_emits_files_selected(self):
         widget = DropZoneWidget()

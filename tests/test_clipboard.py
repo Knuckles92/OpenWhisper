@@ -22,12 +22,6 @@ from ui_qt.clipboard import (
 )
 
 
-@pytest.fixture(scope="module", autouse=True)
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
 class FakeClipboard:
     def __init__(self, mime_data=None):
         self._mime_data = mime_data or QMimeData()

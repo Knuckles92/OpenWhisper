@@ -40,11 +40,6 @@ LETTER = QPageSize(QPageSize.PageSizeId.Letter)
 US_UNITS = QLocale.MeasurementSystem.ImperialUSSystem
 
 
-@pytest.fixture(autouse=True)
-def qt_app(_session_qt_application):
-    return _session_qt_application
-
-
 def _png(path: Path, width: int, height: int, color: str = "#3060c0") -> Path:
     image = QImage(width, height, QImage.Format.Format_RGB32)
     image.fill(QColor(color))

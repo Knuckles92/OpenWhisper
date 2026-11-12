@@ -1,8 +1,6 @@
 """The cleanup level in Settings: AI cleanup page, Learned rules gate, Basic, rail."""
 
 import os
-import tempfile
-from contextlib import ExitStack
 from unittest.mock import patch
 
 import pytest
@@ -14,16 +12,15 @@ from PyQt6.QtGui import QFocusEvent
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox, QPushButton
 
 from config import config
-from services.settings import SettingsKey, SettingsManager
+from services.settings import SettingsKey
 from ui_qt.dialogs import cleanup_levels
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs import settings_downloads as downloads_module
-from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import (
     CLEANUP,
     CLEANUP_RULES,
     OVERVIEW,
 )
+from tests.fakes.personalize import assert_wrapped_labels_fit, large_fonts, settings_dialogs
 
 ENABLED = SettingsKey.TRANSCRIPT_CLEANUP_ENABLED
 LEVEL = SettingsKey.TRANSCRIPT_CLEANUP_LEVEL
@@ -37,39 +34,10 @@ MODEL = {
 }
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture
 def make_dialog():
-    """Build Settings against a throwaway store with no model cache."""
-    stacks = []
-    temp = tempfile.TemporaryDirectory()
-
-    def build(values=None):
-        store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({**(values or {})})
-        stack = ExitStack()
-        for module in (settings_dialog_module, models_module, downloads_module):
-            stack.enter_context(patch.object(module, "settings_manager", store))
-        stack.enter_context(
-            patch.object(settings_dialog_module.history_manager, "set_retention")
-        )
-        for module in (models_module, downloads_module):
-            stack.enter_context(patch.object(module, "scan_cached_models", return_value={}))
-        stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
-        stacks.append(stack)
-        dialog = settings_dialog_module.SettingsDialog(
-            get_loaded_model=lambda: None, background_cache_scan=False
-        )
-        return dialog, store
-
-    yield build
-    for stack in reversed(stacks):
-        stack.close()
-    temp.cleanup()
+    with settings_dialogs(get_loaded_model=lambda: None) as build:
+        yield build
 
 
 def _answer(reply):
@@ -452,15 +420,11 @@ def test_basic_follows_a_change_made_on_the_cleanup_page(make_dialog):
 @pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 720)])
 def test_cleanup_tiles_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from PyQt6.QtWidgets import QAbstractButton, QLabel
-    from ui_qt.utils.font_scale import apply_ui_font_scale
-    from ui_qt.utils.theme_manager import ThemeManager
+    from PyQt6.QtWidgets import QAbstractButton
 
-    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
-    app = QApplication.instance()
+    app = large_fonts(monkeypatch, ui_mode)
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog, _store = make_dialog({PROMPT: CUSTOM})
         dialog.show()
         dialog._fit_to_screen()
@@ -483,9 +447,7 @@ def test_cleanup_tiles_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatc
                     right = control.mapTo(page, control.rect().bottomRight()).x()
                     assert 0 <= left and right < page.width(), (name, control.text())
                     assert control.width() >= control.minimumSizeHint().width(), control.text()
-                for label in tile.findChildren(QLabel):
-                    if label.isVisible() and label.wordWrap():
-                        assert label.height() >= label.heightForWidth(label.width()), label.text()
+                assert_wrapped_labels_fit(tile)
     finally:
         if dialog is not None:
             dialog.close()

@@ -10,7 +10,6 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
 
 from services import focus_context
 from services.actions import routing
@@ -30,11 +29,6 @@ from tests.fakes.settings import InMemorySettings
 ASK = Action("a1", "Ask Claude", ActionKind.OPEN_LINK,
              {"template": "claude://claude.ai/new?q={text}"}, spoken_names=("Claude",))
 RAW = Action("a2", "Raw notes", ActionKind.SCRIPTS, {}, shaping="raw")
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 class Signal:
@@ -395,7 +389,7 @@ def test_route_by_voice_says_when_no_action_matched(h, monkeypatch):
     assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION, route="hotkey"))
     h.runtime.transcribe_audio_file(h.audio)
     h.paste.assert_called_once_with()
-    assert h.ui.notices[-1] == "No action matched — pasted instead"
+    assert h.ui.notices == ["No action matched — pasted instead"]
 
     # A plain dictation that merely could have been routed stays silent.
     h.ui.notices.clear()

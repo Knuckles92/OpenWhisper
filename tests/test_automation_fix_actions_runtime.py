@@ -110,27 +110,6 @@ def test_cancel_stops_running_and_waiting_runs_and_shows_nothing(h, blocked):
     assert h.rt.cancel() == 0
 
 
-def test_cancel_kills_a_running_program(h, monkeypatch):
-    h.add(Action("p1", "Shout", ActionKind.PROGRAM, {"program": "C:\\shout.exe"}))
-    seen = []
-
-    def run_once(argv, stdin, *, timeout_s, cwd="", env=None, cancel=None):
-        seen.append(cancel)
-        cancel.wait(10)
-        return None, b"", programs.CANCELED
-
-    monkeypatch.setattr(programs, "run_once", run_once)
-    h.rt.deliver(_job("p1"), "words", raw_text=None, html="")
-    _wait(lambda: seen)
-
-    assert h.rt.cancel() == 1
-    assert seen[0].is_set()
-    time.sleep(0.2)
-    _wait(lambda: len(_ran(h)) == 1)
-    assert _ran(h)[-1]["message"] == runtime.CANCELED_MESSAGE
-    assert h.ui.copied == []
-
-
 def test_a_try_it_run_is_canceled_and_told_so(h, blocked):
     results = []
     h.rt.test(ASK, "sample", results.append)

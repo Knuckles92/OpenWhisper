@@ -14,7 +14,7 @@ from services.hotkey_manager import format_hotkey_display
 from services.settings import SettingsKey, settings_manager
 from ui_qt.dialogs.settings_destinations import COMMANDS
 from tests.test_personalize_s1_settings_page import (  # noqa: F401  (fixtures)
-    _qapp, _restore_metadata, _windows_text, make_dialog,
+    _restore_metadata, _windows_text, make_dialog,
 )
 
 

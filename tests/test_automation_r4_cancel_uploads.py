@@ -20,7 +20,6 @@ from services.runtime.transcription import EMPTY_ASR_MESSAGE
 from services.transcript_cleanup import CANCELED_REASON
 from tests import test_automation_foundation_pipeline as foundation
 
-_qapp = foundation._qapp
 h = foundation.h
 
 CANCELED = [catalog.RECORDING_CANCELED, f"{catalog.TRANSCRIPTION_FAILED}(canceled)"]

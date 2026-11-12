@@ -5,7 +5,6 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtGui import QTextDocument, QTextFormat
-from PyQt6.QtWidgets import QApplication
 
 from ui_qt.utils.markdown_render import (
     PREVIEW_STYLE,
@@ -23,11 +22,6 @@ from ui_qt.utils.palette import (
 
 def _hex(token):
     return token_color(token).name()
-
-
-@pytest.fixture(scope="module", autouse=True)
-def qapp():
-    yield QApplication.instance() or QApplication([])
 
 
 SAMPLE = """# Title

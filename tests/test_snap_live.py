@@ -12,13 +12,17 @@ from ui_qt.snap import live
 from ui_qt.snap.annotations import Label, Redaction, Stroke, Tool
 
 
-@pytest.mark.parametrize("tool", [Tool.BOX, Tool.ELLIPSE])
-@pytest.mark.parametrize("infill", [False, True])
-def test_rectangle_infill_persists_for_live_drawing(monkeypatch, infill, tool):
-    from services.settings import SettingsKey, settings_manager
-
+@pytest.fixture
+def no_focus_moves(monkeypatch):
     monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
     monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+
+
+@pytest.mark.parametrize("tool", [Tool.BOX, Tool.ELLIPSE])
+@pytest.mark.parametrize("infill", [False, True])
+def test_rectangle_infill_persists_for_live_drawing(no_focus_moves, infill, tool):
+    from services.settings import SettingsKey, settings_manager
+
     settings_manager.save_setting(SettingsKey.SNAP_BOX_INFILL, not infill)
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
@@ -46,9 +50,7 @@ def test_rectangle_infill_persists_for_live_drawing(monkeypatch, infill, tool):
 
 
 @pytest.mark.parametrize("tool", [Tool.BOX, Tool.ELLIPSE, Tool.ARROW])
-def test_live_shift_drag_constrains_callouts(monkeypatch, tool):
-    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
-    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+def test_live_shift_drag_constrains_callouts(no_focus_moves, tool):
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
     try:
@@ -64,11 +66,9 @@ def test_live_shift_drag_constrains_callouts(monkeypatch, tool):
         drawing.close()
 
 
-def test_live_redactions_stay_pinned_until_cleared(monkeypatch):
+def test_live_redactions_stay_pinned_until_cleared(monkeypatch, no_focus_moves):
     now = 100.0
     monkeypatch.setattr(live, "monotonic", lambda: now)
-    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
-    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
     try:
@@ -110,9 +110,7 @@ def test_resuming_live_drawing_reads_the_infill_choice_from_screenshots():
         drawing.close()
 
 
-def test_auto_region_stays_click_through_until_closed_and_survives_pause(monkeypatch):
-    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
-    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+def test_auto_region_stays_click_through_until_closed_and_survives_pause(no_focus_moves):
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
     changes, shots = [], []
@@ -156,9 +154,7 @@ def test_auto_region_stays_click_through_until_closed_and_survives_pause(monkeyp
         drawing.close()
 
 
-def test_tiny_region_drag_does_not_replace_region(monkeypatch):
-    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
-    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+def test_tiny_region_drag_does_not_replace_region(no_focus_moves):
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
     try:
@@ -173,11 +169,9 @@ def test_tiny_region_drag_does_not_replace_region(monkeypatch):
 
 
 @pytest.mark.parametrize("captured", [False, True])
-def test_temporary_marks_survive_countdown_then_clear_with_successful_snap(monkeypatch, captured):
+def test_temporary_marks_survive_countdown_then_clear_with_successful_snap(monkeypatch, no_focus_moves, captured):
     now = 100.0
     monkeypatch.setattr(live, "monotonic", lambda: now)
-    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
-    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
     try:
@@ -203,9 +197,7 @@ def test_temporary_marks_survive_countdown_then_clear_with_successful_snap(monke
 
 
 @pytest.mark.parametrize("keep_marks", [False, True])
-def test_delayed_snap_preserves_kept_and_individually_pinned_marks(monkeypatch, keep_marks):
-    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
-    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+def test_delayed_snap_preserves_kept_and_individually_pinned_marks(monkeypatch, no_focus_moves, keep_marks):
     monkeypatch.setattr(live, "resolve_walkthrough_keep_marks", lambda: keep_marks)
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
@@ -227,12 +219,10 @@ def test_delayed_snap_preserves_kept_and_individually_pinned_marks(monkeypatch, 
         drawing.close()
 
 
-def test_live_tool_stays_selected_until_switched_or_toggled_off(monkeypatch):
+def test_live_tool_stays_selected_until_switched_or_toggled_off(monkeypatch, no_focus_moves):
     now = 100.0
     monkeypatch.setattr(live, "monotonic", lambda: now)
     # Verify Qt behavior without changing the desktop foreground in this test.
-    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
-    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
     shots = []
@@ -288,11 +278,9 @@ def test_live_tool_stays_selected_until_switched_or_toggled_off(monkeypatch):
         drawing.close()
 
 
-def test_live_toolbar_keeps_new_marks_and_clears_them_without_arming(monkeypatch):
+def test_live_toolbar_keeps_new_marks_and_clears_them_without_arming(monkeypatch, no_focus_moves):
     now = 100.0
     monkeypatch.setattr(live, "monotonic", lambda: now)
-    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
-    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
     shots = []
@@ -355,9 +343,7 @@ def test_live_toolbar_tooltips_show_the_active_shortcuts(monkeypatch):
         drawing.close()
 
 
-def test_live_tool_survives_focus_loss_while_capturing(monkeypatch):
-    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
-    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+def test_live_tool_survives_focus_loss_while_capturing(no_focus_moves):
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
     try:
@@ -380,9 +366,7 @@ def test_live_tool_survives_focus_loss_while_capturing(monkeypatch):
         drawing.close()
 
 
-def test_live_text_saves_on_commit(monkeypatch):
-    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
-    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
+def test_live_text_saves_on_commit(no_focus_moves):
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
     shots = []
@@ -405,7 +389,7 @@ def test_live_text_saves_on_commit(monkeypatch):
         QGuiApplication.processEvents()
 
 
-def test_pinned_marks_follow_the_clicked_screen_and_are_rendered_once(monkeypatch):
+def test_pinned_marks_follow_the_clicked_screen_and_are_rendered_once(monkeypatch, no_focus_moves):
     from PyQt6.QtGui import QColor, QImage
     from PyQt6.QtWidgets import QApplication, QWidget
 
@@ -413,8 +397,6 @@ def test_pinned_marks_follow_the_clicked_screen_and_are_rendered_once(monkeypatc
 
     monkeypatch.setattr(support, "_platform", lambda: "darwin")
     monkeypatch.setattr(session, "snap_support", lambda: (True, ""))
-    monkeypatch.setattr(live.affinity, "bring_to_front", lambda _: None)
-    monkeypatch.setattr(live.affinity, "return_foreground", lambda *_: None)
     panel = QWidget()
     panel.show()
     drawing = live.LiveAnnotations(panel, panel)

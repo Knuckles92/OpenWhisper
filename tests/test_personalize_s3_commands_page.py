@@ -1,9 +1,7 @@
 """Settings → Commands: the Command Mode shortcut, its switches, and the transforms library."""
 
 import os
-import tempfile
-from contextlib import ExitStack
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -19,27 +17,21 @@ from PyQt6.QtWidgets import (
 
 from services import text_rewrite
 from services.hotkey_manager import format_hotkey_display
-from services.settings import SettingsKey, SettingsManager
+from services.settings import SettingsKey
 from services.text_transforms import STARTER_TRANSFORMS, load_transforms
 from ui_qt.dialogs import settings_commands
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
-from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import (
     CLEANUP,
     CLEANUP_PROFILES,
     COMMANDS,
     GENERAL,
 )
+from tests.fakes.personalize import assert_wrapped_labels_fit, large_fonts, settings_dialogs
 
 PROFILE = {"id": "ticket", "name": "Support ticket", "instructions": "Format a ticket.",
            "hotkey": "ctrl+alt+t"}
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture(autouse=True)
@@ -62,29 +54,8 @@ def provider(monkeypatch):
 
 @pytest.fixture
 def make_dialog(provider):
-    stacks = []
-    temp = tempfile.TemporaryDirectory()
-
-    def build(values=None):
-        store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({**(values or {})})
-        stack = ExitStack()
-        for module in (settings_dialog_module, models_module, downloads_module):
-            stack.enter_context(patch.object(module, "settings_manager", store))
-        stack.enter_context(patch.object(settings_dialog_module.history_manager, "set_retention"))
-        for module in (models_module, downloads_module):
-            stack.enter_context(patch.object(module, "scan_cached_models", return_value={}))
-        stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
-        stacks.append(stack)
-        dialog = settings_dialog_module.SettingsDialog(background_cache_scan=False)
-        dialog.on_profile_hotkey_capture = MagicMock()
-        dialog.on_settings_changed = MagicMock()
-        return dialog, store
-
-    yield build
-    for stack in reversed(stacks):
-        stack.close()
-    temp.cleanup()
+    with settings_dialogs(mocks=("on_profile_hotkey_capture", "on_settings_changed")) as build:
+        yield build
 
 
 def _commands(make_dialog, values=None):
@@ -383,14 +354,9 @@ def test_basic_has_a_command_mode_shortcut_row(make_dialog):
 @pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
 def test_the_page_fits_a_narrow_window_at_large_fonts(make_dialog, monkeypatch, ui_mode):
-    from ui_qt.utils.font_scale import apply_ui_font_scale
-    from ui_qt.utils.theme_manager import ThemeManager
-
-    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
-    app = QApplication.instance()
+    app = large_fonts(monkeypatch, ui_mode)
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog, _store = make_dialog({SettingsKey.TRANSCRIPT_CLEANUP_PROFILES: [PROFILE]})
         with patch.object(settings_dialog_module.SettingsDialog, "_fit_to_screen", lambda self: None):
             dialog.show()
@@ -411,9 +377,7 @@ def test_the_page_fits_a_narrow_window_at_large_fonts(make_dialog, monkeypatch, 
             # Every button keeps at least its label's height.
             if isinstance(control, QAbstractButton) and control.text():
                 assert control.height() >= control.fontMetrics().height()
-        for label in page.findChildren(QLabel):
-            if label.isVisible() and label.wordWrap():
-                assert label.height() >= label.heightForWidth(label.width())
+        assert_wrapped_labels_fit(page)
         panel = dialog.transforms_panel
         assert panel.duplicate_button.geometry().right() < panel.delete_button.geometry().left()
         scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())

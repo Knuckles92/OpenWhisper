@@ -118,29 +118,17 @@ class TestStrictVersion:
 
 
 class TestArchiveMemberNames:
-    def test_rejects_parent(self):
+    @pytest.mark.parametrize("name", [
+        "../OpenWhisper.exe",  # parent
+        "/etc/passwd",  # absolute
+        "C:/Windows/notepad.exe",  # drive
+        "OpenWhisper.exe:zone.identifier",  # alternate data stream
+        r"_internal\payload.dll",  # backslash
+        "CON",  # reserved device name
+    ])
+    def test_rejects_unsafe_names(self, name):
         with pytest.raises(UpdateApplyError):
-            validate_archive_member_name("../OpenWhisper.exe")
-
-    def test_rejects_absolute(self):
-        with pytest.raises(UpdateApplyError):
-            validate_archive_member_name("/etc/passwd")
-
-    def test_rejects_drive(self):
-        with pytest.raises(UpdateApplyError):
-            validate_archive_member_name("C:/Windows/notepad.exe")
-
-    def test_rejects_ads(self):
-        with pytest.raises(UpdateApplyError):
-            validate_archive_member_name("OpenWhisper.exe:zone.identifier")
-
-    def test_rejects_backslash(self):
-        with pytest.raises(UpdateApplyError):
-            validate_archive_member_name(r"_internal\payload.dll")
-
-    def test_rejects_reserved(self):
-        with pytest.raises(UpdateApplyError):
-            validate_archive_member_name("CON")
+            validate_archive_member_name(name)
 
     def test_accepts_internal_file(self):
         assert validate_archive_member_name("_internal/payload.txt") == (
@@ -334,16 +322,23 @@ class TestCommitAndRecover:
             appdata=str(appdata),
         )
 
-    def test_swap_and_cleanup(self, tmp_path):
+    def _staged(self, tmp_path, *, sentinel=False, state=TransactionState.PREPARED):
+        """The installed 2.5.2 tree, a 2.5.3 candidate and their journal on disk."""
         app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
         (app / "unins000.exe").write_bytes(b"uninstaller")
         candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new")
-        write_completion_sentinel(str(candidate), "2.5.3")
+        if sentinel:
+            write_completion_sentinel(str(candidate), "2.5.3")
         journal = self._journal(tmp_path, app, candidate)
+        journal.state = state
         write_json_atomic(
             str(Path(journal.appdata) / "updates" / "tx" / TX_ID / "journal.json"),
             journal.to_dict(),
         )
+        return app, candidate, journal
+
+    def test_swap_and_cleanup(self, tmp_path):
+        app, candidate, journal = self._staged(tmp_path, sentinel=True)
         state = commit_prepared_update(
             journal,
             wait_parent=False,
@@ -356,15 +351,7 @@ class TestCommitAndRecover:
         assert not Path(str(app) + ".old-aaaaaaaa").exists()
 
     def test_injected_failure_after_old_moved_rolls_back(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
-        (app / "unins000.exe").write_bytes(b"uninstaller")
-        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new")
-        write_completion_sentinel(str(candidate), "2.5.3")
-        journal = self._journal(tmp_path, app, candidate)
-        write_json_atomic(
-            str(Path(journal.appdata) / "updates" / "tx" / TX_ID / "journal.json"),
-            journal.to_dict(),
-        )
+        app, candidate, journal = self._staged(tmp_path, sentinel=True)
 
         def boom(_journal):
             raise UpdateApplyError("injected crash")
@@ -382,14 +369,7 @@ class TestCommitAndRecover:
         assert error and "injected" in error
 
     def test_recover_prepared_abandons_candidate(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
-        (app / "unins000.exe").write_bytes(b"uninstaller")
-        candidate = _bundle(tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new")
-        journal = self._journal(tmp_path, app, candidate)
-        write_json_atomic(
-            str(Path(journal.appdata) / "updates" / "tx" / TX_ID / "journal.json"),
-            journal.to_dict(),
-        )
+        app, candidate, journal = self._staged(tmp_path)
         with patch("services.app_update_apply._launch_exe"):
             recover_transaction(
                 TX_ID, journal.appdata, registration=_registration(app)
@@ -398,22 +378,7 @@ class TestCommitAndRecover:
         assert not candidate.exists()
 
     def test_recover_prepared_after_old_rename_restores_rollback(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
-        (app / "unins000.exe").write_bytes(b"uninstaller")
-        candidate = _bundle(
-            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new"
-        )
-        journal = self._journal(tmp_path, app, candidate)
-        write_json_atomic(
-            str(
-                Path(journal.appdata)
-                / "updates"
-                / "tx"
-                / TX_ID
-                / "journal.json"
-            ),
-            journal.to_dict(),
-        )
+        app, candidate, journal = self._staged(tmp_path)
         os.replace(journal.app_dir, journal.rollback_dir)
         with patch("services.app_update_apply._launch_exe"):
             state = recover_transaction(
@@ -423,23 +388,7 @@ class TestCommitAndRecover:
         assert (Path(journal.app_dir) / APP_EXE_NAME).read_bytes() == b"old"
 
     def test_recover_old_moved_after_candidate_rename_rolls_back(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
-        (app / "unins000.exe").write_bytes(b"uninstaller")
-        candidate = _bundle(
-            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new"
-        )
-        journal = self._journal(tmp_path, app, candidate)
-        journal.state = TransactionState.OLD_MOVED
-        write_json_atomic(
-            str(
-                Path(journal.appdata)
-                / "updates"
-                / "tx"
-                / TX_ID
-                / "journal.json"
-            ),
-            journal.to_dict(),
-        )
+        app, candidate, journal = self._staged(tmp_path, state=TransactionState.OLD_MOVED)
         os.replace(journal.app_dir, journal.rollback_dir)
         os.replace(journal.candidate_dir, journal.app_dir)
         with patch("services.app_update_apply._launch_exe"):
@@ -450,23 +399,7 @@ class TestCommitAndRecover:
         assert (Path(journal.app_dir) / APP_EXE_NAME).read_bytes() == b"old"
 
     def test_empty_health_file_is_not_success(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
-        (app / "unins000.exe").write_bytes(b"uninstaller")
-        candidate = _bundle(
-            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new"
-        )
-        journal = self._journal(tmp_path, app, candidate)
-        journal.state = TransactionState.NEW_ACTIVE
-        write_json_atomic(
-            str(
-                Path(journal.appdata)
-                / "updates"
-                / "tx"
-                / TX_ID
-                / "journal.json"
-            ),
-            journal.to_dict(),
-        )
+        app, candidate, journal = self._staged(tmp_path, state=TransactionState.NEW_ACTIVE)
         os.replace(journal.app_dir, journal.rollback_dir)
         os.replace(journal.candidate_dir, journal.app_dir)
         health = (
@@ -481,23 +414,7 @@ class TestCommitAndRecover:
         assert (Path(journal.app_dir) / APP_EXE_NAME).read_bytes() == b"old"
 
     def test_tampered_candidate_is_rejected_before_swap(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
-        (app / "unins000.exe").write_bytes(b"uninstaller")
-        candidate = _bundle(
-            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new"
-        )
-        write_completion_sentinel(str(candidate), "2.5.3")
-        journal = self._journal(tmp_path, app, candidate)
-        write_json_atomic(
-            str(
-                Path(journal.appdata)
-                / "updates"
-                / "tx"
-                / TX_ID
-                / "journal.json"
-            ),
-            journal.to_dict(),
-        )
+        app, candidate, journal = self._staged(tmp_path, sentinel=True)
         (candidate / APP_EXE_NAME).write_bytes(b"tampered")
         with pytest.raises(UpdateApplyError, match="verification|changed"):
             commit_prepared_update(
@@ -530,24 +447,7 @@ class TestCommitAndRecover:
         assert (rollback / APP_EXE_NAME).read_bytes() == b"untrusted"
 
     def test_damaged_healthy_tree_is_rolled_back(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
-        (app / "unins000.exe").write_bytes(b"uninstaller")
-        candidate = _bundle(
-            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new"
-        )
-        write_completion_sentinel(str(candidate), "2.5.3")
-        journal = self._journal(tmp_path, app, candidate)
-        journal.state = TransactionState.NEW_ACTIVE
-        write_json_atomic(
-            str(
-                Path(journal.appdata)
-                / "updates"
-                / "tx"
-                / TX_ID
-                / "journal.json"
-            ),
-            journal.to_dict(),
-        )
+        app, candidate, journal = self._staged(tmp_path, sentinel=True, state=TransactionState.NEW_ACTIVE)
         os.replace(journal.app_dir, journal.rollback_dir)
         os.replace(journal.candidate_dir, journal.app_dir)
         (
@@ -564,24 +464,7 @@ class TestCommitAndRecover:
         assert (app / APP_EXE_NAME).read_bytes() == b"old"
 
     def test_unconfirmed_new_tree_without_rollback_keeps_recovery(self, tmp_path):
-        app = _bundle(tmp_path / "OpenWhisper", "2.5.2", b"old")
-        (app / "unins000.exe").write_bytes(b"uninstaller")
-        candidate = _bundle(
-            tmp_path / "OpenWhisper.new-aaaaaaaa", "2.5.3", b"new"
-        )
-        write_completion_sentinel(str(candidate), "2.5.3")
-        journal = self._journal(tmp_path, app, candidate)
-        journal.state = TransactionState.NEW_ACTIVE
-        write_json_atomic(
-            str(
-                Path(journal.appdata)
-                / "updates"
-                / "tx"
-                / TX_ID
-                / "journal.json"
-            ),
-            journal.to_dict(),
-        )
+        app, candidate, journal = self._staged(tmp_path, sentinel=True, state=TransactionState.NEW_ACTIVE)
         shutil.rmtree(journal.app_dir)
         os.replace(journal.candidate_dir, journal.app_dir)
         with patch("services.app_update_apply._clear_runonce") as clear:

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from config import config
 from services.hotkey_manager import format_hotkey_display
@@ -48,10 +48,6 @@ class _FakeCaptureThread:
 
 
 class TestHotkeySettingsPage(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
     def _patch_settings(self, manager):
         return patch.object(settings_dialog_module, "settings_manager", manager)
 

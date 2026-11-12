@@ -46,11 +46,6 @@ OPENCODE_AGENT = InstalledAgent(OPENCODE, "C:/bin/opencode.exe", "2.1.0")
 FOUND_TWO = {CLAUDE_CODE: CLAUDE, CODEX: CODEX_AGENT, OPENCODE: None}
 
 
-@pytest.fixture(autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 def _pump_until(predicate, timeout=3.0):
     app = QApplication.instance()
     deadline = time.monotonic() + timeout

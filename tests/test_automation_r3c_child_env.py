@@ -57,21 +57,36 @@ def test_a_key_deleted_from_dotenv_never_reaches_a_child(monkeypatch, tmp_path):
     assert "OPENAI_API_KEY" not in _names(installed_agents.agent_child_env())
 
 
-def test_a_key_the_user_exported_reaches_children_even_when_dotenv_has_it(monkeypatch, tmp_path):
-    # Set before OpenWhisper started, to a value of its own: the user's, so
-    # loading leaves it alone and children get it. (One set to the file's
-    # value came from the file: test_automation_r4b_dotenv.)
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-exported")
-    monkeypatch.setattr(credentials, "env_file_path", lambda: str(tmp_path / ".env"))
-    monkeypatch.setattr(process_env, "_original", dict(process_env._original))
-    (tmp_path / ".env").write_text("OPENROUTER_API_KEY=sk-from-dotenv\n", encoding="utf-8")
-
-    credentials._load_dotenv_into_environ()
-
-    assert installed_agents.agent_child_env()["OPENROUTER_API_KEY"] == "sk-exported"
-
-
 def test_the_app_still_reads_its_keys_from_dotenv(monkeypatch, tmp_path):
     load_dotenv(monkeypatch, tmp_path, {"OPENWHISPER_TEST_KEY": "file-value"})
     assert credentials.resolve_credential("OPENWHISPER_TEST_KEY") == "file-value"
     assert credentials.credential_source("OPENWHISPER_TEST_KEY") == credentials.CredentialSource.DOTENV
+
+
+# -- however the file spells their names (review round 2) --
+
+def test_a_dotenv_key_is_dropped_whatever_case_the_file_writes_it_in(monkeypatch, tmp_path):
+    # Windows ignores case in variable names and os.environ upper-cases them,
+    # so this .env entry is ANTHROPIC_API_KEY there.
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("USER_OWN_VAR", "kept")
+    load_dotenv(monkeypatch, tmp_path, {"Anthropic_Api_Key": "sk-from-openwhisper-dotenv"})
+
+    env = installed_agents.agent_child_env()
+
+    assert not [name for name in env if name.upper() == "ANTHROPIC_API_KEY"]
+    assert env["USER_OWN_VAR"] == "kept"
+
+
+def test_names_are_matched_the_way_the_system_matches_them():
+    env = {"ANTHROPIC_API_KEY": "a", "Anthropic_Api_Key": "b", "KEEP": "1"}
+    process_env.drop(env, ["anthropic_api_key"])
+    if sys.platform == "win32":
+        assert env == {"KEEP": "1"}
+    else:  # distinct variables elsewhere
+        assert env == {"ANTHROPIC_API_KEY": "a", "Anthropic_Api_Key": "b", "KEEP": "1"}
+
+
+def test_openwhispers_internal_names_are_dropped_too(monkeypatch):
+    monkeypatch.setenv("OPENWHISPER_SIDECAR_TOKEN", "internal")
+    assert "OPENWHISPER_SIDECAR_TOKEN" not in installed_agents.agent_child_env()

@@ -7,18 +7,12 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
 from services.hotkey_manager import format_hotkey_display
 
 from services import text_rewrite
 from services.settings import SettingsKey, settings_manager
 from ui_qt.dialogs.settings_destinations import COMMANDS
 from ui_qt.widgets.quick_record_tab import QuickRecordTab
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture(autouse=True)

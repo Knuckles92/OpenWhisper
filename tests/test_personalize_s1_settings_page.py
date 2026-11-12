@@ -1,8 +1,5 @@
 """Settings → Apps & styles: app awareness, text near the cursor, styles."""
 import os
-import tempfile
-from contextlib import ExitStack
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -10,25 +7,18 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QAbstractButton, QApplication, QComboBox, QLabel, QLineEdit
+from PyQt6.QtWidgets import QAbstractButton, QComboBox, QLabel, QLineEdit
 
 from services.app_styles import NEW_INSTALL_TONES
 from services.focus_context import AppIdentity
-from services.settings import SettingsKey, SettingsManager
-from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs import settings_downloads as downloads_module
+from services.settings import SettingsKey
 from ui_qt.dialogs import settings_metadata
-from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs import settings_styles
 from ui_qt.dialogs.settings_destinations import OVERVIEW, STYLES
 from ui_qt.widgets.setting_tile import TileBase
+from tests.fakes.personalize import assert_page_ends_in_view, assert_wrapped_labels_fit, large_fonts, settings_dialogs
 
 CLEANUP_ON = {SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True}
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture(autouse=True)
@@ -51,33 +41,9 @@ def _windows_text(monkeypatch):
 
 @pytest.fixture
 def make_dialog():
-    stacks = []
-    dialogs = []
-    temp = tempfile.TemporaryDirectory()
-
-    def build(values=None):
-        store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({**(values or {})})
-        stack = ExitStack()
-        for module in (settings_dialog_module, models_module, downloads_module):
-            stack.enter_context(patch.object(module, "settings_manager", store))
-        stack.enter_context(patch.object(settings_dialog_module.history_manager, "set_retention"))
-        for module in (models_module, downloads_module):
-            stack.enter_context(patch.object(module, "scan_cached_models", return_value={}))
-        stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
-        stacks.append(stack)
-        dialog = settings_dialog_module.SettingsDialog(
-            get_loaded_model=lambda: None, background_cache_scan=False)
-        dialog.on_settings_changed = MagicMock()
-        dialogs.append(dialog)
-        return dialog, store
-
-    yield build
-    for dialog in dialogs:
-        dialog.close()
-    for stack in reversed(stacks):
-        stack.close()
-    temp.cleanup()
+    with settings_dialogs(mocks=("on_settings_changed",), close=True,
+                          get_loaded_model=lambda: None) as build:
+        yield build
 
 
 def _page(dialog):
@@ -363,12 +329,7 @@ def test_home_row_matches_tone_and_explains_when_it_cannot(make_dialog):
 @pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 720), ("omarchy", 560)])
 def test_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale
-    from ui_qt.utils.theme_manager import ThemeManager
-
-    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
-    app = QApplication.instance()
-    apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
+    app = large_fonts(monkeypatch, ui_mode)
     dialog, _store = make_dialog({
         **CLEANUP_ON,
         SettingsKey.APP_CONTEXT_READ_TEXT: True,
@@ -388,13 +349,8 @@ def test_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mo
         if control.isVisible():
             assert control.mapTo(page, control.rect().topLeft()).x() >= 0
             assert control.mapTo(page, control.rect().bottomRight()).x() < page.width()
-    for label in page.findChildren(QLabel):
-        if label.isVisible() and label.wordWrap():
-            assert label.height() >= label.heightForWidth(label.width())
+    assert_wrapped_labels_fit(page)
     for tile in page.findChildren(TileBase):
         if tile.isVisible():
             assert page.rect().contains(tile.geometry())
-    scroll = dialog._page_scrolls[STYLES]
-    scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
-    app.processEvents()
-    assert page.mapTo(scroll.viewport(), page.rect().bottomRight()).y() <= scroll.viewport().height()
+    assert_page_ends_in_view(dialog, STYLES)

@@ -13,7 +13,7 @@ from services.remote_asr import settings as remote_settings
 from services.remote_asr import tailscale
 from services.remote_asr.service import RemoteEngineService
 from services.settings import SettingsKey, settings_manager
-from tests.test_remote_engine import FakeEngine, _wait_for
+from tests.fakes.remote import FakeEngine, _wait_for
 from ui_qt.widgets import Button, PrimaryButton, SettingTile
 from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.buttons import compact_primary_button, neutral_button

@@ -2,9 +2,7 @@
 import importlib
 import os
 import sys
-import tempfile
 import types
-from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,11 +19,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from services.settings import SettingsKey, SettingsManager
+from services.settings import SettingsKey
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
-from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_home import HomePage
 from ui_qt.dialogs.settings_destinations import (
     ACTIONS,
@@ -45,14 +41,10 @@ from ui_qt.dialogs.settings_destinations import (
 )
 from ui_qt.whats_new import WHATS_NEW
 from ui_qt.widgets.setting_tile import InfoTile, TileBase
+from tests.fakes.personalize import assert_page_ends_in_view, large_fonts, settings_dialogs
 
 NEW_PAGES = (DICTIONARY, SNIPPETS, STYLES, COMMANDS)
 INTRO_SEEN = "whats_new_seen"
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture(autouse=True)
@@ -69,27 +61,8 @@ def _restore_metadata():
 
 @pytest.fixture
 def make_dialog():
-    stacks = []
-    temp = tempfile.TemporaryDirectory()
-
-    def build(values=None):
-        store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({**(values or {})})
-        stack = ExitStack()
-        for module in (settings_dialog_module, models_module, downloads_module):
-            stack.enter_context(patch.object(module, "settings_manager", store))
-        stack.enter_context(patch.object(settings_dialog_module.history_manager, "set_retention"))
-        for module in (models_module, downloads_module):
-            stack.enter_context(patch.object(module, "scan_cached_models", return_value={}))
-        stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
-        stacks.append(stack)
-        dialog = settings_dialog_module.SettingsDialog(background_cache_scan=False)
-        return dialog, store
-
-    yield build
-    for stack in reversed(stacks):
-        stack.close()
-    temp.cleanup()
+    with settings_dialogs() as build:
+        yield build
 
 
 @pytest.fixture
@@ -420,14 +393,9 @@ class TestHomePersonalize:
 @pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
 def test_new_pages_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale
-    from ui_qt.utils.theme_manager import ThemeManager
-
-    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
-    app = QApplication.instance()
+    app = large_fonts(monkeypatch, ui_mode)
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog, _store = make_dialog()
         dialog.show()
         dialog.resize(width, 600)
@@ -451,10 +419,7 @@ def test_new_pages_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, u
                     assert label.height() >= label.heightForWidth(label.width()), key
                     assert tile.rect().contains(label.mapTo(tile, label.rect().bottomRight())), key
                 assert page.rect().contains(tile.geometry()), key
-            scroll = dialog._page_scrolls[key]
-            scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
-            app.processEvents()
-            assert page.mapTo(scroll.viewport(), page.rect().bottomRight()).y() <= scroll.viewport().height()
+            assert_page_ends_in_view(dialog, key)
     finally:
         if dialog is not None:
             dialog.close()

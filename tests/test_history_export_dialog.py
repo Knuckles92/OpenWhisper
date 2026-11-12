@@ -6,7 +6,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QDate, Qt
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from services.history_export import FORMAT_JSON, FORMAT_MARKDOWN
 from ui_qt.dialogs.history_export_dialog import HistoryExportDialog
@@ -34,10 +34,6 @@ def _entry(
 
 
 class TestHistoryExportDialog:
-    @classmethod
-    def setup_class(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
     def _dialog(self, entries, **kwargs):
         return HistoryExportDialog(
             entry_provider=lambda: list(entries),

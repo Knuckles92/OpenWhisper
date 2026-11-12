@@ -37,11 +37,6 @@ SPEECH = 0.06  # a word on a desk microphone, as raw RMS
 SILENCE = 0.002
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture
 def overlay():
     widget = WaveformOverlay()

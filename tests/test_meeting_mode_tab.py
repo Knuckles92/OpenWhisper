@@ -336,6 +336,13 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.app.processEvents()
         self.get_setting.stop()
 
+    def _show_result(self, finalization, status="ended", **extra):
+        """Show an inactive meeting's result card and let the layout settle."""
+        self.tab.set_meeting_state({
+            "active": False, "status": status, "finalization": finalization, **extra,
+        })
+        self.app.processEvents()
+
     def test_unchanged_finalization_steps_keep_their_rows(self):
         def finalization(status):
             return {"finalization": {"status": "failed", "steps": [
@@ -704,12 +711,7 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertTrue(self.tab.ai_settings_button.isHidden())
         self.assertFalse(self.tab.ai_compact_destination.isHidden())
 
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {"status": "failed", "message": "Final insights failed."},
-        })
-        self.app.processEvents()
+        self._show_result({"status": "failed", "message": "Final insights failed."})
         # A failed result is on the stage; the column still sets up the next.
         self.assertFalse(self.tab.ai_panel.isHidden())
         self.assertFalse(self.tab.ai_details.isHidden())
@@ -760,16 +762,10 @@ class TestMeetingModeTabState(unittest.TestCase):
 
     def test_running_finalization_holds_start_and_shows_indeterminate_bar(self):
         """Running finalization keeps a result card with indeterminate progress."""
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {
-                "status": "running",
-                "message": "Preparing final insights…",
-            },
-            "dashboard_available": True,
-        })
-        self.app.processEvents()
+        self._show_result({
+            "status": "running",
+            "message": "Preparing final insights…",
+        }, dashboard_available=True)
 
         self.assertFalse(self.tab.idle_card.isHidden())
         self.assertFalse(self.tab.start_button.isHidden())
@@ -777,7 +773,7 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.assertTrue(self.tab.session_card.isHidden())
         self.assertFalse(self.tab.finalization_card.isHidden())
         self.assertFalse(self.tab.finalization_progress.isHidden())
-        self.assertTrue(self.tab.finalization_report_button.isEnabled() or not self.tab.finalization_report_button.isEnabled())
+        self.assertFalse(self.tab.finalization_report_button.isEnabled())
         self.assertTrue(self.tab.finalization_done_button.isHidden())
 
     def test_completed_and_disabled_restore_start(self):
@@ -787,13 +783,7 @@ class TestMeetingModeTabState(unittest.TestCase):
             ("disabled", "AI insights are off for this meeting."),
         ):
             with self.subTest(status=status):
-                self.tab.set_meeting_state({
-                    "active": False,
-                    "status": "ended",
-                    "finalization": {"status": status, "message": message},
-                    "dashboard_available": True,
-                })
-                self.app.processEvents()
+                self._show_result({"status": status, "message": message}, dashboard_available=True)
                 self.assertFalse(self.tab.idle_card.isHidden())
                 self.assertFalse(self.tab.start_button.isHidden())
                 self.assertFalse(self.tab.finalization_card.isHidden())
@@ -808,22 +798,17 @@ class TestMeetingModeTabState(unittest.TestCase):
 
     def test_empty_meeting_stays_visible_and_disables_speaker_rerun(self):
         """A zero-content result cannot look successful or rerun speakers."""
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "failed",
-            "finalization": {
-                "status": "completed",
-                "message": "Final insights are ready.",
-                "content_summary": {
-                    "meeting_status": "failed",
-                    "is_empty": True,
-                    "has_audio": False,
-                    "has_transcript": False,
-                    "can_rerun_speakers": False,
-                },
+        self._show_result({
+            "status": "completed",
+            "message": "Final insights are ready.",
+            "content_summary": {
+                "meeting_status": "failed",
+                "is_empty": True,
+                "has_audio": False,
+                "has_transcript": False,
+                "can_rerun_speakers": False,
             },
-        })
-        self.app.processEvents()
+        }, status="failed")
 
         self.assertEqual(self.tab.finalization_title.text(), "Meeting Failed")
         self.assertFalse(self.tab.finalization_active_box.isHidden())
@@ -838,29 +823,26 @@ class TestMeetingModeTabState(unittest.TestCase):
 
     def test_unavailable_and_failed_use_warning_tone(self):
         """Unavailable/failed stay persistent warnings without dialogs."""
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {
-                "status": "failed",
-                "message": "Final insights failed: boom",
-            },
-        })
-        self.app.processEvents()
-        self.assertEqual(
-            self.tab.finalization_card.property("finalizationTone"),
-            "warning",
-        )
-        self.assertFalse(self.tab.finalization_card.isHidden())
-        self.assertFalse(self.tab.start_button.isHidden())
-        self.assertTrue(self.tab.start_button.isEnabled())
-        self.assertIn("Past Meetings", self.tab.slot_note.text())
-        self.assertFalse(self.tab.finalization_keep_later_button.isHidden())
-        self.assertTrue(self.tab.finalization_done_button.isHidden())
-        self.assertIn(
-            "stay in Past Meetings",
-            self.tab.finalization_keep_hint.text(),
-        )
+        for status, message in (
+            ("failed", "Final insights failed: boom"),
+            ("unavailable", "Final insights could not run."),
+        ):
+            with self.subTest(status=status):
+                self._show_result({"status": status, "message": message})
+                self.assertEqual(
+                    self.tab.finalization_card.property("finalizationTone"),
+                    "warning",
+                )
+                self.assertFalse(self.tab.finalization_card.isHidden())
+                self.assertFalse(self.tab.start_button.isHidden())
+                self.assertTrue(self.tab.start_button.isEnabled())
+                self.assertIn("Past Meetings", self.tab.slot_note.text())
+                self.assertFalse(self.tab.finalization_keep_later_button.isHidden())
+                self.assertTrue(self.tab.finalization_done_button.isHidden())
+                self.assertIn(
+                    "stay in Past Meetings",
+                    self.tab.finalization_keep_hint.text(),
+                )
 
     def test_continue_in_background_appears_after_local_pass_and_emits(self):
         clicked = []
@@ -952,13 +934,7 @@ class TestMeetingModeTabState(unittest.TestCase):
         """Open report remains wired after active=False."""
         clicked = []
         self.tab.open_report_requested.connect(lambda: clicked.append(True))
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {"status": "completed", "message": "Done"},
-            "dashboard_available": True,
-        })
-        self.app.processEvents()
+        self._show_result({"status": "completed", "message": "Done"}, dashboard_available=True)
         self.tab.finalization_report_button.click()
         self.assertEqual(clicked, [True])
 
@@ -966,16 +942,10 @@ class TestMeetingModeTabState(unittest.TestCase):
         """Failed finalization shows Retry insights button and clicking emits signal."""
         clicked = []
         self.tab.retry_insights_requested.connect(lambda: clicked.append(True))
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {
-                "status": "failed",
-                "message": "Final insights failed: RPC timeout",
-            },
-            "dashboard_available": True,
-        })
-        self.app.processEvents()
+        self._show_result({
+            "status": "failed",
+            "message": "Final insights failed: RPC timeout",
+        }, dashboard_available=True)
         self.assertFalse(self.tab.finalization_retry_button.isHidden())
         self.assertTrue(self.tab.finalization_retry_button.isEnabled())
         self.assertEqual(
@@ -985,36 +955,26 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.tab.finalization_retry_button.click()
         self.assertEqual(clicked, [True])
 
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {
-                "status": "running",
-                "message": "Re-running final insights…",
-            },
+        self._show_result({
+            "status": "running",
+            "message": "Re-running final insights…",
         })
-        self.app.processEvents()
         self.assertTrue(self.tab.finalization_retry_button.isHidden())
 
     def _completed_with_speaker_gate(self, offered, reason, steps=None):
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {
-                "status": "completed",
-                "message": "Final insights are ready.",
-                "steps": steps or [],
-                "content_summary": {
-                    "meeting_status": "ended",
-                    "has_audio": True,
-                    "has_transcript": True,
-                    "can_rerun_speakers": True,
-                    "speaker_rerun_offered": offered,
-                    "speaker_rerun_reason": reason,
-                },
+        self._show_result({
+            "status": "completed",
+            "message": "Final insights are ready.",
+            "steps": steps or [],
+            "content_summary": {
+                "meeting_status": "ended",
+                "has_audio": True,
+                "has_transcript": True,
+                "can_rerun_speakers": True,
+                "speaker_rerun_offered": offered,
+                "speaker_rerun_reason": reason,
             },
         })
-        self.app.processEvents()
 
     def test_on_device_labels_hide_speaker_rerun(self):
         """Nothing offers an upload the settings would refuse."""
@@ -1071,21 +1031,15 @@ class TestMeetingModeTabState(unittest.TestCase):
             {"id": "consolidation", "name": "Summary & Action Items", "status": "pending", "detail": "Queued"},
             {"id": "finalize", "name": "State Finalization", "status": "pending", "detail": "Queued"},
         ]
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {
-                "status": "running",
-                "message": "Cleaning transcript…",
-                "stage": "polish",
-                "current_step": 2,
-                "total_steps": 4,
-                "step_details": "Polishing block 1 of 2 (40 segments)...",
-                "steps": steps,
-            },
-            "dashboard_available": True,
-        })
-        self.app.processEvents()
+        self._show_result({
+            "status": "running",
+            "message": "Cleaning transcript…",
+            "stage": "polish",
+            "current_step": 2,
+            "total_steps": 4,
+            "step_details": "Polishing block 1 of 2 (40 segments)...",
+            "steps": steps,
+        }, dashboard_available=True)
 
         self.assertFalse(self.tab.finalization_card.isHidden())
         self.assertFalse(self.tab.finalization_progress.isHidden())
@@ -1106,13 +1060,7 @@ class TestMeetingModeTabState(unittest.TestCase):
             {"id": "consolidation", "name": "Summary & Action Items", "status": "running"},
             {"id": "finalize", "name": "State Finalization", "status": "pending"},
         ]
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {"status": "running", "steps": steps},
-            "dashboard_available": True,
-        })
-        self.app.processEvents()
+        self._show_result({"status": "running", "steps": steps}, dashboard_available=True)
 
         details = [
             label.text()
@@ -1128,29 +1076,23 @@ class TestMeetingModeTabState(unittest.TestCase):
             {"id": "consolidation", "name": "Summary & Action Items", "status": "completed", "detail": "Done"},
             {"id": "finalize", "name": "State Finalization", "status": "completed", "detail": "Done"},
         ]
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {
-                "status": "completed",
-                "message": "Final insights ready — 32 segments, 4 key points, 2 action items, 1 decisions.",
-                "stage": "complete",
-                "current_step": 3,
-                "total_steps": 3,
-                "step_details": "All finalization passes completed successfully.",
-                "steps": steps,
-                "summary_stats": {
-                    "duration_s": 150.0,
-                    "segments": 32,
-                    "words": 520,
-                    "key_points": 4,
-                    "action_items": 2,
-                    "decisions": 1,
-                },
+        self._show_result({
+            "status": "completed",
+            "message": "Final insights ready — 32 segments, 4 key points, 2 action items, 1 decisions.",
+            "stage": "complete",
+            "current_step": 3,
+            "total_steps": 3,
+            "step_details": "All finalization passes completed successfully.",
+            "steps": steps,
+            "summary_stats": {
+                "duration_s": 150.0,
+                "segments": 32,
+                "words": 520,
+                "key_points": 4,
+                "action_items": 2,
+                "decisions": 1,
             },
-            "dashboard_available": True,
-        })
-        self.app.processEvents()
+        }, dashboard_available=True)
 
         self.assertFalse(self.tab.finalization_card.isHidden())
         self.assertTrue(self.tab.finalization_progress.isHidden())
@@ -1188,17 +1130,11 @@ class TestMeetingModeTabState(unittest.TestCase):
                 "status": "completed",
             },
         ]
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {
-                "status": "completed",
-                "message": "Final insights ready — 12 segments.",
-                "steps": steps,
-            },
-            "dashboard_available": True,
-        })
-        self.app.processEvents()
+        self._show_result({
+            "status": "completed",
+            "message": "Final insights ready — 12 segments.",
+            "steps": steps,
+        }, dashboard_available=True)
 
         self.assertTrue(self.tab.finalization_step_badge.isHidden())
         self.assertEqual(
@@ -1213,16 +1149,11 @@ class TestMeetingModeTabState(unittest.TestCase):
         retry.click()
         self.assertEqual(clicked, ["redecode"])
 
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {
-                "status": "running",
-                "message": "Re-transcribing meeting…",
-                "steps": steps,
-            },
+        self._show_result({
+            "status": "running",
+            "message": "Re-transcribing meeting…",
+            "steps": steps,
         })
-        self.app.processEvents()
         self.assertTrue(self.tab.finalization_retry_button.isHidden())
         running_actions = []
         for index in range(self.tab.finalization_steps_layout.count()):
@@ -1242,15 +1173,10 @@ class TestMeetingModeTabState(unittest.TestCase):
         )
         self.tab.background_requested.connect(lambda: backgrounded.append(True))
         self.tab.cloud_checkbox.setChecked(True)
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {
-                "status": "failed",
-                "message": "Final insights were interrupted.",
-            },
+        self._show_result({
+            "status": "failed",
+            "message": "Final insights were interrupted.",
         })
-        self.app.processEvents()
 
         self.assertFalse(self.tab.start_button.isHidden())
         self.assertTrue(self.tab.start_button.isEnabled())
@@ -1274,15 +1200,10 @@ class TestMeetingModeTabState(unittest.TestCase):
         """A clean completed card keeps idle Start and offers Done."""
         deferred = []
         self.tab.defer_insights_requested.connect(lambda: deferred.append(True))
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {
-                "status": "completed",
-                "message": "Final insights are ready.",
-            },
+        self._show_result({
+            "status": "completed",
+            "message": "Final insights are ready.",
         })
-        self.app.processEvents()
         self.assertFalse(self.tab.start_button.isHidden())
         self.assertTrue(self.tab.slot_note.isHidden())
         self.assertTrue(self.tab.finalization_keep_later_button.isHidden())
@@ -1294,15 +1215,10 @@ class TestMeetingModeTabState(unittest.TestCase):
         """An AI-insights-off leftover card can be dismissed with Done."""
         deferred = []
         self.tab.defer_insights_requested.connect(lambda: deferred.append(True))
-        self.tab.set_meeting_state({
-            "active": False,
-            "status": "ended",
-            "finalization": {
-                "status": "disabled",
-                "message": "AI insights are off for this meeting.",
-            },
+        self._show_result({
+            "status": "disabled",
+            "message": "AI insights are off for this meeting.",
         })
-        self.app.processEvents()
         self.assertFalse(self.tab.start_button.isHidden())
         self.assertFalse(self.tab.finalization_done_button.isHidden())
         self.tab.finalization_done_button.click()

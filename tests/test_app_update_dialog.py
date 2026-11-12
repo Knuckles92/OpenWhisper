@@ -6,9 +6,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication, QCheckBox, QPushButton
-
-_QAPP = QApplication.instance() or QApplication([])
+from PyQt6.QtWidgets import QCheckBox, QPushButton
 
 from services.app_update import (
     ApplyMode,
@@ -69,13 +67,7 @@ def _result(
     )
 
 
-class _QtTestCase:
-    @classmethod
-    def setUpClass(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
-
-class TestAppUpdateDialog(_QtTestCase):
+class TestAppUpdateDialog:
     def _button(self, dialog, name):
         # Primary and danger buttons keep their class object name for the
         # theme and carry their identifier in a "buttonId" property.
@@ -299,7 +291,6 @@ def test_mac_update_explains_restart_rollback_and_manual_fallback():
 def test_title_names_a_beta_release():
     from dataclasses import replace
 
-    QApplication.instance() or QApplication([])
     stable = _result()
     beta = replace(stable, release=replace(stable.release, prerelease=True))
     assert AppUpdateDialog(stable)._title_text() == "OpenWhisper 2.2.0 is available"

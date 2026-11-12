@@ -108,10 +108,12 @@ def test_linux_terminals_get_one_private_script_with_every_argument_quoted(
 
 @pytest.mark.parametrize("style_terminal, prefix", [
     ("gnome-terminal", ["--"]), ("kitty", []), ("wezterm", ["start", "--"]),
-    ("konsole", ["-e"]), ("xfce4-terminal", ["-x"]),
+    ("konsole", ["-e"]), ("xfce4-terminal", ["-x"]), ("xterm", ["-e"]),
 ])
 def test_every_terminal_style_takes_just_the_script(monkeypatch, popen, tmp_path,
                                                     style_terminal, prefix):
+    # Through /bin/sh: a noexec /tmp (or $TMPDIR) can't execute the script itself,
+    # while a launcher such as gnome-terminal still exits 0, so "Opened" would show.
     started, _codes, _failing = popen
     monkeypatch.setenv("TERMINAL", style_terminal)
     monkeypatch.setattr(launch.shutil, "which", base._which({style_terminal}))

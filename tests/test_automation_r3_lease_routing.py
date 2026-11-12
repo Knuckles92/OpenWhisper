@@ -22,7 +22,6 @@ from tests import test_automation_hooks_filters as hooks
 from tests import test_automation_r2_program_words_pipeline as words
 from tests.test_automation_hooks_webhooks import Answer
 
-_qapp = words._qapp
 h = words.h
 pipe = words.pipe
 receiver = words.receiver

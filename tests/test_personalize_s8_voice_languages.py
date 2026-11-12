@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QAbstractButton, QApplication, QLabel
+from PyQt6.QtWidgets import QAbstractButton, QLabel
 
 from services.settings import SettingsKey, settings_manager
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
@@ -17,6 +17,7 @@ from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import VOICE_MODEL
 from ui_qt.widgets.local_engine_controls import DictationLanguagesField
+from tests.fakes.personalize import large_fonts
 
 
 @pytest.fixture
@@ -141,14 +142,9 @@ class TestField:
 @pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 460)])
 def test_chips_wrap_and_fit_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale
-    from ui_qt.utils.theme_manager import ThemeManager
-
-    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
-    app = QApplication.instance()
+    app = large_fonts(monkeypatch, ui_mode)
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog, field = make_dialog({
             SettingsKey.SELECTED_MODEL: "local_whisper",
             SettingsKey.DICTATION_LANGUAGES: ["en", "es", "fr", "de", "pt", "ja", "uk"],

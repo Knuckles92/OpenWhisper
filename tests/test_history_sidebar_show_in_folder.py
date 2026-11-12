@@ -5,8 +5,6 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
-
 from services.models import TranscriptionHistory
 from ui_qt.utils import file_reveal
 from ui_qt.widgets.history_sidebar import HistoryItemWidget
@@ -39,10 +37,6 @@ def _find(actions, text):
 
 class TestShowInFolderAction:
     """The action is always listed, but only live with a recording on disk."""
-
-    @classmethod
-    def setup_class(cls):
-        cls.app = QApplication.instance() or QApplication([])
 
     def test_action_is_enabled_when_the_recording_exists(self, tmp_path):
         audio = tmp_path / "rec.wav"

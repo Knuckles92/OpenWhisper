@@ -4,6 +4,8 @@ Hosts and clients talk over real UDP and TLS sockets on 127.0.0.1; the
 conftest keeps searches off the real network, so each test names where to
 look.
 """
+# Pytest resolves the imported fixtures by name in test parameters.
+# ruff: noqa: F811
 from __future__ import annotations
 
 import socket
@@ -26,24 +28,14 @@ from services.remote_asr.client import (
 )
 from services.remote_asr.host import DeviceRegistry, SpeechHost
 from services.remote_asr.tls import ensure_host_identity
-from tests.test_remote_engine import FakeEngine, ListStore, _wait_for
-
-
-@pytest.fixture(autouse=True)
-def no_real_tailscale(monkeypatch):
-    """Keep every test off this computer's real tailnet."""
-    monkeypatch.setattr(tailscale, "status", lambda timeout=4.0: tailscale.TailscaleStatus("not_installed"))
-    monkeypatch.setattr(tailscale, "whois", lambda address, timeout=4.0: None)
-
-
-@pytest.fixture
-def engine():
-    return FakeEngine()
-
-
-@pytest.fixture
-def store():
-    return ListStore()
+from tests.fakes.remote import (  # noqa: F401
+    FakeEngine,
+    ListStore,
+    _wait_for,
+    engine,
+    no_real_tailscale,
+    store,
+)
 
 
 @pytest.fixture

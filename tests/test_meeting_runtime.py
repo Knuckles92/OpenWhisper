@@ -52,11 +52,6 @@ class _Controller(QObject):
 
 
 @pytest.fixture
-def qapp(_session_qt_application):
-    return _session_qt_application
-
-
-@pytest.fixture
 def runtime(qapp, monkeypatch):
     runtime_settings = _RUNTIME_GLOBALS["settings_manager"]
     monkeypatch.setattr(runtime_settings, "save_setting", lambda *args, **kwargs: None)
@@ -568,8 +563,6 @@ def test_retry_waits_for_a_run_already_holding_the_meeting(runtime, monkeypatch)
 
 
 def test_retry_after_engine_teardown_uses_card_meeting(runtime, monkeypatch):
-    import time
-
     rt, controller = runtime
     controller.meeting_active = False
     rt._engine = None
@@ -595,18 +588,13 @@ def test_retry_after_engine_teardown_uses_card_meeting(runtime, monkeypatch):
 
     monkeypatch.setattr("meeting.refinalize.rerun_finalization", fake_rerun)
     rt.retry_finalization("polish")
-    for _ in range(50):
-        if not rt.is_finalizing:
-            break
-        time.sleep(0.02)
+    _wait_for_retry(rt)
 
     assert called == [("m_card", "polish")]
     fake_repo.list_meetings.assert_not_called()
 
 
 def test_retry_without_card_uses_list_meetings(runtime, monkeypatch):
-    import time
-
     rt, controller = runtime
     controller.meeting_active = False
     rt._engine = None
@@ -626,10 +614,7 @@ def test_retry_without_card_uses_list_meetings(runtime, monkeypatch):
 
     monkeypatch.setattr("meeting.refinalize.rerun_finalization", fake_rerun)
     rt.retry_insights()
-    for _ in range(50):
-        if not rt.is_finalizing:
-            break
-        time.sleep(0.02)
+    _wait_for_retry(rt)
 
     fake_repo.list_meetings.assert_called_with()
     assert called == ["m_latest"]
@@ -830,8 +815,6 @@ def test_refresh_past_meetings_from_worker_uses_signal(runtime):
 
 def test_retry_finalization_from_worker_uses_signal(runtime, monkeypatch):
     """Retry must not rebuild Qt widgets on the finalization worker."""
-    import time
-
     rt, controller = runtime
     controller.meeting_active = False
     rt._engine = None
@@ -856,10 +839,7 @@ def test_retry_finalization_from_worker_uses_signal(runtime, monkeypatch):
 
     monkeypatch.setattr("meeting.refinalize.rerun_finalization", fake_rerun)
     rt.retry_finalization("polish")
-    for _ in range(50):
-        if not rt.is_finalizing:
-            break
-        time.sleep(0.02)
+    _wait_for_retry(rt)
 
     assert rt.is_finalizing is False
     assert refreshed == []
@@ -1169,37 +1149,23 @@ def test_demo_start_without_consent_uses_start_demo_kind(runtime, monkeypatch):
     assert rt.is_claimed is True
 
 
-def test_declined_consent_still_starts_transcript_only(runtime, monkeypatch):
+@pytest.mark.parametrize("kind,starting,granted,demo", [
+    ("start", True, False, False),
+    ("start", True, True, False),
+    ("start_demo", False, True, True),
+], ids=["declined-starts-transcript-only", "granted", "granted-demo"])
+def test_consent_result_launches_with_the_answered_cloud_choice(
+    runtime, monkeypatch, kind, starting, granted, demo,
+):
     rt, controller = runtime
     launched = _record_launch(rt, monkeypatch)
-    rt._starting = True
-    rt._consent_pending_kind = "start"
+    rt._starting = starting
+    rt._consent_pending_kind = kind
 
-    rt.on_consent_result(False)
+    rt.on_consent_result(granted)
 
-    assert launched == [{"cloud": False, "demo": False, "system_audio_policy": "auto"}]
+    assert launched == [{"cloud": granted, "demo": demo, "system_audio_policy": "auto"}]
     assert rt._consent_pending_kind is None
-
-
-def test_granted_consent_starts_with_cloud(runtime, monkeypatch):
-    rt, controller = runtime
-    launched = _record_launch(rt, monkeypatch)
-    rt._starting = True
-    rt._consent_pending_kind = "start"
-
-    rt.on_consent_result(True)
-
-    assert launched == [{"cloud": True, "demo": False, "system_audio_policy": "auto"}]
-
-
-def test_granted_demo_consent_starts_demo_with_cloud(runtime, monkeypatch):
-    rt, controller = runtime
-    launched = _record_launch(rt, monkeypatch)
-    rt._consent_pending_kind = "start_demo"
-
-    rt.on_consent_result(True)
-
-    assert launched == [{"cloud": True, "demo": True, "system_audio_policy": "auto"}]
 
 
 def test_start_without_cloud_skips_consent(runtime, monkeypatch):

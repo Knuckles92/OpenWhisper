@@ -1,11 +1,9 @@
 """Settings → Recording: the preferred microphone, its backups, and Home's mirror."""
 import gc
 import os
-import tempfile
 import threading
 import time
 import weakref
-from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,13 +15,12 @@ from PyQt6.QtWidgets import QAbstractButton, QApplication, QComboBox, QLabel, QP
 
 from services import audio_devices
 from services.audio_devices import InputDevice
-from services.settings import SettingsKey, SettingsManager
+from services.settings import SettingsKey
 from ui_qt.dialogs import settings_cleanup_rules
 from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs import settings_downloads as downloads_module
-from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs.settings_destinations import RECORDING
 from ui_qt.dialogs.settings_microphones import SYSTEM_DEFAULT, entry_token, rail_value
+from tests.fakes.personalize import assert_wrapped_labels_fit, large_fonts, settings_dialogs
 
 MME, DSOUND = "MME", "Windows DirectSound"
 USB = {"name": "Microphone (2- USB Audio Device", "hostapi": MME}
@@ -40,11 +37,6 @@ DEVICES = [
 ]
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 def _pump_until(predicate, timeout=2.0):
     deadline = time.monotonic() + timeout
     while not predicate() and time.monotonic() < deadline:
@@ -55,34 +47,19 @@ def _pump_until(predicate, timeout=2.0):
 
 @pytest.fixture
 def make_dialog(monkeypatch):
-    stacks = []
-    temp = tempfile.TemporaryDirectory()
     devices = list(DEVICES)
     monkeypatch.setattr(settings_dialog_module.AudioRecorder, "get_input_devices", staticmethod(lambda: list(devices)))
+    with settings_dialogs(mocks=("on_audio_device_changed",), get_loaded_model=lambda: None) as new:
+        def build(values=None, *, wait=True):
+            dialog, store = new(values)
+            new.dialogs.clear()  # one test checks a closed dialog is freed
+            dialog.select_destination(RECORDING)
+            if wait:
+                _pump_until(lambda: dialog._microphones is not None and dialog._microphones.devices is not None)
+            return dialog, store
 
-    def build(values=None, *, wait=True):
-        store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({**(values or {})})
-        stack = ExitStack()
-        for module in (settings_dialog_module, models_module, downloads_module):
-            stack.enter_context(patch.object(module, "settings_manager", store))
-        stack.enter_context(patch.object(settings_dialog_module.history_manager, "set_retention"))
-        for module in (models_module, downloads_module):
-            stack.enter_context(patch.object(module, "scan_cached_models", return_value={}))
-        stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
-        stacks.append(stack)
-        dialog = settings_dialog_module.SettingsDialog(get_loaded_model=lambda: None, background_cache_scan=False)
-        dialog.on_audio_device_changed = MagicMock()
-        dialog.select_destination(RECORDING)
-        if wait:
-            _pump_until(lambda: dialog._microphones is not None and dialog._microphones.devices is not None)
-        return dialog, store
-
-    build.devices = devices
-    yield build
-    for stack in reversed(stacks):
-        stack.close()
-    temp.cleanup()
+        build.devices = devices
+        yield build
 
 
 def _rows(dialog):
@@ -329,14 +306,9 @@ def test_rail_value_reads_short_names():
 @pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
 def test_recording_page_fits_narrow_windows_and_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale
-    from ui_qt.utils.theme_manager import ThemeManager
-
-    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
-    app = QApplication.instance()
+    app = large_fonts(monkeypatch, ui_mode)
     dialog = None
     try:
-        apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
         dialog, _store = make_dialog({SettingsKey.AUDIO_INPUT_PRIORITY: [USB, LAPEL, SNOWBALL]})
         dialog.show()
         dialog._fit_to_screen()
@@ -355,9 +327,7 @@ def test_recording_page_fits_narrow_windows_and_large_fonts(make_dialog, monkeyp
         for row in _rows(dialog):
             for label in row.findChildren(QLabel):
                 assert label.width() > 0 and label.height() >= label.sizeHint().height() - 1
-        for label in page.findChildren(QLabel):
-            if label.isVisible() and label.wordWrap():
-                assert label.height() >= label.heightForWidth(label.width())
+        assert_wrapped_labels_fit(page)
     finally:
         if dialog is not None:
             dialog.close()

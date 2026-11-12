@@ -22,11 +22,6 @@ STARTED = datetime(2026, 10, 20, 14, 32, 5)
 LETTER = QPageSize(QPageSize.PageSizeId.Letter)
 
 
-@pytest.fixture(autouse=True)
-def qt_app(_session_qt_application):
-    return _session_qt_application
-
-
 def _png(path: Path, width: int = 400, height: int = 240) -> Path:
     image = QImage(width, height, QImage.Format.Format_RGB32)
     image.fill(QColor("#3060c0"))

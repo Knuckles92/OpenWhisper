@@ -396,6 +396,12 @@ def make_engine(repo, tmp_path, fakes):
             pass
         engine._stop_heartbeat()
 
+def end_and_wait(engine):
+    """End the meeting, wait for the end worker, and return the finalization."""
+    engine.end()
+    engine._end_thread.join(timeout=10.0)
+    return engine.store.with_state(lambda s: s.finalization.to_dict())
+
 def events_of(engine, kind):
     """All payloads emitted by ``engine`` for one listener event kind."""
     return [payload for k, payload in engine.events if k == kind]
@@ -1225,8 +1231,7 @@ class TestEndLifecycle:
 
         engine._capture.flush = boom
 
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
         assert not engine._end_thread.is_alive()
 
         errors = events_of(engine, "error")
@@ -1248,8 +1253,7 @@ class TestEndLifecycle:
 
         engine._finalize_highlights = boom
 
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
 
         assert events_of(engine, "error")[-1]["code"] == "end_failed"
         assert repo.get_meeting(meeting_id)["status"] == "ended"
@@ -1287,8 +1291,7 @@ class TestEndLifecycle:
         engine.start()
         meeting_id = engine.meeting_id
 
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
 
         assert events_of(engine, "ended")[-1]["canceled"] is False
         assert repo.get_meeting(meeting_id)["status"] == "ended"
@@ -1307,8 +1310,7 @@ class TestEndLifecycle:
         engine = make_engine(cloud_enabled=True)
         engine.start()
 
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
 
         kinds = [kind for kind, _payload in engine.events]
         assert "asr_released" in kinds, "the app never learns the model is free"
@@ -1367,23 +1369,12 @@ class TestEndLifecycle:
         assert fin["status"] == "completed"
         assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
 
-    def test_end_disabled_cloud_finalization(self, make_engine, repo):
-        engine = make_engine(cloud_enabled=False)
-        engine.start()
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
-        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
-        assert fin["status"] == "disabled"
-        assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
-
     def test_end_unhealthy_intelligence_finalization(
             self, make_engine, repo, fakes):
         engine = make_engine(cloud_enabled=True)
         engine.start()
         fakes.cores[0].healthy = False
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
-        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        fin = end_and_wait(engine)
         assert fin["status"] == "unavailable"
         assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
 
@@ -1396,8 +1387,7 @@ class TestEndLifecycle:
             return 2
 
         engine.repository.count_unfinished_chunks = unfinished
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
         assert fakes.schedulers[0].consolidations == 0
         fin = engine.store.with_state(lambda s: s.finalization.to_dict())
         assert fin["status"] == "unavailable"
@@ -1410,8 +1400,7 @@ class TestEndLifecycle:
         engine.start()
         engine.repository.count_unfinished_chunks = lambda _meeting_id: 2
         monkeypatch.setattr(engine, "_run_offline_final_pass", lambda **kwargs: True)
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
         assert fakes.schedulers[0].consolidations == 0
         fin = engine.store.with_state(lambda s: s.finalization.to_dict())
         assert fin["status"] == "unavailable"
@@ -1433,9 +1422,7 @@ class TestEndLifecycle:
             )
 
         scheduler.run_consolidation = boom
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
-        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        fin = end_and_wait(engine)
         assert fin["status"] == "failed"
         assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
 
@@ -1453,9 +1440,7 @@ class TestEndLifecycle:
             )
 
         scheduler.run_final_polish = boom
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
-        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        fin = end_and_wait(engine)
         polish = next(step for step in fin["steps"] if step["id"] == "polish")
         assert polish["status"] == "failed"
         assert fin["status"] == "failed"
@@ -1506,8 +1491,7 @@ class TestEndLifecycle:
                 channel="mic", start_s=0.0, end_s=1.2, text="clean",
             )
         ]
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
         ids = {row["id"] for row in repo.get_segments(meeting_id)}
         assert "sg_draft" in ids
         assert "sg_clean" not in ids
@@ -1534,8 +1518,7 @@ class TestEndLifecycle:
                 channel="mic", start_s=0.0, end_s=1.2, text="clean",
             )
         ]
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
         ids = {row["id"] for row in repo.get_segments(meeting_id)}
         assert "sg_clean" in ids
         assert "sg_draft" not in ids
@@ -1573,8 +1556,7 @@ class TestEndLifecycle:
             ),
         ]
 
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
 
         rows = {row["id"]: row for row in repo.get_segments(meeting_id)}
         assert rows["sg_mic"]["speaker_participant_id"] == engine._me_participant_id
@@ -1615,8 +1597,7 @@ class TestEndLifecycle:
                 channel="mic", start_s=0.0, end_s=2.0, text="final",
             )
         ]
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
         assert asr.offline_passes == 0
         assert fakes.schedulers[0].polishes == 1
         assert fakes.schedulers[0].consolidations == 1
@@ -1638,8 +1619,7 @@ class TestEndLifecycle:
                 channel="mic", start_s=0.0, end_s=2.0, text="final",
             )
         ]
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
         assert asr.offline_passes == 1
         assert fakes.schedulers[0].polishes == 1
         assert fakes.schedulers[0].consolidations == 1
@@ -1651,19 +1631,16 @@ class TestEndLifecycle:
     def test_end_skips_polish_when_disabled(self, make_engine, fakes):
         engine = make_engine(cloud_enabled=True, end_polish=False, end_report=True)
         engine.start()
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
         assert fakes.schedulers[0].polishes == 0
         assert fakes.schedulers[0].consolidations == 1
 
     def test_end_skips_report_when_disabled(self, make_engine, fakes):
         engine = make_engine(cloud_enabled=True, end_polish=True, end_report=False)
         engine.start()
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        fin = end_and_wait(engine)
         assert fakes.schedulers[0].polishes == 1
         assert fakes.schedulers[0].consolidations == 0
-        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
         assert fin["status"] == "completed"
         assert "cleanup" in (fin.get("message") or "").lower()
 
@@ -1672,11 +1649,9 @@ class TestEndLifecycle:
             cloud_enabled=True, end_polish=False, end_report=False,
         )
         engine.start()
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        fin = end_and_wait(engine)
         assert fakes.schedulers[0].polishes == 0
         assert fakes.schedulers[0].consolidations == 0
-        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
         assert fin["status"] == "completed"
 
     def test_end_racing_start_waits_for_the_pipeline(self, make_engine, fakes):
@@ -2170,8 +2145,7 @@ class TestDemoMeeting:
         engine.start()
         meeting_id = engine.meeting_id
 
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
 
         assert events_of(engine, "ended")[-1]["status"] == "ended"
         assert repo.get_meeting(meeting_id)["status"] == "ended"
@@ -2182,15 +2156,14 @@ class TestDemoMeeting:
         ) == "completed"
 
 class TestCloudSpeakerStep:
-    def test_local_backend_omits_speaker_step(self, make_engine):
+    def test_local_backend_omits_speaker_step(self, make_engine, repo):
         engine = make_engine(cloud_enabled=False)
         engine.start()
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
-        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        fin = end_and_wait(engine)
         ids = [step["id"] for step in fin.get("steps") or []]
         assert "speaker_id" not in ids
         assert fin["status"] == "disabled"
+        assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
 
     def test_off_backend_omits_speaker_step_and_diarizer(
             self, make_engine, fakes):
@@ -2205,9 +2178,7 @@ class TestCloudSpeakerStep:
         assert engine.store.with_state(
             lambda s: s.diarization_available
         ) is False
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
-        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        fin = end_and_wait(engine)
         ids = [step["id"] for step in fin.get("steps") or []]
         assert "speaker_id" not in ids
         assert fin["status"] == "disabled"
@@ -2219,9 +2190,7 @@ class TestCloudSpeakerStep:
             speaker_id_audio_consent=False,
         )
         engine.start()
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
-        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        fin = end_and_wait(engine)
         steps = {step["id"]: step for step in fin.get("steps") or []}
         assert "speaker_id" in steps
         assert steps["speaker_id"]["status"] == "completed"
@@ -2237,9 +2206,7 @@ class TestCloudSpeakerStep:
             "ok": True, "skipped": False, "applied": 3, "error": None,
         }
         engine.start()
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
-        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        fin = end_and_wait(engine)
         steps = {step["id"]: step for step in fin.get("steps") or []}
         assert steps["speaker_id"]["status"] == "completed"
         assert fin["status"] == "completed"
@@ -2256,9 +2223,7 @@ class TestCloudSpeakerStep:
 
         engine._run_cloud_speaker_pass = boom
         engine.start()
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
-        fin = engine.store.with_state(lambda s: s.finalization.to_dict())
+        fin = end_and_wait(engine)
         steps = {step["id"]: step for step in fin.get("steps") or []}
         assert steps["speaker_id"]["status"] == "failed"
         assert repo.get_meeting(engine.meeting_id)["status"] == "ended"
@@ -2281,8 +2246,7 @@ class TestCloudSpeakerStep:
         )
         engine.start()
         result = engine._run_cloud_speaker_pass(transcribe_fn=lambda *a, **k: [])
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
         assert result["ok"] is False
         assert result["skipped"] is True
         assert result["error"] == message
@@ -2305,8 +2269,7 @@ class TestCloudSpeakerStep:
             speaker_id_audio_consent=True,
         )
         engine.start()
-        engine.end()
-        engine._end_thread.join(timeout=10.0)
+        end_and_wait(engine)
 
         assert [call["api_key"] for call in uploads] == ["sk-test"]
         fin = engine.store.with_state(lambda s: s.finalization.to_dict())

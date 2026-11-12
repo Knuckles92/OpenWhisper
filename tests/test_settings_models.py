@@ -124,11 +124,6 @@ def _isolated_settings(isolated):
 
 
 class _DialogTestCase:
-    @pytest.fixture(scope="class", autouse=True)
-    @classmethod
-    def _qapp(cls):
-        cls.app = QApplication.instance() or QApplication([])
-
     @pytest.fixture(autouse=True)
     def _patch_stack(self):
         """Hold the fake settings store for the whole test, not just __init__.

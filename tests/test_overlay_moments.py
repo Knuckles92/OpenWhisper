@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 import pytest
 from PyQt6.QtCore import QPointF
-from PyQt6.QtWidgets import QApplication
 
 from ui_qt.overlays import moments, waveform_overlay
 from ui_qt.overlays.waveform_overlay import WaveformOverlay
@@ -18,11 +17,6 @@ from ui_qt.utils.palette import (
     current_palette,
     set_current_palette,
 )
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture

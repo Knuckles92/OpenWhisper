@@ -22,16 +22,12 @@ from services.runtime.command import CommandRuntime
 from services.settings import RecordingTriggerMode, SettingsKey
 from services.transcript_cleanup import CleanupInfo
 from tests.fakes.settings import InMemorySettings
+from tests.test_personalize_foundation_runtime import Signal
 from ui_qt.overlay_state import OverlayState
 
 NOTEPAD = AppIdentity("notepad.exe", "Notepad", pid=4, window="0x4")
 TERMINAL = AppIdentity("WindowsTerminal.exe", "Windows Terminal", pid=5, window="0x5")
 VS_CODE = AppIdentity("Code.exe", "Visual Studio Code", pid=6, window="0x6")
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 def _settle(predicate, timeout=2.0):
@@ -42,14 +38,6 @@ def _settle(predicate, timeout=2.0):
             raise AssertionError("timed out waiting for the command runtime")
         QApplication.processEvents()
         time.sleep(0.002)
-
-
-class Signal:
-    def __init__(self):
-        self.calls = []
-
-    def emit(self, *args):
-        self.calls.append(args)
 
 
 class FakeService(ContextCaptureService):
@@ -132,6 +120,31 @@ class FakeUI:
     def capture_selection(self, callback, *, timeout_ms=None):
         self.captures.append(threading.current_thread() is threading.main_thread())
         callback(self.clipboard_selection)
+
+
+def bare_commands(monkeypatch, *, keys_released=True):
+    """A CommandRuntime on FakeRuntime with a provider ready; callers set the focus service."""
+    settings = InMemorySettings({
+        SettingsKey.RECORDING_TRIGGER_MODE: RecordingTriggerMode.PUSH_HOLD,
+    })
+    monkeypatch.setattr(command, "settings_manager", settings)
+    monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: True)
+    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: True)
+    monkeypatch.setattr(
+        synthetic_keys, "wait_for_modifiers_released", lambda timeout_s=0.8: keys_released)
+    recorder = SimpleNamespace(is_recording=False)
+    controller = SimpleNamespace(
+        recorder=recorder,
+        status_update=Signal(),
+        overlay_state_update=Signal(),
+        stop_recording=lambda: setattr(recorder, "is_recording", False),
+        cancel=lambda: setattr(recorder, "is_recording", False),
+        ui_controller=FakeUI(),
+    )
+    runtime = FakeRuntime(controller, settings)
+    controller.transcription_runtime = runtime
+    return SimpleNamespace(controller=controller, runtime=runtime, ui=controller.ui_controller,
+                           commands=CommandRuntime(controller), settings=settings)
 
 
 @pytest.fixture

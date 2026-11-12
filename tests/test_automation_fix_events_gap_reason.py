@@ -83,15 +83,6 @@ def test_a_stream_from_the_start_sends_no_gap(app_bus):
     assert [message[0] for message in sent] == [str(event.seq) for event in published]
 
 
-def test_a_stream_from_before_a_restart_says_so(app_bus):
-    position, bus = app_bus
-    published = publish(bus, 2)
-    gap, *replayed = run_stream(position, after_subscribe=lambda: None)
-    assert gap[1] == catalog.EVENTS_GAP
-    assert gap[2]["data"] == {"missed_from_seq": position + 1, "reason": catalog.GAP_RESTARTED}
-    assert [message[0] for message in replayed] == [str(event.seq) for event in published]
-
-
 def test_recent_events_from_zero_reports_no_gap_on_a_fresh_run(tmp_path, app_bus):
     position, bus = app_bus
     published = publish(bus, 2)

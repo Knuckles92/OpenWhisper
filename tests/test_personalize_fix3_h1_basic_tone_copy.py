@@ -4,7 +4,7 @@ from services.app_styles import NEW_INSTALL_TONES, AppCategory, Tone
 from services.settings import SettingsKey
 from ui_qt.dialogs import settings_styles
 from tests.test_personalize_s1_settings_page import (  # noqa: F401  (fixtures)
-    CLEANUP_ON, _qapp, _restore_metadata, _windows_text, make_dialog,
+    CLEANUP_ON, _restore_metadata, _windows_text, make_dialog,
 )
 
 BASIC = dict(CLEANUP_ON)

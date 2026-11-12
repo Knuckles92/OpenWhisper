@@ -14,11 +14,9 @@ import pytest
 
 from services.actions import launch
 from tests import test_automation_agents_launch as base
-from tests import test_automation_fix_actions_launch as round1
 from tests.test_automation_hooks_programs import wait_until
 
 fresh_handler_cache = base.fresh_handler_cache
-popen = round1.popen
 FakeAssoc = base.FakeAssoc
 NO_ASSOCIATION = base.NO_ASSOCIATION
 COMMAND, EXECUTABLE, DELEGATE_EXECUTE = 1, 2, 18  # ASSOCSTR_*
@@ -104,25 +102,6 @@ def test_open_uri_on_windows_opens_the_link_as_it_is(monkeypatch):
 
 
 # -- N5: a Linux terminal runs the one-shot script through /bin/sh ------------------------
-
-
-@pytest.mark.parametrize("terminal, prefix", [
-    ("xterm", ["-e"]), ("gnome-terminal", ["--"]), ("kitty", []),
-])
-def test_a_linux_terminal_runs_the_script_through_sh(monkeypatch, popen, tmp_path,
-                                                      terminal, prefix):
-    # A noexec /tmp (or $TMPDIR) can't execute the script itself, while a
-    # launcher such as gnome-terminal still exits 0, so "Opened" would show.
-    started, _codes, _failing = popen
-    monkeypatch.setenv("TERMINAL", terminal)
-    monkeypatch.setattr(launch.shutil, "which", base._which({terminal}))
-
-    launch._linux_terminal(["/bin/agent", "hi"], str(tmp_path), None)
-
-    (proc,) = started
-    script = proc.args[-1]
-    os.remove(script)
-    assert proc.args == [f"/usr/bin/{terminal}", *prefix, "/bin/sh", script]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX terminals")

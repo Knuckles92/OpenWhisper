@@ -8,19 +8,14 @@ synchronous identity), a rewrite was pasted into whatever took focus.
 
 import time
 from concurrent.futures import Future
-from types import SimpleNamespace
-from unittest.mock import Mock
 
 import pytest
 from PyQt6.QtWidgets import QApplication
 
-from services import dictation_pipeline, focus_context, synthetic_keys, text_rewrite
+from services import dictation_pipeline, focus_context
 from services.dictation_pipeline import DictationJob, JobMode, PasteTarget
 from services.focus_context import FocusSnapshot, NullCaptureService, TextContext
 from services.focus_context._capture import CaptureService
-from services.runtime import command, transcription
-from services.runtime.command import CommandRuntime
-from services.runtime.transcription import TranscriptionRuntime
 from services.settings import SettingsKey
 from tests.fakes.settings import InMemorySettings
 from tests.test_personalize_s1_service import FakePlatform
@@ -28,10 +23,8 @@ from tests.test_personalize_s3_command_delivery import (
     BROWSER,
     NOTEPAD,
     FakeCleaner,
-    FakeHistory,
     FakeService,
-    FakeUI,
-    Signal,
+    command_harness,
 )
 
 CHANGED_STATUS = "Rewrite copied — the app changed; paste it where you want"
@@ -40,55 +33,15 @@ UNKNOWN_STATUS = "Rewrite copied — couldn't confirm the app; paste it where yo
 
 @pytest.fixture
 def h(monkeypatch, _session_qt_application):
-    ui = FakeUI()
-    history = FakeHistory()
-    settings = InMemorySettings({
+    h = command_harness(monkeypatch, InMemorySettings({
         SettingsKey.AUTO_PASTE: False,
         SettingsKey.COPY_CLIPBOARD: True,
         SettingsKey.RESTORE_CLIPBOARD: True,
         SettingsKey.APP_CONTEXT_ENABLED: False,
-    })
-    paste = Mock()
-    for module in (transcription, command):
-        monkeypatch.setattr(module, "settings_manager", settings)
-    monkeypatch.setattr(transcription, "history_manager", history)
-    monkeypatch.setattr(transcription, "send_paste", paste)
-    monkeypatch.setattr(transcription, "is_accessibility_trusted", lambda: True)
-    monkeypatch.setattr(text_rewrite, "provider_ready", lambda _settings: True)
-    monkeypatch.setattr(text_rewrite, "provider_readiness", lambda _settings: True)
-    monkeypatch.setattr(synthetic_keys, "wait_for_modifiers_released", lambda timeout_s=0.8: True)
-    submitted = []
-    controller = SimpleNamespace(
-        ui_controller=ui,
-        recorder=SimpleNamespace(is_recording=False),
-        streaming_runtime=Mock(),
-        is_meeting_active=lambda: False,
-        overlay_state_update=Signal(),
-        status_update=Signal(),
-        transcription_completed=Signal(),
-        transcription_failed=Signal(),
-        executor=SimpleNamespace(submit=lambda fn, *args: submitted.append((fn, args))),
-        persistence_executor=SimpleNamespace(submit=lambda fn, *args: fn(*args)),
-        _pending_audio_path=None,
-        _pending_audio_duration=None,
-        _pending_file_size=None,
-        _pending_source_name=None,
-        _pending_streaming_text="",
-        _transcription_elapsed=None,
-        _transcription_start_time=None,
-        _remote_timing=None,
-    )
-    runtime = TranscriptionRuntime(controller)
-    controller.transcription_runtime = runtime
-    controller.history_persisted = Signal(runtime.on_history_persisted)
-    controller.transcription_completed.handler = runtime.on_transcription_complete
-    controller.transcription_failed.handler = runtime.on_transcription_error
-    runtime._transcript_cleanup = FakeCleaner("CONFIDENTIAL rewrite")
-    monkeypatch.setattr(runtime, "_model_info_for_history", lambda: "parakeet")
-    controller.command_runtime = CommandRuntime(controller)
-    yield SimpleNamespace(ui=ui, history=history, settings=settings, paste=paste,
-                          submitted=submitted, controller=controller, runtime=runtime)
-    controller.command_runtime.cleanup()
+    }))
+    h.runtime._transcript_cleanup = FakeCleaner("CONFIDENTIAL rewrite")
+    yield h
+    h.controller.command_runtime.cleanup()
 
 
 def _run_transform(h):

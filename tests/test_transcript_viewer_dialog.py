@@ -1,10 +1,8 @@
 import os
 
-import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtWidgets import QApplication
 
 from services.batch_upload import (
     BatchItem,
@@ -15,11 +13,6 @@ from services.batch_upload import (
 )
 from ui_qt.dialogs.transcript_viewer_dialog import TranscriptViewerDialog, _ReaderView
 from ui_qt.utils.markdown_render import READER_STYLE
-
-
-@pytest.fixture(scope="module", autouse=True)
-def qapp():
-    yield QApplication.instance() or QApplication([])
 
 
 def _first_block_heading_level(dialog):

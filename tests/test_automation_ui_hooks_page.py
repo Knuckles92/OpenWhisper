@@ -42,11 +42,6 @@ FILTER = {"id": "filt01", "name": "Names", "kind": "http", "stage": "after_clean
           "url": "http://127.0.0.1:5005/fix", "timeout_ms": 1500, "enabled": False}
 
 
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
-
-
 @pytest.fixture(autouse=True)
 def _restore_metadata():
     # Registering a page module writes its routes into these shared maps.
@@ -145,6 +140,22 @@ def close(widget):
     widget.close()
     widget.deleteLater()
     pump()
+
+
+@pytest.fixture
+def open_section(store, monkeypatch):
+    """``section_of`` over ``store``; closes the section when the test ends,
+    before the test's patches are undone."""
+    opened = []
+
+    def build(kind):
+        section, changes = section_of(kind, store)
+        opened.append(section)
+        return section, changes
+
+    yield build
+    for section in opened:
+        close(section)
 
 
 # ---- the page module ---------------------------------------------------------
@@ -261,62 +272,57 @@ class TestPageModule:
 # ---- webhooks ----------------------------------------------------------------
 
 class TestWebhooks:
-    def test_add_edit_and_delete_persist_and_forget_the_secret(self, store, answers, monkeypatch):
+    def test_add_edit_and_delete_persist_and_forget_the_secret(
+            self, store, open_section, answers, monkeypatch):
         queue, _asked = answers
         forgotten = []
         monkeypatch.setattr(webhooks, "delete_secret", forgotten.append)
-        section, changes = section_of("webhook", store)
-        try:
-            assert not section.empty_state.isHidden()
-            assert section.count_label.isHidden()
-            section.add_button.click()
-            editor = section.editor
-            assert not editor.isHidden() and section.empty_state.isHidden()
-            assert editor.delete_button.isHidden()
-            assert editor.extras.isHidden()
-            assert editor.events.events() == (catalog.TRANSCRIPTION_COMPLETED,)
-            editor.name_edit.setText("  Home  ")
-            editor.url_edit.setText("https://example.com/in")
-            editor.events.chips[catalog.HISTORY_SAVED].click()
-            editor.save_button.click()
-            [hook] = models.load_webhooks(store.load_all_settings())
-            assert (hook.name, hook.url, hook.enabled) == ("Home", "https://example.com/in", True)
-            assert hook.events == (catalog.TRANSCRIPTION_COMPLETED, catalog.HISTORY_SAVED)
-            assert changes == ["webhook"]
-            assert editor.message.text() == "Saved."
-            assert not editor.extras.isHidden() and not editor.delete_button.isHidden()
-            assert section.count_label.text() == f"1 / {models.MAX_WEBHOOKS}"
-            row = section._rows[hook.id]
-            assert row.property("selected") is True
-            assert "example.com" in row.detail.text()
+        section, changes = open_section("webhook")
+        assert not section.empty_state.isHidden()
+        assert section.count_label.isHidden()
+        section.add_button.click()
+        editor = section.editor
+        assert not editor.isHidden() and section.empty_state.isHidden()
+        assert editor.delete_button.isHidden()
+        assert editor.extras.isHidden()
+        assert editor.events.events() == (catalog.TRANSCRIPTION_COMPLETED,)
+        editor.name_edit.setText("  Home  ")
+        editor.url_edit.setText("https://example.com/in")
+        editor.events.chips[catalog.HISTORY_SAVED].click()
+        editor.save_button.click()
+        [hook] = models.load_webhooks(store.load_all_settings())
+        assert (hook.name, hook.url, hook.enabled) == ("Home", "https://example.com/in", True)
+        assert hook.events == (catalog.TRANSCRIPTION_COMPLETED, catalog.HISTORY_SAVED)
+        assert changes == ["webhook"]
+        assert editor.message.text() == "Saved."
+        assert not editor.extras.isHidden() and not editor.delete_button.isHidden()
+        assert section.count_label.text() == f"1 / {models.MAX_WEBHOOKS}"
+        row = section._rows[hook.id]
+        assert row.property("selected") is True
+        assert "example.com" in row.detail.text()
 
-            editor.url_edit.setText("https://example.org/new")
-            assert section.has_unsaved_changes()
-            section.refresh()  # a draft in progress survives a refresh
-            assert editor.url_edit.text() == "https://example.org/new"
-            assert section.save()
-            assert models.find_webhook(store.load_all_settings(), hook.id).url == "https://example.org/new"
-            assert len(models.load_webhooks(store.load_all_settings())) == 1
+        editor.url_edit.setText("https://example.org/new")
+        assert section.has_unsaved_changes()
+        section.refresh()  # a draft in progress survives a refresh
+        assert editor.url_edit.text() == "https://example.org/new"
+        assert section.save()
+        assert models.find_webhook(store.load_all_settings(), hook.id).url == "https://example.org/new"
+        assert len(models.load_webhooks(store.load_all_settings())) == 1
 
-            queue.append(QMessageBox.StandardButton.Yes)
-            editor.delete_button.click()
-            assert models.load_webhooks(store.load_all_settings()) == []
-            wait_for(lambda: forgotten == [hook.id])
-            assert editor.isHidden() and not section.empty_state.isHidden()
-            assert changes == ["webhook", "webhook", "webhook"]
-        finally:
-            close(section)
+        queue.append(QMessageBox.StandardButton.Yes)
+        editor.delete_button.click()
+        assert models.load_webhooks(store.load_all_settings()) == []
+        wait_for(lambda: forgotten == [hook.id])
+        assert editor.isHidden() and not section.empty_state.isHidden()
+        assert changes == ["webhook", "webhook", "webhook"]
 
-    def test_delete_can_be_called_off(self, store, answers):
+    def test_delete_can_be_called_off(self, store, open_section, answers):
         store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_WEBHOOKS, [HOOK]))
-        section, changes = section_of("webhook", store)
-        try:
-            section.open_editor("hook01")
-            section.editor.delete_button.click()  # answered Cancel
-            assert len(models.load_webhooks(store.load_all_settings())) == 1
-            assert changes == []
-        finally:
-            close(section)
+        section, changes = open_section("webhook")
+        section.open_editor("hook01")
+        section.editor.delete_button.click()  # answered Cancel
+        assert len(models.load_webhooks(store.load_all_settings())) == 1
+        assert changes == []
 
     @pytest.mark.parametrize(
         "name, url, events, message",
@@ -327,36 +333,30 @@ class TestWebhooks:
             ("Home", "https://example.com", False, "Choose at least one event."),
         ],
     )
-    def test_validation_messages_show_inline(self, store, name, url, events, message):
-        section, changes = section_of("webhook", store)
-        try:
-            section.open_editor("")
-            editor = section.editor
-            editor.name_edit.setText(name)
-            editor.url_edit.setText(url)
-            if not events:
-                editor.events.set_events(())
-            assert not section.save()
-            assert editor.message.text() == message
-            assert editor.message.property("tone") == "error"
-            assert models.load_webhooks(store.load_all_settings()) == []
-            assert changes == []
-        finally:
-            close(section)
+    def test_validation_messages_show_inline(self, store, open_section, name, url, events, message):
+        section, changes = open_section("webhook")
+        section.open_editor("")
+        editor = section.editor
+        editor.name_edit.setText(name)
+        editor.url_edit.setText(url)
+        if not events:
+            editor.events.set_events(())
+        assert not section.save()
+        assert editor.message.text() == message
+        assert editor.message.property("tone") == "error"
+        assert models.load_webhooks(store.load_all_settings()) == []
+        assert changes == []
 
-    def test_duplicate_names_and_the_limit_are_refused(self, store):
+    def test_duplicate_names_and_the_limit_are_refused(self, store, open_section):
         hooks = [dict(HOOK, id=f"h{i}", name=f"Hook {i}") for i in range(models.MAX_WEBHOOKS)]
         store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_WEBHOOKS, hooks))
-        section, _changes = section_of("webhook", store)
-        try:
-            assert not section.add_button.isEnabled()
-            assert "up to 20" in section.add_button.toolTip()
-            section.open_editor("h1")
-            section.editor.name_edit.setText("hook 0")
-            assert not section.save()
-            assert section.editor.message.text() == "A webhook with that name already exists."
-        finally:
-            close(section)
+        section, _changes = open_section("webhook")
+        assert not section.add_button.isEnabled()
+        assert "up to 20" in section.add_button.toolTip()
+        section.open_editor("h1")
+        section.editor.name_edit.setText("hook 0")
+        assert not section.save()
+        assert section.editor.message.text() == "A webhook with that name already exists."
 
     @pytest.mark.parametrize(
         "url, warned",
@@ -369,160 +369,139 @@ class TestWebhooks:
             ("http://homeassistant.local:8123/api", False),
         ],
     )
-    def test_plain_http_beyond_this_network_gets_a_gentle_note(self, store, url, warned):
-        section, _changes = section_of("webhook", store)
-        try:
-            section.open_editor("")
-            section.editor.url_edit.setText(url)
-            assert section.editor.url_note.isHidden() is not warned
-            if warned:
-                assert "unencrypted" in section.editor.url_note.text()
-        finally:
-            close(section)
+    def test_plain_http_beyond_this_network_gets_a_gentle_note(self, store, open_section, url, warned):
+        section, _changes = open_section("webhook")
+        section.open_editor("")
+        section.editor.url_edit.setText(url)
+        assert section.editor.url_note.isHidden() is not warned
+        if warned:
+            assert "unencrypted" in section.editor.url_note.text()
 
-    def test_the_row_switch_saves_and_the_editor_keeps_it(self, store):
+    def test_the_row_switch_saves_and_the_editor_keeps_it(self, store, open_section):
         store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_WEBHOOKS, [HOOK]))
-        section, changes = section_of("webhook", store)
-        try:
-            section.open_editor("hook01")
-            section.editor.name_edit.setText("Renamed")
-            section._rows["hook01"].switch.click()
-            assert models.find_webhook(store.load_all_settings(), "hook01").enabled is False
-            assert section._rows["hook01"].detail.text().startswith("Off · ")
-            assert section.editor.name_edit.text() == "Renamed"
-            assert section.save()
-            saved = models.find_webhook(store.load_all_settings(), "hook01")
-            assert (saved.name, saved.enabled) == ("Renamed", False)
-            assert changes == ["webhook", "webhook"]
-        finally:
-            close(section)
+        section, changes = open_section("webhook")
+        section.open_editor("hook01")
+        section.editor.name_edit.setText("Renamed")
+        section._rows["hook01"].switch.click()
+        assert models.find_webhook(store.load_all_settings(), "hook01").enabled is False
+        assert section._rows["hook01"].detail.text().startswith("Off · ")
+        assert section.editor.name_edit.text() == "Renamed"
+        assert section.save()
+        saved = models.find_webhook(store.load_all_settings(), "hook01")
+        assert (saved.name, saved.enabled) == ("Renamed", False)
+        assert changes == ["webhook", "webhook"]
 
-    def test_a_failed_switch_save_shows_why_and_keeps_the_saved_state(self, store, monkeypatch):
+    def test_a_failed_switch_save_shows_why_and_keeps_the_saved_state(self, store, open_section, monkeypatch):
         store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_WEBHOOKS, [HOOK]))
-        section, changes = section_of("webhook", store)
-        try:
-            def fail(_mutator):
-                raise OSError("disk is read-only")
+        section, changes = open_section("webhook")
+        def fail(_mutator):
+            raise OSError("disk is read-only")
 
-            monkeypatch.setattr(store, "mutate_settings", fail)
-            section._rows["hook01"].switch.click()
-            assert section._rows["hook01"].switch.isChecked()
-            assert "read-only" in section.message.text()
-            assert changes == []
-        finally:
-            close(section)
+        monkeypatch.setattr(store, "mutate_settings", fail)
+        section._rows["hook01"].switch.click()
+        assert section._rows["hook01"].switch.isChecked()
+        assert "read-only" in section.message.text()
+        assert changes == []
 
-    def test_opening_another_hook_asks_to_save_the_draft(self, store, answers):
+    def test_opening_another_hook_asks_to_save_the_draft(self, store, open_section, answers):
         queue, asked = answers
         second = dict(HOOK, id="hook02", name="Office")
         store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_WEBHOOKS, [HOOK, second]))
-        section, _changes = section_of("webhook", store)
-        try:
-            section.open_editor("hook01")
-            section.editor.name_edit.setText("Home 2")
-            queue.append(QMessageBox.StandardButton.Cancel)
-            assert not section.open_editor("hook02")
-            assert section.editing_id() == "hook01"
-            queue.append(QMessageBox.StandardButton.Save)
-            assert section.open_editor("hook02")
-            assert section.editing_id() == "hook02"
-            assert models.find_webhook(store.load_all_settings(), "hook01").name == "Home 2"
-            assert [title for title, _text in asked] == ["Unsaved webhook", "Unsaved webhook"]
-            # The editor sits under the row it edits.
-            layout = section._list
-            assert layout.indexOf(section.editor) == layout.indexOf(section._rows["hook02"]) + 1
-        finally:
-            close(section)
+        section, _changes = open_section("webhook")
+        section.open_editor("hook01")
+        section.editor.name_edit.setText("Home 2")
+        queue.append(QMessageBox.StandardButton.Cancel)
+        assert not section.open_editor("hook02")
+        assert section.editing_id() == "hook01"
+        queue.append(QMessageBox.StandardButton.Save)
+        assert section.open_editor("hook02")
+        assert section.editing_id() == "hook02"
+        assert models.find_webhook(store.load_all_settings(), "hook01").name == "Home 2"
+        assert [title for title, _text in asked] == ["Unsaved webhook", "Unsaved webhook"]
+        # The editor sits under the row it edits.
+        layout = section._list
+        assert layout.indexOf(section.editor) == layout.indexOf(section._rows["hook02"]) + 1
 
-    def test_send_test_shows_the_result_and_recent_deliveries(self, store, monkeypatch):
+    def test_send_test_shows_the_result_and_recent_deliveries(self, store, open_section, monkeypatch):
         store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_WEBHOOKS, [HOOK]))
         sent, history = [], []
         monkeypatch.setattr(webhooks, "send_test", lambda hook_id: sent.append(hook_id) or resolved(
             record(200, 120)))
         monkeypatch.setattr(webhooks, "deliveries", lambda hook_id: list(history))
-        section, _changes = section_of("webhook", store)
-        try:
-            section.open_editor("hook01")
-            editor = section.editor
-            assert editor.recent._shown == ()
-            history.extend([
-                record(200, 118, event_type=catalog.TRANSCRIPTION_COMPLETED),
-                record(502, 1430, ok=False, error="Bad gateway", attempt=3),
-            ])
-            editor.test_button.click()
-            assert sent == ["hook01"]
-            assert (editor.test_chip.text(), editor.test_chip.property("tone")) == ("200 · 120 ms", "ok")
-            rows = editor.recent._shown
-            assert [(what, result, ok) for _at, what, result, ok in rows] == [
-                ("Finished dictations", "200 · 118 ms", True),
-                ("Test", "502 · 1430 ms · try 3", False),
-            ]
-            section.refresh_live()
-            row = section._rows["hook01"]
-            assert row.detail.text().endswith("Last delivery 200 · 118 ms")
-            assert row.dot.status() == EngineStatus.READY
-        finally:
-            close(section)
+        section, _changes = open_section("webhook")
+        section.open_editor("hook01")
+        editor = section.editor
+        assert editor.recent._shown == ()
+        history.extend([
+            record(200, 118, event_type=catalog.TRANSCRIPTION_COMPLETED),
+            record(502, 1430, ok=False, error="Bad gateway", attempt=3),
+        ])
+        editor.test_button.click()
+        assert sent == ["hook01"]
+        assert (editor.test_chip.text(), editor.test_chip.property("tone")) == ("200 · 120 ms", "ok")
+        rows = editor.recent._shown
+        assert [(what, result, ok) for _at, what, result, ok in rows] == [
+            ("Finished dictations", "200 · 118 ms", True),
+            ("Test", "502 · 1430 ms · try 3", False),
+        ]
+        section.refresh_live()
+        row = section._rows["hook01"]
+        assert row.detail.text().endswith("Last delivery 200 · 118 ms")
+        assert row.dot.status() == EngineStatus.READY
 
-    def test_send_test_reports_errors_honestly(self, store, monkeypatch):
+    def test_send_test_reports_errors_honestly(self, store, open_section, monkeypatch):
         store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_WEBHOOKS, [HOOK]))
-        section, _changes = section_of("webhook", store)
-        try:
-            section.open_editor("hook01")
-            editor = section.editor
-            # An engine that can't send says why in its own words, on the line
-            # under the button (an error is too long for the chip); no fake success.
-            error_line = editor.test_chip.error_line
-            monkeypatch.setattr(webhooks, "send_test", lambda hook_id: resolved(
-                error=RuntimeError("Webhooks aren't available yet.")))
-            editor.test_button.click()
-            assert error_line.text() == "Webhooks aren't available yet."
-            assert error_line.property("tone") == "error" and editor.test_chip.isHidden()
+        section, _changes = open_section("webhook")
+        section.open_editor("hook01")
+        editor = section.editor
+        # An engine that can't send says why in its own words, on the line
+        # under the button (an error is too long for the chip); no fake success.
+        error_line = editor.test_chip.error_line
+        monkeypatch.setattr(webhooks, "send_test", lambda hook_id: resolved(
+            error=RuntimeError("Webhooks aren't available yet.")))
+        editor.test_button.click()
+        assert error_line.text() == "Webhooks aren't available yet."
+        assert error_line.property("tone") == "error" and editor.test_chip.isHidden()
 
-            def refuse(hook_id):
-                raise RuntimeError("Saved webhooks changed; try again.")
+        def refuse(hook_id):
+            raise RuntimeError("Saved webhooks changed; try again.")
 
-            monkeypatch.setattr(webhooks, "send_test", refuse)
-            editor.test_button.click()
-            assert error_line.text() == "Saved webhooks changed; try again."
-            assert editor.test_button.isEnabled()
-            monkeypatch.setattr(webhooks, "send_test", lambda hook_id: resolved(
-                record(None, 5000, ok=False, error="Timed out")))
-            editor.test_button.click()
-            assert error_line.text() == "Timed out" and not error_line.isHidden()
-            monkeypatch.setattr(webhooks, "send_test", lambda hook_id: resolved(record(404, 80, ok=False)))
-            editor.test_button.click()
-            assert (editor.test_chip.text(), editor.test_chip.property("tone")) == ("404 · 80 ms", "error")
-            assert error_line.isHidden()
-            pending = Future()
-            monkeypatch.setattr(webhooks, "send_test", lambda hook_id: pending)
-            editor.test_button.click()
-            assert (editor.test_chip.text(), editor.test_chip.property("tone")) == ("Sending…", "busy")
-            assert not editor.test_button.isEnabled()
-            pending.set_result(record(200, 95))
-            wait_for(lambda: editor.test_chip.text() == "200 · 95 ms")
-            assert editor.test_button.isEnabled()
-        finally:
-            close(section)
+        monkeypatch.setattr(webhooks, "send_test", refuse)
+        editor.test_button.click()
+        assert error_line.text() == "Saved webhooks changed; try again."
+        assert editor.test_button.isEnabled()
+        monkeypatch.setattr(webhooks, "send_test", lambda hook_id: resolved(
+            record(None, 5000, ok=False, error="Timed out")))
+        editor.test_button.click()
+        assert error_line.text() == "Timed out" and not error_line.isHidden()
+        monkeypatch.setattr(webhooks, "send_test", lambda hook_id: resolved(record(404, 80, ok=False)))
+        editor.test_button.click()
+        assert (editor.test_chip.text(), editor.test_chip.property("tone")) == ("404 · 80 ms", "error")
+        assert error_line.isHidden()
+        pending = Future()
+        monkeypatch.setattr(webhooks, "send_test", lambda hook_id: pending)
+        editor.test_button.click()
+        assert (editor.test_chip.text(), editor.test_chip.property("tone")) == ("Sending…", "busy")
+        assert not editor.test_button.isEnabled()
+        pending.set_result(record(200, 95))
+        wait_for(lambda: editor.test_chip.text() == "200 · 95 ms")
+        assert editor.test_button.isEnabled()
 
-    def test_send_test_saves_a_changed_draft_first(self, store, monkeypatch):
+    def test_send_test_saves_a_changed_draft_first(self, store, open_section, monkeypatch):
         store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_WEBHOOKS, [HOOK]))
         monkeypatch.setattr(webhooks, "send_test", lambda hook_id: resolved(record()))
-        section, changes = section_of("webhook", store)
-        try:
-            section.open_editor("hook01")
-            section.editor.url_edit.setText("https://example.com/v2")
-            section.editor.test_button.click()
-            assert models.find_webhook(store.load_all_settings(), "hook01").url == "https://example.com/v2"
-            assert changes == ["webhook"]
-            section.editor.url_edit.setText("not a url")
-            section.editor.test_button.click()
-            assert section.editor.test_chip.isHidden() or section.editor.test_chip.text() == "200 · 120 ms"
-            assert "http://" in section.editor.message.text()
-        finally:
-            close(section)
+        section, changes = open_section("webhook")
+        section.open_editor("hook01")
+        section.editor.url_edit.setText("https://example.com/v2")
+        section.editor.test_button.click()
+        assert models.find_webhook(store.load_all_settings(), "hook01").url == "https://example.com/v2"
+        assert changes == ["webhook"]
+        section.editor.url_edit.setText("not a url")
+        section.editor.test_button.click()
+        assert section.editor.test_chip.isHidden() or section.editor.test_chip.text() == "200 · 120 ms"
+        assert "http://" in section.editor.message.text()
 
-    def test_copy_and_new_secret_go_through_the_engine(self, store, answers, monkeypatch):
+    def test_copy_and_new_secret_go_through_the_engine(self, store, open_section, answers, monkeypatch):
         queue, _asked = answers
         store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_WEBHOOKS, [HOOK]))
         calls = []
@@ -530,26 +509,23 @@ class TestWebhooks:
                             or "whsec_first")
         monkeypatch.setattr(webhooks, "rotate_secret", lambda hook_id: calls.append(("rotate", hook_id))
                             or "whsec_second")
-        section, _changes = section_of("webhook", store)
-        try:
-            section.open_editor("hook01")
-            editor = section.editor
-            editor.copy_secret.click()
-            wait_for(lambda: editor.secret_chip.text() == "Copied")
-            assert QApplication.clipboard().text() == "whsec_first"
-            editor.rotate_secret.click()  # answered Cancel
-            assert ("rotate", "hook01") not in calls
-            queue.append(QMessageBox.StandardButton.Yes)
-            editor.rotate_secret.click()
-            wait_for(lambda: editor.secret_chip.text() == "New secret copied")
-            assert QApplication.clipboard().text() == "whsec_second"
-            assert calls == [("ensure", "hook01"), ("rotate", "hook01")]
-            # The secret never reaches settings.
-            assert "whsec_" not in str(store.load_all_settings())
-        finally:
-            close(section)
+        section, _changes = open_section("webhook")
+        section.open_editor("hook01")
+        editor = section.editor
+        editor.copy_secret.click()
+        wait_for(lambda: editor.secret_chip.text() == "Copied")
+        assert QApplication.clipboard().text() == "whsec_first"
+        editor.rotate_secret.click()  # answered Cancel
+        assert ("rotate", "hook01") not in calls
+        queue.append(QMessageBox.StandardButton.Yes)
+        editor.rotate_secret.click()
+        wait_for(lambda: editor.secret_chip.text() == "New secret copied")
+        assert QApplication.clipboard().text() == "whsec_second"
+        assert calls == [("ensure", "hook01"), ("rotate", "hook01")]
+        # The secret never reaches settings.
+        assert "whsec_" not in str(store.load_all_settings())
 
-    def test_secret_errors_show_under_the_buttons(self, store, monkeypatch):
+    def test_secret_errors_show_under_the_buttons(self, store, open_section, monkeypatch):
         store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_WEBHOOKS, [HOOK]))
 
         def unavailable(hook_id):
@@ -557,175 +533,151 @@ class TestWebhooks:
             raise RuntimeError("Your system's credential store is locked.")
 
         monkeypatch.setattr(webhooks, "ensure_secret", unavailable)
-        section, _changes = section_of("webhook", store)
-        try:
-            section.open_editor("hook01")
-            section.editor.copy_secret.click()
-            error_line = section.editor.secret_chip.error_line
-            wait_for(lambda: not error_line.isHidden())
-            assert error_line.text() == "Your system's credential store is locked."
-            assert section.editor.secret_chip.isHidden()
-            assert section.editor.copy_secret.isEnabled()
-        finally:
-            close(section)
+        section, _changes = open_section("webhook")
+        section.open_editor("hook01")
+        section.editor.copy_secret.click()
+        error_line = section.editor.secret_chip.error_line
+        wait_for(lambda: not error_line.isHidden())
+        assert error_line.text() == "Your system's credential store is locked."
+        assert section.editor.secret_chip.isHidden()
+        assert section.editor.copy_secret.isEnabled()
 
-    def test_cancel_closes_a_new_draft_without_saving(self, store):
-        section, changes = section_of("webhook", store)
-        try:
-            section.open_editor("")
-            section.editor.name_edit.setText("Never saved")
-            section.editor.cancel_button.click()
-            assert section.editor.isHidden() and not section.has_unsaved_changes()
-            assert models.load_webhooks(store.load_all_settings()) == []
-            assert changes == []
-        finally:
-            close(section)
+    def test_cancel_closes_a_new_draft_without_saving(self, store, open_section):
+        section, changes = open_section("webhook")
+        section.open_editor("")
+        section.editor.name_edit.setText("Never saved")
+        section.editor.cancel_button.click()
+        assert section.editor.isHidden() and not section.has_unsaved_changes()
+        assert models.load_webhooks(store.load_all_settings()) == []
+        assert changes == []
 
 
 # ---- programs ----------------------------------------------------------------
 
 class TestPrograms:
-    def test_add_with_the_file_picker_arguments_and_time_limit(self, store, monkeypatch):
+    def test_add_with_the_file_picker_arguments_and_time_limit(self, store, open_section, monkeypatch):
         chosen = os.path.abspath(os.path.join("tools", "log.exe"))
         monkeypatch.setattr(hooks_panel.QFileDialog, "getOpenFileName",
                             lambda *args, **kwargs: (chosen, ""))
-        section, changes = section_of("program", store)
-        try:
-            section.open_editor("")
-            editor = section.editor
-            editor.name_edit.setText("Log")
-            editor.choose_button.click()
-            assert editor.program_edit.text() == chosen
-            editor.args_edit.setPlainText("--quiet\n\n  --tag=voice  \n")
-            editor.timeout.setValue(45)
-            editor.events.chips[catalog.ACTION_RAN].click()
-            assert section.save()
-            [program] = models.load_programs(store.load_all_settings())
-            assert program.program == chosen
-            assert program.args == ("--quiet", "--tag=voice")
-            assert program.timeout_s == 45
-            assert program.events == (catalog.TRANSCRIPTION_COMPLETED, catalog.ACTION_RAN)
-            assert changes == ["program"]
-            assert "log.exe" in section._rows[program.id].detail.text()
-        finally:
-            close(section)
+        section, changes = open_section("program")
+        section.open_editor("")
+        editor = section.editor
+        editor.name_edit.setText("Log")
+        editor.choose_button.click()
+        assert editor.program_edit.text() == chosen
+        editor.args_edit.setPlainText("--quiet\n\n  --tag=voice  \n")
+        editor.timeout.setValue(45)
+        editor.events.chips[catalog.ACTION_RAN].click()
+        assert section.save()
+        [program] = models.load_programs(store.load_all_settings())
+        assert program.program == chosen
+        assert program.args == ("--quiet", "--tag=voice")
+        assert program.timeout_s == 45
+        assert program.events == (catalog.TRANSCRIPTION_COMPLETED, catalog.ACTION_RAN)
+        assert changes == ["program"]
+        assert "log.exe" in section._rows[program.id].detail.text()
 
-    def test_a_relative_program_path_is_refused(self, store):
-        section, _changes = section_of("program", store)
-        try:
-            section.open_editor("")
-            section.editor.name_edit.setText("Log")
-            section.editor.program_edit.setText("log.exe")
-            assert not section.save()
-            assert section.editor.message.text() == "Choose the program with its full path."
-        finally:
-            close(section)
+    def test_a_relative_program_path_is_refused(self, store, open_section):
+        section, _changes = open_section("program")
+        section.open_editor("")
+        section.editor.name_edit.setText("Log")
+        section.editor.program_edit.setText("log.exe")
+        assert not section.save()
+        assert section.editor.message.text() == "Choose the program with its full path."
 
-    def test_run_test_and_recent_runs(self, store, monkeypatch):
+    def test_run_test_and_recent_runs(self, store, open_section, monkeypatch):
         store.mutate_settings(lambda s: s.__setitem__(SettingsKey.AUTOMATION_PROGRAMS, [PROGRAM]))
         runs = [programs.RunRecord("evt_2", "2026-10-10T18:03:00Z", True, 0, 340),
                 programs.RunRecord("evt_1", "2026-10-10T17:40:00Z", False, None, 30000,
                                    "Timed out after 30 s")]
         monkeypatch.setattr(programs, "runs", lambda program_id: list(runs))
         monkeypatch.setattr(programs, "run_test", lambda program_id: resolved(runs[0]))
-        section, _changes = section_of("program", store)
-        try:
-            section.open_editor("prog01")
-            editor = section.editor
-            editor.test_button.click()
-            assert (editor.test_chip.text(), editor.test_chip.property("tone")) == ("Exit 0 · 340 ms", "ok")
-            assert [(result, ok) for _at, _what, result, ok in editor.recent._shown] == [
-                ("Exit 0 · 340 ms", True), ("Timed out after 30 s", False),
-            ]
-            monkeypatch.setattr(programs, "run_test", lambda program_id: resolved(
-                programs.RunRecord("evt_3", "2026-10-10T18:04:00Z", False, 2, 80)))
-            editor.test_button.click()
-            assert (editor.test_chip.text(), editor.test_chip.property("tone")) == ("Exit 2 · 80 ms", "error")
-            monkeypatch.setattr(programs, "run_test", lambda program_id: resolved(
-                error=RuntimeError("Programs aren't available yet.")))
-            editor.test_button.click()
-            assert editor.test_chip.error_line.text() == "Programs aren't available yet."
-        finally:
-            close(section)
+        section, _changes = open_section("program")
+        section.open_editor("prog01")
+        editor = section.editor
+        editor.test_button.click()
+        assert (editor.test_chip.text(), editor.test_chip.property("tone")) == ("Exit 0 · 340 ms", "ok")
+        assert [(result, ok) for _at, _what, result, ok in editor.recent._shown] == [
+            ("Exit 0 · 340 ms", True), ("Timed out after 30 s", False),
+        ]
+        monkeypatch.setattr(programs, "run_test", lambda program_id: resolved(
+            programs.RunRecord("evt_3", "2026-10-10T18:04:00Z", False, 2, 80)))
+        editor.test_button.click()
+        assert (editor.test_chip.text(), editor.test_chip.property("tone")) == ("Exit 2 · 80 ms", "error")
+        monkeypatch.setattr(programs, "run_test", lambda program_id: resolved(
+            error=RuntimeError("Programs aren't available yet.")))
+        editor.test_button.click()
+        assert editor.test_chip.error_line.text() == "Programs aren't available yet."
 
 
 # ---- text filters -------------------------------------------------------------
 
 class TestFilters:
-    def test_web_address_and_program_filters_save_only_their_own_fields(self, store):
-        section, changes = section_of("filter", store)
-        try:
-            section.open_editor("")
-            editor = section.editor
-            assert editor.kind_bar.currentIndex() == 0
-            assert not editor.url_edit.isHidden() and editor.program_row.isHidden()
-            assert "posts the words as JSON" in editor.reply_hint.text()
-            editor.name_edit.setText("Names")
-            editor.url_edit.setText("http://127.0.0.1:5005/fix")
-            editor.program_edit.setText(os.path.abspath("ignored.exe"))
-            editor.stage_bar.setCurrentIndex(0)
-            editor.timeout.setValue(800)
-            assert section.save()
-            [saved] = models.load_filters(store.load_all_settings())
-            assert (saved.kind, saved.stage, saved.url, saved.program, saved.timeout_ms) == (
-                "http", models.BEFORE_CLEANUP, "http://127.0.0.1:5005/fix", "", 800)
+    def test_web_address_and_program_filters_save_only_their_own_fields(self, store, open_section):
+        section, changes = open_section("filter")
+        section.open_editor("")
+        editor = section.editor
+        assert editor.kind_bar.currentIndex() == 0
+        assert not editor.url_edit.isHidden() and editor.program_row.isHidden()
+        assert "posts the words as JSON" in editor.reply_hint.text()
+        editor.name_edit.setText("Names")
+        editor.url_edit.setText("http://127.0.0.1:5005/fix")
+        editor.program_edit.setText(os.path.abspath("ignored.exe"))
+        editor.stage_bar.setCurrentIndex(0)
+        editor.timeout.setValue(800)
+        assert section.save()
+        [saved] = models.load_filters(store.load_all_settings())
+        assert (saved.kind, saved.stage, saved.url, saved.program, saved.timeout_ms) == (
+            "http", models.BEFORE_CLEANUP, "http://127.0.0.1:5005/fix", "", 800)
 
-            editor.kind_bar.buttons[1].click()
-            assert editor.url_edit.isHidden() and not editor.program_row.isHidden()
-            assert "program's input" in editor.reply_hint.text()
-            editor.program_edit.setText(os.path.abspath("swearjar.exe"))
-            editor.args_edit.setPlainText("--strict")
-            assert section.save()
-            saved = models.find_filter(store.load_all_settings(), saved.id)
-            assert (saved.kind, saved.url, saved.args) == ("program", "", ("--strict",))
-            assert changes == ["filter", "filter"]
-            assert "swearjar.exe · Before AI cleanup · 800 ms" in section._rows[saved.id].detail.text()
-            assert section._rows[saved.id].dot.isHidden()
-        finally:
-            close(section)
+        editor.kind_bar.buttons[1].click()
+        assert editor.url_edit.isHidden() and not editor.program_row.isHidden()
+        assert "program's input" in editor.reply_hint.text()
+        editor.program_edit.setText(os.path.abspath("swearjar.exe"))
+        editor.args_edit.setPlainText("--strict")
+        assert section.save()
+        saved = models.find_filter(store.load_all_settings(), saved.id)
+        assert (saved.kind, saved.url, saved.args) == ("program", "", ("--strict",))
+        assert changes == ["filter", "filter"]
+        assert "swearjar.exe · Before AI cleanup · 800 ms" in section._rows[saved.id].detail.text()
+        assert section._rows[saved.id].dot.isHidden()
 
-    def test_time_limit_validation(self, store):
-        section, _changes = section_of("filter", store)
-        try:
-            section.open_editor("")
-            editor = section.editor
-            assert (editor.timeout.minimum(), editor.timeout.maximum()) == (
-                models.FILTER_TIMEOUT_MIN_MS, models.FILTER_TIMEOUT_MAX_MS)
-            assert editor.timeout.value() == models.FILTER_TIMEOUT_DEFAULT_MS
-            editor.name_edit.setText("Names")
-            assert not section.save()
-            assert editor.message.text() == "Enter the address to send to."
-        finally:
-            close(section)
+    def test_time_limit_validation(self, store, open_section):
+        section, _changes = open_section("filter")
+        section.open_editor("")
+        editor = section.editor
+        assert (editor.timeout.minimum(), editor.timeout.maximum()) == (
+            models.FILTER_TIMEOUT_MIN_MS, models.FILTER_TIMEOUT_MAX_MS)
+        assert editor.timeout.value() == models.FILTER_TIMEOUT_DEFAULT_MS
+        editor.name_edit.setText("Names")
+        assert not section.save()
+        assert editor.message.text() == "Enter the address to send to."
 
-    def test_leased_filters_show_read_only_with_their_expiry(self, store, monkeypatch):
+    def test_leased_filters_show_read_only_with_their_expiry(self, store, open_section, monkeypatch):
         leases = [filters.Lease("l1", "http://127.0.0.1:7070/f", models.AFTER_CLEANUP, 1500,
                                 ("dictation",), time.time() + 42),
                   filters.Lease("l2", "http://127.0.0.1:7071/f", models.BEFORE_CLEANUP, 1500,
                                 ("dictation",), time.time() - 1)]
         monkeypatch.setattr(filters, "leases", lambda: list(leases))
-        section, _changes = section_of("filter", store)
-        try:
-            lease_list = section.leases
-            assert len(lease_list._shown) == 1
-            _id, url, stage, seconds = lease_list._shown[0]
-            assert (url, stage) == ("http://127.0.0.1:7070/f", models.AFTER_CLEANUP)
-            assert 40 <= seconds <= 42
-            assert lease_list.note.isHidden() and lease_list.open_api.isHidden()
-            [line] = lease_list._lines
-            assert line.detail.text().startswith("After AI cleanup · ends in ")
-            # A renewal moves the countdown on the same row.
-            leases[0] = filters.Lease("l1", "http://127.0.0.1:7070/f", models.AFTER_CLEANUP, 1500,
-                                      ("dictation",), time.time() + 20.4)
-            section.refresh_live()
-            assert lease_list._lines == [line]
-            assert line.detail.text() == "After AI cleanup · ends in 20 s"
-            leases.clear()
-            section.refresh_live()
-            assert lease_list._shown == ()
-            assert not lease_list.note.isHidden()
-        finally:
-            close(section)
+        section, _changes = open_section("filter")
+        lease_list = section.leases
+        assert len(lease_list._shown) == 1
+        _id, url, stage, seconds = lease_list._shown[0]
+        assert (url, stage) == ("http://127.0.0.1:7070/f", models.AFTER_CLEANUP)
+        assert 40 <= seconds <= 42
+        assert lease_list.note.isHidden() and lease_list.open_api.isHidden()
+        [line] = lease_list._lines
+        assert line.detail.text().startswith("After AI cleanup · ends in ")
+        # A renewal moves the countdown on the same row.
+        leases[0] = filters.Lease("l1", "http://127.0.0.1:7070/f", models.AFTER_CLEANUP, 1500,
+                                  ("dictation",), time.time() + 20.4)
+        section.refresh_live()
+        assert lease_list._lines == [line]
+        assert line.detail.text() == "After AI cleanup · ends in 20 s"
+        leases.clear()
+        section.refresh_live()
+        assert lease_list._shown == ()
+        assert not lease_list.note.isHidden()
 
 
 def test_a_secret_worker_never_keeps_the_editor_alive(store, monkeypatch):

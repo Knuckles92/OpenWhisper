@@ -54,6 +54,10 @@ def _cached(repo_id, size_bytes):
     )
 
 
+def _pick(combo, data):
+    combo.setCurrentIndex(combo.findData(data))
+
+
 BASE_REPO = "Systran/faster-whisper-base"
 TINY_REPO = "Systran/faster-whisper-tiny"
 
@@ -408,25 +412,18 @@ class TestFilter(_DialogTestCase):
         dialog.filter_edit.setText("")
         assert not dialog.empty_label.isVisibleTo(dialog)
 
-    def test_status_filter_downloaded_only(self):
+    @pytest.mark.parametrize("status, base_shown, tiny_shown", [
+        ("downloaded", True, False),
+        ("not_downloaded", False, True),
+        ("all", True, True),
+    ])
+    def test_status_filter_shows_matching_rows(self, status, base_shown, tiny_shown):
         dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
         )
-        dialog.status_filter_combo.setCurrentIndex(
-            dialog.status_filter_combo.findData("downloaded")
-        )
-        assert dialog.rows["base"].isVisibleTo(dialog)
-        assert not dialog.rows["tiny"].isVisibleTo(dialog)
-
-    def test_status_filter_not_downloaded_only(self):
-        dialog, _values = self._make_dialog(
-            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
-        )
-        dialog.status_filter_combo.setCurrentIndex(
-            dialog.status_filter_combo.findData("not_downloaded")
-        )
-        assert not dialog.rows["base"].isVisibleTo(dialog)
-        assert dialog.rows["tiny"].isVisibleTo(dialog)
+        _pick(dialog.status_filter_combo, status)
+        assert dialog.rows["base"].isVisibleTo(dialog) is base_shown
+        assert dialog.rows["tiny"].isVisibleTo(dialog) is tiny_shown
 
     def test_status_filter_combines_with_search(self):
         dialog, _values = self._make_dialog(
@@ -435,39 +432,22 @@ class TestFilter(_DialogTestCase):
                 TINY_REPO: _cached(TINY_REPO, 76_000_000),
             }
         )
-        dialog.status_filter_combo.setCurrentIndex(
-            dialog.status_filter_combo.findData("downloaded")
-        )
+        _pick(dialog.status_filter_combo, "downloaded")
         dialog.filter_edit.setText("tiny")
         assert dialog.rows["tiny"].isVisibleTo(dialog)
         assert not dialog.rows["base"].isVisibleTo(dialog)
         assert not dialog.rows["tiny.en"].isVisibleTo(dialog)
 
-    def test_status_filter_all_shows_everything(self):
-        dialog, _values = self._make_dialog(
-            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
-        )
-        dialog.status_filter_combo.setCurrentIndex(
-            dialog.status_filter_combo.findData("all")
-        )
-        assert dialog.rows["base"].isVisibleTo(dialog)
-        assert dialog.rows["tiny"].isVisibleTo(dialog)
-
-
     def test_backend_filter_shows_one_family(self):
         dialog, _values = self._make_dialog()
-        dialog.backend_filter_combo.setCurrentIndex(
-            dialog.backend_filter_combo.findData("parakeet")
-        )
+        _pick(dialog.backend_filter_combo, "parakeet")
         assert dialog.rows["parakeet-v3"].isVisibleTo(dialog)
         assert not dialog.rows["qwen-0.6b"].isVisibleTo(dialog)
         assert not dialog.rows["base"].isVisibleTo(dialog)
 
     def test_backend_filter_whisper_covers_distilled_checkpoints(self):
         dialog, _values = self._make_dialog()
-        dialog.backend_filter_combo.setCurrentIndex(
-            dialog.backend_filter_combo.findData("local_whisper")
-        )
+        _pick(dialog.backend_filter_combo, "local_whisper")
         whisper_rows = [
             name for name, row in dialog.rows.items() if row.isVisibleTo(dialog)
         ]
@@ -489,12 +469,8 @@ class TestFilter(_DialogTestCase):
         dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
         )
-        dialog.backend_filter_combo.setCurrentIndex(
-            dialog.backend_filter_combo.findData("moonshine")
-        )
-        dialog.status_filter_combo.setCurrentIndex(
-            dialog.status_filter_combo.findData("not_downloaded")
-        )
+        _pick(dialog.backend_filter_combo, "moonshine")
+        _pick(dialog.status_filter_combo, "not_downloaded")
         assert dialog.rows["moonshine-small"].isVisibleTo(dialog)
         assert dialog.rows["moonshine-medium"].isVisibleTo(dialog)
         assert not dialog.rows["base"].isVisibleTo(dialog)
@@ -502,9 +478,7 @@ class TestFilter(_DialogTestCase):
         assert dialog.rows["moonshine-medium"].isVisibleTo(dialog)
         assert not dialog.rows["moonshine-small"].isVisibleTo(dialog)
         assert not dialog.rows["medium"].isVisibleTo(dialog)
-        dialog.status_filter_combo.setCurrentIndex(
-            dialog.status_filter_combo.findData("downloaded")
-        )
+        _pick(dialog.status_filter_combo, "downloaded")
         assert dialog.empty_label.isVisibleTo(dialog)
 
     def test_backend_filter_all_restores_every_row(self):
@@ -543,24 +517,24 @@ class TestSorting(_DialogTestCase):
         dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
         )
-        dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("downloaded"))
+        _pick(dialog.sort_combo, "downloaded")
         assert self._row_order(dialog)[0] == "base"
 
     def test_smallest_first_uses_catalog_estimates(self):
         dialog, _values = self._make_dialog(active_model="medium")
-        dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("size"))
+        _pick(dialog.sort_combo, "size")
         assert self._row_order(dialog)[0] == "tiny"
 
     def test_name_sort_is_alphabetical(self):
         dialog, _values = self._make_dialog()
-        dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("name"))
+        _pick(dialog.sort_combo, "name")
         order = self._row_order(dialog)
         assert order == sorted(order, key=str.casefold)
 
     def test_backend_sort_keeps_each_family_contiguous(self):
         """Families follow the alphabetical backend filter."""
         dialog, _values = self._make_dialog(active_model="medium")
-        dialog.sort_combo.setCurrentIndex(dialog.sort_combo.findData("backend"))
+        _pick(dialog.sort_combo, "backend")
         backends = [dialog.rows[name].backend for name in self._row_order(dialog)]
         first_seen = list(dict.fromkeys(backends))
         assert first_seen == [

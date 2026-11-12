@@ -23,7 +23,6 @@ from tests import test_automation_foundation_pipeline as foundation
 from tests.test_automation_actions_runtime import _wait
 from tests.test_automation_fix_actions_runtime import BlockedAsk
 
-_qapp = foundation._qapp
 h = foundation.h
 
 QUICK = Action("q1", "Quick answer", ActionKind.AGENT,

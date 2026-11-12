@@ -1,8 +1,6 @@
 """Settings → Personalize → Snippets: the switch, library, editor and Basic row."""
 import os
-import tempfile
-from contextlib import ExitStack
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -17,25 +15,18 @@ from PyQt6.QtWidgets import (
     QPushButton,
 )
 
-from services.settings import SettingsKey, SettingsManager
+from services.settings import SettingsKey
 from services.snippets import Snippet, load_snippets
-from ui_qt.dialogs import settings_dialog as settings_dialog_module
-from ui_qt.dialogs import settings_downloads as downloads_module
 from ui_qt.dialogs import settings_metadata
-from ui_qt.dialogs import settings_models as models_module
 from ui_qt.dialogs import settings_snippets
 from ui_qt.dialogs.settings_destinations import SNIPPETS
 from ui_qt.widgets.setting_tile import TileBase
+from tests.fakes.personalize import assert_page_ends_in_view, assert_wrapped_labels_fit, large_fonts, settings_dialogs
 
 CAL = Snippet("cal", "my calendar link", "https://cal.example.com/dana")
 ADDRESS = Snippet("address", "my email address", "dana@example.com")
 SIGN_OFF = Snippet("sig", "my sign-off", "**Dana Lee**\nDesigner", formatted=True)
 QUESTION = "ui_qt.widgets.snippets_panel.QMessageBox.question"
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _qapp():
-    return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture(autouse=True)
@@ -51,32 +42,8 @@ def _restore_metadata():
 
 @pytest.fixture
 def make_dialog():
-    stacks = []
-    dialogs = []
-    temp = tempfile.TemporaryDirectory()
-
-    def build(values=None):
-        store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
-        store.save_all_settings({**(values or {})})
-        stack = ExitStack()
-        for module in (settings_dialog_module, models_module, downloads_module):
-            stack.enter_context(patch.object(module, "settings_manager", store))
-        stack.enter_context(patch.object(settings_dialog_module.history_manager, "set_retention"))
-        for module in (models_module, downloads_module):
-            stack.enter_context(patch.object(module, "scan_cached_models", return_value={}))
-        stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
-        stacks.append(stack)
-        dialog = settings_dialog_module.SettingsDialog(background_cache_scan=False)
-        dialog.on_settings_changed = MagicMock()
-        dialogs.append(dialog)
-        return dialog, store
-
-    yield build
-    for dialog in dialogs:
-        dialog.close()
-    for stack in reversed(stacks):
-        stack.close()
-    temp.cleanup()
+    with settings_dialogs(mocks=("on_settings_changed",), close=True) as build:
+        yield build
 
 
 def _library(*snippets):
@@ -315,12 +282,7 @@ def test_home_counts_snippets_and_adds_one(make_dialog):
 @pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 940), ("omarchy", 560)])
 def test_the_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale
-    from ui_qt.utils.theme_manager import ThemeManager
-
-    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
-    app = QApplication.instance()
-    apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
+    app = large_fonts(monkeypatch, ui_mode)
     dialog, _store, panel = _open(make_dialog, CAL, ADDRESS, SIGN_OFF)
     dialog.show()
     dialog.resize(width, 600)
@@ -332,9 +294,7 @@ def test_the_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, u
         if control.isVisible():
             assert control.mapTo(page, control.rect().topLeft()).x() >= 0
             assert control.mapTo(page, control.rect().bottomRight()).x() < page.width()
-    for label in page.findChildren(QLabel):
-        if label.isVisible() and label.wordWrap():
-            assert label.height() >= label.heightForWidth(label.width())
+    assert_wrapped_labels_fit(page)
     buttons = [panel.new_button, panel.duplicate_button, panel.delete_button, panel.save_button]
     for index, button in enumerate(buttons):
         box = button.rect().translated(button.mapTo(page, button.rect().topLeft()))
@@ -343,21 +303,13 @@ def test_the_page_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, u
             assert not box.intersects(other_box)
         assert button.width() >= button.minimumSizeHint().width()
     assert panel.text_edit.height() >= panel.text_edit.minimumHeight()
-    scroll = dialog._page_scrolls[SNIPPETS]
-    scroll.verticalScrollBar().setValue(scroll.verticalScrollBar().maximum())
-    app.processEvents()
-    assert page.mapTo(scroll.viewport(), page.rect().bottomRight()).y() <= scroll.viewport().height()
+    assert_page_ends_in_view(dialog, SNIPPETS)
 
 
 @pytest.mark.usefixtures("isolated_app_theme")
 @pytest.mark.parametrize("ui_mode,width", [("classic", 720), ("omarchy", 460)])
 def test_the_home_row_fits_narrow_windows_at_large_fonts(make_dialog, monkeypatch, ui_mode, width):
-    from ui_qt.utils.font_scale import apply_ui_font_scale
-    from ui_qt.utils.theme_manager import ThemeManager
-
-    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
-    app = QApplication.instance()
-    apply_ui_font_scale(130, app=app, theme_manager=ThemeManager())
+    app = large_fonts(monkeypatch, ui_mode)
     dialog, _store = make_dialog(_library(CAL))
     dialog.show()
     dialog._fit_to_screen()

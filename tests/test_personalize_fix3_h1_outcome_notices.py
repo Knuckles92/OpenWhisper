@@ -25,7 +25,7 @@ from ui_qt.overlay_state import OverlayState
 from ui_qt.overlays import moments, waveform_overlay
 from ui_qt.overlays.waveform_overlay import WaveformOverlay
 from tests.test_personalize_s3_command_delivery import (  # noqa: F401  (fixtures)
-    BROWSER, NOTEPAD, FakeCleaner, FakeService, _command_job, _qapp, _run_submitted, h,
+    BROWSER, NOTEPAD, FakeCleaner, FakeService, _command_job, _run_submitted, h,
 )
 
 
