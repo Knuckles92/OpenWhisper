@@ -321,6 +321,8 @@ class UIController(QObject):
         self.on_walkthrough: Optional[Callable[[str], None]] = None
         self.on_screenshot: Optional[Callable[[str], None]] = None
         self.on_recover_walkthrough = None
+        # Whether a finished walkthrough's AI write-up is running; set by the app.
+        self.walkthrough_writing_up = None
         self.acquire_walkthrough_library = None
         self.release_walkthrough_library = None
         self.submit_walkthrough_library = None
@@ -493,6 +495,7 @@ class UIController(QObject):
         self.overlay.walkthrough_finish_requested.connect(self._on_overlay_finish)
         self.main_window.walkthrough_requested.connect(self._on_window_walkthrough)
         self.main_window.walkthrough_library_requested.connect(self.show_walkthrough_library)
+        self.main_window.walkthroughs_changed.connect(self._refresh_walkthrough_library)
 
         self.record_started.connect(self._show_recording_overlay)
         self.record_stopped.connect(self._show_processing_overlay)
@@ -693,8 +696,7 @@ class UIController(QObject):
         else:
             self.main_window.clear_transcription()
         self.hide_overlay()
-        if self._walkthrough_panel is not None:
-            self._walkthrough_panel.dismiss()
+        self._dismiss_walkthrough_panel_for_job()
 
     def _apply_status_to_main_window(self, status: str):
         if self.main_window.quick_record_tab.engine_loading:
@@ -880,8 +882,7 @@ class UIController(QObject):
 
         if state is OverlayState.CANCELING:
             self.tray_manager.set_recording(False)
-            if self._walkthrough_panel is not None:
-                self._walkthrough_panel.dismiss()
+            self._dismiss_walkthrough_panel_for_job()
             self._start_cancel_animation()
             return
 
@@ -1158,7 +1159,30 @@ class UIController(QObject):
         # can't be, a screenshot hides the column for a moment (start_snap).
         keep_out_of_screenshots(panel, True)
         # The column shows the recording, so the recording overlay steps aside.
-        self.overlay.set_stand_in(panel.shows_recording)
+        self.overlay.set_stand_in(self._walkthrough_panel_stands_in)
+
+    def _writing_walkthrough_up(self) -> bool:
+        writing = self.walkthrough_writing_up
+        return writing is not None and writing() is True
+
+    def _walkthrough_panel_stands_in(self) -> bool:
+        """Whether the column shows what the overlay would: the walkthrough's own job.
+
+        During the AI write-up that job is over, so a recording or
+        transcription then is a dictation, which the overlay shows.
+        """
+        panel = self._walkthrough_panel
+        return (panel is not None and panel.shows_recording()
+                and not self._writing_walkthrough_up())
+
+    def _dismiss_walkthrough_panel_for_job(self) -> None:
+        """A job was cancelled or failed: close the column, unless it belongs to a write-up.
+
+        A dictation made during the write-up is not the walkthrough's; the
+        column stays, with its Cancel, until the write-up ends.
+        """
+        if self._walkthrough_panel is not None and not self._writing_walkthrough_up():
+            self._walkthrough_panel.dismiss()
 
     @property
     def walkthrough_panel(self):
@@ -1199,6 +1223,9 @@ class UIController(QObject):
         if self._walkthrough_panel is not None:
             self._walkthrough_panel.complete(result)
         self.main_window.walkthrough_finished(result.folder)
+        # A write-up lands long after History was written: its card's title
+        # and "AI write-up" label are only on disk until the panel reloads.
+        self.main_window.refresh_history()
         dialog = getattr(self, "_walkthrough_library", None)
         if (dialog is not None and dialog.isVisible()
                 and not dialog.review._busy and not dialog.review._dirty):
@@ -1271,6 +1298,13 @@ class UIController(QObject):
         if walkthrough_tab is not None:
             walkthrough_tab.review.cancel()
 
+    def _refresh_walkthrough_library(self) -> None:
+        """The tab saved or deleted a walkthrough: an open library shows it as it is now."""
+        dialog = self._walkthrough_library
+        if (dialog is not None and dialog.isVisible()
+                and not dialog.review._busy and not dialog.review._dirty):
+            dialog.refresh(dialog.review.folder)
+
     def show_walkthrough_library(self, folder=None) -> None:
         from ui_qt.dialogs.walkthrough_library import WalkthroughLibraryDialog
 
@@ -1283,6 +1317,8 @@ class UIController(QObject):
                 submit=self.submit_walkthrough_library)
             # The side panel lists walkthroughs while their tab is open.
             self._walkthrough_library.changed.connect(self.main_window.refresh_history)
+            # The tab's storyboard may show what the library just saved or deleted.
+            self._walkthrough_library.changed.connect(self.main_window.reload_walkthrough)
         dialog = self._walkthrough_library
         if not dialog.review._busy and not dialog.review._dirty:
             dialog.refresh(folder)

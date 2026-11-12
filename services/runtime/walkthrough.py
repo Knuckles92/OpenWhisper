@@ -102,6 +102,8 @@ class WalkthroughRuntime(QObject):
         self._snap_after_drawing: str | None = None
         self._auto_position: tuple[int, int] | None = None
         self._auto_draw_pending = None
+        # A drawing on another monitor, waiting for the pending one's screenshot.
+        self._auto_draw_next = None
         self._auto_deadline = 0.0
         self._auto_delay = 0
         self._auto_progress = QTimer(self)
@@ -216,6 +218,13 @@ class WalkthroughRuntime(QObject):
                 self._live_drawing.set_busy(True)
             if self._auto_draw_pending is not None and not self._live_drawing.interacting:
                 self._capture_click()
+            elif (self._auto_position is not None and not self._live_drawing.interacting
+                  and self._auto_timer.remainingTime() > AUTO_SETTLE_MS):
+                # Done doesn't wait out a capture delay: the click's screenshot
+                # is taken once the clicked app has had its moment to update.
+                self._auto_progress.stop()
+                self._live_drawing.set_capture_countdown(0)
+                self._auto_timer.start(AUTO_SETTLE_MS)
             return
         self.controller.stop_recording()
 
@@ -379,6 +388,13 @@ class WalkthroughRuntime(QObject):
         if self._auto_can_capture(drawing=True):
             delay = resolve_walkthrough_capture_delay(settings_manager.load_all_settings())
             if delay:
+                pending = self._auto_draw_pending
+                if pending is not None and pending[0] is not screen:
+                    # One screenshot is of one monitor: keep the drawing that
+                    # waits on the other before this one's countdown starts.
+                    self._auto_draw_next = (screen, marks)
+                    self._capture_click()
+                    return
                 self._auto_position = None
                 self._auto_draw_pending = (screen, marks)
                 self._live_drawing.set_capture_pending(True)
@@ -406,18 +422,22 @@ class WalkthroughRuntime(QObject):
         self._auto_snap = snap
         snap.kept.connect(lambda image: self._on_auto_outcome(snap, session, image=image,
                                                              marks=marks, kept_at_s=kept_at_s,
-                                                             crop=crop, source_rect=source_rect))
+                                                             crop=crop, source_rect=source_rect,
+                                                             screen=location.get("screen")))
         snap.failed.connect(lambda reason: self._on_auto_outcome(snap, session, reason=reason))
 
     def _on_auto_outcome(self, snap, session: WalkthroughSession, *, image=None, marks=(),
                          kept_at_s: float | None = None, reason="", crop=None,
-                         source_rect=None) -> None:
+                         source_rect=None, screen=None) -> None:
         snap.deleteLater()
         if snap is not self._auto_snap:
             return
         self._auto_snap = None
         self._auto_drawing_capture = False
         next_snap, self._snap_after_drawing = self._snap_after_drawing, None
+        next_drawing, self._auto_draw_next = self._auto_draw_next, None
+        if session is not self._session or self._live_drawing is None:
+            next_drawing = None
         if session is self._session:
             if image is not None:
                 if marks or crop is not None:
@@ -430,11 +450,20 @@ class WalkthroughRuntime(QObject):
                                             else getattr(snap, "capture_rect", None))
             elif reason:
                 self._tell(reason)
-        self._finish_if_asked()
+        if next_drawing is None:
+            self._finish_if_asked()
         if self._live_drawing is not None:
-            self._live_drawing.set_capture_pending(False, captured=image is not None)
+            self._live_drawing.set_capture_pending(False, captured=image is not None, screen=screen)
             self._live_drawing.set_busy(False)
-            if next_snap is not None:
+            if next_drawing is not None:
+                # The other monitor's drawing now gets its own screenshot;
+                # Done, if asked meanwhile, takes it without the countdown.
+                self._auto_draw_pending = next_drawing
+                self._live_drawing.set_capture_pending(True)
+                self._schedule_auto_capture()
+                if self._finish_after_snap:
+                    self._capture_click()
+            elif next_snap is not None:
                 self.snap(next_snap)
 
     def _on_capture_region_changed(self) -> None:
@@ -446,6 +475,7 @@ class WalkthroughRuntime(QObject):
         self._clear_auto_countdown()
         self._auto_position = None
         self._auto_draw_pending = None
+        self._auto_draw_next = None
         self._auto_drawing_capture = False
         self._snap_after_drawing = None
         snap, self._auto_snap = self._auto_snap, None
@@ -522,6 +552,9 @@ class WalkthroughRuntime(QObject):
         settings_manager.save_setting(SettingsKey.WALKTHROUGH_SNAP_MODE, mode)
         if self._panel is not None:
             self._panel.set_snap_mode(mode)
+        # A pick is taken at once, also while "In 3 seconds" counts down;
+        # snap() would read that as "pressed again" and take a region.
+        self._stop_countdown()
         self.snap("ui")
 
     def _snap_mode(self) -> str:
@@ -736,7 +769,11 @@ class WalkthroughRuntime(QObject):
             self._out_of_screenshots = False
             self._ui.keep_overlay_out_of_screenshots(False)
         if self._snap is not None and self._snap.active and self._snap_for is not None:
-            if self.controller.recorder.capture_canceled is True:
+            # Cancel says the recording stopped before the recorder marks it
+            # canceled, so the transcription runtime says which this is.
+            if (self.controller.recorder.capture_canceled is True
+                    or getattr(self.controller.transcription_runtime,
+                               "canceling_recording", False) is True):
                 self._snap.drop()
             else:
                 self._snap.keep()

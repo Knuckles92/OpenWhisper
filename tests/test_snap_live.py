@@ -66,31 +66,80 @@ def test_live_shift_drag_constrains_callouts(no_focus_moves, tool):
         drawing.close()
 
 
-def test_live_redactions_stay_pinned_until_cleared(monkeypatch, no_focus_moves):
+def test_live_redactions_leave_with_their_screenshot_like_other_marks(monkeypatch, no_focus_moves):
     now = 100.0
     monkeypatch.setattr(live, "monotonic", lambda: now)
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
+
+    def redact(modifiers=Qt.KeyboardModifier.NoModifier):
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(80, 60))
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, modifiers, QPoint(180, 120))
+
     try:
         drawing.arm(Tool.PEN)
         canvas = drawing._canvases[live.capture.screen_under_cursor()]
         QTest.keyClick(canvas, Qt.Key.Key_R)
         assert drawing.tool is Tool.REDACT
-        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(80, 60))
-        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=QPoint(180, 120))
+        drawn = Mock()
+        drawing.drawn.connect(drawn)
+        redact()
+        # The screenshot gets the cover; later automatic screenshots do not.
+        (_, marks), _ = drawn.call_args
+        assert isinstance(marks[0], Redaction)
+        assert not drawing.pinned_on(canvas.screen)
+        now += live.MARK_LIFETIME_S + 1
+        canvas._expire.timeout.emit()
+        assert canvas.items() == ()
+
+        # With a capture delay it leaves as the screenshot is taken.
+        redact()
+        drawing.set_capture_pending(True)
+        now += live.MARK_LIFETIME_S + 10
+        canvas._expire.timeout.emit()
+        assert len(canvas.items()) == 1
+        drawing.set_capture_pending(False, captured=True)
+        assert canvas.items() == ()
+
+        # Pinning one, or Keep marks, keeps it until Clear marks.
+        redact(Qt.KeyboardModifier.ControlModifier)
         redaction, = drawing.pinned_on(canvas.screen)
-        assert isinstance(redaction, Redaction)
         now += live.MARK_LIFETIME_S + 10
         canvas._expire.timeout.emit()
         assert canvas.items() == (redaction,)
-        drawing.set_capture_pending(True)
-        drawing.set_capture_pending(False, captured=True)
-        drawing.disarm()
-        drawing.set_enabled(False)
-        drawing.set_enabled(True)
-        assert drawing.pinned_on(canvas.screen) == (redaction,)
         drawing.clear()
         assert not drawing.pinned_on(canvas.screen)
+    finally:
+        drawing.close()
+
+
+def test_live_toolbar_close_is_dimmed_when_it_has_nothing_to_do(no_focus_moves):
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        toolbar = drawing._toolbar
+        drop = toolbar.button_rect("drop").center()
+        dropped = Mock()
+        toolbar.drop_clicked.connect(dropped)
+        # No tool and no screenshot coming: it is shown as unavailable.
+        assert toolbar._button_at(drop) is None
+        QTest.mouseClick(toolbar, Qt.MouseButton.LeftButton, pos=drop)
+        dropped.assert_not_called()
+
+        drawing.arm(Tool.PEN)
+        assert toolbar._button_at(drop) is not None
+        QTest.mouseClick(toolbar, Qt.MouseButton.LeftButton, pos=drop)
+        dropped.assert_called_once()
+        assert not drawing.armed and toolbar._button_at(drop) is None
+
+        # A delayed screenshot of a click can be cancelled with it too.
+        cancelled = Mock()
+        drawing.capture_cancelled.connect(cancelled)
+        drawing.set_capture_countdown(2.0, 3.0)
+        QTest.mouseClick(toolbar, Qt.MouseButton.LeftButton, pos=drop)
+        cancelled.assert_called_once()
+        drawing.set_capture_countdown(0)
+        assert toolbar._button_at(drop) is None
     finally:
         drawing.close()
 
@@ -452,10 +501,48 @@ def test_mac_live_toolbar_explains_command_to_pin(monkeypatch):
     owner = QObject()
     drawing = live.LiveAnnotations(owner)
     try:
-        tooltips = [button.tip for button in drawing._toolbar._buttons
-                    if button.kind == "tool" and button.value != Tool.REDACT]
+        tooltips = [button.tip for button in drawing._toolbar._buttons if button.kind == "tool"]
         assert tooltips and all("Hold Cmd to pin" in tip for tip in tooltips)
-        redact_tip = next(button.tip for button in drawing._toolbar._buttons if button.value == Tool.REDACT)
-        assert "Stays until Clear marks" in redact_tip
+    finally:
+        drawing.close()
+
+
+def test_delay_chip_cancel_keeps_the_tool_and_label_escape_cancels_the_shot(no_focus_moves):
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        cancelled = Mock()
+        drawing.capture_cancelled.connect(cancelled)
+        drawing.arm(Tool.PEN)
+        drawing._toolbar.capture_delay.cancelled.emit()
+        cancelled.assert_called_once()
+        assert drawing.tool is Tool.PEN
+
+        drawing.arm(Tool.TEXT)
+        canvas = drawing._canvases[live.capture.screen_under_cursor()]
+        QTest.mouseClick(canvas, Qt.MouseButton.LeftButton, pos=QPoint(80, 60))
+        canvas.label_editor.cancelled.emit()
+        assert cancelled.call_count == 2
+        assert not drawing.armed
+    finally:
+        drawing.close()
+
+
+def test_a_captured_delayed_shot_clears_only_its_own_monitors_marks(no_focus_moves):
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        drawing.arm(Tool.PEN)
+        canvas = drawing._canvases[live.capture.screen_under_cursor()]
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(80, 60))
+        QTest.mouseMove(canvas, QPoint(120, 90))
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=QPoint(180, 120))
+        drawing.set_capture_pending(True)
+        # The screenshot was of another monitor: this one's marks were not in it.
+        drawing.set_capture_pending(False, captured=True, screen=object())
+        assert len(canvas.items()) == 1
+        drawing.set_capture_pending(True)
+        drawing.set_capture_pending(False, captured=True, screen=canvas.screen)
+        assert canvas.items() == ()
     finally:
         drawing.close()

@@ -233,6 +233,8 @@ class TranscriptionRuntime:
         self._write_up_cancel: Optional[threading.Event] = None
         self._stop_started_at = 0.0
         self._cancel_started_at = 0.0
+        # True only while _cancel_recording announces that the recording stopped.
+        self.canceling_recording = False
 
     @property
     def has_active_job(self) -> bool:
@@ -1019,7 +1021,13 @@ class TranscriptionRuntime:
     def _cancel_recording(self) -> None:
         self.controller.streaming_runtime.cancel_streaming_session()
         self._incremental.discard()
-        self.controller.recording_state_changed.emit(False)
+        # Listeners can't yet read the cancel from the recorder: a walkthrough
+        # must drop, not keep, a screenshot still being drawn.
+        self.canceling_recording = True
+        try:
+            self.controller.recording_state_changed.emit(False)
+        finally:
+            self.canceling_recording = False
         self.controller.recorder.cancel_recording()
         self.controller.ui_controller.discard_clipboard_prefetch()
         self._end_walkthrough(keep=False)

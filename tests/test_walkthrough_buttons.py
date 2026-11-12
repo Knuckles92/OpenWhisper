@@ -744,12 +744,28 @@ def test_the_controller_lets_the_column_stand_in_for_the_overlay(monkeypatch):
     panel = Mock()
     monkeypatch.setattr(walkthrough_panel, "make_panel", lambda: panel)
     monkeypatch.setattr(ui_qt.snap, "keep_out_of_screenshots", Mock())
-    ui = SimpleNamespace(_walkthrough_panel=None, overlay=Mock())
+    writing = [False]
+    ui = SimpleNamespace(_walkthrough_panel=None, overlay=Mock(),
+                         walkthrough_writing_up=lambda: writing[0])
+    for name in ("_walkthrough_panel_stands_in", "_writing_walkthrough_up",
+                 "_dismiss_walkthrough_panel_for_job"):
+        setattr(ui, name, getattr(UIController, name).__get__(ui))
 
     UIController._show_walkthrough_panel(ui, True)
 
     panel.begin.assert_called_once_with()
-    ui.overlay.set_stand_in.assert_called_once_with(panel.shows_recording)
+    (stands_in,), _ = ui.overlay.set_stand_in.call_args
+    panel.shows_recording.return_value = True
+    assert stands_in()
+    # During the AI write-up the walkthrough's job is over: a dictation made
+    # then gets the overlay, and cancelling it leaves the column and its Cancel.
+    writing[0] = True
+    assert not stands_in()
+    ui._dismiss_walkthrough_panel_for_job()
+    panel.dismiss.assert_not_called()
+    writing[0] = False
+    ui._dismiss_walkthrough_panel_for_job()
+    panel.dismiss.assert_called_once_with()
 
 
 def test_without_a_column_wayland_keeps_the_overlay(monkeypatch):

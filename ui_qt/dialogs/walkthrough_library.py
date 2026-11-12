@@ -297,6 +297,8 @@ class WalkthroughLibraryDialog(QDialog):
 
     def _refresh_requested(self):
         if self.review.discard_changes():
+            # Agreed once: refresh must not ask again for the same edits.
+            self.review._set_dirty(False)
             self.refresh(self.review.folder)
 
     def _selected(self, item, previous):
@@ -314,32 +316,44 @@ class WalkthroughLibraryDialog(QDialog):
     def _review_busy(self, busy: bool):
         for widget in (self.list, self.keep, self.refresh_button):
             widget.setEnabled(not busy)
+        if not busy:
+            # A retention change that failed leaves the saved choice showing.
+            self._show_retention()
+
+    def _show_retention(self) -> None:
+        self.keep.blockSignals(True)
+        self.keep.setCurrentIndex(self.keep.findData(library.retention_days(self.root)))
+        self.keep.blockSignals(False)
 
     def _retention(self, _index=None):
         days = self.keep.currentData()
         saved = library.retention_days(self.root)
         if days == saved:
             return
-        if days and not (self.review.discard_changes() and QMessageBox.question(
+        # Applying reloads the walkthrough shown, so unsaved edits are asked
+        # about whatever the choice, Forever included.
+        if not self.review.discard_changes() or (days and QMessageBox.question(
                 self, "Keep walkthroughs",
                 f"Delete completed walkthroughs older than {self.keep.currentText().lower()} "
                 "now and at each startup? Interrupted drafts and standalone screenshots are never deleted.",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes):
-            self.keep.blockSignals(True)
-            self.keep.setCurrentIndex(self.keep.findData(saved))
-            self.keep.blockSignals(False)
+                QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes):
+            self._show_retention()
             return
         def apply():
             library.set_retention(self.root, days)
             library.prune(self.root)
-        self.review.run(apply)
+        self.review.run(apply, done="Retention updated.")
+        if not self.review._busy:
+            # Refused before it started (another job holds the library).
+            self._show_retention()
 
     def reject(self):
         if self.review._busy:
             self.review.cancel()
             return
         if self.review.discard_changes():
+            self._drop_edits()
             super().reject()
 
     def closeEvent(self, event):
@@ -347,4 +361,10 @@ class WalkthroughLibraryDialog(QDialog):
             event.ignore()
             self.review.cancel()
         else:
+            self._drop_edits()
             event.accept()
+
+    def _drop_edits(self) -> None:
+        """The dialog is kept and reopened: edits the user let go must not come back."""
+        if self.review._dirty:
+            self.review._discard()

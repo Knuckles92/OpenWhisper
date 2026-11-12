@@ -723,6 +723,17 @@ class _CopyGroup(QWidget):
         return QSize(width, self._flow.heightForWidth(width))
 
 
+class _SavedOnly:
+    """The words were saved, but the write-up asked for after them was not redone."""
+
+    def __init__(self, result, reason: str) -> None:
+        self.result = result
+        self.reason = reason
+
+
+SAVED = "Saved. Copy it again whenever you're ready."
+
+
 class WalkthroughReview(QWidget):
     """Review, fix, reorder, copy and open one walkthrough."""
 
@@ -1148,8 +1159,12 @@ class WalkthroughReview(QWidget):
             button.setEnabled(ready)
         # A draft has no document yet: nothing to copy, open or edit.
         for widget in (self.pdf_button, self.markdown_button, self.copy_word_button,
-                       self.chip, self.open_button, self.notice):
+                       self.chip, self.open_button):
             widget.setVisible(ready)
+        if not ready and not self._busy:
+            # No editing hint, but the line stays to say what Recover and
+            # Delete are doing or why they can't.
+            self.notice.setText("")
         # Walkthroughs from before Word documents have none until Review saves them.
         word = ready and self._result_docx().is_file()
         self.copy_word_button.setEnabled(word)
@@ -1274,14 +1289,15 @@ class WalkthroughReview(QWidget):
 
     # ---- work off the UI thread ----
 
-    def run(self, operation, *, then: tuple | None = None) -> None:
+    def run(self, operation, *, then: tuple | None = None, done: str = SAVED) -> None:
         """Run ``operation`` on a worker behind the app's gate, then show what it left.
 
         ``then`` is ``(spoken, version)`` to show of this folder afterwards,
-        when not what it opens on.
+        when not what it opens on; ``done`` is what the notice says after.
         """
         if self._busy:
             return
+        self._done_text = done
         self._then = (self._folder, *then) if then is not None and self._folder else None
         error = self._acquire()
         if error:
@@ -1329,13 +1345,21 @@ class WalkthroughReview(QWidget):
                 button.setEnabled(enabled)
             self.notice.setText(f"Couldn't finish: {error}")
             return
+        done = self._done_text
+        if isinstance(result, _SavedOnly):
+            # The save is on disk: reload it so a second save can't apply the
+            # same reordering twice, and say the write-up is as it was.
+            done = f"Saved, but the write-up wasn't redone: {result.reason}"
+            result = result.result
+            if self._folder is not None:
+                self._then = (self._folder, True, None)
         folder = getattr(result, "folder", self._folder)
         shown = Path(folder) if folder is not None and Path(folder).is_dir() else None
         self._next, self._then = self._then, None
         self._set_dirty(False)
         # The host shows what to see next: this folder, or another once it's gone.
         self.changed.emit(shown)
-        self.notice.setText("Saved. Copy it again whenever you're ready.")
+        self.notice.setText(done)
 
     def cancel(self) -> None:
         """Stop the work in progress as soon as it safely can."""
@@ -1362,7 +1386,13 @@ class WalkthroughReview(QWidget):
         def save():
             result = library.save_review(folder, texts, keep, order)
             if redo:
-                return library.retry_write_up(folder, cancel_event=self._cancel)
+                try:
+                    return library.retry_write_up(folder, cancel_event=self._cancel)
+                except Exception as exc:
+                    if not self._cancel.is_set():
+                        logger.warning("Walkthrough write-up redo failed after saving",
+                                       exc_info=True)
+                    return _SavedOnly(result, str(exc))
             return result
         # Redone, the new write-up shows; otherwise the words just saved stay.
         self.run(save, then=None if redo else (True, None))
@@ -1445,6 +1475,8 @@ class WalkthroughReview(QWidget):
     def _recover_draft(self):
         if self._folder and self._recover:
             self._recover(str(self._folder))
+            # One click starts it; a second would only be refused.
+            self.recover_button.setEnabled(False)
             self.notice.setText("Recovering. It appears here once it's transcribed.")
 
     def _open(self):
@@ -1465,4 +1497,4 @@ class WalkthroughReview(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
             folder = self._folder
-            self.run(lambda: library.delete_entry(folder))
+            self.run(lambda: library.delete_entry(folder), done="Deleted.")

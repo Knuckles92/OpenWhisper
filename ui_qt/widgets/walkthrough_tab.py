@@ -1308,6 +1308,23 @@ class WalkthroughTab(QWidget):
             folder = newest if newest is not None and newest.name != closed else None
         return self._show(folder, ask=ask)
 
+    def reload_walkthrough(self) -> None:
+        """Something else changed the saved walkthroughs: show the one open as it is now.
+
+        Unsaved edits here stay; a walkthrough that was deleted gives way to
+        the newest.
+        """
+        review = self.review
+        if review._busy or review._dirty:
+            return
+        folder = review.folder
+        if folder is None:
+            self._load_recent()
+        elif folder.is_dir():
+            self._show(folder, ask=False)
+        else:
+            self.show_walkthrough()
+
     def close_walkthrough(self) -> None:
         """Put the storyboard away until a newer walkthrough finishes."""
         newest = self._newest()

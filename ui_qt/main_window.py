@@ -380,6 +380,8 @@ class MainWindow(QMainWindow):
     walkthrough_requested = pyqtSignal()
     #: Open the walkthrough library at a capture folder, or None for the newest.
     walkthrough_library_requested = pyqtSignal(object)
+    #: The Walkthrough tab saved or deleted a walkthrough.
+    walkthroughs_changed = pyqtSignal()
     model_changed = pyqtSignal(str)
     whisper_engine_changed = pyqtSignal()  # Local engine (model/device/quant) changed
     # The Remote backend's Model field chose one of the paired computer's
@@ -756,6 +758,7 @@ class MainWindow(QMainWindow):
                 widget.cancel_requested.connect(self._on_quick_record_canceled)
                 widget.settings_requested.connect(self.settings_destination_requested)
                 widget.walkthroughs_changed.connect(self.refresh_history)
+                widget.walkthroughs_changed.connect(self.walkthroughs_changed)
             elif key == "meeting":
                 widget.past_meeting_requested.connect(self.past_meeting_requested)
         for method, (args, kwargs) in self._screen_updates[key].items():
@@ -1979,6 +1982,12 @@ class MainWindow(QMainWindow):
         self.tabbed_content.set_current_index(tab_index)
         if not self.history_sidebar.is_expanded:
             self.toggle_history()
+
+    def reload_walkthrough(self) -> None:
+        """The library changed a walkthrough on disk: the tab shows it as it is now."""
+        tab = self._screen_widgets.get("walkthrough")
+        if tab is not None:
+            tab.reload_walkthrough()
 
     def walkthrough_finished(self, folder) -> None:
         """Show a walkthrough that just finished, unless edits to another are open."""
