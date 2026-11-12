@@ -280,11 +280,17 @@ def test_a_full_queue_drops_the_oldest_event(tmp_path, bus, store, monkeypatch):
     # first event reaches it, and then the full queue would drop that one.
     wait_until(lambda: started.exists() and started.read_text().split() == ["0"], timeout=10)
     published += [bus.publish("recording.started", {"n": n}) for n in range(1, 6)]
+    ours = {e.id for e in published}
 
-    wait_until(lambda: sum(1 for r in programs.runs("p") if r.ok) == 3, timeout=20)
+    def our_runs():
+        # A run an earlier test left going can still finish and be recorded
+        # under "p" after its teardown, so count only this test's events.
+        return [r for r in programs.runs("p") if r.event_id in ours]
+
+    wait_until(lambda: sum(1 for r in our_runs() if r.ok) == 3, timeout=20)
     time.sleep(0.6)
     ran = log.read_text().split()
-    dropped = [r.event_id for r in programs.runs("p") if r.error.startswith("Dropped")]
+    dropped = [r.event_id for r in our_runs() if r.error.startswith("Dropped")]
     assert len(ran) == 3 and ran[0] == "0" and ran[-2:] == ["4", "5"]
     assert len(dropped) == 3
     assert set(dropped) == {e.id for e in published if str(e.data["n"]) not in ran}

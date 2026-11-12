@@ -383,6 +383,7 @@ class MainWindow(QMainWindow):
     # The Remote engine's link was clicked while the host was out of reach.
     remote_retry_requested = pyqtSignal()
     live_preview_changed = pyqtSignal()  # Live preview toggled from a tab footer
+    cleanup_toggled = pyqtSignal()  # AI cleanup toggled from a tab footer
     settings_requested = pyqtSignal()
     guided_setup_requested = pyqtSignal()
     #: A Settings destination key (or legacy alias) to open.
@@ -663,6 +664,7 @@ class MainWindow(QMainWindow):
         tab.remote_runtime_selected.connect(self.remote_runtime_selected)
         tab.remote_retry_requested.connect(self.remote_retry_requested)
         tab.live_preview_changed.connect(self._on_live_preview_changed)
+        tab.cleanup_toggled.connect(self.cleanup_toggled)
         tab.help_requested.connect(self.engine_help_requested)
         tab.engine_downloads_requested.connect(
             lambda: self.settings_destination_requested.emit("engine_downloads")

@@ -887,6 +887,11 @@ class SettingsKey:
     CLEANUP_ENDPOINT_PROVIDER: Final = StrSetting(
         "cleanup_endpoint_provider", config.TRANSCRIPT_CLEANUP_PROVIDER, in_table=False,
     )
+    # Set once the user has answered the offer to run cleanup through a
+    # detected Claude Code or Codex, so it is asked only once.
+    CLEANUP_AGENT_OFFER_ANSWERED: Final = BoolSetting(
+        "cleanup_agent_offer_answered", False, in_table=False,
+    )
     # Live API permissions, rechecked on every request. Reading events is
     # the same trust as reading history; the rest can act for the user.
     API_LIVE_EVENTS: Final = BoolSetting("api_live_events", True)

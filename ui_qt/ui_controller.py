@@ -32,6 +32,7 @@ from services.update_contract import decode_native_result
 from services.backup_startup import RESTART_EXIT_CODE
 from services.code_identity import changed_since_launch
 from services.hotkey_manager import format_hotkey_display
+from ui_qt.cleanup_agent_offer import CleanupAgentOffer
 from ui_qt.clipboard import ClipboardStageResult, TemporaryClipboard
 from ui_qt.overlay_state import OverlayState
 from ui_qt.main_window import MainWindow
@@ -373,6 +374,8 @@ class UIController(QObject):
 
         self._settings_dialog = None
         self._guided_setup_dialog = None
+        self._cleanup_agent_offer = CleanupAgentOffer(self.main_window, self)
+        self._cleanup_agent_offer.on_accepted = self._on_cleanup_agent_accepted
         self._guided_setup_offer_timer = QTimer(self)
         self._guided_setup_offer_timer.setSingleShot(True)
         self._guided_setup_offer_timer.timeout.connect(self._offer_guided_setup_now)
@@ -419,6 +422,7 @@ class UIController(QObject):
         self.main_window.remote_runtime_selected.connect(self._on_remote_runtime_selected)
         self.main_window.remote_retry_requested.connect(self._on_remote_retry)
         self.main_window.live_preview_changed.connect(self._on_live_preview_changed)
+        self.main_window.cleanup_toggled.connect(self._cleanup_agent_offer.maybe_offer)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
         self.main_window.guided_setup_requested.connect(self.open_guided_setup)
         self.main_window.engine_help_requested.connect(self.open_engine_help_destination)
@@ -1579,7 +1583,7 @@ class UIController(QObject):
         dialog.on_developer_mode_changed = (
             lambda enabled: self._update_screen("meeting", "set_developer_mode", enabled)
         )
-        dialog.on_cleanup_changed = self.refresh_cleanup_controls
+        dialog.on_cleanup_changed = self._on_settings_cleanup_changed
         dialog.on_hotkeys_changed = self._on_settings_hotkeys_changed
         dialog.on_cleanup_profiles_changed = self._on_cleanup_profiles_changed
         dialog.on_profile_hotkey_capture = self._on_profile_hotkey_capture
@@ -1624,6 +1628,17 @@ class UIController(QObject):
     def _loaded_local_model(self) -> Optional[str]:
         """The model the engine has loaded, read when Settings asks."""
         return self.get_loaded_local_model() if self.get_loaded_local_model else None
+
+    def _on_settings_cleanup_changed(self) -> None:
+        self.refresh_cleanup_controls()
+        self._cleanup_agent_offer.maybe_offer()
+
+    def _on_cleanup_agent_accepted(self) -> None:
+        """Show the new cleanup runner wherever it is named."""
+        if self._settings_dialog is not None:
+            self._settings_dialog.refresh()
+        if self._guided_setup_dialog is not None:
+            self._guided_setup_dialog.refresh()
 
     def refresh_cleanup_controls(self):
         self.main_window.quick_record_tab.load_cleanup_setting()
