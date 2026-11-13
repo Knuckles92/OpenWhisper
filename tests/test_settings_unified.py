@@ -85,7 +85,7 @@ def make_dialog():
     stacks = []
     temp = tempfile.TemporaryDirectory()
 
-    def build(values=None, cached=None, *, background_cache_scan=False):
+    def build(values=None, cached=None, *, background_cache_scan=False, staged=False):
         store = SettingsManager(os.path.join(temp.name, f"settings{len(stacks)}.json"))
         store.save_all_settings({**(values or {})})
         stack = ExitStack()
@@ -101,7 +101,8 @@ def make_dialog():
         stack.enter_context(patch("services.local_asr.cache.inventory", return_value={}))
         stacks.append(stack)
         dialog = settings_dialog_module.SettingsDialog(
-            get_loaded_model=lambda: None, background_cache_scan=background_cache_scan
+            get_loaded_model=lambda: None, background_cache_scan=background_cache_scan,
+            staged=staged,
         )
         return dialog, store
 
@@ -566,6 +567,113 @@ class TestChapters:
             assert dialog.rail.current_key() == RUNTIME
         finally:
             menu.close()
+
+class TestStagedBuild:
+    """Settings built a piece at a time, ahead of its first opening."""
+
+    def test_a_staged_window_ends_up_like_one_built_at_once(self, make_dialog):
+        values = {SettingsKey.AUTO_PASTE: False}
+        whole, _store = make_dialog(values)
+        staged, _store = make_dialog(values, staged=True)
+        assert staged.layout() is None
+        pieces = 1
+        while not staged.build_step():
+            pieces += 1
+        assert pieces > 3
+        assert staged.build_step() is True
+        assert staged.rail.current_key() == OVERVIEW
+        assert staged._built_pages == whole._built_pages == {OVERVIEW}
+        assert staged.size() == whole.size()
+        for key in whole.rail.keys():
+            assert staged.rail.value(key) == whole.rail.value(key), key
+
+    def test_finish_build_runs_what_is_left(self, make_dialog):
+        staged, _store = make_dialog(staged=True)
+        assert staged.build_step() is False
+        staged.finish_build()
+        assert staged.build_step() is True
+        staged.select_destination(GENERAL)
+        assert GENERAL in staged._built_pages
+
+    def _controller(self, steps):
+        dialog = MagicMock()
+        dialog.build_step.side_effect = steps
+        controller = SimpleNamespace(
+            _settings_dialog=None,
+            _settings_build=None,
+            _settings_build_timer=MagicMock(),
+            is_recording=False,
+            _meeting_active=False,
+            SETTINGS_BUILD_DELAY_MS=UIController.SETTINGS_BUILD_DELAY_MS,
+            SETTINGS_BUILD_GAP_MS=UIController.SETTINGS_BUILD_GAP_MS,
+            SETTINGS_BUILD_RETRY_MS=UIController.SETTINGS_BUILD_RETRY_MS,
+            _new_settings_dialog=MagicMock(return_value=dialog),
+            on_component_install_requested=MagicMock(),
+            on_component_cancel_requested=MagicMock(),
+            on_component_remove_requested=MagicMock(),
+        )
+        for name in ("_adopt_settings_dialog", "_discard_settings_build"):
+            setattr(
+                controller, name,
+                lambda *args, name=name: getattr(UIController, name)(controller, *args),
+            )
+        return controller, dialog
+
+    def test_the_controller_builds_a_piece_per_tick_then_keeps_the_window(self):
+        controller, dialog = self._controller([False, False, True])
+        UIController.build_settings_when_idle(controller)
+        controller._settings_build_timer.start.assert_called_once_with(
+            UIController.SETTINGS_BUILD_DELAY_MS
+        )
+        for _tick in range(2):
+            UIController._settings_build_step(controller)
+            assert controller._settings_dialog is None
+            controller._settings_build_timer.start.assert_called_with(
+                UIController.SETTINGS_BUILD_GAP_MS
+            )
+        UIController._settings_build_step(controller)
+        assert controller._settings_dialog is dialog
+        assert controller._settings_build is None
+        controller._new_settings_dialog.assert_called_once_with(staged=True)
+        dialog.downloads.component_install_requested.connect.assert_called_once_with(
+            controller.on_component_install_requested
+        )
+
+    @pytest.mark.parametrize("busy", ["is_recording", "_meeting_active"])
+    def test_building_waits_out_a_recording_or_a_meeting(self, busy):
+        controller, dialog = self._controller([True])
+        setattr(controller, busy, True)
+        UIController._settings_build_step(controller)
+        controller._new_settings_dialog.assert_not_called()
+        controller._settings_build_timer.start.assert_called_once_with(
+            UIController.SETTINGS_BUILD_RETRY_MS
+        )
+        setattr(controller, busy, False)
+        UIController._settings_build_step(controller)
+        assert controller._settings_dialog is dialog
+
+    def test_opening_mid_build_finishes_the_same_window(self):
+        controller, dialog = self._controller([False])
+        UIController._settings_build_step(controller)
+        assert UIController._ensure_settings_dialog(controller) is dialog
+        dialog.finish_build.assert_called_once_with()
+        controller._settings_build_timer.stop.assert_called()
+        controller._new_settings_dialog.assert_called_once_with(staged=True)
+        # Built: a late tick has nothing to do.
+        UIController._settings_build_step(controller)
+        assert dialog.build_step.call_count == 1
+
+    def test_a_piece_that_fails_leaves_the_opening_to_build_afresh(self):
+        controller, dialog = self._controller(RuntimeError("no display"))
+        UIController._settings_build_step(controller)
+        assert controller._settings_dialog is None
+        assert controller._settings_build is None
+        dialog.deleteLater.assert_called_once_with()
+        fresh = MagicMock()
+        controller._new_settings_dialog = MagicMock(return_value=fresh)
+        assert UIController._ensure_settings_dialog(controller) is fresh
+        controller._new_settings_dialog.assert_called_once_with()
+
 
 class TestControllerRouting:
     def _controller(self, dialog, missing_runtime=None):

@@ -362,6 +362,7 @@ def main() -> int:
         app_controller.notify_main_ui_ready()
         if not health_token:
             ui_controller.offer_guided_setup()
+            ui_controller.build_settings_when_idle()
         from services.agent_mcp.runtime import runtime as mcp_runtime
         from services.settings import settings_manager
 

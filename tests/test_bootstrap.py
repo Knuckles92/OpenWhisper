@@ -52,6 +52,9 @@ class _FakeUIController:
     def offer_guided_setup(self):
         self.guided_setup_offered = True
 
+    def build_settings_when_idle(self):
+        self.settings_build_requested = True
+
     def set_ambient_status(self, status):
         self.ambient_status = status
 
