@@ -486,6 +486,7 @@ class SettingsDialog(QDialog):
         get_loaded_model: Optional[Callable[[], Optional[str]]] = None,
         background_cache_scan: bool = True,
         backup_coordinator=None,
+        staged: bool = False,
     ):
         """Register destinations and build only the selected page.
 
@@ -494,6 +495,10 @@ class SettingsDialog(QDialog):
             get_loaded_model: Provider returning the model the engine has
                 loaded (or None), so "auto" and the Delete lock are accurate.
             background_cache_scan: Scan the model cache on a worker thread.
+            staged: Leave the window unbuilt. The owner then calls
+                ``build_step`` until it returns True, one short piece of work
+                per event-loop turn, and touches nothing else on the window
+                until then.
         """
         super().__init__(parent)
         self.setWindowTitle("Settings")
@@ -592,7 +597,60 @@ class SettingsDialog(QDialog):
             ensure_built=lambda: self.ensure_page(MEETING_AFTER),
         )
 
-        self._setup_ui()
+        self._build_steps = self._build()
+        if not staged:
+            self.finish_build()
+
+    def build_step(self) -> bool:
+        """Run the next piece of construction; True once the window is built."""
+        steps = self._build_steps
+        if steps is None:
+            return True
+        try:
+            next(steps)
+        except StopIteration:
+            self._build_steps = None
+            return True
+        return False
+
+    def finish_build(self) -> None:
+        """Run whatever construction is left, in one go."""
+        while not self.build_step():
+            pass
+
+    def _build(self):
+        """Construct the window, yielding between pieces of similar cost.
+
+        One piece is at most about a tenth of a second on the Qt thread, so
+        a window built ahead of its first opening never holds up a hotkey.
+        """
+        root = QVBoxLayout(self)
+        # Only the shell constrains the window; page contents scroll independently.
+        root.setSizeConstraint(QLayout.SizeConstraint.SetDefaultConstraint)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._build_view_header())
+        self.settings_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.settings_splitter.setObjectName("settingsSplitter")
+        self.settings_splitter.setHandleWidth(6)
+        self.settings_splitter.setChildrenCollapsible(False)
+        root.addWidget(self.settings_splitter, stretch=1)
+        yield
+        self.rail_pane = self._build_rail_pane()
+        yield
+        self.settings_splitter.addWidget(self.rail_pane)
+        yield
+        body = self._build_body()
+        yield
+        self.settings_splitter.addWidget(body)
+        self.settings_splitter.setStretchFactor(0, 0)
+        self.settings_splitter.setStretchFactor(1, 1)
+        self.settings_splitter.setSizes(
+            [NavRail.RAIL_WIDTH, self.DEFAULT_SIZE.width() - NavRail.RAIL_WIDTH]
+        )
+        handle = self.settings_splitter.handle(1)
+        handle.setCursor(Qt.CursorShape.SizeHorCursor)
+        handle.setToolTip("Drag to resize the settings sidebar")
         self.setMinimumSize(self.MINIMUM_SIZE)
         self.resize(self.DEFAULT_SIZE)
 
@@ -625,39 +683,17 @@ class SettingsDialog(QDialog):
         self._reveal_timer.setSingleShot(True)
         self._reveal_timer.setInterval(0)
         self._reveal_timer.timeout.connect(self._run_reveal)
+        yield
 
         self._pages_ready = True
         self.rail.select(OVERVIEW)
+        yield
         self.refresh()
         if self._backup_coordinator is not None:
             try:
                 self._on_backup_busy_changed(bool(self._backup_coordinator.snapshot().get("busy")))
             except Exception:
                 logger.exception("Could not read backup coordinator state")
-
-    def _setup_ui(self) -> None:
-        root = QVBoxLayout(self)
-        # Only the shell constrains the window; page contents scroll independently.
-        root.setSizeConstraint(QLayout.SizeConstraint.SetDefaultConstraint)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-        root.addWidget(self._build_view_header())
-        self.settings_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.settings_splitter.setObjectName("settingsSplitter")
-        self.settings_splitter.setHandleWidth(6)
-        self.settings_splitter.setChildrenCollapsible(False)
-        self.rail_pane = self._build_rail_pane()
-        self.settings_splitter.addWidget(self.rail_pane)
-        self.settings_splitter.addWidget(self._build_body())
-        self.settings_splitter.setStretchFactor(0, 0)
-        self.settings_splitter.setStretchFactor(1, 1)
-        self.settings_splitter.setSizes(
-            [NavRail.RAIL_WIDTH, self.DEFAULT_SIZE.width() - NavRail.RAIL_WIDTH]
-        )
-        handle = self.settings_splitter.handle(1)
-        handle.setCursor(Qt.CursorShape.SizeHorCursor)
-        handle.setToolTip("Drag to resize the settings sidebar")
-        root.addWidget(self.settings_splitter, stretch=1)
 
     def _build_view_header(self) -> QWidget:
         header = QFrame()
