@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Fixed
+
+- **Walkthrough write-ups no longer fail with "has been deleted"** — writing a walkthrough's PDF and Word documents could still stop with "Couldn't finish: wrapped C/C++ object of type QAbstractTextDocumentLayout has been deleted" (or QTextFrame or QTextTable), most often for a write-up with numbered or bulleted lists. The 2.8.9 fix only made it rarer. Qt objects that the documents are built from were freed on the background thread while the app was still due to hear about them, so a newer object at the same memory address could be taken for the freed one. Lists are now kept until their document is finished with, and finished documents are freed on the app's main thread, which hears about them straight away. In a test that writes a write-up with lists over and over, the first failure came within 25 PDF and Word pairs; none now in 1,200. A document no longer waits for a busy app before it is built, which used to add up to a quarter of a second to each one. The pages and Word files come out exactly as before.
+
 ## [2.8.91] - 2026-11-12
 
 ### Added

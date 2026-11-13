@@ -40,6 +40,7 @@ from services.walkthrough.document import (
     _Group,
     _layout_dpi,
     _MarkdownComposer,
+    _release,
     _text_area,
     _when,
     page_layout,
@@ -77,9 +78,13 @@ def write_docx(
     """
     layout = page_layout(page_size)
     dpi = _layout_dpi()
-    doc, groups = _Composer(_text_area(layout, dpi), dpi, document_format).layout(walkthrough)
+    composer = _Composer(_text_area(layout, dpi), dpi, document_format)
     title = f"{document_format.title or TITLE} · {_when(walkthrough.started_at)}"
-    return _write(doc, groups, folder / DOCX_NAME, layout, dpi, title)
+    try:
+        doc, groups = composer.layout(walkthrough)
+        return _write(doc, groups, folder / DOCX_NAME, layout, dpi, title)
+    finally:
+        _release(composer.doc)
 
 
 def write_markdown_docx(
@@ -101,8 +106,12 @@ def write_markdown_docx(
     """
     layout = page_layout(page_size)
     dpi = _layout_dpi()
-    doc, groups = _MarkdownComposer(_text_area(layout, dpi), dpi, folder, look).layout(text)
-    return _write(doc, groups, path, layout, dpi, title)
+    composer = _MarkdownComposer(_text_area(layout, dpi), dpi, folder, look)
+    try:
+        doc, groups = composer.layout(text)
+        return _write(doc, groups, path, layout, dpi, title)
+    finally:
+        _release(composer.doc)
 
 
 def _write(

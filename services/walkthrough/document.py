@@ -25,9 +25,9 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
+from PyQt6 import sip
 from PyQt6.QtCore import (
     QCoreApplication,
-    QEvent,
     QLocale,
     QMarginsF,
     QObject,
@@ -439,8 +439,11 @@ def write_pdf(
     writer.setCreator("OpenWhisper")
     dpi = _layout_dpi()
     composer = _Composer(_text_area(writer.pageLayout(), dpi), dpi, document_format)
-    doc, frames = composer.compose(walkthrough)
-    _paint_pages(doc, frames, writer, dpi, path)
+    try:
+        doc, frames = composer.compose(walkthrough)
+        _paint_pages(doc, frames, writer, dpi, path)
+    finally:
+        _release(composer.doc)
     return path
 
 
@@ -469,8 +472,12 @@ def write_markdown_pdf(
     writer.setTitle(title)
     writer.setCreator("OpenWhisper")
     dpi = _layout_dpi()
-    doc, frames = _MarkdownComposer(_text_area(writer.pageLayout(), dpi), dpi, folder, look).compose(text)
-    _paint_pages(doc, frames, writer, dpi, path)
+    composer = _MarkdownComposer(_text_area(writer.pageLayout(), dpi), dpi, folder, look)
+    try:
+        doc, frames = composer.compose(text)
+        _paint_pages(doc, frames, writer, dpi, path)
+    finally:
+        _release(composer.doc)
     return path
 
 
@@ -488,52 +495,47 @@ def _local_page_size() -> QPageSize:
     return QPageSize(QPageSize.PageSizeId.A4)
 
 
-class _MainThreadGate(QObject):
-    """Lives on the main thread; sets each event it is sent once that thread reaches it."""
+class _MainThreadDeleter(QObject):
+    """Lives on the main thread and deletes there what it is handed."""
 
-    asked = pyqtSignal(object)
+    handed = pyqtSignal(object)
 
     def __init__(self, main_thread: QThread) -> None:
         super().__init__()
         self.moveToThread(main_thread)
-        # After the move, so the call is queued to the main thread.
-        self.asked.connect(self._answer, Qt.ConnectionType.QueuedConnection)
+        self.handed.connect(self._delete, Qt.ConnectionType.QueuedConnection)
 
-    def _answer(self, event: threading.Event) -> None:
-        event.set()
-
-
-_gate: _MainThreadGate | None = None
-_gate_lock = threading.Lock()
-#: How long a worker waits for the main thread. A main thread too busy to
-#: answer isn't delivering the late notices either.
-_SETTLE_SECONDS = 0.25
+    def _delete(self, doc: QTextDocument) -> None:
+        sip.delete(doc)
 
 
-def _new_document() -> QTextDocument:
-    """A QTextDocument whose frames and tables PyQt won't report as deleted.
+_deleter: _MainThreadDeleter | None = None
+_deleter_lock = threading.Lock()
 
-    PyQt learns that a frame or table it wrapped was destroyed from a notice
-    it handles on the main thread. For a document built on a worker that
-    notice arrives late, and it names the object by address, so it can land
-    on a frame of the next document that reused the address: "wrapped C/C++
-    object of type QTextFrame has been deleted". Letting the main thread
-    work through the notices of earlier documents first leaves none to
-    misfire, as it handles them in order.
+
+def _release(doc: QTextDocument) -> None:
+    """Have ``doc``, once done with, deleted on the main thread.
+
+    PyQt marks a wrapper of a Qt-owned object (the document's layout, its
+    frames, tables and lists) deleted when a monitor on the main thread
+    hears the object's ``destroyed`` signal. Destroyed on a worker, the
+    signal is queued and names the object by address, which a new object
+    can take before the main thread gets to it: that object's wrapper is
+    then marked deleted while in use ("wrapped C/C++ object of type
+    QAbstractTextDocumentLayout has been deleted"). Destroyed on the main
+    thread, the monitor hears it at once, before the memory is free. A
+    document built on the main thread is left to Python, which deletes it
+    there.
     """
     app = QCoreApplication.instance()
-    if app is not None:
-        if QThread.currentThread() == app.thread():
-            QCoreApplication.sendPostedEvents(None, QEvent.Type.MetaCall.value)
-        else:
-            global _gate
-            with _gate_lock:
-                if _gate is None:
-                    _gate = _MainThreadGate(app.thread())
-            caught_up = threading.Event()
-            _gate.asked.emit(caught_up)
-            caught_up.wait(_SETTLE_SECONDS)
-    return QTextDocument()
+    if app is None or QThread.currentThread() == app.thread():
+        return
+    global _deleter
+    with _deleter_lock:
+        if _deleter is None:
+            _deleter = _MainThreadDeleter(app.thread())
+    doc.moveToThread(app.thread())
+    _deleter.handed.emit(doc)
 
 
 def _layout_dpi() -> int:
@@ -750,7 +752,7 @@ class _Composer:
         self.page = page
         self.unit = dpi / 72  # layout units per point
         self.format = document_format
-        self.doc = _new_document()
+        self.doc = QTextDocument()
         self.doc.setDocumentMargin(0)
         # Laid out at screen resolution but painted at the PDF's: hinted
         # advances would space the letters unevenly once scaled.
@@ -1097,7 +1099,7 @@ class _MarkdownComposer:
         self.folder = folder
         self.text_color = _color(look.text_color)
         self.heading_color = _color(look.heading_color) or self.text_color
-        self.doc = _new_document()
+        self.doc = QTextDocument()
         self.doc.setDocumentMargin(0)
         self.doc.setUseDesignMetrics(True)
         self.doc.setDefaultFont(_document_font(look.font.strip()))
@@ -1154,19 +1156,29 @@ class _MarkdownComposer:
         beside a line, list markers included. As text they are painted, and
         copied and searched with the words. The marker hangs in the item's
         indent, so wrapped lines start under the words.
+
+        Items stay in their lists, which no longer indent them: the list's
+        indent becomes the block's own, as the Word writer reads it.
+        Taking the last item out would delete the list on this thread, which
+        PyQt hears of too late on a worker (see _release).
         """
         items = []
+        lists: dict[QTextList, None] = {}
         block = self.doc.begin()
         while block.isValid():
             text_list = block.textList()
             if text_list is not None:
-                # Every number first: taking an item out of its list renumbers the rest.
-                items.append((block, text_list, _list_marker(text_list, block)))
+                lists[text_list] = None
+                items.append((block, text_list.format().indent(), _list_marker(text_list, block)))
             block = block.next()
+        for text_list in lists:
+            list_format = text_list.format()
+            list_format.setIndent(0)
+            text_list.setFormat(list_format)
         hang = _LIST_HANG_PT * self.unit
-        for block, text_list, marker in items:
-            text_list.remove(block)  # keeps the list's indent as the block's
+        for block, list_indent, marker in items:
             block_format = block.blockFormat()
+            block_format.setIndent(block_format.indent() + list_indent)
             block_format.setTextIndent(-hang)
             # From where the first line starts: the words line up with the wrapped lines.
             block_format.setTabPositions([QTextOption.Tab(hang, QTextOption.TabType.LeftTab)])

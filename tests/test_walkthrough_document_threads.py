@@ -1,55 +1,70 @@
 """Walkthrough documents built on a worker while the main thread handles events."""
 import os
 import threading
-import time
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt6 import sip
 from PyQt6.QtCore import QSizeF
-from PyQt6.QtGui import QTextTable
 from PyQt6.QtWidgets import QApplication
 
-from services.walkthrough import document
+from services.walkthrough import document, word
 
-TABLE = "# Steps\n\n| Step | Result |\n|---|---|\n| Sign in | Stalls |\n\nThen it recovers.\n"
+WRITE_UP = (
+    "# Steps\n\n1. Sign in.\n2. Invoices hang.\n\n- one\n- two\n\n"
+    "| Step | Result |\n|---|---|\n| Sign in | Stalls |\n\n3. Then it recovers.\n"
+)
 
 
-def _build(count, tmp_path, errors):
+def _write_pairs(count, folder, errors):
     for _ in range(count):
         try:
-            composer = document._MarkdownComposer(QSizeF(600, 800), 96, tmp_path)
-            doc, _groups = composer.layout(TABLE)
-            tables = [frame for frame in doc.rootFrame().childFrames()
-                      if isinstance(frame, QTextTable)]
-            assert [(table.rows(), table.columns()) for table in tables] == [(2, 2)]
+            document.write_markdown_pdf(WRITE_UP, folder / "w.pdf", folder=folder, title="Steps")
+            word.write_markdown_docx(WRITE_UP, folder / "w.docx", folder=folder, title="Steps")
         except Exception as exc:
             errors.append(exc)
             return
 
 
-def test_frames_stay_usable_in_documents_built_back_to_back_on_a_worker(tmp_path):
-    # Without the main thread catching up first, about one document in a
-    # hundred raised "wrapped C/C++ object of type QTextFrame has been deleted".
+def test_write_ups_written_back_to_back_on_a_worker_stay_usable(tmp_path):
+    # Lists emptied, or documents dropped, on the worker used to make PyQt
+    # mark a later document's layout, frame or table deleted while in use:
+    # this failed within 25 pairs, mostly within a few.
     errors = []
-    worker = threading.Thread(target=_build, args=(600, tmp_path, errors))
+    worker = threading.Thread(target=_write_pairs, args=(80, tmp_path, errors))
     worker.start()
     while worker.is_alive():
         QApplication.processEvents()
     assert errors == []
 
 
-def test_a_worker_does_not_wait_long_for_a_main_thread_that_is_blocked(tmp_path, monkeypatch):
-    monkeypatch.setattr(document, "_SETTLE_SECONDS", 0.05)
+def test_a_worker_never_waits_for_a_blocked_main_thread(tmp_path):
     errors = []
-    worker = threading.Thread(target=_build, args=(3, tmp_path, errors))
-    started = time.monotonic()
+    worker = threading.Thread(target=_write_pairs, args=(3, tmp_path, errors))
     worker.start()
-    worker.join(5)
+    worker.join(10)
     assert not worker.is_alive() and errors == []
-    assert time.monotonic() - started < 3
+    QApplication.processEvents()
 
 
-def test_documents_can_be_built_on_the_main_thread(tmp_path):
+def test_a_document_built_on_a_worker_is_deleted_on_the_main_thread(tmp_path):
+    built = {}
+
+    def build():
+        composer = document._MarkdownComposer(QSizeF(600, 800), 96, tmp_path)
+        built["doc"], _groups = composer.layout(WRITE_UP)
+        built["layout"] = built["doc"].documentLayout()
+        document._release(built["doc"])
+
+    worker = threading.Thread(target=build)
+    worker.start()
+    worker.join(10)
+    assert not sip.isdeleted(built["doc"])
+    QApplication.processEvents()
+    assert sip.isdeleted(built["doc"]) and sip.isdeleted(built["layout"])
+
+
+def test_write_ups_can_be_written_on_the_main_thread(tmp_path):
     errors = []
-    _build(5, tmp_path, errors)
+    _write_pairs(3, tmp_path, errors)
     assert errors == []
