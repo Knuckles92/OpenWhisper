@@ -6,6 +6,7 @@ from PyQt6.QtCore import QTimer, QUrl, Qt
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout
 
+from services import accessibility_grant
 from services._hotkey_pynput import accessibility_app_bundle
 from services.hotkey_manager import (
     accessibility_permission_instructions,
@@ -20,10 +21,12 @@ logger = logging.getLogger(__name__)
 
 
 class AccessibilityDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, lost=False):
         super().__init__(parent)
         self.setObjectName("accessibilityDialog")
-        self.setWindowTitle("Set up auto-paste")
+        self.setWindowTitle("Turn auto-paste back on" if lost else "Set up auto-paste")
+        self._trusted = None
+        self._stale_entry_cleared = False
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setMinimumWidth(520)
         # As short as the copy allows; the labels raise the floor as they wrap.
@@ -39,11 +42,20 @@ class AccessibilityDialog(QDialog):
             layout.addWidget(label)
             return label
 
-        paragraph("Paste transcriptions into the app you’re using", "headerLabel")
-        paragraph(
-            "Auto-paste needs Accessibility access. Recording and global hotkeys "
-            "work without it, and you can paste copied text with ⌘V."
-        )
+        if lost:
+            paragraph("Auto-paste needs Accessibility access again", "headerLabel")
+            paragraph(
+                "macOS withdrew this copy’s access, which happens after an update. "
+                "The old switch can still look on; opening Accessibility Settings "
+                "below removes it so you can turn on the current one. Until then, "
+                "paste copied text with ⌘V."
+            )
+        else:
+            paragraph("Paste transcriptions into the app you’re using", "headerLabel")
+            paragraph(
+                "Auto-paste needs Accessibility access. Recording and global hotkeys "
+                "work without it, and you can paste copied text with ⌘V."
+            )
         self.bundle = accessibility_app_bundle()
         name = self.bundle.name if self.bundle else "OpenWhisper"
         if self.bundle:
@@ -125,6 +137,9 @@ class AccessibilityDialog(QDialog):
 
     def refresh_status(self):
         trusted = is_accessibility_trusted()
+        if trusted is not self._trusted:
+            self._trusted = trusted
+            accessibility_grant.remember_grant(trusted)
         self.status.setText(
             "Accessibility access is enabled. Permission setup is complete."
             if trusted else "Access not detected yet. Clipboard paste is available."
@@ -133,6 +148,11 @@ class AccessibilityDialog(QDialog):
 
     def _open_settings(self):
         if not is_accessibility_trusted():
+            # An entry left by an earlier build stays on yet grants nothing.
+            # Once only: a second click must not undo a switch just turned on.
+            if not self._stale_entry_cleared:
+                self._stale_entry_cleared = True
+                accessibility_grant.reset_stale_grant()
             request_accessibility_trust()
         opened = QDesktopServices.openUrl(QUrl(
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
@@ -150,7 +170,7 @@ class AccessibilityDialog(QDialog):
         )
 
 
-def show_accessibility_setup(parent):
+def show_accessibility_setup(parent, lost=False):
     """Keep a single non-modal setup window per owner."""
     existing = parent.findChild(AccessibilityDialog)
     if existing is not None:
@@ -158,6 +178,6 @@ def show_accessibility_setup(parent):
         existing.raise_()
         existing.activateWindow()
         return existing
-    dialog = AccessibilityDialog(parent)
+    dialog = AccessibilityDialog(parent, lost=lost)
     dialog.show()
     return dialog

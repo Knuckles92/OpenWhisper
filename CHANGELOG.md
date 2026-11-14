@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Fixed
+
+- **Auto-paste no longer stops silently after a macOS update** — macOS ties Accessibility access to the exact build, so an update could leave OpenWhisper switched on in System Settings while pasting quietly fell back to the clipboard. OpenWhisper now notices on launch that access it had is gone and reopens the auto-paste setup window, and **Open Accessibility Settings** removes the leftover entry first so the switch you turn on is the current one.
+
 ## [2.8.92] - 2026-11-12
 
 ### Fixed
