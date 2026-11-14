@@ -14,7 +14,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 from config import config
 from services.components import component_coordinator
 from services.database import db
-from services import dictionary
+from services import credentials, dictionary
 from services.recorder import AudioRecorder
 from services.runtime import (
     HotkeyRuntime,
@@ -866,6 +866,9 @@ class ApplicationController(QObject):
         if not self._startup_database_requested:
             self._startup_database_requested = True
             self._startup_executor.submit(self._initialize_startup_database)
+        # Settings asks whether keys are saved as soon as it is built; the
+        # first question loads the OS credential store's bindings (~80 ms).
+        self.component_executor.submit(credentials.store().status)
         self.component_executor.submit(self.updater.prune_leftovers)
         # Measures every installed runtime (a walk of ~30k files for Qwen)
         # and probes the system GPU runtime, both remembered, so Settings'

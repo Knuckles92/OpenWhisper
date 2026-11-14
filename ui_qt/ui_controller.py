@@ -375,6 +375,11 @@ class UIController(QObject):
         self._meeting_urls: dict = {}
 
         self._settings_dialog = None
+        # A Settings window under construction ahead of its first opening.
+        self._settings_build: Optional[SettingsDialog] = None
+        self._settings_build_timer = QTimer(self)
+        self._settings_build_timer.setSingleShot(True)
+        self._settings_build_timer.timeout.connect(self._settings_build_step)
         self._guided_setup_dialog = None
         self._cleanup_agent_offer = CleanupAgentOffer(self.main_window, self)
         self._cleanup_agent_offer.on_accepted = self._on_cleanup_agent_accepted
@@ -1642,23 +1647,87 @@ class UIController(QObject):
         downloads.on_batch_cancel_requested = self.request_model_batch_stop
         return dialog
 
+    #: How long after launch Settings starts building, and the pause between
+    #: its pieces; a busy moment puts the next piece off by the retry time.
+    SETTINGS_BUILD_DELAY_MS = 2500
+    SETTINGS_BUILD_GAP_MS = 60
+    SETTINGS_BUILD_RETRY_MS = 1000
+
+    def build_settings_when_idle(self) -> None:
+        """Build the Settings window ahead of its first opening.
+
+        A first opening otherwise builds the window while the user waits,
+        about ten times as long as showing a built one. The work runs a
+        piece per event-loop turn, between recordings, and an opening that
+        arrives first finishes it on the spot.
+        """
+        if self._settings_dialog is None:
+            self._settings_build_timer.start(self.SETTINGS_BUILD_DELAY_MS)
+
+    def _settings_build_step(self) -> None:
+        if self._settings_dialog is not None:
+            return
+        if (
+            self.is_recording
+            or self._meeting_active
+            or QApplication.activeModalWidget() is not None
+            or QApplication.activePopupWidget() is not None
+        ):
+            self._settings_build_timer.start(self.SETTINGS_BUILD_RETRY_MS)
+            return
+        try:
+            if self._settings_build is None:
+                self._settings_build = self._new_settings_dialog(staged=True)
+            built = self._settings_build.build_step()
+        except Exception:
+            # Opening Settings builds it again, where the failure is reported.
+            logger.exception("Could not build Settings ahead of its first opening")
+            self._discard_settings_build()
+            return
+        if built:
+            self._adopt_settings_dialog(self._settings_build)
+        else:
+            self._settings_build_timer.start(self.SETTINGS_BUILD_GAP_MS)
+
+    def _discard_settings_build(self) -> None:
+        self._settings_build_timer.stop()
+        dialog, self._settings_build = self._settings_build, None
+        if dialog is not None:
+            dialog.deleteLater()
+
+    def _new_settings_dialog(self, staged: bool = False) -> SettingsDialog:
+        return SettingsDialog(
+            self.main_window, get_loaded_model=self._loaded_local_model,
+            backup_coordinator=self.backup_coordinator, staged=staged,
+        )
+
+    def _adopt_settings_dialog(self, dialog: SettingsDialog) -> None:
+        self._settings_build_timer.stop()
+        self._settings_build = None
+        downloads = dialog.downloads
+        downloads.component_install_requested.connect(
+            self.on_component_install_requested
+        )
+        downloads.component_cancel_requested.connect(
+            self.on_component_cancel_requested
+        )
+        downloads.component_remove_requested.connect(
+            self.on_component_remove_requested
+        )
+        self._settings_dialog = dialog
+
     def _ensure_settings_dialog(self):
         if self._settings_dialog is None:
-            dialog = SettingsDialog(
-                self.main_window, get_loaded_model=self._loaded_local_model,
-                backup_coordinator=self.backup_coordinator,
-            )
-            downloads = dialog.downloads
-            downloads.component_install_requested.connect(
-                self.on_component_install_requested
-            )
-            downloads.component_cancel_requested.connect(
-                self.on_component_cancel_requested
-            )
-            downloads.component_remove_requested.connect(
-                self.on_component_remove_requested
-            )
-            self._settings_dialog = dialog
+            dialog = self._settings_build
+            if dialog is None:
+                dialog = self._new_settings_dialog()
+            else:
+                try:
+                    dialog.finish_build()
+                except Exception:
+                    self._discard_settings_build()
+                    raise
+            self._adopt_settings_dialog(dialog)
         return self._settings_dialog
 
     def _loaded_local_model(self) -> Optional[str]:
@@ -2832,6 +2901,7 @@ class UIController(QObject):
             logger.warning(f"Error restoring clipboard during cleanup: {e}", exc_info=True)
 
         try:
+            self._settings_build_timer.stop()
             self._code_change_timer.stop()
             if self.cancel_animation_timer.isActive():
                 self.cancel_animation_timer.stop()

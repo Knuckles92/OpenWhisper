@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings opens quickly the first time** — the first opening after launch built the whole window while you waited, about 0.4 to 0.5 seconds, where every later opening took about 60 ms. OpenWhisper now builds the window a few seconds after launch, in pieces of under a tenth of a second each, and waits while you record or a meeting runs, so the first opening takes about 70 ms as well. Opening Settings before that has finished completes the build on the spot. The check of the operating system's credential store, which loaded about 80 ms of software the first time Settings asked whether a key was saved, now runs in the background at launch.
+
 ### Fixed
 
 - **Auto-paste no longer stops silently after a macOS update** — macOS ties Accessibility access to the exact build, so an update could leave OpenWhisper switched on in System Settings while pasting quietly fell back to the clipboard. OpenWhisper now notices on launch that access it had is gone and reopens the auto-paste setup window, and **Open Accessibility Settings** removes the leftover entry first so the switch you turn on is the current one.
