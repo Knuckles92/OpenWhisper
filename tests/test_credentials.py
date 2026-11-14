@@ -16,6 +16,7 @@ from services.credentials import (
     CredentialStore,
     CredentialStoreError,
     CredentialStoreTimeout,
+    credential_available,
     credential_source,
     environment_shadowed,
     keyring_did_not_respond,
@@ -212,6 +213,106 @@ class TestCredentialStore:
         store.request_access(NAME)
         store.set(NAME, SECRET)
         assert store.get(NAME) == SECRET
+
+
+class _PresenceBackend(credentials.MemoryCredentialBackend):
+    """A store like the macOS Keychain: it can say a key exists without reading it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads = 0
+        self.checks = 0
+        self.check_fails = False
+
+    def get_password(self, service, username):
+        self.reads += 1
+        return super().get_password(service, username)
+
+    def has_password(self, service, username):
+        self.checks += 1
+        if self.check_fails:
+            raise RuntimeError("search refused")
+        return (service, username) in self._values
+
+
+class TestPresenceWithoutReading:
+    """Reading a Keychain item prompts; a status display must not cause that."""
+
+    @pytest.fixture
+    def backend(self, monkeypatch):
+        backend = _PresenceBackend()
+        backend._values[(credentials.SERVICE_NAME, NAME)] = SECRET
+        store = CredentialStore(lambda: (backend, "fake keychain"))
+        monkeypatch.setattr(credentials, "_store", store)
+        return backend
+
+    def test_status_checks_never_read_the_saved_key(self, backend, monkeypatch):
+        monkeypatch.setenv(NAME, "sk-from-the-environment")
+        store = credentials.store()
+        assert store.has(NAME)
+        assert credential_available(NAME)
+        assert credential_source(NAME) == CredentialSource.STORED
+        assert environment_shadowed(NAME)
+        assert store.loaded(NAME) is None
+        assert backend.reads == 0
+        assert backend.checks == 1  # remembered, like a read
+
+    def test_using_the_key_reads_it_once(self, backend):
+        store = credentials.store()
+        assert store.has(NAME)
+        assert resolve_credential(NAME) == SECRET
+        assert resolve_credential(NAME) == SECRET
+        assert store.loaded(NAME) == SECRET
+        assert backend.reads == 1
+
+    def test_missing_key_is_absent_without_a_read(self, backend):
+        store = credentials.store()
+        assert not store.has("OPENAI_API_KEY")
+        assert not credential_available("OPENAI_API_KEY")
+        assert store.get("OPENAI_API_KEY") is None
+        assert backend.reads == 0
+
+    def test_denied_read_reports_the_key_as_unavailable(self, backend, monkeypatch):
+        store = credentials.store()
+        assert store.has(NAME)
+
+        def denied(service, username):
+            raise RuntimeError("denied")
+
+        monkeypatch.setattr(backend, "get_password", denied)
+        assert store.get(NAME) is None
+        assert not store.has(NAME)
+
+    def test_save_and_remove_update_presence(self, backend):
+        store = credentials.store()
+        assert store.has(NAME)
+        assert store.delete(NAME)
+        assert not store.has(NAME)
+        store.set(NAME, SECRET)
+        assert store.has(NAME)
+        assert backend.reads == 0
+
+    def test_failed_presence_check_falls_back_to_reading(self, backend):
+        backend.check_fails = True
+        assert credentials.store().has(NAME)
+        assert backend.reads == 1
+
+    def test_backend_without_a_presence_check_reads(self):
+        backend = credentials.MemoryCredentialBackend()
+        backend.set_password(credentials.SERVICE_NAME, NAME, SECRET)
+        store = CredentialStore(lambda: (backend, "in-memory store"))
+        assert store.has(NAME)
+        assert store.loaded(NAME) == SECRET
+
+    def test_environment_and_dotenv_count_as_available(
+        self, backend, monkeypatch, _no_dotenv_and_clean_env
+    ):
+        assert not credential_available("OPENAI_API_KEY")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+        assert credential_available("OPENAI_API_KEY")
+        _no_dotenv_and_clean_env.write_text("OPENROUTER_API_KEY=sk-dotenv\n")
+        assert credential_available("OPENROUTER_API_KEY")
+        assert not credential_available("")
 
 
 class _FakeItem:

@@ -327,9 +327,13 @@ class ApiKeysSection(QObject):
         else:
             source = credential_source(name)
             self._source = source
-            suffix = mask_key(resolve_credential(name))
             if source == CredentialSource.STORED:
-                text = f"Saved in {status.backend_name} · {suffix}"
+                # Only a key already read this session shows its ending:
+                # reading it just for this line would raise a Keychain prompt.
+                loaded = credential_store().loaded(name)
+                text = f"Saved in {status.backend_name}"
+                if loaded:
+                    text += f" · {mask_key(loaded)}"
                 if environment_shadowed(name):
                     text += (
                         f". The {name} variable in your environment or .env "
@@ -337,12 +341,14 @@ class ApiKeysSection(QObject):
                     )
                 tone = "success"
             elif source == CredentialSource.ENVIRONMENT:
+                suffix = mask_key(resolve_credential(name))
                 text = (
                     f"Using the {name} environment variable · {suffix}. "
                     "Save a key here to use it instead."
                 )
                 tone = "success"
             elif source == CredentialSource.DOTENV:
+                suffix = mask_key(resolve_credential(name))
                 text = (
                     f"Using the .env file · {suffix}. "
                     "Save a key here to use it instead."

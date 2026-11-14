@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence,
 from urllib.parse import urlsplit, urlunsplit
 
 from config import config
-from services.credentials import resolve_credential
+from services.credentials import credential_available, resolve_credential
 
 if TYPE_CHECKING:
     import openai
@@ -643,7 +643,7 @@ def credential_status(profile: TextLLMProfile) -> Tuple[bool, str]:
     if not profile.api_key_env:
         return True, "No API key required"
     label = credential_label(profile)
-    if lookup_env_value(profile.api_key_env):
+    if credential_available(profile.api_key_env):
         return True, f"{label} found"
     return False, f"Requires {label} — add it in Settings → App → API keys"
 

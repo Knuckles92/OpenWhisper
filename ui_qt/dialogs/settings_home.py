@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
 from services import cleanup_prompts
 from services.cleanup_prompts import CleanupLevel
 from services.audio_devices import display_name
-from services.credentials import resolve_credential
+from services.credentials import credential_available
 from services.format_utils import format_size_bytes
 from services.settings import (
     SETTINGS_BY_KEY,
@@ -801,7 +801,7 @@ class HomePage(QWidget):
             return f"{name} · Uses your installed agent's sign-in. Transcript text is sent to its model."
         if profile and profile.is_local:
             return f"{name} · Transcript text stays on this computer."
-        configured = profile and (not profile.api_key_env or resolve_credential(profile.api_key_env))
+        configured = profile and (not profile.api_key_env or credential_available(profile.api_key_env))
         status = f"{name} · Transcript text goes to this provider when cleanup is on."
         return status if configured else status + " API key needed."
 

@@ -374,7 +374,7 @@ def test_privacy_follows_actual_endpoint_and_never_claims_connected(provider, ur
                 "api_key_env": "COMPANY_KEY",
             }
         ]
-    with patch.object(setup_ui, "resolve_credential", return_value="key"):
+    with patch.object(setup_ui, "credential_available", return_value="key"):
         name, status, privacy, remote, needs_key = setup_ui.provider_summary(values)
     assert remote is not local
     assert not needs_key
@@ -386,7 +386,7 @@ def test_privacy_follows_actual_endpoint_and_never_claims_connected(provider, ur
 
 
 def test_missing_key_is_shown_without_network_probe():
-    with patch.object(setup_ui, "resolve_credential", return_value=""):
+    with patch.object(setup_ui, "credential_available", return_value=""):
         _, status, _, _, needs_key = setup_ui.provider_summary({})
     assert status == "API key needed"
     assert needs_key
@@ -412,12 +412,12 @@ def test_cleanup_agent_summary_uses_sign_in_without_probing(agent_id, name, monk
 def test_missing_key_links_to_api_keys_and_a_saved_key_to_cleanup(make_setup):
     setup, _, _ = make_setup({SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True})
     setup.show_page(setup_ui.CLEAN_UP)
-    with patch.object(setup_ui, "resolve_credential", return_value=""):
+    with patch.object(setup_ui, "credential_available", return_value=""):
         setup.refresh()
     assert setup.provider_button.text() == "Add key"
     setup.provider_button.click()
     setup.open_destination.assert_called_with(API_KEYS)
-    with patch.object(setup_ui, "resolve_credential", return_value="key"):
+    with patch.object(setup_ui, "credential_available", return_value="key"):
         setup.refresh()
     assert setup.provider_button.text() == "Change"
     setup.provider_button.click()
@@ -526,7 +526,7 @@ def test_closing_a_finished_setup_keeps_it_completed(make_setup):
 
 
 def test_ready_page_names_what_is_still_missing(make_setup, monkeypatch):
-    monkeypatch.setattr(setup_ui, "resolve_credential", lambda env: "")
+    monkeypatch.setattr(setup_ui, "credential_available", lambda env: "")
     setup, _, _ = make_setup({
         SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True,
         SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: "openrouter",

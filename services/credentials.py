@@ -114,7 +114,7 @@ def platform_backend() -> tuple[CredentialBackend, str]:
     if sys.platform == "win32":
         from keyring.backends.Windows import WinVaultKeyring as Backend
     elif sys.platform == "darwin":
-        from keyring.backends.macOS import Keyring as Backend
+        Backend = _macos_backend_class()
     else:
         Backend = _secret_service_backend_class()
 
@@ -171,6 +171,36 @@ def _note_prompt() -> None:
     event = getattr(_prompting, "event", None)
     if event is not None:
         event.set()
+
+
+@functools.cache
+def _macos_backend_class() -> type:
+    """keyring's Keychain backend plus a presence check that shows no prompt."""
+    from keyring.backends.macOS import Keyring
+
+    class Backend(Keyring):
+        def has_password(self, service: str, username: str) -> bool:
+            """True when the item exists, without asking for its secret.
+
+            macOS guards an item's data, not its attributes: a search that
+            returns no data needs no approval, so it never raises the
+            "wants to use your confidential information" prompt.
+            """
+            from keyring.backends.macOS import api
+
+            query = api.create_query(
+                kSecClass=api.k_("kSecClassGenericPassword"),
+                kSecMatchLimit=api.k_("kSecMatchLimitOne"),
+                kSecAttrService=service,
+                kSecAttrAccount=username or "",
+            )
+            status = api.SecItemCopyMatching(query, None)
+            if status == api.error.item_not_found:
+                return False
+            api.Error.raise_for_status(status)
+            return True
+
+    return Backend
 
 
 @functools.cache
@@ -275,6 +305,8 @@ class CredentialStore:
         self._backend: CredentialBackend | None = None
         self._status: CredentialStoreStatus | None = None
         self._cache: dict[str, str | None] = {}
+        #: Names the backend says exist whose value has not been read.
+        self._present: set[str] = set()
         self._lock = threading.RLock()
 
     def status(self) -> CredentialStoreStatus:
@@ -294,6 +326,7 @@ class CredentialStore:
             self._status = None
             self._backend = None
             self._cache.clear()
+            self._present.clear()
             return self.status()
 
     def _probe(self) -> CredentialStoreStatus:
@@ -356,7 +389,43 @@ class CredentialStore:
             return value
 
     def has(self, name: str) -> bool:
-        return self.get(name) is not None
+        """True when a key is saved, without reading it where the store allows.
+
+        Reading a macOS Keychain item can raise an access prompt; asking
+        whether it exists does not. Status displays call this so a prompt
+        appears only when a key is about to be used. A backend without a
+        presence check answers by reading, as before.
+        """
+        name = validate_credential_name(name)
+        with self._lock:
+            if name in self._cache:
+                return self._cache[name] is not None
+            if name in self._present:
+                return True
+            if not self.status().available:
+                return False
+            check = getattr(self._backend, "has_password", None)
+            if check is None:
+                return self.get(name) is not None
+            try:
+                present = bool(check(SERVICE_NAME, name))
+            except Exception as exc:
+                logger.warning(
+                    "Checking for %s in the credential store failed: %s",
+                    name, type(exc).__name__,
+                )
+                return self.get(name) is not None
+            if present:
+                self._present.add(name)
+            else:
+                self._cache[name] = None
+            return present
+
+    def loaded(self, name: str) -> str | None:
+        """The saved key if this process has already read it; never reads the OS store."""
+        name = validate_credential_name(name)
+        with self._lock:
+            return self._cache.get(name)
 
     def request_access(self, name: str) -> None:
         """Retry an OS lookup on an explicit user action, allowing its access prompt.
@@ -565,11 +634,24 @@ def resolve_credential(name: str) -> str | None:
     return os.getenv(name) or None
 
 
+def credential_available(name: str) -> bool:
+    """True when ``resolve_credential`` would find a key, without reading a saved one.
+
+    For status displays: reading a saved key can raise an OS access prompt.
+    """
+    if not name:
+        return False
+    if _store.has(name) or os.getenv(name):
+        return True
+    _load_dotenv_into_environ()
+    return bool(os.getenv(name))
+
+
 def credential_source(name: str) -> str:
     """Report which layer ``resolve_credential`` would answer from."""
     if not name:
         return CredentialSource.NONE
-    if _store.get(name):
+    if _store.has(name):
         return CredentialSource.STORED
     env_value = os.getenv(name)
     dotenv_value = _dotenv_values().get(name) or None
@@ -586,6 +668,6 @@ def credential_source(name: str) -> str:
 
 def environment_shadowed(name: str) -> bool:
     """True when a saved key hides a value that the environment also provides."""
-    if not name or not _store.get(name):
+    if not name or not _store.has(name):
         return False
     return bool(os.getenv(name) or _dotenv_values().get(name))

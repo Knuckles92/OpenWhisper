@@ -10,6 +10,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 ### Changed
 
 - **Settings opens quickly the first time** — the first opening after launch built the whole window while you waited, about 0.4 to 0.5 seconds, where every later opening took about 60 ms. OpenWhisper now builds the window a few seconds after launch, in pieces of under a tenth of a second each, and waits while you record or a meeting runs, so the first opening takes about 70 ms as well. Opening Settings before that has finished completes the build on the spot. The check of the operating system's credential store, which loaded about 80 ms of software the first time Settings asked whether a key was saved, now runs in the background at launch.
+- **Fewer Keychain prompts on macOS** — Settings read every saved API key just to show whether it was set, so opening it raised one "wants to use your confidential information" prompt per key, again after each update on builds that aren't notarized. Settings now only checks that a key exists, which macOS allows without asking; the prompt appears when a key is actually used. On the API keys page, a saved key's last four characters show once it has been used in that session.
 
 ## [2.8.92] - 2026-11-12
 

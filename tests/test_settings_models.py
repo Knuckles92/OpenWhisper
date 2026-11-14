@@ -169,6 +169,10 @@ class _DialogTestCase:
     ):
         values = self._settings_values(active_model, extra_settings)
         fake_settings = InMemorySettings(values)
+        keys_by_env = {
+            get_profile(provider).api_key_env: key
+            for provider, key in (api_keys or {}).items()
+        }
         patchers = [
             patch.object(
                 dialog_module, "scan_cached_models", return_value=cached or {}
@@ -178,12 +182,11 @@ class _DialogTestCase:
             patch("services.speech_endpoints.settings_manager", fake_settings),
             patch("ui_qt.widgets.speech_server_controls.settings_manager", fake_settings),
             # Keys by the provider that needs them, resolved by variable name.
+            patch("services.text_llm.resolve_credential", side_effect=keys_by_env.get),
+            # Status copy asks whether a key exists without reading it.
             patch(
-                "services.text_llm.resolve_credential",
-                side_effect=lambda env_name: {
-                    get_profile(provider).api_key_env: key
-                    for provider, key in (api_keys or {}).items()
-                }.get(env_name),
+                "services.text_llm.credential_available",
+                side_effect=lambda env_name: bool(keys_by_env.get(env_name)),
             ),
         ]
         for patcher in patchers:

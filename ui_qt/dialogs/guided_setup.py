@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from services import cleanup_prompts, guided_setup
-from services.credentials import resolve_credential
+from services.credentials import credential_available
 from services.hotkey_manager import format_hotkey_display
 from services.settings import (
     RecordingTriggerMode,
@@ -168,7 +168,7 @@ def provider_summary(settings: dict) -> tuple[str, str, str, bool, bool]:
     ) + " No audio is sent for cleanup."
     needs_key = False
     if profile.api_key_env:
-        if resolve_credential(profile.api_key_env):
+        if credential_available(profile.api_key_env):
             status = "API key saved · Connection not tested"
         else:
             status, needs_key = "API key needed", True
