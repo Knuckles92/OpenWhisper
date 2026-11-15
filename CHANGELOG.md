@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Fixed
+
+- **Clearer macOS auto-paste setup** — opening Accessibility Settings keeps the current permission entry intact. If an old entry stops working after an update, a separate **Repair old Accessibility entry…** action resets it, explains how to enable the current copy, and offers manual recovery if the reset fails. Settings Home now updates its permission warning while open. Release builds reject incomplete signing credentials and can require Developer ID signing to prevent accidental ad-hoc releases that lose permission across updates.
+
 ## [2.8.93] - 2026-11-15
 
 ### Changed

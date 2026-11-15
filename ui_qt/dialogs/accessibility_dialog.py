@@ -2,7 +2,7 @@
 
 import logging
 
-from PyQt6.QtCore import QTimer, QUrl, Qt
+from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout
 
@@ -27,6 +27,7 @@ class AccessibilityDialog(QDialog):
         self.setWindowTitle("Turn auto-paste back on" if lost else "Set up auto-paste")
         self._trusted = None
         self._stale_entry_cleared = False
+        self._repair_status = ""
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setMinimumWidth(520)
         # As short as the copy allows; the labels raise the floor as they wrap.
@@ -45,9 +46,9 @@ class AccessibilityDialog(QDialog):
         if lost:
             paragraph("Auto-paste needs Accessibility access again", "headerLabel")
             paragraph(
-                "macOS withdrew this copy’s access, which happens after an update. "
-                "The old switch can still look on; opening Accessibility Settings "
-                "below removes it so you can turn on the current one. Until then, "
+                "This copy no longer has access. This can happen after an update. "
+                "Turn on the app in Accessibility Settings. If the switch is already "
+                "on but access is not detected, use the recovery steps below. Until then, "
                 "paste copied text with ⌘V."
             )
         else:
@@ -57,7 +58,7 @@ class AccessibilityDialog(QDialog):
                 "work without it, and you can paste copied text with ⌘V."
             )
         self.bundle = accessibility_app_bundle()
-        name = self.bundle.name if self.bundle else "OpenWhisper"
+        name = self.bundle.stem if self.bundle else "OpenWhisper"
         if self.bundle:
             instructions = (
                 f"1. Open Accessibility Settings below.\n"
@@ -93,6 +94,15 @@ class AccessibilityDialog(QDialog):
         )
         self.recovery.setVisible(False)
         help_button.toggled.connect(self.recovery.setVisible)
+        self.repair_button = neutral_button(Button("Repair old Accessibility entry…"))
+        self.repair_button.setAutoDefault(False)
+        self.repair_button.setToolTip(
+            "Removes only OpenWhisper’s Accessibility entry. You must enable it again."
+        )
+        self.repair_button.clicked.connect(self._repair_access)
+        # Never reset Python.app's grant for a development launch.
+        self.repair_button.setVisible(bool(accessibility_grant._frozen_bundle_id()))
+        layout.addWidget(self.repair_button, alignment=Qt.AlignmentFlag.AlignLeft)
         self.status = paragraph("")
         paragraph(
             "We won’t ask again at launch. Set up auto-paste anytime in Settings → General.",
@@ -142,23 +152,38 @@ class AccessibilityDialog(QDialog):
             accessibility_grant.remember_grant(trusted)
         self.status.setText(
             "Accessibility access is enabled. Permission setup is complete."
-            if trusted else "Access not detected yet. Clipboard paste is available."
+            if trusted else self._repair_status or "Access not detected yet. Clipboard paste is available."
         )
         self.done_button.setText("Done" if trusted else "Continue with clipboard")
+        self.repair_button.setEnabled(not trusted and not self._stale_entry_cleared)
 
     def _open_settings(self):
         if not is_accessibility_trusted():
-            # An entry left by an earlier build stays on yet grants nothing.
-            # Once only: a second click must not undo a switch just turned on.
-            if not self._stale_entry_cleared:
-                self._stale_entry_cleared = True
-                accessibility_grant.reset_stale_grant()
             request_accessibility_trust()
         opened = QDesktopServices.openUrl(QUrl(
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
         ))
         if not opened:
-            self.status.setText("Open System Settings → Privacy & Security → Accessibility.")
+            self._repair_status = "Open System Settings → Privacy & Security → Accessibility."
+            self.refresh_status()
+
+    def _repair_access(self):
+        if is_accessibility_trusted() or self._stale_entry_cleared:
+            self.refresh_status()
+            return
+        if accessibility_grant.reset_stale_grant():
+            self._stale_entry_cleared = True
+            self._repair_status = (
+                "Old entry removed. Turn on this app in Accessibility Settings. "
+                "If it is missing, use + to add the app shown above."
+            )
+        else:
+            self._repair_status = (
+                "Couldn’t remove the old entry. In Accessibility Settings, select "
+                "OpenWhisper, remove it with −, then use + to add this copy and enable it."
+            )
+        self._open_settings()
+        self.refresh_status()
 
     def _reveal_app(self):
         # Reveal the bundle itself so it can be dragged into the permissions list.

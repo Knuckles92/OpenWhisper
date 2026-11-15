@@ -16,7 +16,7 @@ leaves it; the Storage card repeats the Downloads totals. Settings composes a
 import sys
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import QEvent, QRectF, QSignalBlocker, Qt
+from PyQt6.QtCore import QEvent, QRectF, QSignalBlocker, Qt, QTimer
 from PyQt6.QtGui import QPainter, QPainterPath
 from PyQt6.QtWidgets import (
     QBoxLayout,
@@ -30,8 +30,8 @@ from PyQt6.QtWidgets import (
 )
 
 from services import cleanup_prompts
-from services.cleanup_prompts import CleanupLevel
 from services.audio_devices import display_name
+from services.cleanup_prompts import CleanupLevel
 from services.credentials import resolve_credential
 from services.format_utils import format_size_bytes
 from services.settings import (
@@ -265,6 +265,19 @@ class HomePage(QWidget):
         layout.addWidget(self.footer_label)
         self._reflow_columns()
         self.refresh()
+        self._accessibility_timer = QTimer(self)
+        self._accessibility_timer.setInterval(1000)
+        self._accessibility_timer.timeout.connect(self.refresh_accessibility_status)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if sys.platform == "darwin":
+            self.refresh_accessibility_status()
+            self._accessibility_timer.start()
+
+    def hideEvent(self, event):
+        self._accessibility_timer.stop()
+        super().hideEvent(event)
 
     def _build_intro(self, layout):
         """The current ``ui_qt/whats_new.py`` note, until it is dismissed."""
@@ -751,16 +764,7 @@ class HomePage(QWidget):
         self.voice_detail.setText(
             models.voice_detail() if models.voice_is_remote() else "Audio is transcribed on this computer."
         )
-        if sys.platform == "darwin":
-            from services.hotkey_manager import is_accessibility_trusted
-
-            trusted = is_accessibility_trusted()
-            self.accessibility_button.setVisible(not trusted)
-            self.paste_description.setText(
-                "Insert the transcript into the active window."
-                if trusted
-                else "Auto-paste needs Accessibility access. Use ⌘V to paste for now."
-            )
+        self.refresh_accessibility_status()
         self.cleanup_status.setText(self._cleanup_status(settings))
         self._refresh_cleanup_level(settings)
         self.refresh_shortcut(settings)
@@ -770,6 +774,19 @@ class HomePage(QWidget):
         self.meeting_intelligence.setText(
             " · ".join(part for part in (value, detail) if part)
             + ". Turn it on for each meeting when you start it."
+        )
+
+    def refresh_accessibility_status(self):
+        if sys.platform != "darwin":
+            return
+        from services.hotkey_manager import is_accessibility_trusted
+
+        trusted = is_accessibility_trusted()
+        self.accessibility_button.setVisible(not trusted)
+        self.paste_description.setText(
+            "Insert the transcript into the active window."
+            if trusted
+            else "Auto-paste needs Accessibility access. Use ⌘V to paste for now."
         )
 
     def _refresh_microphone(self, settings):
