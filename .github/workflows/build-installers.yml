@@ -358,6 +358,9 @@ jobs:
       MACOS_NOTARY_KEY_P8: ${{ secrets.MACOS_NOTARY_KEY_P8 }}
       MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
       MACOS_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+      # Set this repository variable to true once Developer ID is configured
+      # to prevent later releases from falling back to a new ad-hoc identity.
+      MACOS_REQUIRE_SIGNING: ${{ vars.MACOS_REQUIRE_SIGNING }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -390,6 +393,24 @@ jobs:
           ./venv/bin/python -m pip check
       # The full macOS suite already ran on this commit in the qualification
       # job (ci.yml "macOS tests"), so the builder goes straight to packaging.
+      - name: Validate macOS signing configuration
+        run: |
+          configured=0
+          for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD \
+            MACOS_NOTARY_KEY_P8 MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER; do
+            if [[ -n "${!name}" ]]; then configured=$((configured + 1)); fi
+          done
+          if (( configured > 0 && configured < 5 )); then
+            echo "::error::Set all five macOS signing secrets. Partial configuration would lose Developer ID signing and Accessibility permission continuity. See docs/macos-accessibility.md."
+            exit 1
+          fi
+          if (( configured == 0 )); then
+            if [[ "$MACOS_REQUIRE_SIGNING" == "true" ]]; then
+              echo "::error::MACOS_REQUIRE_SIGNING is true but macOS signing secrets are missing."
+              exit 1
+            fi
+            echo "::warning::Ad-hoc preview: users may need to grant Accessibility access again after updates. Configure Developer ID signing and set MACOS_REQUIRE_SIGNING=true for permission continuity."
+          fi
       - name: Import Developer ID signing and notary credentials
         if: env.MACOS_CERTIFICATE_P12 != '' && env.MACOS_NOTARY_KEY_P8 != ''
         run: |

@@ -1,9 +1,9 @@
-"""Notice a macOS Accessibility grant that an update took away, and clear it.
+"""Notice missing macOS Accessibility access and repair an old entry on request.
 
 macOS ties the grant to the signed build. An ad-hoc signed update is a new
 build, so the old entry stays in System Settings, still switched on, while the
-running app has no access. Removing that entry is the only way the switch
-works again.
+running app has no access. Removing that entry lets the user grant the current
+build access. Opening Settings alone must not remove an existing entry.
 """
 
 import logging

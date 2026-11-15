@@ -63,7 +63,7 @@ Downloads include `SHA256SUMS.txt` for verification. Compare your file's hash us
 
 In **System Settings → Privacy & Security**, allow **Microphone** for recording, **Screen & System Audio Recording** for meeting audio and walkthrough screenshots, and **Accessibility** for auto-paste. You can copy transcripts without Accessibility.
 
-**Settings → App → General → Set up auto-paste…** shows which app to allow. If permission breaks after an update, remove its old entry, add the app again, and restart.
+**Settings → Home → Set up auto-paste…** shows which app to allow and checks access automatically. If an old entry is enabled but access is still missing, choose **Repair old Accessibility entry…**, then enable the current app in macOS Settings. See [macOS auto-paste setup and recovery](docs/macos-accessibility.md).
 
 When macOS asks whether OpenWhisper may use your **login** Keychain (to read saved API keys, the MCP token, or a remote engine's connection key), enter your Mac password and choose **Always Allow**. **Allow** works for that one read only, so macOS asks again at every launch. Builds that aren't notarized may ask once more after an update.
 

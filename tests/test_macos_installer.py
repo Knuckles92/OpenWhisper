@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -287,9 +288,45 @@ def test_macos_build_notarizes_only_with_credentials_and_identity():
     assert 'xcrun stapler staple "$DMG_ARTIFACT"' in script
     assert 'codesign --sign "$OPENWHISPER_MACOS_CODESIGN_IDENTITY" --timestamp "$DMG_ARTIFACT"' in script
     assert "missing the hardened runtime" in script
+    assert "^Authority=Developer ID Application:" in script
+    assert "^TeamIdentifier=[A-Z0-9]+$" in script
     # The DMG is staged from the stapled app, and hashed after its own staple.
     assert script.index('xcrun stapler staple "$DIST_APP"') < script.index('ditto -- "$DIST_APP"')
     assert script.index('xcrun stapler staple "$DMG_ARTIFACT"') < script.index('dmg_hash="$(shasum')
+
+
+_SIGNING_SECRETS = (
+    "MACOS_CERTIFICATE_P12", "MACOS_CERTIFICATE_PASSWORD", "MACOS_NOTARY_KEY_P8",
+    "MACOS_NOTARY_KEY_ID", "MACOS_NOTARY_ISSUER",
+)
+
+
+@pytest.mark.parametrize("missing,required,succeeds", [
+    ("all", False, True),
+    ("all", True, False),
+    ("", False, True),
+    ("", True, True),
+    *((name, False, False) for name in _SIGNING_SECRETS),
+])
+def test_signing_preflight_prevents_silent_adhoc_fallback(missing, required, succeeds):
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    macos = workflow.split("\n  macos:")[1].split("\n  bundle:")[0]
+    assert "MACOS_REQUIRE_SIGNING: ${{ vars.MACOS_REQUIRE_SIGNING }}" in macos
+    step = macos.split("      - name: Validate macOS signing configuration\n")[1]
+    script = textwrap.dedent(step.split("        run: |\n")[1].split("      - name:")[0])
+    env = {**os.environ, **dict.fromkeys(_SIGNING_SECRETS, "test-secret-value")}
+    for name in _SIGNING_SECRETS:
+        if missing in (name, "all"):
+            env[name] = ""
+    env["MACOS_REQUIRE_SIGNING"] = "true" if required else "false"
+    result = subprocess.run(
+        [_bash(), "-euo", "pipefail", "-c", script], env=env,
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    assert (result.returncode == 0) is succeeds, result.stdout + result.stderr
+    assert "test-secret-value" not in result.stdout + result.stderr
+    if missing == "all" and not required:
+        assert "::warning::Ad-hoc preview" in result.stdout
 
 
 def test_frozen_macos_install_channel_is_notify_only():

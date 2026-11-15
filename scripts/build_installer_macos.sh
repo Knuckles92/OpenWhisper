@@ -287,8 +287,10 @@ CODESIGN_DV="$WORKDIR/codesign-dv.txt"
 # codesign -dv writes details to stderr.
 codesign -dv --verbose=2 "$DIST_APP" >"$CODESIGN_DV" 2>&1 || true
 if [[ -n "${OPENWHISPER_MACOS_CODESIGN_IDENTITY:-}" ]]; then
-    grep -q "Authority=" "$CODESIGN_DV" \
-        || fail "expected a real signing authority when OPENWHISPER_MACOS_CODESIGN_IDENTITY is set"
+    grep -q '^Authority=Developer ID Application:' "$CODESIGN_DV" \
+        || fail "expected Developer ID Application signing when OPENWHISPER_MACOS_CODESIGN_IDENTITY is set"
+    grep -Eq '^TeamIdentifier=[A-Z0-9]+$' "$CODESIGN_DV" \
+        || fail "the Developer ID build is missing its TeamIdentifier (needed for permission continuity)"
     # Notarization requires the hardened runtime on every signed binary.
     grep -Eq 'flags=0x[0-9a-f]*\(runtime\)' "$CODESIGN_DV" \
         || fail "the Developer ID build is missing the hardened runtime"

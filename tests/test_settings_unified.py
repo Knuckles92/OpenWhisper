@@ -188,6 +188,33 @@ class TestRouting:
         assert dialog.rail.name(OVERVIEW) == "Home"
         assert dialog.rail.value(OVERVIEW) == ""
 
+    @pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
+    def test_home_updates_when_accessibility_changes_without_reopening(self, make_dialog, monkeypatch, ui_mode):
+        from ui_qt.dialogs import settings_home
+
+        monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
+        with patch.object(settings_home.sys, "platform", "darwin"), patch(
+            "services.hotkey_manager.is_accessibility_trusted", return_value=False
+        ) as trusted:
+            dialog, _store = make_dialog()
+            dialog.show()
+            try:
+                home = dialog.home
+                assert home._accessibility_timer.isActive()
+                assert "needs Accessibility" in home.paste_description.text()
+                trusted.return_value = True
+                home._accessibility_timer.timeout.emit()
+                assert "needs Accessibility" not in home.paste_description.text()
+                assert home.accessibility_button.isHidden()
+                trusted.return_value = False
+                home._accessibility_timer.timeout.emit()
+                assert not home.accessibility_button.isHidden()
+                assert "needs Accessibility" in home.paste_description.text()
+                dialog.hide()
+                assert not home._accessibility_timer.isActive()
+            finally:
+                dialog.close()
+
     def test_show_home_returns_to_the_top_of_home(self, make_dialog):
         dialog, _store = make_dialog()
         dialog.show()

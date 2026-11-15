@@ -113,10 +113,13 @@ def test_setup_reopens_and_updates_live_without_requesting_permission(app, setti
 def test_settings_action_registers_identity_and_opens_exact_pane(app, settings):
     with patch.object(setup, "is_accessibility_trusted", return_value=False), patch.object(
         setup, "request_accessibility_trust"
-    ) as request, patch.object(setup.QDesktopServices, "openUrl", return_value=True) as opened:
+    ) as request, patch.object(setup.QDesktopServices, "openUrl", return_value=True) as opened, patch.object(
+        grant, "reset_stale_grant"
+    ) as reset:
         dialog = setup.AccessibilityDialog()
         dialog.open_button.click()
         request.assert_called_once()
+        reset.assert_not_called()
         assert opened.call_args.args[0].toString().endswith("?Privacy_Accessibility")
         dialog.close()
 
@@ -136,7 +139,9 @@ def test_launcher_executable_resolves_to_selectable_app(tmp_path):
         assert str(executable) not in instructions
 
 
-def test_instructions_fit_with_recovery_expanded(app, settings):
+@pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
+def test_instructions_fit_with_recovery_expanded(app, settings, monkeypatch, ui_mode):
+    monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
     with patch.object(setup, "is_accessibility_trusted", return_value=False), patch.object(
         setup, "accessibility_app_bundle", return_value=Path(
             "/opt/homebrew/Cellar/python@3.12/3.12.13_4/Frameworks/"
@@ -175,12 +180,13 @@ def test_lost_grant_is_offered_once_then_again_after_the_next_loss(settings):
     assert _startup_check(trusted=False)
 
 
-def test_lost_grant_dialog_clears_the_stale_entry_once(app, settings):
+def test_lost_grant_dialog_repairs_only_when_requested_and_only_once(app, settings):
     parent = QWidget()
     with patch.object(setup, "is_accessibility_trusted", return_value=False), patch.object(
         setup, "request_accessibility_trust"
-    ) as request, patch.object(setup.accessibility_grant, "reset_stale_grant") as reset, patch.object(
+    ) as request, patch.object(setup.accessibility_grant, "reset_stale_grant", return_value=True) as reset, patch.object(
         setup.QDesktopServices, "openUrl", return_value=True
+    ), patch.object(grant, "_frozen_bundle_id", return_value="tech.fiorilabs.openwhisper"
     ), patch.object(setup, "accessibility_app_bundle", return_value=None):
         dialog = setup.show_accessibility_setup(parent, lost=True)
         assert dialog.windowTitle() == "Turn auto-paste back on"
@@ -188,11 +194,45 @@ def test_lost_grant_dialog_clears_the_stale_entry_once(app, settings):
         reset.assert_not_called()
         dialog.open_button.click()
         dialog.open_button.click()
+        reset.assert_not_called()
+        dialog.repair_button.click()
+        dialog.repair_button.click()
         # A second click must not remove the entry the user has just enabled.
         reset.assert_called_once()
-        assert request.call_count == 2
+        assert request.call_count == 3
+        assert not dialog.repair_button.isEnabled()
+        dialog.timer.timeout.emit()
+        assert "Old entry removed" in dialog.status.text()
         dialog.close()
     parent.close()
+
+
+def test_failed_repair_shows_manual_recovery_and_can_retry(app, settings):
+    with patch.object(setup, "is_accessibility_trusted", return_value=False), patch.object(
+        grant, "reset_stale_grant", side_effect=[False, True]
+    ) as reset, patch.object(setup, "request_accessibility_trust"), patch.object(
+        setup.QDesktopServices, "openUrl", return_value=True
+    ):
+        dialog = setup.AccessibilityDialog()
+        dialog._repair_access()
+        dialog.timer.timeout.emit()
+        assert "Couldn’t remove" in dialog.status.text()
+        assert dialog.repair_button.isEnabled()
+        dialog._repair_access()
+        assert reset.call_count == 2
+        assert "Old entry removed" in dialog.status.text()
+        dialog.close()
+
+
+def test_repair_never_resets_a_working_grant(app, settings):
+    with patch.object(setup, "is_accessibility_trusted", return_value=True), patch.object(
+        grant, "reset_stale_grant"
+    ) as reset:
+        dialog = setup.AccessibilityDialog()
+        dialog._repair_access()
+        reset.assert_not_called()
+        assert not dialog.repair_button.isEnabled()
+        dialog.close()
 
 
 def test_dialog_records_access_once_granted(app, settings):
