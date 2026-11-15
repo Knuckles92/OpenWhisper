@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Dict, Optional
 from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
 
 from config import config
-from services import synthetic_keys, text_transforms
+from services import accessibility_grant, synthetic_keys, text_transforms
 from services._hotkey_common import OrderedDispatcher
 from services.hotkey_manager import HotkeyManager, USE_PYNPUT_BACKEND
 from services.cleanup_profiles import load_cleanup_profiles
@@ -502,26 +502,27 @@ class HotkeyRuntime(QObject):
             settings_manager.load_all_settings())
 
     def _check_autopaste_permission(self) -> None:
-        """Offer optional setup once, remembering dismissal across launches."""
+        """Offer optional setup once, and again when an update took access away."""
         if sys.platform != "darwin" or not USE_PYNPUT_BACKEND:
             return
-        if not self._auto_paste_enabled() or self._accessibility_intro_seen():
+        trusted = is_accessibility_trusted()
+        lost = accessibility_grant.grant_lost(trusted)
+        accessibility_grant.remember_grant(trusted)
+        if trusted or not self._auto_paste_enabled():
             return
-        if is_accessibility_trusted():
+        if self._accessibility_intro_seen() and not lost:
             return
-        QTimer.singleShot(0, self._warn_autopaste_not_trusted)
+        QTimer.singleShot(0, lambda: self._warn_autopaste_not_trusted(lost))
 
-    def _warn_autopaste_not_trusted(self) -> None:
+    def _warn_autopaste_not_trusted(self, lost: bool = False) -> None:
         # Preferences or trust may change before this deferred call runs.
-        if (
-            is_accessibility_trusted()
-            or not self._auto_paste_enabled()
-            or self._accessibility_intro_seen()
-        ):
+        if is_accessibility_trusted() or not self._auto_paste_enabled():
+            return
+        if self._accessibility_intro_seen() and not lost:
             return
         from ui_qt.dialogs.accessibility_dialog import show_accessibility_setup
 
-        show_accessibility_setup(self.controller.ui_controller.main_window)
+        show_accessibility_setup(self.controller.ui_controller.main_window, lost=lost)
 
     def update_hotkeys(self, hotkeys: Dict[str, str]) -> None:
         logger.info(f"Updating hotkeys: {hotkeys}")

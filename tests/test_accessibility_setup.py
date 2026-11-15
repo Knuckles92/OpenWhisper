@@ -12,6 +12,7 @@ from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from services import _hotkey_pynput as backend
+from services import accessibility_grant as grant
 from services.runtime import hotkeys
 from services.settings import SettingsKey, SettingsManager
 from ui_qt.dialogs import accessibility_dialog as setup
@@ -29,7 +30,7 @@ def settings(tmp_path):
     manager = SettingsManager(str(tmp_path / "settings.json"))
     with patch.object(setup, "settings_manager", manager), patch.object(
         hotkeys, "settings_manager", manager
-    ):
+    ), patch.object(grant, "settings_manager", manager):
         yield manager
 
 
@@ -49,23 +50,32 @@ def test_dismissal_survives_relaunch_and_preserves_autopaste(app, settings):
         assert settings.get(SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN)
         assert settings.get(SettingsKey.AUTO_PASTE)
         # A fresh settings reader and runtime simulate the next launch.
-        with patch.object(hotkeys, "settings_manager", SettingsManager(settings.settings_file)), patch.object(
-            hotkeys.QTimer, "singleShot"
-        ) as scheduled:
+        relaunched = SettingsManager(settings.settings_file)
+        with patch.object(hotkeys, "settings_manager", relaunched), patch.object(
+            grant, "settings_manager", relaunched
+        ), patch.object(hotkeys.QTimer, "singleShot") as scheduled:
             hotkeys.HotkeyRuntime(SimpleNamespace())._check_autopaste_permission()
             scheduled.assert_not_called()
     parent.close()
 
 
-@pytest.mark.parametrize("trusted,enabled,seen,expected", [
-    (False, True, False, True),
-    (True, True, False, False),
-    (False, False, False, False),
-    (False, True, True, False),
+@pytest.mark.parametrize("trusted,enabled,seen,granted,expected", [
+    (False, True, False, None, True),
+    (True, True, False, None, False),
+    (False, False, False, None, False),
+    (False, True, True, False, False),
+    # Access the last launch had is gone: an update replaced the signed build.
+    (False, True, True, True, True),
+    (False, False, True, True, False),
+    (True, True, True, True, False),
+    # Installed before the grant was recorded, so this update is what lost it.
+    (False, True, True, None, True),
 ])
-def test_startup_only_offers_setup_when_needed(settings, trusted, enabled, seen, expected):
+def test_startup_only_offers_setup_when_needed(settings, trusted, enabled, seen, granted, expected):
     settings.update_settings({SettingsKey.AUTO_PASTE: enabled,
                               SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN: seen})
+    if granted is not None:
+        settings.save_setting(SettingsKey.MACOS_ACCESSIBILITY_GRANTED, granted)
     with patch.object(hotkeys.sys, "platform", "darwin"), patch.object(
         hotkeys, "is_accessibility_trusted", return_value=trusted, create=True
     ), patch.object(hotkeys, "USE_PYNPUT_BACKEND", True), patch.object(
@@ -141,3 +151,89 @@ def test_instructions_fit_with_recovery_expanded(app, settings):
         for label in dialog.findChildren(WrappedLabel):
             assert label.height() >= label.heightForWidth(label.width()), label.text()
         dialog.close()
+
+
+def _startup_check(trusted):
+    with patch.object(hotkeys.sys, "platform", "darwin"), patch.object(
+        hotkeys, "is_accessibility_trusted", return_value=trusted, create=True
+    ), patch.object(hotkeys, "USE_PYNPUT_BACKEND", True), patch.object(
+        hotkeys.QTimer, "singleShot"
+    ) as scheduled:
+        hotkeys.HotkeyRuntime(SimpleNamespace())._check_autopaste_permission()
+    return scheduled.called
+
+
+def test_lost_grant_is_offered_once_then_again_after_the_next_loss(settings):
+    settings.update_settings({SettingsKey.AUTO_PASTE: True,
+                              SettingsKey.MACOS_ACCESSIBILITY_INTRO_SEEN: True})
+    assert not _startup_check(trusted=True)
+    assert settings.get(SettingsKey.MACOS_ACCESSIBILITY_GRANTED) is True
+    assert _startup_check(trusted=False)
+    assert settings.get(SettingsKey.MACOS_ACCESSIBILITY_GRANTED) is False
+    assert not _startup_check(trusted=False)
+    assert not _startup_check(trusted=True)
+    assert _startup_check(trusted=False)
+
+
+def test_lost_grant_dialog_clears_the_stale_entry_once(app, settings):
+    parent = QWidget()
+    with patch.object(setup, "is_accessibility_trusted", return_value=False), patch.object(
+        setup, "request_accessibility_trust"
+    ) as request, patch.object(setup.accessibility_grant, "reset_stale_grant") as reset, patch.object(
+        setup.QDesktopServices, "openUrl", return_value=True
+    ), patch.object(setup, "accessibility_app_bundle", return_value=None):
+        dialog = setup.show_accessibility_setup(parent, lost=True)
+        assert dialog.windowTitle() == "Turn auto-paste back on"
+        assert any("after an update" in label.text() for label in dialog.findChildren(WrappedLabel))
+        reset.assert_not_called()
+        dialog.open_button.click()
+        dialog.open_button.click()
+        # A second click must not remove the entry the user has just enabled.
+        reset.assert_called_once()
+        assert request.call_count == 2
+        dialog.close()
+    parent.close()
+
+
+def test_dialog_records_access_once_granted(app, settings):
+    with patch.object(setup, "is_accessibility_trusted", return_value=False) as trust, patch.object(
+        setup, "accessibility_app_bundle", return_value=None
+    ):
+        dialog = setup.AccessibilityDialog()
+        assert settings.get(SettingsKey.MACOS_ACCESSIBILITY_GRANTED) is False
+        trust.return_value = True
+        dialog.timer.timeout.emit()
+        assert settings.get(SettingsKey.MACOS_ACCESSIBILITY_GRANTED) is True
+        dialog.close()
+
+
+def test_reset_leaves_a_development_launch_alone():
+    with patch.object(grant.sys, "platform", "darwin"), patch.object(
+        grant, "_frozen_bundle_id", return_value=""
+    ), patch.object(grant.subprocess, "run") as run:
+        assert not grant.reset_stale_grant()
+        run.assert_not_called()
+
+
+@pytest.mark.parametrize("returncode,expected", [(0, True), (1, False)])
+def test_reset_removes_only_this_apps_accessibility_entry(returncode, expected):
+    with patch.object(grant.sys, "platform", "darwin"), patch.object(
+        grant, "_frozen_bundle_id", return_value="tech.fiorilabs.openwhisper"
+    ), patch.object(
+        grant.subprocess, "run", return_value=SimpleNamespace(returncode=returncode, stdout="", stderr="no")
+    ) as run:
+        assert grant.reset_stale_grant() is expected
+        assert run.call_args.args[0] == [
+            "/usr/bin/tccutil", "reset", "Accessibility", "tech.fiorilabs.openwhisper",
+        ]
+
+
+def test_bundle_id_comes_from_the_frozen_app_only(tmp_path):
+    from services import app_update_macos
+
+    with patch.object(app_update_macos, "running_bundle", return_value=None):
+        assert grant._frozen_bundle_id() == ""
+    with patch.object(app_update_macos, "running_bundle", return_value=str(tmp_path)), patch.object(
+        app_update_macos, "bundle_info", return_value={"CFBundleIdentifier": "tech.fiorilabs.openwhisper"}
+    ):
+        assert grant._frozen_bundle_id() == "tech.fiorilabs.openwhisper"

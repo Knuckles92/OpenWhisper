@@ -509,6 +509,9 @@ class SettingsKey:
     MACOS_ACCESSIBILITY_INTRO_SEEN: Final = BoolSetting(
         "macos_accessibility_intro_seen", False,
     )
+    # Whether the last launch had Accessibility access (unset before the first
+    # one that recorded it), so a grant an update took away can be noticed.
+    MACOS_ACCESSIBILITY_GRANTED: Final = RawSetting("macos_accessibility_granted")
     COPY_CLIPBOARD: Final = BoolSetting("copy_clipboard", True)
     # Put back what the clipboard held before an auto-paste borrowed it; off
     # leaves the pasted text on the clipboard.
