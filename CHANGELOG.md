@@ -7,6 +7,20 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.95] - 2026-11-19
+
+### Changed
+
+- **Meeting audio checks show live levels** for the microphone and system audio, with a countdown while the check runs. Meeting Mode also shows the brief's character count and confirms when you copy a guest link or transcript.
+- **Walkthroughs are easier to find and review.** Search the library, see the selected walkthrough in History, and zoom screenshots during review. OpenWhisper asks before discarding unsaved walkthrough edits when you quit.
+- **Settings search and backups are easier to use.** Search takes you to the matching control, including options in collapsed remote settings. Automatic backup settings save as you change them and show feedback if a destination or schedule cannot be saved.
+
+### Fixed
+
+- **Dictation failures are easier to recover from.** Notifications tell you when a recording was kept in History or when a failed auto-paste left the transcript on the clipboard.
+- **History and upload feedback are clearer.** History can show local results while paired-host records load, and failed file previews stay visible on the affected rows.
+- **The tray reflects the current app state.** It shows the applicable Show or Hide action, enables copying the last original dictation when one is available, and reports active recordings, meetings, or walkthroughs in the tooltip.
+
 ## [2.8.94] - 2026-11-18
 
 ### Added
