@@ -149,6 +149,8 @@ class LocalSpeechBackend(TranscriptionBackend):
     def _runtime_kind(self, device) -> str:
         if self.backend_id == "parakeet_mlx":
             return "MLX"
+        if self.backend_id == "parakeet_unified":
+            return "transcribe.cpp"
         return "GPU" if device in ("cuda", "mps", "metal") else "CPU"
 
     def _start_worker(self, component, requested, device, generation, cancel_event):
@@ -156,13 +158,14 @@ class LocalSpeechBackend(TranscriptionBackend):
 
         Auto falls back to the CPU when the runtime has no code for the GPU.
         """
-        from services.components import component_dir
+        from services.components import active_component_dir
         from services.local_asr.process import SpeechProcess
+        runtime_dir = active_component_dir(component)
         # Windows runtimes carry an embedded Python; the macOS and Linux
         # ones use the app's interpreter with downloaded native libraries
         # or, for MLX, a separate wheel tree.
         if sys.platform == "win32":
-            python = str(Path(component_dir(component)) / "python.exe")
+            python = str(Path(runtime_dir) / "python.exe")
         else:
             python = sys.executable
         while True:
@@ -174,7 +177,7 @@ class LocalSpeechBackend(TranscriptionBackend):
             try:
                 result = process.request("load", backend=self.backend_id, model=self.model_name,
                                          model_path=cache.load_path(self.model_name),
-                                         runtime=component_dir(component), device=device, timeout=300,
+                                         runtime=runtime_dir, device=device, timeout=300,
                                          cancel=cancel_event)
             except Exception as exc:
                 process.close()

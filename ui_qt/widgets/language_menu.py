@@ -42,7 +42,12 @@ def populate(menu, ui) -> None:
     else:
         menu.addAction(reason or "No other languages").setEnabled(False)
     menu.addSeparator()
-    menu.addAction("Choose languages…").triggered.connect(
+    choose_label = (
+        "Switch to a multilingual engine\u2026"
+        if reason and languages.is_english_only_engine(settings)
+        else "Choose languages\u2026"
+    )
+    menu.addAction(choose_label).triggered.connect(
         lambda _checked=False: ui.open_settings_destination(VOICE_MODEL)
     )
 

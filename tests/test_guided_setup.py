@@ -941,3 +941,24 @@ def test_offer_waits_for_a_visible_main_window(tmp_path, monkeypatch, visible, m
         UIController._offer_guided_setup_now(ui)
     ui._show_guided_setup.assert_not_called()
     ui._guided_setup_offer_timer.start.assert_called_once_with(1000)
+
+
+def test_guided_setup_offers_multilingual_switch_for_english_only_engine(make_setup):
+    setup, _settings, store = make_setup({
+        SettingsKey.SELECTED_MODEL: "parakeet_unified",
+    })
+    setup.show_page(setup_ui.RECORD)
+    assert not setup.speech_multilingual_row.isHidden()
+
+    setup._open_multilingual_menu()
+    try:
+        actions = setup.speech_multilingual_menu.actions()
+        assert any("Local Whisper" in action.text() for action in actions)
+        whisper_action = next(action for action in actions if "Local Whisper" in action.text())
+        whisper_action.trigger()
+    finally:
+        setup.speech_multilingual_menu.close()
+
+    assert store.get(SettingsKey.SELECTED_MODEL) == "local_whisper"
+    assert setup.speech_multilingual_row.isHidden()
+

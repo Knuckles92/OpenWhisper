@@ -15,6 +15,7 @@ depend = libdrm
 depend = libegl
 depend = libgl
 depend = portaudio
+depend = vulkan-icd-loader
 depend = wayland
 depend = xcb-util-cursor
 depend = xcb-util-wm

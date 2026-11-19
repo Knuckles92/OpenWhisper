@@ -1136,6 +1136,18 @@ class TestComponents(_DialogTestCase):
         assert removes == ["gpu-accel"]
         assert selected == []
 
+    def test_bundled_component_row_shows_included_without_install_or_remove(self):
+        row = ComponentRowWidget("asr-transcribe")
+        row.update_state(
+            self._info(ComponentState.BUNDLED, download_bytes=25_000_000),
+            installing=False,
+        )
+
+        assert row.badge.text() == "Included"
+        assert row.size_label.text() == "Included with OpenWhisper"
+        assert row.install_button.isHidden()
+        assert row.remove_button.isHidden()
+
     def test_component_profile_renders_bundled_facts_and_links(self):
         details = get_component_details(ComponentId.MEETING_AGENT)
         popup = ComponentDetailsDialog(ComponentId.MEETING_AGENT)

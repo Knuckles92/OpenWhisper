@@ -20,6 +20,11 @@ The native Windows and Linux distributions include, among other dependencies:
   Copyright 2014 The DM Sans Project Authors and Copyright 2022 The
   Instrument Serif Project Authors. Bundled into the meeting dashboard from
   the Fontsource packages; the license texts ship in `webui/dist/licenses`.
+- **transcribe.cpp and ggml** — MIT License. The packaged Windows x64 and
+  Linux x86_64 builds include the `transcribe.cpp` speech runtime for
+  Parakeet Unified under `_internal/bundled_components/asr-transcribe`
+  (with upstream license texts in `transcribe-native/licenses`; Windows
+  also bundles an embedded CPython 3.12 runtime under the PSF License).
 
 Additional Python distributions retain their upstream license files under
 `_internal` (typically in `*.dist-info/licenses`, package-specific `LICENSE`

@@ -55,6 +55,15 @@ def _language_in_effect():
     return dictation_language.label(dictation_language.current_language(settings))
 
 
+def _language_menu_footer():
+    from services import dictation_language
+
+    settings = settings_manager.load_all_settings()
+    if dictation_language.is_english_only_engine(settings):
+        return "Switch to a multilingual engine\u2026"
+    return "Choose languages\u2026"
+
+
 def _menu_texts(menu):
     return [action.text() for action in menu.actions() if not action.isSeparator()]
 
@@ -199,7 +208,7 @@ class TestEmptyStates:
         menu.addAction("Stale")
         language_menu.populate(menu, ui)
         language_menu.populate(menu, ui)
-        assert _menu_texts(menu) == [_language_in_effect(), "Choose languages…"]
+        assert _menu_texts(menu) == [_language_in_effect(), _language_menu_footer()]
         assert not menu.actions()[0].isEnabled()
 
 
@@ -220,7 +229,7 @@ class TestAppWiring:
             assert text in texts
         assert texts.index("Start Recording") < texts.index("Copy original of last dictation")
         assert texts.index("Scratchpad") < texts.index("Settings")
-        assert _menu_texts(tray.language_menu) == [_language_in_effect(), "Choose languages…"]
+        assert _menu_texts(tray.language_menu) == [_language_in_effect(), _language_menu_footer()]
 
         calls = []
         monkeypatch.setattr(scratchpad, "toggle", lambda ui: calls.append(("scratchpad", ui)))

@@ -58,12 +58,12 @@ def model_identity(backend):
                   compute_type=getattr(backend, "_compute_type", getattr(backend, "compute_type", None)))
     if name in MODELS:
         from services.local_asr import cache
-        from services.components import component_dir
+        from services.components import active_component_dir
         result["artifacts"] = artifacts(name)
         result["installed"] = json.loads((cache.model_dir(name) / "installed.json").read_text())
         component = getattr(backend, "runtime_component", None)
         if component:
-            root = Path(component_dir(component))
+            root = Path(active_component_dir(component))
             result["runtime_files"] = {
                 p.relative_to(root).as_posix(): file_identity(p)
                 for p in sorted(root.glob("*.json"))

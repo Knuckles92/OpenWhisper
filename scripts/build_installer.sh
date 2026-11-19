@@ -133,6 +133,9 @@ INTERNAL_DIR="$DIST_DIR/_internal"
 EXE_PATH="$DIST_DIR/OpenWhisper"
 [[ -x "$EXE_PATH" ]] || fail "expected executable not found: $EXE_PATH"
 
+step "Staging bundled Parakeet Unified runtime (transcribe.cpp)"
+"$PYTHON" scripts/stage_bundled_runtime.py --dest "$INTERNAL_DIR"
+
 step "Removing build-host library search paths"
 PYTHON_BASE_PREFIX="$("$PYTHON" -c 'import sys; print(sys.base_prefix)')"
 while IFS= read -r -d '' candidate; do
@@ -157,7 +160,11 @@ for path in \
     "$INTERNAL_DIR/third_party_licenses/PyQt6/LICENSE" \
     "$INTERNAL_DIR/third_party_licenses/Qt/LICENSE" \
     "$INTERNAL_DIR/PyQt6/Qt6/plugins/platforms/libqxcb.so" \
-    "$INTERNAL_DIR/PyQt6/Qt6/plugins/imageformats/libqsvg.so"; do
+    "$INTERNAL_DIR/PyQt6/Qt6/plugins/imageformats/libqsvg.so" \
+    "$INTERNAL_DIR/bundled_components/asr-transcribe/.installed" \
+    "$INTERNAL_DIR/bundled_components/asr-transcribe/manifest.json" \
+    "$INTERNAL_DIR/bundled_components/asr-transcribe/transcribe-native/libtranscribe.so" \
+    "$INTERNAL_DIR/bundled_components/asr-transcribe/transcribe-native/libggml-vulkan.so"; do
     [[ -f "$path" ]] || fail "required bundle asset missing: ${path#"$DIST_DIR/"}"
 done
 

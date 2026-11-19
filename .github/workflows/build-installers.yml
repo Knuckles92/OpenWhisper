@@ -246,7 +246,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             binutils build-essential desktop-file-utils dpkg-dev file \
             libarchive-tools lintian patchelf xauth xvfb zstd \
-            libdrm2 libegl1 libgl1 libportaudio2 \
+            libdrm2 libegl1 libgl1 libportaudio2 libvulkan1 \
             libwayland-client0 libwayland-cursor0 libwayland-egl1 \
             libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
             libxcb-xkb1 libxkbcommon-x11-0

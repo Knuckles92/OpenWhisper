@@ -407,6 +407,8 @@ class DictationLanguagesField(QWidget):
 
     #: The saved list changed (a person's edit, never a refresh).
     changed = pyqtSignal()
+    #: User chose a multilingual engine from the English-only prompt.
+    engine_requested = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -415,6 +417,7 @@ class DictationLanguagesField(QWidget):
         self._remaining: list = []
         self.chips: list = []
         self.add_menu = QMenu(self)
+        self.switch_engine_menu = QMenu(self)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -431,6 +434,10 @@ class DictationLanguagesField(QWidget):
         self.caption = WrappedLabel("")
         self.caption.setObjectName("infoLabel")
         layout.addWidget(self.caption)
+        self.switch_engine_button = neutral_button(Button("Switch to a multilingual engine"))
+        self.switch_engine_button.setObjectName("switchMultilingualEngineButton")
+        self.switch_engine_button.clicked.connect(self._open_switch_engine_menu)
+        layout.addWidget(self.switch_engine_button, alignment=Qt.AlignmentFlag.AlignLeft)
         self.refresh()
 
     def set_backend(self, backend: str) -> None:
@@ -476,6 +483,12 @@ class DictationLanguagesField(QWidget):
         self.add_button.setEnabled(bool(self._remaining))
         current = dictation_language.current_language(settings)
         self.caption.setText(reason or self._caption(chosen, choices, current, engine_name))
+        show_switch = (
+            bool(reason)
+            and dictation_language.is_english_only_engine(settings)
+            and bool(dictation_language.multilingual_engine_options())
+        )
+        self.switch_engine_button.setVisible(show_switch)
         self.chip_area.updateGeometry()
 
     @staticmethod
@@ -503,6 +516,17 @@ class DictationLanguagesField(QWidget):
             action = self.add_menu.addAction(dictation_language.label(code))
             action.triggered.connect(lambda _checked=False, code=code: self.add(code))
         self.add_menu.popup(self.add_button.mapToGlobal(QPoint(0, self.add_button.height())))
+
+    def _open_switch_engine_menu(self) -> None:
+        self.switch_engine_menu.clear()
+        for backend, label, detail in dictation_language.multilingual_engine_options():
+            action = self.switch_engine_menu.addAction(f"{label} \u2014 {detail}")
+            action.triggered.connect(
+                lambda _checked=False, backend=backend: self.engine_requested.emit(backend)
+            )
+        self.switch_engine_menu.popup(
+            self.switch_engine_button.mapToGlobal(QPoint(0, self.switch_engine_button.height()))
+        )
 
     def add(self, code: str) -> None:
         self._save(lambda settings: dictation_language.add_chosen(settings, code))

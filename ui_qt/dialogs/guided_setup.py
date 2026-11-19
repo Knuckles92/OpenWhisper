@@ -13,7 +13,7 @@ import logging
 import sys
 from collections.abc import Callable
 
-from PyQt6.QtCore import QEvent, QSignalBlocker, QSize, Qt, QTimer
+from PyQt6.QtCore import QEvent, QPoint, QSignalBlocker, QSize, Qt, QTimer
 from PyQt6.QtWidgets import (
     QApplication,
     QProgressBar,
@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -31,7 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from services import cleanup_prompts, guided_setup
+from services import cleanup_prompts, dictation_language, guided_setup
 from services.credentials import resolve_credential
 from services.hotkey_manager import format_hotkey_display
 from services.settings import (
@@ -553,6 +554,22 @@ class GuidedSetupDialog(QDialog):
         self.speech_summary = self._row(card, "Speech engine", "", holder)
         self.speech_progress = self._progress_bar()
         card.addWidget(self.speech_progress)
+        self.speech_multilingual_menu = QMenu(self)
+        self.speech_multilingual_row, multilingual_layout = _group(QHBoxLayout, 8)
+        self.speech_multilingual_row.setObjectName("guidedMultilingualRow")
+        self.speech_multilingual_note = _label(
+            "English only \u2014 dictating in another language?"
+        )
+        self.speech_multilingual_button = _button(
+            "Other languages", self._open_multilingual_menu, "guidedLink"
+        )
+        self.speech_multilingual_button.setAccessibleName(
+            "Switch to a multilingual speech engine"
+        )
+        multilingual_layout.addWidget(self.speech_multilingual_note, 1)
+        multilingual_layout.addWidget(self.speech_multilingual_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.speech_multilingual_row.hide()
+        card.addWidget(self.speech_multilingual_row)
         self._link_row(column, "More recording options", lambda: self._open(RECORDING))
         column.addStretch()
 
@@ -815,6 +832,13 @@ class GuidedSetupDialog(QDialog):
         self.speech_progress.setVisible(bool(progress))
         self.ready_progress.setVisible(bool(progress))
         self.speech_download_button.setVisible(missing and not progress)
+        settings = self.manager.load_all_settings()
+        show_multilingual = (
+            not progress
+            and dictation_language.is_english_only_engine(settings)
+            and bool(dictation_language.multilingual_engine_options())
+        )
+        self.speech_multilingual_row.setVisible(show_multilingual)
         self.ready_download_button.setVisible(not progress)
         self.ready_speech.setVisible(missing or bool(progress))
         waiting = missing or bool(progress)
@@ -824,6 +848,31 @@ class GuidedSetupDialog(QDialog):
             if waiting
             else "Give it a try before you go."
         )
+
+    def _open_multilingual_menu(self):
+        self.speech_multilingual_menu.clear()
+        for backend, label, detail in dictation_language.multilingual_engine_options():
+            action = self.speech_multilingual_menu.addAction(f"{label} \u2014 {detail}")
+            action.triggered.connect(
+                lambda _checked=False, backend=backend: self._choose_multilingual_engine(backend)
+            )
+        self.speech_multilingual_menu.addSeparator()
+        self.speech_multilingual_menu.addAction("More speech engines\u2026").triggered.connect(
+            lambda _checked=False: self._open(VOICE_MODEL)
+        )
+        self.speech_multilingual_menu.popup(
+            self.speech_multilingual_button.mapToGlobal(
+                QPoint(0, self.speech_multilingual_button.height())
+            )
+        )
+
+    def _choose_multilingual_engine(self, backend: str):
+        if self._settings is None:
+            return
+        self._settings.models.choose_backend(backend)
+        self._download_error = ""
+        self._update_speech_status()
+        self.refresh()
 
     def _refresh_output(self):
         if self._settings._native_wayland:

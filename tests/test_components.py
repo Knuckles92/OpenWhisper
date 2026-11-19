@@ -969,6 +969,77 @@ def test_safe_extract_nvidia_wheel_flattens_only_dlls(tmp_path):
     assert not (out / "nvidia").exists()
 
 
+# Bundled components (shipped inside native installers)
+
+def _make_bundled(bundle_root: Path, component_id: str, manifest: dict) -> Path:
+    target = bundle_root / components.BUNDLED_COMPONENTS_DIRNAME / component_id
+    target.mkdir(parents=True, exist_ok=True)
+    (target / ".installed").write_text("ok", encoding="utf-8")
+    (target / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return target
+
+
+def test_bundled_component_reports_bundled_and_usable(component_root, tmp_path, monkeypatch):
+    bundle_root = tmp_path / "bundle"
+    version = components.catalog_entry_for_platform(
+        "asr-transcribe", components.PLATFORM_WIN_AMD64,
+    )["version"]
+    bundled = _make_bundled(
+        bundle_root,
+        "asr-transcribe",
+        {"version": version, "component_api": components.COMPONENT_API},
+    )
+    monkeypatch.setattr(components, "bundle_root", lambda: str(bundle_root))
+    monkeypatch.setattr(components, "current_platform_tag", lambda: components.PLATFORM_WIN_AMD64)
+
+    assert components.bundled_component_dir("asr-transcribe") == str(bundled)
+    assert components.is_bundled("asr-transcribe") is True
+    assert components.is_installed("asr-transcribe") is True
+    assert components.active_component_dir("asr-transcribe") == str(bundled)
+    assert components.read_manifest("asr-transcribe")["version"] == version
+
+    info = ComponentCoordinator().describe("asr-transcribe")
+    assert info.state == ComponentState.BUNDLED
+    assert info.is_usable is True
+    assert info.install_bytes == 0
+    assert info.installed_version == version
+
+
+def test_bundled_component_supersedes_stale_user_copy_but_keeps_newer_user_override(
+    component_root, tmp_path, monkeypatch,
+):
+    bundle_root = tmp_path / "bundle"
+    version = components.catalog_entry_for_platform(
+        "asr-transcribe", components.PLATFORM_WIN_AMD64,
+    )["version"]
+    bundled = _make_bundled(
+        bundle_root,
+        "asr-transcribe",
+        {"version": version, "component_api": components.COMPONENT_API},
+    )
+    monkeypatch.setattr(components, "bundle_root", lambda: str(bundle_root))
+    monkeypatch.setattr(components, "current_platform_tag", lambda: components.PLATFORM_WIN_AMD64)
+
+    # An outdated user-installed copy yields to the current bundled copy.
+    _make_installed(
+        component_root,
+        "asr-transcribe",
+        {"version": "0.1.0-old", "component_api": components.COMPONENT_API},
+    )
+    assert components.active_component_dir("asr-transcribe") == str(bundled)
+    assert ComponentCoordinator().describe("asr-transcribe").state == ComponentState.BUNDLED
+
+    # A current or newer user-installed override takes precedence over the bundled copy.
+    user_dir = component_root / "asr-transcribe"
+    (user_dir / "manifest.json").write_text(
+        json.dumps({"version": version, "component_api": components.COMPONENT_API}),
+        encoding="utf-8",
+    )
+    assert components.active_component_dir("asr-transcribe") == str(user_dir)
+    assert ComponentCoordinator().describe("asr-transcribe").state == ComponentState.INSTALLED
+
+
+
 def test_validate_gpu_payload_rejects_missing_core_dlls(tmp_path, monkeypatch):
     """cuBLAS is the one library CTranslate2 cannot run on the GPU without."""
     # The Windows layout; test_linux_gpu_component.py covers Linux's lib/.

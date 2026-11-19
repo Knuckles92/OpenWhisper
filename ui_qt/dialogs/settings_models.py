@@ -430,6 +430,7 @@ class ModelAssignments(QObject):
         from ui_qt.widgets.local_engine_controls import DictationLanguagesField
         self.dictation_languages = DictationLanguagesField()
         self.dictation_languages.changed.connect(self._on_dictation_languages_changed)
+        self.dictation_languages.engine_requested.connect(self.choose_backend)
         card.addWidget(self._field("Languages I dictate in", self.dictation_languages))
 
         self.engine_inventory_title = self._group_title(layout, "On this computer")

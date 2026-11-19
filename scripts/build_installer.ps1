@@ -146,6 +146,11 @@ if (-not (Test-Path $ExePath)) { throw "Expected executable not found at $ExePat
 Copy-Item -Force $HelperExe (Join-Path $DistDir 'OpenWhisperUpdater.exe')
 Write-Host "    copied OpenWhisperUpdater.exe into the app bundle"
 
+Write-Step "Staging bundled Parakeet Unified runtime (transcribe.cpp)"
+Invoke-Native $Python `
+    @('scripts\stage_bundled_runtime.py', '--dest', (Join-Path $DistDir '_internal')) `
+    -ErrorMessage "Bundled speech runtime staging failed"
+
 Write-Step "Verifying the bundle"
 $DistSize = Get-TreeSize $DistDir
 Write-Host "    dist\OpenWhisper: $(Format-Size $DistSize)"
@@ -180,6 +185,11 @@ $RequiredAssets = @(
     # Qt 6.11 imports icuuc.dll; PyQt6 6.11 wheels omit it. The spec copies
     # the Windows system ICU next to Qt6Core when the wheel has none.
     '_internal\PyQt6\Qt6\bin\icuuc.dll',
+    '_internal\bundled_components\asr-transcribe\.installed',
+    '_internal\bundled_components\asr-transcribe\manifest.json',
+    '_internal\bundled_components\asr-transcribe\python.exe',
+    '_internal\bundled_components\asr-transcribe\transcribe-native\transcribe.dll',
+    '_internal\bundled_components\asr-transcribe\transcribe-native\ggml-vulkan.dll',
     'OpenWhisperUpdater.exe'
 )
 foreach ($asset in $RequiredAssets) {

@@ -52,6 +52,7 @@ _ROW_STYLE = row_style(
 _STATE_BADGES = {
     ComponentState.NOT_INSTALLED: ("Not installed", "idle"),
     ComponentState.EXTERNAL: ("Available", "installed"),
+    ComponentState.BUNDLED: ("Included", "installed"),
     ComponentState.INSTALLED: ("Installed", "installed"),
     ComponentState.UPDATE_AVAILABLE: ("Update available", "warning"),
     ComponentState.INCOMPATIBLE: ("Update required", "warning"),
@@ -228,12 +229,17 @@ class ComponentRowWidget(DownloadRow):
         text, tone = _STATE_BADGES.get(info.state, ("Unknown", "idle"))
         self._set_badge(text, tone)
 
-        if info.state in (ComponentState.EXTERNAL, ComponentState.INSTALLED):
-            self.size_label.setText(
-                "Existing setup"
-                if info.state == ComponentState.EXTERNAL
-                else format_size_bytes(info.install_bytes)
-            )
+        if info.state in (
+            ComponentState.EXTERNAL,
+            ComponentState.BUNDLED,
+            ComponentState.INSTALLED,
+        ):
+            if info.state == ComponentState.EXTERNAL:
+                self.size_label.setText("Existing setup")
+            elif info.state == ComponentState.BUNDLED:
+                self.size_label.setText("Included with OpenWhisper")
+            else:
+                self.size_label.setText(format_size_bytes(info.install_bytes))
             self.install_button.hide()
             self.remove_button.setVisible(info.state == ComponentState.INSTALLED)
         else:

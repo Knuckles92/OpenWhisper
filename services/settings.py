@@ -1433,8 +1433,9 @@ def keep_unchosen_engine(manager: Optional["SettingsManager"] = None) -> bool:
     Such an install has no saved selection and follows
     ``config.DEFAULT_BACKEND``, so moving a platform's default would switch
     it to an engine it hasn't downloaded. A new install saves the default
-    it starts with. An existing Linux x86_64 install keeps Local Whisper,
-    its default until Parakeet replaced it (October 2026). Run before the
+    it starts with. Existing installs without a saved selection keep their
+    previous default (Local Whisper on Linux x86_64, Parakeet on Windows x64)
+    so upgrading does not switch them to an uncached model. Run before the
     main window reads the selection.
     """
     manager = settings_manager if manager is None else manager
@@ -1443,6 +1444,13 @@ def keep_unchosen_engine(manager: Optional["SettingsManager"] = None) -> bool:
         return False
     if is_new():
         engine = config.DEFAULT_BACKEND
+    elif config.DEFAULT_BACKEND == "parakeet_unified":
+        if sys.platform.startswith("linux"):
+            engine = "local_whisper"
+        elif sys.platform == "win32":
+            engine = "parakeet"
+        else:
+            return False
     elif sys.platform.startswith("linux") and config.DEFAULT_BACKEND == "parakeet":
         engine = "local_whisper"
     else:
