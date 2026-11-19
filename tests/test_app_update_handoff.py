@@ -19,8 +19,11 @@ from ui_qt.ui_controller import UIController, arm_handoff_watchdog
 
 
 class _FakeWindow:
+    _can_discard_walkthrough_edits = MainWindow._can_discard_walkthrough_edits
+
     def __init__(self):
         self._force_quit = False
+        self._screen_widgets = {}
         self.quit_calls = 0
         self.confirm_quit = None
 

@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import QMenu
 import services
 from config import config
 from services.settings import settings_manager
-from ui_qt import history_actions
+from ui_qt import history_actions, system_tray
 from ui_qt.dialogs import stats_dialog
 from ui_qt.dialogs.settings_destinations import DICTIONARY
 from ui_qt.overlay_state import OverlayState
@@ -240,6 +240,8 @@ class TestAppWiring:
         monkeypatch.setattr(
             language_menu, "populate", lambda menu, ui: calls.append(("language", menu, ui))
         )
+        monkeypatch.setattr(system_tray, "can_copy_last_original", lambda: True)
+        tray.menu.aboutToShow.emit()
         tray.scratchpad_action.trigger()
         tray.stats_action.trigger()
         tray.copy_original_action.trigger()
