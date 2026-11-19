@@ -264,11 +264,10 @@ def test_writing_it_up_again_keeps_the_one_before_under_a_version_picker(
 
 
 def test_copying_waits_for_saved_edits_and_copies_the_version_shown(review, capture):
-    review.rows[0].editor.setPlainText("unsaved")
+    review.rows[0].editor.setPlainText("corrected")
     review.pdf_button.click()
-    review._copy_files.assert_not_called()
-    review.show_folder(capture.folder)
-    review.pdf_button.click()
+    _wait(review)
+    assert "corrected" in library.load_result(capture.folder).clipboard_text
     args, _kwargs = review._copy_files.call_args
     assert args == ([capture.folder / "walkthrough.pdf"],)
 

@@ -390,6 +390,7 @@ class WalkthroughPanel(QWidget):
         self._paused_ms = 0
         self._paused_at = 0
         self._countdown = 0
+        self._confirm_cancel_until = 0.0
         self._menu = None
         self._frame = QTimer(self)
         self._frame.setInterval(FRAME_MS)
@@ -402,6 +403,7 @@ class WalkthroughPanel(QWidget):
         self.end_capture_animation()
         self.column = WalkthroughColumn()
         self._scroll = self._scrolled_back = 0.0
+        self._confirm_cancel_until = 0.0
         self._summary = ""
         self._recorded_s = 0.0
         self._hover = self._pressed = ""
@@ -614,6 +616,8 @@ class WalkthroughPanel(QWidget):
     def _controls(self) -> dict[str, QRectF]:
         """Every control that takes a click now, by key, where it was last drawn."""
         controls = {key: rect for key, (rect, enabled) in self._footer().items() if enabled}
+        if self.state == self.RECORDING and self._scrolled_back > 1.0:
+            controls["live"] = self._live_button()
         if self.state == self.RECORDING and self._hover_shot in self._shot_rects:
             for key, (rect, enabled) in self._shot_tools(self._hover_shot).items():
                 if enabled:
@@ -725,7 +729,18 @@ class WalkthroughPanel(QWidget):
 
     def _click(self, key: str) -> None:
         name, _, number = key.partition(":")
-        if name == "up":
+        if name == "live":
+            self._scrolled_back = 0.0
+        elif name == "keep":
+            self._confirm_cancel_until = 0.0
+        elif name == "cancel":
+            if (self.state == self.RECORDING and (self.column.shots or self._recorded() > 0)
+                    and not self._confirming_cancel()):
+                self._confirm_cancel_until = self._now() + 5.0
+            else:
+                self._confirm_cancel_until = 0.0
+                self.cancel_requested.emit()
+        elif name == "up":
             self.move_requested.emit(int(number), -1)
         elif name == "down":
             self.move_requested.emit(int(number), 1)
@@ -742,7 +757,6 @@ class WalkthroughPanel(QWidget):
             {
                 "snap": self.snap_requested,
                 "undo": self.undo_requested,
-                "cancel": self.cancel_requested,
                 "done": self.finish_requested,
             }[name].emit()
 
@@ -796,6 +810,13 @@ class WalkthroughPanel(QWidget):
             return ease_out(self._since() / FADE_S)
         return 0.0 if self.state == self.RECORDING else 1.0
 
+    def _confirming_cancel(self) -> bool:
+        return self.state == self.RECORDING and self._now() < self._confirm_cancel_until
+
+    def _live_button(self) -> QRectF:
+        inner = self._inner()
+        return QRectF(inner.right() - 100, inner.top() + 2, 100, 25)
+
     def _footer(self) -> dict[str, tuple[QRectF, bool]]:
         """Each footer button's place, and whether it takes a click now.
 
@@ -818,15 +839,20 @@ class WalkthroughPanel(QWidget):
         if widen:
             cancel = QRectF(cancel.left() + (inner.left() - cancel.left()) * widen, bottom,
                             FOOT_ICON_W + (inner.width() - FOOT_ICON_W) * widen, FOOT_H)
+        confirming = self._confirming_cancel()
+        if confirming:
+            keep = QRectF(inner.left(), bottom, half, FOOT_H)
+            cancel = QRectF(keep.right() + FOOT_GAP, bottom, half, FOOT_H)
         return {
+            "keep": (keep if confirming else QRectF(), confirming),
             # Paused, Auto Mode's drawing is off: Draw would do nothing.
             "snap": (snap, recording and not (self._auto_mode and self.paused)),
             "snap-menu": (snap_menu, recording),
             "note": (note, recording and self._notes_on and not self.paused),
-            "pause": (pause, recording),
-            "undo": (undo, recording and self.column.shots > 0),
+            "pause": (pause if not confirming else QRectF(), recording and not confirming),
+            "undo": (undo if not confirming else QRectF(), recording and not confirming and self.column.shots > 0),
             "cancel": (cancel, self.state in (self.RECORDING, self.WRITING)),
-            "done": (done, recording),
+            "done": (done if not confirming else QRectF(), recording and not confirming),
         }
 
     def _shot_tools(self, number: int) -> dict[str, tuple[QRectF, bool]]:
@@ -899,6 +925,9 @@ class WalkthroughPanel(QWidget):
             text = f"Writing it up{dots}"
         else:
             text = self._summary or "Walkthrough"
+        if self.state == self.RECORDING and self._scrolled_back > 1.0:
+            painter.setPen(token_color("accent-soft" if self._hover != "live" else "text"))
+            painter.drawText(self._live_button(), Qt.AlignmentFlag.AlignCenter, "Jump to live")
         painter.setPen(token_color("text-secondary"))
         painter.drawText(QRectF(x, y, inner.right() - x, 18),
                          Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
@@ -1208,6 +1237,8 @@ class WalkthroughPanel(QWidget):
         font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
         for key, (rect, enabled) in self._footer().items():
+            if rect.isEmpty():
+                continue
             if self.state == self.RECORDING:
                 alpha = 1.0 if enabled else 0.4
             else:
@@ -1269,9 +1300,13 @@ class WalkthroughPanel(QWidget):
                 paint_icon(painter, "play", rect.center(), 15, token_color("accent-soft"))
             else:
                 paint_icon(painter, "pause", rect.center(), 15, token_color("text"))
+        elif key == "keep":
+            self._paint_label(painter, rect, "", "Keep walkthrough", token_color("text"))
         elif key == "cancel":
             ink = token_color("danger-text-soft")
-            if rect.width() > FOOT_ICON_W * 2.5:
+            if self._confirming_cancel():
+                self._paint_label(painter, rect, "x", "Discard walkthrough", ink)
+            elif rect.width() > FOOT_ICON_W * 2.5:
                 self._paint_label(painter, rect, "x", "Cancel", ink)
             else:
                 paint_icon(painter, "x", rect.center(), 16, ink)

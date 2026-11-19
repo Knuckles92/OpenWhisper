@@ -191,14 +191,15 @@ def test_a_failed_paste_of_a_rewrite_is_reported(h, notices):  # noqa: F811
     assert h.runtime._claim_job(_command_job("hey", FocusSnapshot(NOTEPAD)))
     h.runtime.transcribe_audio_file(h.audio)
     assert notices == [(h.ui.statuses[-1], False)]
-    assert "paste failed" in notices[0][0]
+    assert notices[0][0].startswith("Auto-paste failed. Copied. Press ")
 
 
 def test_a_failed_paste_of_the_original_is_reported(h, notices):  # noqa: F811
     h.paste.side_effect = OSError("no input desktop")
     h.ui.commit_transcript_clipboard = lambda stage, text: True
     assert not h.runtime.paste_text_now("um hello")
-    assert notices == [("Transcription complete (paste failed)", False)]
+    assert notices == [(h.ui.statuses[-1], False)]
+    assert notices[0][0].startswith("Auto-paste failed. Copied. Press ")
 
 
 def test_an_ai_failure_in_a_command_is_reported(h, notices):  # noqa: F811
@@ -241,14 +242,20 @@ def test_a_command_during_a_recording_says_to_finish_it(h, notices):  # noqa: F8
     assert notices == [("Finish the current recording before using Command Mode", False)]
 
 
-def test_plain_dictation_gets_no_notice(h, notices):  # noqa: F811
+def test_plain_dictation_only_gets_a_notice_when_it_fails(h, notices):  # noqa: F811
     h.runtime._transcript_cleanup = FakeCleaner("Hello.")
     assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION))
     h.runtime.transcribe_audio_file(h.audio)
     assert h.ui.copied == ["make it formal"]
+    assert notices == []
     assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION))
     h.runtime.on_transcription_error("The engine crashed")
-    assert notices == []
+    assert notices == [("Error: The engine crashed", False)]
+
+    assert h.runtime._claim_job(DictationJob(mode=JobMode.DICTATION))
+    h.runtime.on_transcription_complete("")
+    assert len(notices) == 2
+    assert notices[-1] == (h.ui.statuses[-1], False)
 
 
 def test_a_canceled_rewrite_gets_no_notice(h, notices):  # noqa: F811

@@ -111,6 +111,28 @@ class TestCoverageGuardSettings(_DialogTestCase):
             reopened.close()
         assert isolated.load_all_settings()[SettingsKey.MEETING_REDECODE_COVERAGE_GUARD] is False
 
+class TestReportViews(_DialogTestCase):
+    _open = TestKnowledgeFolderSettings._open
+
+    def test_turning_off_the_last_view_persists_ribbon_fallback(self, tmp_path):
+        isolated = SettingsManager(str(tmp_path / "report-settings.json"))
+        isolated.save_all_settings({
+            SettingsKey.MEETING_REPORT_RIBBON: False,
+            SettingsKey.MEETING_REPORT_BRIEF: True,
+            SettingsKey.MEETING_REPORT_SIGNAL: False,
+        })
+        settings_patch, history_patch = self._open(isolated)
+        with settings_patch, history_patch:
+            dialog = settings_dialog_module.SettingsDialog(background_cache_scan=False)
+            assert not dialog.meeting_report_ribbon_check.isChecked()
+            dialog.meeting_report_brief_check.setChecked(False)
+            assert dialog.meeting_report_ribbon_check.isChecked()
+            assert dialog.meeting_report_ribbon_tile.property("checked") is True
+            dialog.close()
+        assert isolated.get(SettingsKey.MEETING_REPORT_RIBBON) is True
+        assert isolated.get(SettingsKey.MEETING_REPORT_BRIEF) is False
+
+
 class TestInsightReviewSettings(_DialogTestCase):
     _open = TestKnowledgeFolderSettings._open
 
@@ -124,6 +146,7 @@ class TestInsightReviewSettings(_DialogTestCase):
             with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
                 dialog.meeting_review_check.setChecked(True)
             assert not dialog.meeting_review_check.isChecked()
+            assert dialog.meeting_review_tile.property("checked") is False
             assert not isolated.load_all_settings().get(SettingsKey.MEETING_INSIGHT_REVIEW_CONSENT)
             with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
                 dialog.meeting_review_check.setChecked(True)

@@ -33,7 +33,10 @@ from PyQt6.QtWidgets import (
 from services.walkthrough import library
 from services.walkthrough.document import clock
 from services.walkthrough.storage import captures_root
-from services.walkthrough.write_up import MARKDOWN_NAME, PDF_NAME
+from services.walkthrough.write_up import MARKDOWN_NAME
+from ui_qt.utils.file_reveal import reveal_in_file_manager
+from ui_qt.utils.restyle import set_style_property
+from ui_qt.widgets.context_menu import context_menu
 from ui_qt.widgets.walkthrough_review import _day, _shots, _started, _time
 
 logger = logging.getLogger(__name__)
@@ -73,7 +76,7 @@ class _Relay(QObject):
 _relay_instance: _Relay | None = None
 
 
-def _relay() -> _Relay:
+def walkthrough_list_relay() -> _Relay:
     # Made on first use, on the UI thread: a module-level QObject would live
     # on whichever thread imported this module.
     global _relay_instance
@@ -124,7 +127,7 @@ def _thumb(path: Path, ratio: float, box: QSize = THUMB_SIZE, radius: float = 8)
 
 
 def summarize(folder: Path, today: date, ratio: float = 1.0, *,
-              thumb_size: QSize = THUMB_SIZE, thumb_radius: float = 8) -> Summary:
+              thumb_size: QSize | None = THUMB_SIZE, thumb_radius: float = 8) -> Summary:
     """Read one capture folder for its card; any thread.
 
     ``thumb_size`` and ``thumb_radius`` shape its first screenshot, for a
@@ -146,13 +149,13 @@ def summarize(folder: Path, today: date, ratio: float = 1.0, *,
         )
     shots = [section.shot for section in document.sections if section.shot]
     thumb = None
-    if shots:
+    if shots and thumb_size is not None:
         try:
             thumb = _thumb(shots[0], ratio, thumb_size, thumb_radius)
         except Exception:
             logger.debug("No thumbnail for %s", folder, exc_info=True)
     title = _title(folder, document)
-    write_up = (folder / PDF_NAME).is_file()
+    write_up = library.written_up(folder)
     return Summary(
         folder, when, title,
         meta=f"{_shots(len(shots))} · {clock(document.duration_s)}",
@@ -160,6 +163,29 @@ def summarize(folder: Path, today: date, ratio: float = 1.0, *,
         words=" ".join([title, *(s.text for s in document.sections)]).lower(),
         thumb=thumb,
     )
+
+
+def load_summaries(root: Path, today: date, *, limit=None, ratio=1.0, thumbnails=True) -> int:
+    """Read the list and send it to the shared UI relay."""
+    token, loaded = next(_tokens), walkthrough_list_relay().loaded
+
+    def load() -> None:
+        try:
+            folders = library.entries(root)
+        except OSError:
+            logger.warning("Could not read walkthrough folders", exc_info=True)
+            folders = []
+        summaries = []
+        for folder in folders[:limit]:
+            try:
+                summaries.append(summarize(folder, today, ratio,
+                                           thumb_size=THUMB_SIZE if thumbnails else None))
+            except Exception:
+                logger.warning("Could not read walkthrough %s", folder, exc_info=True)
+        loaded.emit(token, (summaries, len(folders)))
+
+    threading.Thread(target=load, name="walkthrough-list-load", daemon=True).start()
+    return token
 
 
 class WalkthroughCard(QFrame):
@@ -217,6 +243,13 @@ class WalkthroughCard(QFrame):
             self.clicked.emit(self.summary.folder)
         super().mouseReleaseEvent(event)
 
+    def contextMenuEvent(self, event):
+        menu = context_menu(self)
+        menu.addAction("Open walkthrough", lambda: self.clicked.emit(self.summary.folder))
+        menu.addAction("Show in folder", lambda: reveal_in_file_manager(str(self.summary.folder)))
+        menu.exec(event.globalPos())
+        menu.deleteLater()
+
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
             self.clicked.emit(self.summary.folder)
@@ -235,12 +268,13 @@ class PastWalkthroughsPanel(QWidget):
         self.root = Path(root) if root is not None else captures_root()
         self._today = today
         self._token = 0
+        self._selected_folder: Path | None = None
         #: How many folders the last read found; None until one has finished.
         self._total: int | None = None
         self.cards: list[WalkthroughCard] = []
         self.setObjectName("walkthroughsContent")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        _relay().loaded.connect(self._on_loaded)
+        walkthrough_list_relay().loaded.connect(self._on_loaded)
         self._setup_ui()
         self._apply_style()
 
@@ -327,6 +361,10 @@ class PastWalkthroughsPanel(QWidget):
                 background-color: rgba(@surface-hover-rgb, 0.6);
                 border: 1px solid rgba(@accent-rgb, 0.35);
             }
+            QFrame#walkthroughCard[selected="true"] {
+                background-color: rgba(@accent-rgb, 0.10);
+                border-color: @accent;
+            }
             QLabel#walkthroughCardWhen {
                 color: @text-secondary-strong;
                 background: transparent;
@@ -372,25 +410,13 @@ class PastWalkthroughsPanel(QWidget):
 
     def refresh(self) -> None:
         """Read the capture folders again, off the UI thread."""
-        self._token = token = next(_tokens)
-        root, today = self.root, self._today()
-        ratio = self.devicePixelRatioF() or 1.0
-        loaded = _relay().loaded
+        self._token = load_summaries(self.root, self._today(), limit=MAX_SHOWN,
+                                     ratio=self.devicePixelRatioF() or 1.0)
 
-        def load() -> None:
-            try:
-                folders = library.entries(root)
-            except OSError:
-                folders = []
-            summaries = []
-            for folder in folders[:MAX_SHOWN]:
-                try:
-                    summaries.append(summarize(folder, today, ratio))
-                except Exception:
-                    logger.warning("Could not read walkthrough %s", folder, exc_info=True)
-            loaded.emit(token, (summaries, len(folders)))
-
-        threading.Thread(target=load, name="past-walkthroughs-load", daemon=True).start()
+    def set_selected_folder(self, folder: Path | None) -> None:
+        self._selected_folder = folder
+        for card in self.cards:
+            set_style_property(card, "selected", card.summary.folder == folder)
 
     def _on_loaded(self, token: int, result) -> None:
         if token != self._token:
@@ -408,6 +434,7 @@ class PastWalkthroughsPanel(QWidget):
             self.card_layout.addWidget(card)
             self.cards.append(card)
         self._total = total
+        self.set_selected_folder(self._selected_folder)
         self._filter()
 
     def _filter(self, *_args) -> None:

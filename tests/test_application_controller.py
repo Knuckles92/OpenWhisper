@@ -2014,7 +2014,8 @@ class TestApplicationController:
         assert len(ui.clipboard_commits) == 1
         assert ui.clipboard_commits[0][1] == "hello world"
         assert ui.clipboard_restores == []
-        assert ui.statuses[-1] == "Transcription complete (paste failed)"
+        shortcut = "Cmd+V" if sys.platform == "darwin" else "Ctrl+V"
+        assert ui.statuses[-1] == f"Auto-paste failed. Copied. Press {shortcut}."
 
     def test_blocked_auto_paste_leaves_transcript_for_manual_paste(self):
         controller = self._create_controller()

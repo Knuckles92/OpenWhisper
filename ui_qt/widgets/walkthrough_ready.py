@@ -130,6 +130,10 @@ class FileChip(QFrame):
         self._path = path
         self.name.setText(path.name)
 
+    @property
+    def path(self) -> Path | None:
+        return self._path
+
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self._press = event.position().toPoint()
@@ -230,7 +234,7 @@ class WalkthroughReadyCard(QWidget):
         row.setContentsMargins(0, 8, 0, 0)
         row.setSpacing(4)
         self.chip = FileChip(self)
-        self.chip.clicked.connect(self._open)
+        self.chip.clicked.connect(self._open_chip)
         row.addWidget(self.chip)
         row.addStretch(1)
         self.review_button = QToolButton()
@@ -290,12 +294,13 @@ class WalkthroughReadyCard(QWidget):
     def present(self, result, *, copied: bool) -> None:
         """Fill the card for ``result`` and show it in the corner of the pointer's screen."""
         self._result = result
+        settings = settings_manager.load_all_settings()
+        copy_format = resolve_walkthrough_copy_format(settings)
         count = f"{result.shots} screenshot{'' if result.shots == 1 else 's'}"
         if copied:
             self.title.setText(f"{result.name} copied")
             note = "write-up failed, copied as spoken" if result.write_up_error else "paste it into your agent"
-            settings = settings_manager.load_all_settings()
-            if resolve_walkthrough_copy_format(settings) == WalkthroughCopyFormat.AGENT_TASK:
+            if copy_format == WalkthroughCopyFormat.AGENT_TASK:
                 if SettingsKey.AUTO_PASTE.read(settings):
                     note = "preparing to paste PDF, then instructions"
                     if result.write_up_error:
@@ -315,7 +320,7 @@ class WalkthroughReadyCard(QWidget):
         self.thumb.setVisible(thumb is not None)
         if thumb is not None:
             self.thumb.setPixmap(thumb)
-        self.chip.set_path(result.pdf)
+        self._set_chip(result, copy_format)
         has_word = result.docx.is_file()
         self.open_word_action.setEnabled(has_word)
         self.copy_word_action.setEnabled(has_word)
@@ -324,6 +329,23 @@ class WalkthroughReadyCard(QWidget):
         self.show()
         self.raise_()
         self._timer.start(SHOW_MS)
+
+    def _set_chip(self, result, copy_format: str) -> None:
+        path = {
+            WalkthroughCopyFormat.WORD: result.docx,
+            WalkthroughCopyFormat.AGENT: getattr(result, "markdown", result.pdf),
+        }.get(copy_format, result.pdf)
+        self.chip.set_path(path if path.is_file() else result.pdf)
+
+    def show_copy_status(self, result, copy_format: str, *, copied: bool) -> None:
+        if self._result is None or self._result.folder != result.folder:
+            return
+        if copied:
+            self._result = result
+            self._set_chip(result, copy_format)
+        self.subtitle.setText("Copied!" if copied else "Couldn't copy the walkthrough.")
+        self.adjustSize()
+        self._place()
 
     def show_paste_status(self, result, status: str) -> None:
         """Replace manual-copy guidance only for the card being pasted."""
@@ -365,6 +387,11 @@ class WalkthroughReadyCard(QWidget):
         if self._result is not None:
             self.copy_requested.emit(self._result, copy_format)
             self._timer.start(SHOW_MS)
+
+    def _open_chip(self) -> None:
+        if self.chip.path is not None:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.chip.path)))
+        self.hide()
 
     def _open(self) -> None:
         if self._result is not None:

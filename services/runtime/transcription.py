@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
@@ -2261,6 +2262,7 @@ class TranscriptionRuntime:
             if self._retry_entry_id:
                 status += " — recording kept in History"
             self.controller.ui_controller.set_status(status)
+            self._notify(status)
             if job is not None and job.mode == JobMode.WALKTHROUGH:
                 # The column said "Writing it up…"; nothing is coming.
                 dismiss = getattr(self.controller.ui_controller, "dismiss_walkthrough_panel", None)
@@ -2398,6 +2400,8 @@ class TranscriptionRuntime:
             self._notify(f"{reason} — pasted instead" if pasted else reason)
         if forced:
             self._notify_forced_outcome(job, pasted)
+        elif not pasted and self._delivery_status != "Ready" + status_suffix:
+            self._notify(self._delivery_status)
 
     def _deliver_walkthrough(self, ui, transcript: str = "") -> None:
         """Copy a finished walkthrough, or write it up first; Qt thread.
@@ -2740,13 +2744,14 @@ class TranscriptionRuntime:
             logger.info("Transcription auto-pasted")
         except Exception as exc:
             logger.error(f"Failed to auto-paste: {exc}", exc_info=True)
-            if not self.controller.ui_controller.commit_transcript_clipboard(
-                stage, transcript
-            ):
+            if ui.commit_transcript_clipboard(stage, transcript):
+                shortcut = "Cmd+V" if sys.platform == "darwin" else "Ctrl+V"
+                report(f"Auto-paste failed. Copied. Press {shortcut}.")
+            else:
                 logger.warning(
                     "Could not leave transcription in clipboard after paste failure"
                 )
-            report("Transcription complete (paste failed)")
+                report("Auto-paste failed. Open OpenWhisper to copy the transcript.")
             return False
 
         if stage.restore_unavailable:
@@ -2923,23 +2928,25 @@ class TranscriptionRuntime:
         self.controller.ui_controller.set_status(status)
         self.controller.ui_controller.show_transcription_error(status)
         self.controller.overlay_state_update.emit(OverlayState.NONE)
-        rewrite = refused or (job is not None and job.mode != JobMode.DICTATION)
-        if rewrite and not self._cancel_requested.is_set():
-            self._notify(status)
         self.controller._transcription_start_time = None
         self.controller._transcription_elapsed = None
         self.controller._remote_timing = None
         self.controller.ui_controller.discard_clipboard_prefetch()
         if pending_audio:
             try:
-                save = self._preserve_failed_audio
-                if (category == event_catalog.FAILURE_FAILED
-                        and (job is None or job.mode == JobMode.DICTATION)):
-                    save = self._save_failed_recording
+                save_to_history = (
+                    category == event_catalog.FAILURE_FAILED
+                    and (job is None or job.mode == JobMode.DICTATION)
+                )
+                save = self._save_failed_recording if save_to_history else self._preserve_failed_audio
                 self.controller.persistence_executor.submit(save, pending_audio, status)
+                if not save_to_history and category != event_catalog.FAILURE_CANCELED:
+                    self._notify(status)
                 return
             except Exception:
                 logger.exception('Could not queue failed recording preservation')
+        if category != event_catalog.FAILURE_CANCELED:
+            self._notify(status)
         self._clear_pending_audio_metadata()
         self._finish_job()
 

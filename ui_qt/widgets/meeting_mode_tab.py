@@ -529,6 +529,7 @@ class MeetingModeTab(QWidget):
     open_dashboard_requested = pyqtSignal()
     open_report_requested = pyqtSignal()
     copy_guest_link_requested = pyqtSignal()
+    copy_transcript_requested = pyqtSignal(str)
     cloud_toggled = pyqtSignal(bool)
     #: "Change…" beside AI insights: open Settings → Meeting Mode → Intelligence.
     ai_settings_requested = pyqtSignal()
@@ -798,6 +799,9 @@ class MeetingModeTab(QWidget):
             "Copy the guest dashboard link to the clipboard."
         )
         self.guest_link_button.clicked.connect(self.copy_guest_link_requested)
+        self._guest_copy_timer = QTimer(self)
+        self._guest_copy_timer.setSingleShot(True)
+        self._guest_copy_timer.timeout.connect(lambda: self.guest_link_button.setText("Copy guest link"))
         for button in (self.dashboard_button, self.guest_link_button):
             button.setSizePolicy(
                 QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
@@ -937,6 +941,9 @@ class MeetingModeTab(QWidget):
         optional = QLabel("Optional")
         optional.setObjectName("meetingBriefOptional")
         header.addWidget(optional)
+        self.brief_count = QLabel()
+        self.brief_count.setObjectName("meetingBriefOptional")
+        header.addWidget(self.brief_count)
         layout.addLayout(header)
 
         # The brief is stated before Start so the agent works to it from the
@@ -964,6 +971,8 @@ class MeetingModeTab(QWidget):
         )
         self.brief_label.setBuddy(self.brief_input)
         layout.addWidget(self.brief_input)
+        self.brief_input.textChanged.connect(self._update_brief_count)
+        self._update_brief_count()
 
         self.brief_hint = WrappedLabel(
             "AI insights read this on every pass. You can change it from the "
@@ -973,7 +982,7 @@ class MeetingModeTab(QWidget):
         layout.addWidget(self.brief_hint)
         # Show or hide the brief first, so it has already changed by the time
         # turning the switch on opens the consent dialog.
-        self.cloud_checkbox.toggled.connect(self._sync_brief_availability)
+        self.cloud_checkbox.toggled.connect(self._apply_layout_state)
         self.cloud_checkbox.toggled.connect(self.cloud_toggled)
         panel.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         return panel
@@ -1188,6 +1197,18 @@ class MeetingModeTab(QWidget):
         record_actions.addWidget(
             self.finalization_report_button, 0, Qt.AlignmentFlag.AlignRight
         )
+        self.finalization_copy_button = self._link_button(
+            "Copy transcript", "meetingFinalizationCopyButton",
+            "Copy this meeting's transcript to the clipboard",
+        )
+        self.finalization_copy_button.clicked.connect(self._copy_finalization_transcript)
+        self.finalization_copy_button.hide()
+        record_actions.addWidget(self.finalization_copy_button, 0, Qt.AlignmentFlag.AlignRight)
+        self._transcript_copy_timer = QTimer(self)
+        self._transcript_copy_timer.setSingleShot(True)
+        self._transcript_copy_timer.timeout.connect(
+            lambda: self.finalization_copy_button.setText("Copy transcript")
+        )
         self.finalization_retry_speakers_button = self._link_button(
             "Re-run speakers",
             "meetingFinalizationRetrySpeakersButton",
@@ -1398,6 +1419,20 @@ class MeetingModeTab(QWidget):
                 self._load_recent()
         return super().event(event)
 
+    def _update_brief_count(self) -> None:
+        from meeting.state.patches import MAX_INTENT_LEN
+
+        count = len(self.brief_input.toPlainText().strip())
+        self._brief_overflow = max(0, count - MAX_INTENT_LEN)
+        self.brief_count.setText(f"{count:,} / {MAX_INTENT_LEN:,}")
+        if hasattr(self, "brief_hint"):
+            self.brief_hint.setText(
+                f"Remove {self._brief_overflow:,} characters to start."
+                if self._brief_overflow else
+                "AI insights read this on every pass. You can change it from the dashboard."
+            )
+            self._apply_layout_state()
+
     def meeting_brief(self) -> str:
         """The host's pre-meeting brief, trimmed and capped for the engine.
 
@@ -1420,6 +1455,8 @@ class MeetingModeTab(QWidget):
         first. A finished or incomplete one needs nothing here: the runtime
         files it in Past Meetings as part of starting.
         """
+        if self.cloud_checkbox.isChecked() and self._brief_overflow:
+            return
         if self._wrapping_up() and self._background_available:
             self.background_requested.emit()
         self.start_requested.emit(
@@ -1581,6 +1618,18 @@ class MeetingModeTab(QWidget):
             self.status_pill.setText(text)
             self.status_pill.setAccessibleName(f"Meeting status: {text}")
 
+    def show_guest_link_copied(self) -> None:
+        self.guest_link_button.setText("Copied!")
+        self._guest_copy_timer.start(1800)
+
+    def _copy_finalization_transcript(self) -> None:
+        if self._meeting_id:
+            self.copy_transcript_requested.emit(self._meeting_id)
+
+    def show_transcript_copy_status(self, copied: bool) -> None:
+        self.finalization_copy_button.setText("Copied!" if copied else "Couldn't copy")
+        self._transcript_copy_timer.start(1800)
+
     def set_dashboard_available(self, available: bool) -> None:
         """Enable Open Dashboard when a retained URL exists.
 
@@ -1716,8 +1765,9 @@ class MeetingModeTab(QWidget):
         # meeting still holds the speech model; after that the wrap-up can
         # finish in the background.
         start_blocked = running_finalization and not self._background_available
+        brief_blocked = self.cloud_checkbox.isChecked() and bool(self._brief_overflow)
         self.start_button.setEnabled(
-            not self._recording_active and not start_blocked
+            not self._recording_active and not start_blocked and not brief_blocked
         )
         self.demo_button.setEnabled(not self._recording_active)
         if start_blocked:
@@ -1736,7 +1786,8 @@ class MeetingModeTab(QWidget):
             note = ""
         self.slot_note.setText(note)
         self.slot_note.setVisible(setting_up and bool(note))
-        self.start_button.setToolTip(note if start_blocked else "")
+        tip = note if start_blocked else ""
+        self.start_button.setToolTip(self.brief_hint.text() if brief_blocked else tip)
         self._sync_brief_availability()
         self._show_stage(
             "live" if showing_session else "result" if show_finalization else "empty"
@@ -1895,6 +1946,10 @@ class MeetingModeTab(QWidget):
             content.get("speaker_rerun_reason") or ""
         )
         self._update_report_button(view)
+        self.finalization_copy_button.setVisible(
+            bool(self._meeting_id) and not view.empty_meeting
+            and content.get("has_transcript", True) and view.status != "running"
+        )
         if view.empty_meeting:
             view.message = (
                 "No audio or transcript was captured. The meeting failed "
@@ -2127,7 +2182,16 @@ class MeetingModeTab(QWidget):
         if step_status == "running":
             name_font.setWeight(QFont.Weight.DemiBold)
         name_label.setFont(name_font)
-        row_layout.addWidget(name_label, 1)
+        names = QVBoxLayout()
+        names.setSpacing(2)
+        names.addWidget(name_label)
+        if detail_text and step_status in {"failed", "skipped", "deferred", "unavailable"}:
+            reason = WrappedLabel(detail_text, break_long_words=True)
+            reason.setObjectName("meetingFinalizationStepDetail")
+            reason.setTextFormat(Qt.TextFormat.PlainText)
+            names.addWidget(reason)
+            row.setToolTip(detail_text)
+        row_layout.addLayout(names, 1)
 
         detail_label = QLabel(_step_detail_text(step_status))
         detail_label.setObjectName("meetingFinalizationStepDetail")

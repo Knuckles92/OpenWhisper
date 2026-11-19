@@ -157,7 +157,7 @@ def test_a_stale_read_is_dropped(panel, root):
     _loaded(panel)
     panel._token += 1  # a newer read is on its way
 
-    past_walkthroughs._relay().loaded.emit(panel._token - 1, ([], 0))
+    past_walkthroughs.walkthrough_list_relay().loaded.emit(panel._token - 1, ([], 0))
 
     assert len(panel.cards) == 1
 

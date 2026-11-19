@@ -435,6 +435,10 @@ class CalendarSource:
             logger.debug("Record sync unavailable for the History calendar", exc_info=True)
             return False
 
+    def clear_remote(self) -> None:
+        self._remote = {DICTATION: [], MEETING: []}
+        self.notice = ""
+
     def load_remote(self, local_ids: Iterable[str]) -> List[Mark]:
         """Marks for the records only the paired host keeps; may wait on the network."""
         self.notice = ""

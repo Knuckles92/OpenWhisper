@@ -1254,6 +1254,8 @@ class SettingsDialog(QDialog):
         self.backup_create_tile = self.backup_page.create_tile
         self.backup_restore_tile = self.backup_page.restore_tile
         self.backup_schedule_tile = self.backup_page.schedule_tile
+        if self._backup_coordinator is not None:
+            self._backup_coordinator.schedule_changed.connect(self._refresh_rail_values)
         layout.addWidget(self.backup_page)
 
     def _build_downloads_page(self, layout: QVBoxLayout) -> None:
@@ -2985,13 +2987,16 @@ class SettingsDialog(QDialog):
             ))
         keywords = keyword_entries(_SEARCH_ALIASES) + self._agent_search_entries()
         entries = build_index(pages, self.downloads, keywords)
+        indexed = {(entry.destination, entry.title) for entry in entries}
         for key in self.rail.keys():
-            if key in self._built_pages:
+            if key in self._built_pages and key != REMOTE_ENGINE:
                 continue
             title, _subtitle = self._headings[key]
             crumb = self._crumb(key)
             icon = self._rail_icons.get(key, "box-blue.svg")
             for target_name, label, description in PAGE_SEARCH_FIELDS.get(key, ()):
+                if (key, label) in indexed:
+                    continue
                 entries.append(SearchEntry(
                     SETTING, label, crumb, key,
                     target_name=target_name, keywords=description, icon=icon,
@@ -3025,7 +3030,16 @@ class SettingsDialog(QDialog):
             self.show_downloads(component_id=entry.component_id)
             return
         self.select_destination(entry.destination)
-        target = entry.target or (getattr(self, entry.target_name, None) if entry.target_name else None)
+        target = entry.target
+        if entry.destination == REMOTE_ENGINE:
+            target = target or getattr(self.remote_section, entry.target_name or "", None)
+            if target is not None:
+                self.remote_section.reveal_target(target)
+        elif target is None and entry.target_name:
+            name, _, field = entry.target_name.partition(".")
+            target = getattr(self, name, None)
+            if field and isinstance(target, dict):
+                target = target.get(field)
         if target is not None:
             self._reveal(target)
 
@@ -3136,15 +3150,7 @@ class SettingsDialog(QDialog):
         return super().eventFilter(obj, event)
 
     def reject(self) -> None:
-        # Escape closes through here without a close event.
-        if self._save_page_drafts(ask=self.isVisible()):
-            super().reject()
-
-    def closeEvent(self, event):
-        # Quitting the app closes a visible Settings window this way too. A
-        # hidden one has nobody to ask, so only its valid drafts are saved.
         if not self._save_page_drafts(ask=self.isVisible()):
-            event.ignore()
             return
         self.search_palette.close_palette()
         if self.home is not None:
@@ -3158,7 +3164,11 @@ class SettingsDialog(QDialog):
         if self._retention_commit_timer.isActive():
             self._commit_retention()
         self.cleanup_rules.release_recorder()
-        super().closeEvent(event)
+        super().reject()
+
+    def closeEvent(self, event):
+        self.reject()
+        event.setAccepted(not self.isVisible())
 
     def _persist(self, key: str, value, *, message: str = "") -> bool:
         if self._loading:
@@ -3235,7 +3245,7 @@ class SettingsDialog(QDialog):
         )
         self.rail.set_value(DOWNLOADS, self.downloads.rail_value())
         if BACKUP in self._built_pages:
-            frequency = self.backup_page.frequency_combo.currentData()
+            frequency = self.backup_page.saved_frequency
             self.rail.set_value(BACKUP, "Off" if frequency == "off" else str(frequency).title())
         else:
             self.rail.set_value(BACKUP, "Local backups")
@@ -3861,6 +3871,8 @@ class SettingsDialog(QDialog):
             return
         self._microphones.apply_devices(devices, outcome)
         self._refresh_rail_values()
+        if self.home is not None:
+            self.home.microphones_ready()
 
     def _start_hotkey_capture(
         self, key: str, input_field: HotkeyCaptureInput

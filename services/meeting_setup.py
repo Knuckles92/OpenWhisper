@@ -6,6 +6,7 @@ import logging
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from services.settings import (
@@ -152,6 +153,7 @@ class AudioCheck:
 
 def check_audio(
     cancel: threading.Event, *, system_audio_allowed: bool = True, seconds: float = 6.0,
+    progress: Callable[[float, float, float], None] | None = None,
 ) -> AudioCheck:
     """Check for real signal without saving any samples or starting a meeting."""
     from contextlib import ExitStack
@@ -216,12 +218,19 @@ def check_audio(
                         loopback = open_source(CHANNEL_LOOPBACK, SoundcardLoopbackSource)
             monitors = (mic, loopback)
             deadline = time.monotonic() + seconds
-            while time.monotonic() < deadline and any(
-                monitor is not None and not monitor.snapshot()["signal_windows"]
-                for monitor in monitors
-            ):
-                if cancel.wait(0.1):
+            while not cancel.is_set():
+                remaining = max(0.0, deadline - time.monotonic())
+                snapshots = [
+                    monitor.snapshot(include_level=progress is not None) if monitor is not None else None
+                    for monitor in monitors
+                ]
+                if progress is not None:
+                    levels = [snapshot.get("rms", 0.0) if snapshot else 0.0 for snapshot in snapshots]
+                    progress(remaining, *levels)
+                if not remaining or all(snapshot is None or snapshot["signal_windows"]
+                                        for snapshot in snapshots):
                     break
+                cancel.wait(min(remaining, 0.1))
 
             def result(monitor):
                 if monitor is None:

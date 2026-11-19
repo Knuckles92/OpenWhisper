@@ -25,12 +25,15 @@ from PyQt6.QtGui import (
     QDrag,
     QImage,
     QImageReader,
+    QKeySequence,
     QPainter,
     QPainterPath,
     QPixmap,
+    QShortcut,
 )
 from PyQt6.QtWidgets import (
     QApplication,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -481,7 +484,8 @@ class _Preview(QWidget):
         self.setObjectName("wlPreview")
         self.setAccessibleName(f"Preview of {image.name}")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Open the full screenshot")
+        self.setToolTip("Zoom screenshot")
+        self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         size = picture.deviceIndependentSize()
         self._ratio = size.height() / size.width()
         # Never drawn larger than decoded: a small region stays its own size.
@@ -543,7 +547,34 @@ class _Preview(QWidget):
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.image)))
+            self._zoom()
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self._zoom()
+            return
+        super().keyPressEvent(event)
+
+    def _zoom(self) -> None:
+        picture = QPixmap(str(self.image))
+        if picture.isNull():
+            QMessageBox.warning(self, "Screenshot", f"Couldn't read {self.image.name}.")
+            return
+        dialog = QDialog(self.window())
+        dialog.setWindowTitle(self.image.name)
+        layout = QVBoxLayout(dialog)
+        scroll = QScrollArea(dialog)
+        scroll.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label = QLabel()
+        label.setPixmap(picture)
+        label.adjustSize()
+        scroll.setWidget(label)
+        layout.addWidget(scroll)
+        screen_size = self.screen().availableGeometry().size()
+        dialog.resize(min(picture.width() + 40, int(screen_size.width() * 0.9)),
+                      min(picture.height() + 40, int(screen_size.height() * 0.9)))
+        dialog.exec()
+        dialog.deleteLater()
 
 
 class _Row(QFrame):
@@ -726,9 +757,10 @@ class _CopyGroup(QWidget):
 class _SavedOnly:
     """The words were saved, but the write-up asked for after them was not redone."""
 
-    def __init__(self, result, reason: str) -> None:
+    def __init__(self, result, reason: str, view: tuple) -> None:
         self.result = result
         self.reason = reason
+        self.view = view
 
 
 SAVED = "Saved. Copy it again whenever you're ready."
@@ -769,6 +801,7 @@ class WalkthroughReview(QWidget):
         self._then: tuple | None = None
         self._next: tuple | None = None
         self._cancel = threading.Event()
+        self._after_save = None
         self._enabled: list[bool] = []
         self.board: _Board | None = None
         self._finished.connect(self._done)
@@ -806,6 +839,9 @@ class WalkthroughReview(QWidget):
                         self.retry_button, self.style_button, self.prompt_button,
                         self.delete_button, self.recover_button, self.close_button,
                         self.version_bar, self.version_picker]
+        self.save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
+        self.save_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.save_shortcut.activated.connect(self._save)
         self.show_folder(None)
 
     def bind(self, *, copy_files=None, recover=None, acquire=None, release=None, submit=None):
@@ -1245,6 +1281,16 @@ class WalkthroughReview(QWidget):
         self.save_button.style().polish(self.save_button)
         self.save_redo_button.setVisible(redo)
         self.save_bar.setVisible(dirty)
+        self.save_shortcut.setEnabled(dirty)
+        redo_label = "Redo AI write-up" if self._written else "Write up with AI"
+        redo = "Redo" if self._written else "Write up"
+        self.style_menu.setTitle(f"Save and {redo.lower()} as" if dirty else f"{redo} as")
+        for button, label in (
+            (self.pdf_button, "Copy PDF"), (self.markdown_button, "Copy Markdown"),
+            (self.copy_word_button, "Copy Word"), (self.copy_agent_action, "Copy for agent"),
+            (self.retry_button, redo_label), (self.prompt_button, f"{redo} with a new prompt…"),
+        ):
+            button.setText(f"Save and {label[0].lower()}{label[1:]}" if dirty else label)
 
     def _discard(self):
         self.show_folder(self._folder, spoken=self._spoken, version=self._version)
@@ -1289,11 +1335,12 @@ class WalkthroughReview(QWidget):
 
     # ---- work off the UI thread ----
 
-    def run(self, operation, *, then: tuple | None = None, done: str = SAVED) -> None:
+    def run(self, operation, *, then: tuple | None = None, done: str = SAVED, after_save=None) -> None:
         """Run ``operation`` on a worker behind the app's gate, then show what it left.
 
         ``then`` is ``(spoken, version)`` to show of this folder afterwards,
         when not what it opens on; ``done`` is what the notice says after.
+        ``after_save`` receives the saved result on the Qt thread.
         """
         if self._busy:
             return
@@ -1303,6 +1350,7 @@ class WalkthroughReview(QWidget):
         if error:
             self.notice.setText(error)
             return
+        self._after_save = after_save
         self._busy = True
         self.busy_changed.emit(True)
         self._enabled = [button.isEnabled() for button in self.actions]
@@ -1333,6 +1381,7 @@ class WalkthroughReview(QWidget):
             self._done(None, str(exc))
 
     def _done(self, result, error):
+        after_save, self._after_save = self._after_save, None
         self._busy = False
         self._release()
         self.scroll.setEnabled(True)
@@ -1350,9 +1399,9 @@ class WalkthroughReview(QWidget):
             # The save is on disk: reload it so a second save can't apply the
             # same reordering twice, and say the write-up is as it was.
             done = f"Saved, but the write-up wasn't redone: {result.reason}"
-            result = result.result
             if self._folder is not None:
-                self._then = (self._folder, True, None)
+                self._then = (self._folder, *result.view)
+            result = result.result
         folder = getattr(result, "folder", self._folder)
         shown = Path(folder) if folder is not None and Path(folder).is_dir() else None
         self._next, self._then = self._then, None
@@ -1360,6 +1409,8 @@ class WalkthroughReview(QWidget):
         # The host shows what to see next: this folder, or another once it's gone.
         self.changed.emit(shown)
         self.notice.setText(done)
+        if after_save is not None:
+            after_save(result)
 
     def cancel(self) -> None:
         """Stop the work in progress as soon as it safely can."""
@@ -1369,43 +1420,57 @@ class WalkthroughReview(QWidget):
 
     # ---- actions ----
 
-    def _save(self, redo: bool = False):
-        if not self._folder:
+    def _save(self, redo: bool = False, *, instructions=None, after_save=None):
+        if not self._folder or not self._dirty or self._busy:
             return
         folder = self._folder
         if not self._spoken:
             parts = [(row.editor.toPlainText(), row.line) for row in self.rows]
             version = self._version
-            self.run(lambda: library.save_write_up(
-                folder, library.join_write_up(parts), version=version),
-                then=(False, version))
-            return
-        texts = [row.editor.toPlainText() for row in self.rows]
-        keep = [row.check.isChecked() for row in self.rows]
-        order = [row.index for row in self.rows]
+
+            def save_review():
+                return library.save_write_up(folder, library.join_write_up(parts), version=version)
+
+            then = (False, version)
+        else:
+            texts = [row.editor.toPlainText() for row in self.rows]
+            keep = [row.check.isChecked() for row in self.rows]
+            order = [row.index for row in self.rows]
+
+            def save_review():
+                return library.save_review(folder, texts, keep, order)
+
+            then = (True, None)
+
         def save():
-            result = library.save_review(folder, texts, keep, order)
+            result = save_review()
             if redo:
                 try:
-                    return library.retry_write_up(folder, cancel_event=self._cancel)
+                    return library.retry_write_up(folder, instructions=instructions, cancel_event=self._cancel)
                 except Exception as exc:
                     if not self._cancel.is_set():
                         logger.warning("Walkthrough write-up redo failed after saving",
                                        exc_info=True)
-                    return _SavedOnly(result, str(exc))
+                    return _SavedOnly(result, str(exc), then)
             return result
         # Redone, the new write-up shows; otherwise the words just saved stay.
-        self.run(save, then=None if redo else (True, None))
+        self.run(save, then=None if redo else then, after_save=after_save)
 
     def _copy(self, copy_format):
         if self._busy or not self._folder or not self._copy_files:
             return
         if self._dirty:
-            self.notice.setText("Save your changes before copying.")
+            self._save(after_save=lambda result: self._copy_result(result, copy_format))
             return
         try:
-            result = library.load_result(self._folder, spoken=self._spoken,
-                                         version=self._version)
+            result = library.load_result(self._folder, spoken=self._spoken, version=self._version)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.notice.setText(str(exc))
+            return
+        self._copy_result(result, copy_format)
+
+    def _copy_result(self, result, copy_format) -> None:
+        try:
             files, text = result.clipboard(copy_format)
             ok = self._copy_files(files, text=text)
             if ok:
@@ -1445,7 +1510,7 @@ class WalkthroughReview(QWidget):
             self.run(lambda: library.retry_write_up(
                 folder, instructions=instructions, cancel_event=self._cancel))
         elif self._dirty:
-            self.notice.setText("Save your changes before writing it up.")
+            self._save(redo=True, instructions=instructions)
 
     def _fill_style_menu(self) -> None:
         from services.walkthrough.styles import load_styles
@@ -1461,9 +1526,6 @@ class WalkthroughReview(QWidget):
     def _retry_with_prompt(self):
         from ui_qt.dialogs.write_up_prompt_dialog import WriteUpPromptDialog
 
-        if self._dirty:
-            self.notice.setText("Save your changes before writing it up.")
-            return
         if not self._folder:
             return
         prompt = (resolve_walkthrough_write_up_instructions(settings_manager.load_all_settings())

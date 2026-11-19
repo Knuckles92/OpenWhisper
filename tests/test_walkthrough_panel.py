@@ -261,10 +261,15 @@ def test_the_footer_snaps_undoes_cancels_and_finishes(panel, clock):
 
     _click(panel, _footer_button(panel, "undo"))  # no screenshot to undo yet
     panel.add_shot(1, _image(), 3.0)
-    for key in ("snap", "undo", "cancel", "done"):
+    for key in ("snap", "undo", "cancel"):
         _click(panel, _footer_button(panel, key))
+    assert heard == ["snap", "undo"]
+    _click(panel, _footer_button(panel, "keep"))
+    _click(panel, _footer_button(panel, "done"))
+    _click(panel, _footer_button(panel, "cancel"))
+    _click(panel, _footer_button(panel, "cancel"))
 
-    assert heard == ["snap", "undo", "cancel", "done"]
+    assert heard == ["snap", "undo", "done", "cancel"]
 
 
 def test_while_it_is_written_only_cancel_is_left(panel, clock):

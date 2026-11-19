@@ -343,6 +343,18 @@ class TestMeetingModeTabState(unittest.TestCase):
         })
         self.app.processEvents()
 
+    def test_finished_meeting_exposes_copy_and_step_details(self):
+        self._show_result({"status": "completed", "steps": [
+            {"id": "polish", "status": "skipped", "detail": "AI insights are off."},
+        ]}, meeting_id="saved-meeting")
+        copied = []
+        self.tab.copy_transcript_requested.connect(copied.append)
+        self.assertFalse(self.tab.finalization_copy_button.isHidden())
+        self.tab.finalization_copy_button.click()
+        self.assertEqual(copied, ["saved-meeting"])
+        step = self.tab.finalization_steps_layout.itemAt(0).widget()
+        self.assertEqual(step.toolTip(), "AI insights are off.")
+
     def test_unchanged_finalization_steps_keep_their_rows(self):
         def finalization(status):
             return {"finalization": {"status": "failed", "steps": [
@@ -604,13 +616,16 @@ class TestMeetingModeTabState(unittest.TestCase):
         self.tab.set_meeting_state({"cloud_enabled": True})
         self.assertFalse(self.tab.brief_panel.isHidden())
 
-    def test_meeting_brief_is_capped_at_the_validation_limit(self):
-        """A pasted essay is trimmed here rather than rejected by the store."""
+    def test_long_meeting_brief_shows_the_limit_and_blocks_start(self):
         from meeting.state.patches import MAX_INTENT_LEN
 
         self.tab.cloud_checkbox.setChecked(True)
         self.tab.brief_input.setPlainText("b" * (MAX_INTENT_LEN + 500))
         self.assertEqual(len(self.tab.meeting_brief()), MAX_INTENT_LEN)
+        self.assertIn("Remove 500 characters", self.tab.brief_hint.text())
+        self.assertFalse(self.tab.start_button.isEnabled())
+        self.tab.cloud_checkbox.setChecked(False)
+        self.assertTrue(self.tab.start_button.isEnabled())
 
     def test_meeting_brief_field_is_hidden_during_a_meeting(self):
         """The brief is a pre-meeting control; the dashboard owns it after."""

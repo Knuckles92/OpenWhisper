@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QAction, QCursor, QGuiApplication
 from PyQt6.QtCore import Qt, pyqtSignal
 
+from ui_qt.history_actions import can_copy_last_original
 from ui_qt.utils.app_icon import app_icon
 
 logger = logging.getLogger(__name__)
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 # macOS status items never report DoubleClick, and an attached context menu
 # swallows the left click to pop itself up. There, a left click restores the
 # window and the menu is shown on right/Ctrl-click instead.
-_CLICK_TO_RESTORE = sys.platform == "darwin"
+_MANUAL_CONTEXT_MENU = sys.platform == "darwin"
 
 
 class SystemTrayManager(QSystemTrayIcon):
@@ -37,6 +38,9 @@ class SystemTrayManager(QSystemTrayIcon):
         super().__init__()
         self.main_window = main_window
         self._meeting_active = False
+        self._recording = False
+        self._walkthrough_active = False
+        self._update_version = ""
         self.available = bool(QSystemTrayIcon.isSystemTrayAvailable())
 
         self._setup_icon()
@@ -59,11 +63,11 @@ class SystemTrayManager(QSystemTrayIcon):
     def _setup_menu(self):
         self.menu = QMenu()
 
-        show_action = self.menu.addAction("Show")
-        show_action.triggered.connect(self._on_show)
-
-        hide_action = self.menu.addAction("Hide")
-        hide_action.triggered.connect(self._on_hide)
+        self.show_action = self.menu.addAction("Show")
+        self.show_action.triggered.connect(self._on_show)
+        self.hide_action = self.menu.addAction("Hide")
+        self.hide_action.triggered.connect(self._on_hide)
+        self.menu.aboutToShow.connect(self._refresh_menu)
 
         self.menu.addSeparator()
         self.toggle_action = self.menu.addAction("Start Recording")
@@ -71,6 +75,7 @@ class SystemTrayManager(QSystemTrayIcon):
         self.copy_original_action = self.menu.addAction(
             "Copy original of last dictation"
         )
+        self.copy_original_action.setEnabled(False)
         self.copy_original_action.triggered.connect(
             self.copy_last_original_requested
         )
@@ -107,7 +112,7 @@ class SystemTrayManager(QSystemTrayIcon):
         exit_action.setMenuRole(QAction.MenuRole.NoRole)
         exit_action.triggered.connect(self._on_exit)
 
-        if not _CLICK_TO_RESTORE:
+        if not _MANUAL_CONTEXT_MENU:
             self.setContextMenu(self.menu)
 
     def _connect_signals(self):
@@ -115,8 +120,8 @@ class SystemTrayManager(QSystemTrayIcon):
 
     def _on_activated(self, reason):
         Reason = QSystemTrayIcon.ActivationReason
-        if not _CLICK_TO_RESTORE:
-            if reason == Reason.DoubleClick:
+        if not _MANUAL_CONTEXT_MENU:
+            if reason in (Reason.Trigger, Reason.DoubleClick):
                 self._on_show()
             return
 
@@ -129,6 +134,13 @@ class SystemTrayManager(QSystemTrayIcon):
             self._popup_menu()
         elif reason in (Reason.Trigger, Reason.DoubleClick):
             self._on_show()
+
+    def _refresh_menu(self) -> None:
+        window = self.main_window
+        showing = bool(window and window.isVisible() and not window.isMinimized())
+        self.show_action.setVisible(not showing)
+        self.hide_action.setVisible(showing)
+        self.copy_original_action.setEnabled(can_copy_last_original())
 
     def _popup_menu(self):
         """Show the menu under the status item (it is not attached on macOS)."""
@@ -166,27 +178,43 @@ class SystemTrayManager(QSystemTrayIcon):
         self.exit_requested.emit()
 
     def set_recording(self, is_recording: bool):
+        self._recording = bool(is_recording)
+        self._refresh_tooltip()
         if is_recording:
             self.toggle_action.setText("Stop Recording")
         else:
             self.toggle_action.setText("Start Recording")
 
     def set_walkthrough_active(self, active: bool) -> None:
+        self._walkthrough_active = bool(active)
         self.walkthrough_action.setText("Finish Walkthrough" if active else "Start Walkthrough")
+        self._refresh_tooltip()
 
     def set_update_available(self, version: str) -> None:
         """Offer the newer release ``version`` in the menu; "" withdraws it."""
         self.update_action.setText(f"Update to {version}…")
         self.update_action.setVisible(bool(version))
-        self.setToolTip(
-            f"OpenWhisper: update {version} available" if version else "OpenWhisper"
-        )
+        self._update_version = version
+        self._refresh_tooltip()
+
+    def _refresh_tooltip(self) -> None:
+        parts = ["OpenWhisper"]
+        if self._walkthrough_active:
+            parts.append("Walkthrough active")
+        elif self._recording:
+            parts.append("Recording")
+        if self._meeting_active:
+            parts.append("Meeting active")
+        if self._update_version:
+            parts.append(f"Update {self._update_version} available")
+        self.setToolTip(" · ".join(parts))
 
     def set_meeting_active(
         self, active: bool, dashboard_available: Optional[bool] = None
     ):
         """Update meeting actions, optionally overriding dashboard availability."""
         self._meeting_active = bool(active)
+        self._refresh_tooltip()
         if self._meeting_active:
             self.meeting_toggle_action.setText("End Meeting")
         else:

@@ -45,6 +45,17 @@ def test_history_sidebar_loads_only_one_page_off_the_ui_thread():
     app.processEvents()
 
 
+def test_unreachable_host_notice_survives_empty_local_history():
+    app = QApplication.instance() or QApplication([])
+    sidebar = _expanded_sidebar(app)
+    sidebar._apply_history_results(1, "", {"entries": [], "notice": "Host is offline."}, "")
+    texts = [sidebar.history_list_layout.itemAt(i).widget().text()
+             for i in range(sidebar.history_list_layout.count())]
+    assert any("Host is offline" in text for text in texts)
+    assert "No history yet" in texts
+    sidebar.deleteLater()
+
+
 def test_large_history_does_not_stretch_section_header():
     app = QApplication.instance() or QApplication([])
     sidebar = HistorySidebar()

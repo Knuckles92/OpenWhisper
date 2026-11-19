@@ -341,7 +341,7 @@ from ui_qt.widgets import (
     Button,
     HistorySidebar, HistoryEdgeTab, HotkeyHintFilter,
     TabbedContentWidget, QuickRecordTab,
-    CompactRecordController,
+    CompactRecordController, history_playback,
 )
 from ui_qt.widgets.update_notice import UpdateNoticeButton
 from services.history_manager import history_manager
@@ -757,6 +757,8 @@ class MainWindow(QMainWindow):
                 widget.walkthrough_requested.connect(self.walkthrough_requested)
                 widget.cancel_requested.connect(self._on_quick_record_canceled)
                 widget.settings_requested.connect(self.settings_destination_requested)
+                widget.walkthrough_shown.connect(self.history_sidebar.set_selected_walkthrough)
+                self.history_sidebar.set_selected_walkthrough(widget.review.folder)
                 widget.walkthroughs_changed.connect(self.refresh_history)
                 widget.walkthroughs_changed.connect(self.walkthroughs_changed)
             elif key == "meeting":
@@ -1537,6 +1539,7 @@ class MainWindow(QMainWindow):
         self._save_geometry()
         self._compact_mode = True
 
+        history_playback.stop_all()
         self.tabbed_content.hide()
         self.compact_controller.show()
         # Four footer buttons don't fit the compact width; Stats stays in the tray menu.
@@ -1662,6 +1665,7 @@ class MainWindow(QMainWindow):
             self._save_geometry()
             self._pre_host_geometry = QRect(self.geometry())
             self._host_mode = True
+            history_playback.stop_all()
             self.tabbed_content.hide()
             self.history_edge_tab.hide()
             self.history_sidebar.hide()
@@ -1787,7 +1791,12 @@ class MainWindow(QMainWindow):
         if self.confirm_quit is not None and not self.confirm_quit():
             logger.info("Quit canceled: work in progress")
             return
-        self.quit_application()
+        if self._can_discard_walkthrough_edits():
+            self.quit_application()
+
+    def _can_discard_walkthrough_edits(self) -> bool:
+        tab = self._screen_widgets.get("walkthrough")
+        return tab is None or not tab.review._dirty or tab.review.discard_changes()
 
     def quit_application(self):
         logger.info("Quitting application")
@@ -1972,12 +1981,16 @@ class MainWindow(QMainWindow):
 
     def show_walkthrough(self, folder) -> None:
         """Bring the window forward on the Walkthrough tab, showing ``folder``."""
+        if self._host_mode:
+            self.set_host_mode(False)
         self.restore_from_tray()
         self.tabbed_content.set_current_index(TabbedContentWidget.TAB_WALKTHROUGH)
         self.walkthrough_tab.show_walkthrough(folder, ask=True)
 
     def show_past_items(self, tab_index: int) -> None:
         """Bring the window forward on a tab, with that tab's list of past items open."""
+        if self._host_mode:
+            self.set_host_mode(False)
         self.restore_from_tray()
         self.tabbed_content.set_current_index(tab_index)
         if not self.history_sidebar.is_expanded:
@@ -2098,7 +2111,7 @@ class MainWindow(QMainWindow):
                 logger.warning(f"Error hiding window: {e}", exc_info=True)
                 event.accept()
         else:
-            event.accept()
+            event.setAccepted(self._can_discard_walkthrough_edits())
 
     def update_hotkeys(
         self,

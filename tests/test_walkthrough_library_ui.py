@@ -16,9 +16,18 @@ capture = capture_fixture
 @pytest.fixture
 def dialog(capture):
     widget = WalkthroughLibraryDialog(root=capture.root, copy_files=Mock(return_value=True))
+    _wait_for_list(widget)
     yield widget
     widget.review._dirty = False
     widget.close()
+
+
+def _wait_for_list(dialog):
+    for _ in range(300):
+        if not dialog.count_label.text().startswith("Loading"):
+            return
+        QTest.qWait(10)
+    pytest.fail("Walkthrough list worker did not finish")
 
 
 def _wait(dialog):
@@ -55,14 +64,13 @@ def test_copy_buttons_send_explicit_clipboard_formats(dialog, capture):
     assert dialog.review.notice.text() == "Instructions copied. Paste them, then drag the PDF into your chat."
 
 
-def test_unsaved_edits_cannot_be_shared_or_written_up(dialog):
+def test_copy_saves_edits_before_sharing(dialog, capture):
     dialog.review._editors[0].setPlainText("corrected")
     dialog.review.markdown_button.click()
-    dialog.review.copy_agent_action.trigger()
-    dialog.review._copy_files.assert_not_called()
-    assert "Save" in dialog.review.notice.text()
-    dialog.review.retry_button.trigger()
-    assert not dialog.review._busy
+    _wait(dialog)
+    assert not dialog.review._dirty
+    assert "corrected" in library.load_result(capture.folder).clipboard_text
+    assert "corrected" in dialog.review._copy_files.call_args.kwargs["text"]
 
 
 def test_save_regenerates_and_releases_the_app_gate(dialog, capture):
@@ -90,6 +98,7 @@ def test_save_regenerates_and_releases_the_app_gate(dialog, capture):
 
 def test_gate_refusal_starts_no_worker(dialog):
     dialog.review._acquire = Mock(return_value="Finish recording first")
+    dialog.review._editors[0].setPlainText("edited")
     dialog.review.save_button.click()
     assert not dialog.review._busy
     assert dialog.review.notice.text() == "Finish recording first"
@@ -98,6 +107,7 @@ def test_gate_refusal_starts_no_worker(dialog):
 def test_executor_submission_failure_releases_the_gate(dialog):
     dialog.review._release = Mock()
     dialog.review._submit = Mock(side_effect=RuntimeError("shutting down"))
+    dialog.review._editors[0].setPlainText("edited")
     dialog.review.save_button.click()
     assert not dialog.review._busy
     dialog.review._release.assert_called_once()
@@ -171,6 +181,7 @@ def test_recovery_requests_the_selected_draft(capture):
     (capture.folder / library.AUDIO_NAME).write_bytes(b"audio")
     recover = Mock()
     widget = WalkthroughLibraryDialog(root=capture.root, recover=recover)
+    _wait_for_list(widget)
     assert widget.review.recover_button.isEnabled()
     widget.review.recover_button.click()
     recover.assert_called_once_with(str(capture.folder))
@@ -213,6 +224,7 @@ def test_refresh_asks_about_unsaved_edits_only_once(dialog, monkeypatch):
     asked = _yes(monkeypatch)
     dialog.review._editors[0].setPlainText("EDITED")
     dialog._refresh_requested()
+    _wait_for_list(dialog)
     asked.assert_called_once()
     assert dialog.list.currentRow() == 0
     assert dialog.review._editors[0].toPlainText() == "first"
@@ -247,6 +259,7 @@ def test_a_draft_shows_that_it_is_recovering(capture):
     widget = WalkthroughLibraryDialog(root=capture.root, recover=recover)
     try:
         widget.show()
+        _wait_for_list(widget)
         review = widget.review
         assert review.recover_button.isEnabled()
         review.recover_button.click()
