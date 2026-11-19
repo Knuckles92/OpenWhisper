@@ -7,6 +7,18 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.94] - 2026-11-18
+
+### Added
+
+- **All-in-one offline installers for Windows and Linux** — alongside the slim installers, releases now ship `OpenWhisper-AllInOne-Setup-2.8.94.exe` (Windows x64) and `OpenWhisper-AllInOne-2.8.94-linux-{amd64.deb,x86_64.pkg.tar.zst}` (Debian/Ubuntu and Arch Linux). Each all-in-one package bundles both the `transcribe.cpp` speech runtime and the compact **Parakeet TDT-CTC 110M** English model (135 MB), so dictation, live preview, file uploads, and Meeting Mode work completely offline right after installation with zero extra downloads. Bundled models show an **Included** badge in Settings, appear as **Included and ready** in Guided Setup, and are preserved across future Windows in-app updates.
+- **One-click non-English switching** — choosing a non-English language in Guided Setup or Settings while using Parakeet Unified now offers a direct **Switch to Whisper** path so multilingual users can switch immediately without hunting through engine menus.
+
+### Changed
+
+- **Parakeet Unified is now the default engine on Windows x64 and Linux x86_64** — fresh installs start with Parakeet Unified (`transcribe.cpp`, supporting Vulkan GPUs and CPU) bundled directly in the installer, removing the separate runtime download step. Existing installations keep whichever speech engine they already chose.
+- **Live preview on by default for new installs** — brand-new installations using engines that share a single loaded decoder (Parakeet Unified on Windows/Linux and Parakeet MLX on Apple Silicon) now start with live streaming preview enabled out of the box, leaving existing installations untouched.
+
 ### Fixed
 
 - **Clearer macOS auto-paste setup** — opening Accessibility Settings keeps the current permission entry intact. If an old entry stops working after an update, a separate **Repair old Accessibility entry…** action resets it, explains how to enable the current copy, and offers manual recovery if the reset fails. Settings Home now updates its permission warning while open. Release builds reject incomplete signing credentials and can require Developer ID signing to prevent accidental ad-hoc releases that lose permission across updates.
