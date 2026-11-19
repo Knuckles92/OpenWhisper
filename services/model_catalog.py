@@ -443,6 +443,7 @@ _SPEECH_PARAMETER_COUNTS: Final[Mapping[str, str]] = MappingProxyType({
     "moonshine-medium": "245 million",
     "qwen-1.7b": "1.7 billion",
     "parakeet-unified-en": "618 million",
+    "parakeet-110m-en": "114 million",
 })
 _SPEECH_RUNTIME_FORMATS: Final[Mapping[str, str]] = MappingProxyType({
     "parakeet_mlx": "MLX Safetensors",
@@ -464,7 +465,7 @@ _SPEECH_RUNTIME_NOTES: Final[Mapping[str, str]] = MappingProxyType({
         for backend in _NATIVE_BACKENDS
     },
     "parakeet_unified": (
-        "Requires the transcribe.cpp runtime from Downloads (Windows x64 or Linux x86_64)."
+        "Uses the transcribe.cpp runtime included with the Windows x64 and Linux x86_64 installers."
     ),
 })
 #: Where each backend runs, and what that costs.
@@ -480,7 +481,7 @@ _SPEECH_DEVICE_NOTES: Final[Mapping[str, str]] = MappingProxyType({
     "moonshine": "English only; CPU execution.",
     "parakeet_unified": (
         "English only. Auto runs on a dedicated GPU through Vulkan (NVIDIA, AMD or Intel), "
-        "else on the CPU. Its live preview streams words as you speak."
+        "else on the CPU."
     ),
 })
 _SPEECH_UPSTREAM_URLS: Final[Mapping[str, str]] = MappingProxyType({
@@ -528,6 +529,16 @@ def _speech_model_details(key: str, model) -> ModelDetails:
 
 for _key, _model in SPEECH_MODELS.items():
     _CATALOG[_key] = _speech_model_details(_key, _model)
+_CATALOG["parakeet-unified-en"] = replace(
+    _CATALOG["parakeet-unified-en"],
+    limitations=(*_CATALOG["parakeet-unified-en"].limitations,
+                 "Its live preview streams words as you speak."),
+)
+_CATALOG["parakeet-110m-en"] = replace(
+    _CATALOG["parakeet-110m-en"],
+    limitations=(*_CATALOG["parakeet-110m-en"].limitations,
+                 "Included in the all-in-one installer; uses windowed live preview rather than native streaming."),
+)
 _CATALOG["parakeet-v3-mlx"] = replace(
     _CATALOG["parakeet-v3-mlx"],
     limitations=(*_CATALOG["parakeet-v3-mlx"].limitations,

@@ -36,8 +36,9 @@ def isolated_models(tmp_path, monkeypatch):
 
 
 def test_every_optional_artifact_is_pinned_and_has_integrity_metadata():
-    assert len(BACKENDS) == 6 and len(MODELS) == 9
+    assert len(BACKENDS) == 6 and len(MODELS) == 10
     assert "orukeet-v0.1" in MODELS
+    assert "parakeet-110m-en" in MODELS
     for key in MODELS:
         spec = artifacts(key)
         assert spec["revision"]

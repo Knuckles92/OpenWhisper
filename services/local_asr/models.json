@@ -59,6 +59,30 @@
       }
     ]
   },
+  "parakeet-110m-en": {
+    "repo": "handy-computer/parakeet-tdt_ctc-110m-gguf",
+    "revision": "1c3f0d5378fdd358905cc410a93ed9e64f52d170",
+    "files": [
+      {
+        "name": "parakeet-tdt_ctc-110m-Q8_0.gguf",
+        "url": "https://huggingface.co/handy-computer/parakeet-tdt_ctc-110m-gguf/resolve/1c3f0d5378fdd358905cc410a93ed9e64f52d170/parakeet-tdt_ctc-110m-Q8_0.gguf",
+        "sha256": "7dd44c74a331d788a4e5f8b16913b3feb29ced22cf5613aad0e0f6cd30516296",
+        "size_bytes": 135373280
+      },
+      {
+        "name": "LICENSE",
+        "url": "https://huggingface.co/handy-computer/parakeet-tdt_ctc-110m-gguf/resolve/1c3f0d5378fdd358905cc410a93ed9e64f52d170/LICENSE",
+        "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+        "size_bytes": 18657
+      },
+      {
+        "name": "NOTICE",
+        "url": "https://huggingface.co/handy-computer/parakeet-tdt_ctc-110m-gguf/resolve/1c3f0d5378fdd358905cc410a93ed9e64f52d170/NOTICE",
+        "sha256": "c8adba97ba3c25562e26996c50ec5161e86869630ac0beb284897b016c46ecad",
+        "size_bytes": 401
+      }
+    ]
+  },
   "qwen-0.6b": {
     "repo": "Qwen/Qwen3-ASR-0.6B",
     "revision": "5eb144179a02acc5e5ba31e748d22b0cf3e303b0",

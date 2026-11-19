@@ -39,13 +39,13 @@ The app also includes microphone selection, a system tray where available, and d
 
 ## Install
 
-Download the package for your platform from [Releases](https://github.com/Knuckles92/OpenWhisper/releases/latest). Native packages include Python and the app dependencies.
+Download the package for your platform from [Releases](https://github.com/Knuckles92/OpenWhisper/releases/latest). Native packages include Python, the app dependencies, and (on Windows x64 and Linux x86_64) the `transcribe.cpp` speech runtime. Choose the **All-in-One** (`OpenWhisper-AllInOne-*`) installer on Windows or Linux to also bundle the compact English **Parakeet TDT-CTC 110M** model (~135 MB) so offline dictation, live preview, and meetings work right out of the box with no extra download.
 
 | Platform | Install |
 | --- | --- |
-| Windows | Run the `.exe` installer. It installs per-user without admin rights. |
+| Windows | Run `OpenWhisper-Setup-<version>.exe` (slim; downloads your speech model on first use) or `OpenWhisper-AllInOne-Setup-<version>.exe` (ready offline out of the box). Both install per-user without admin rights and upgrade in place. |
 | macOS | Open the `.dmg` and drag OpenWhisper into Applications. Requires Apple Silicon and macOS 14+. Unless a release says it is notarized, approve first launch in **Privacy & Security → Open Anyway**. Intel Macs run [from source](#run-from-source). |
-| Linux | Install the `.deb` on Debian 12+ / Ubuntu 22.04+, or `.pkg.tar.zst` on Arch-compatible distributions. Both packages require x86_64. |
+| Linux | Install the `.deb` on Debian 12+ / Ubuntu 22.04+, or `.pkg.tar.zst` on Arch-compatible distributions (`OpenWhisper-*` slim or `OpenWhisper-AllInOne-*` with the bundled English model). Both packages require x86_64. |
 
 On Linux, use the matching command, replacing `<version>` with your download's version:
 
@@ -170,7 +170,7 @@ Choose **Settings → App → Appearance → Theme → Omarchy desktop** to foll
 | Local Whisper | Standard Whisper sizes, turbo, Distil-Whisper | All platforms, CPU; NVIDIA CUDA on Windows/Linux | Dictation with preview, uploads, meetings |
 | Parakeet | TDT 0.6B v3; Orukeet TDT 0.6B community adaptation | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meeting chunks |
 | Parakeet MLX | TDT 0.6B v3, MLX Community weights | Apple Silicon, macOS 14+: Apple GPU through Metal or CPU | Dictation with preview, uploads, meeting chunks |
-| Parakeet Unified | Unified EN 0.6B, English | Windows x64 and Linux x86_64 CPU / GPU through Vulkan (NVIDIA, AMD, Intel) | Dictation with native preview, uploads |
+| Parakeet Unified | Unified EN 0.6B (native preview); TDT-CTC 110M (compact, included in All-in-One installers), English | Windows x64 and Linux x86_64 CPU / GPU through Vulkan (NVIDIA, AMD, Intel) | Dictation with preview, uploads; meetings (TDT-CTC 110M) |
 | Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (MPS) | Dictation, uploads |
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU; Apple Silicon CPU, macOS 15+ | Dictation, uploads, meetings with native preview |

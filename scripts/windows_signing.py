@@ -56,6 +56,7 @@ TRUSTED_SIGNING_TIMESTAMP_URL = "http://timestamp.acs.microsoft.com"
 
 _SHA1_RE = re.compile(r"[0-9A-Fa-f]{40}")
 _SETUP_RE = re.compile(r"OpenWhisper-Setup-\d+\.\d+\.\d+\.exe")
+_ALLINONE_SETUP_RE = re.compile(r"OpenWhisper-AllInOne-Setup-\d+\.\d+\.\d+\.exe")
 
 
 class SigningError(ValueError):
@@ -277,10 +278,18 @@ def release_metadata(report: Mapping, release_dir: Path) -> Dict:
     setups = sorted(path for path in release_dir.iterdir() if _SETUP_RE.fullmatch(path.name))
     if len(setups) != 1:
         raise SigningError("Release candidate needs exactly one setup exe")
-    setup = setups[0]
-    entry = next((item for item in files if isinstance(item, Mapping) and item.get("name") == setup.name), None)
-    if entry is None or entry.get("sha256") != _sha256(setup):
-        raise SigningError("Windows signing report does not match the setup exe")
+    allinone_setups = sorted(
+        path for path in release_dir.iterdir() if _ALLINONE_SETUP_RE.fullmatch(path.name)
+    )
+    if len(allinone_setups) > 1:
+        raise SigningError("Release candidate has multiple all-in-one setup exes")
+    for setup in (*setups, *allinone_setups):
+        entry = next(
+            (item for item in files if isinstance(item, Mapping) and item.get("name") == setup.name),
+            None,
+        )
+        if entry is None or entry.get("sha256") != _sha256(setup):
+            raise SigningError(f"Windows signing report does not match {setup.name}")
     expected_status = "Valid" if signed else "NotSigned"
     if any(not isinstance(item, Mapping) or item.get("status") != expected_status for item in files):
         raise SigningError("Windows signing report is inconsistent")

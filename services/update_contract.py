@@ -22,6 +22,7 @@ INTERNAL_DIRNAME: Final[str] = "_internal"
 MANIFEST_NAME: Final[str] = ".openwhisper-update.json"
 SENTINEL_NAME: Final[str] = ".openwhisper-update-complete"
 NVIDIA_RELATIVE: Final[str] = os.path.join(INTERNAL_DIRNAME, "nvidia")
+BUNDLED_MODELS_RELATIVE: Final[str] = os.path.join(INTERNAL_DIRNAME, "bundled_models")
 
 MANIFEST_SCHEMA_VERSION: Final[int] = 1
 TOPOLOGY_REVISION: Final[int] = 1

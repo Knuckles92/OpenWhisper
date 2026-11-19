@@ -306,130 +306,185 @@ find "$STAGE_ROOT" -print0 | xargs -0 touch -h -d "@$SOURCE_DATE_EPOCH"
 INSTALLED_SIZE="$(du -sk "$STAGE_ROOT/usr" | cut -f1)"
 INSTALLED_SIZE_BYTES="$(du -sb "$STAGE_ROOT/usr" | cut -f1)"
 
-step "Building the Debian package"
-DEB_ROOT="$REPO_ROOT/build/linux-deb"
-clone_stage "$DEB_ROOT"
-mkdir -p \
-    "$DEB_ROOT/DEBIAN" \
-    "$DEB_ROOT/usr/share/lintian/overrides"
-install -m 0644 installer/linux/lintian-overrides \
-    "$DEB_ROOT/usr/share/lintian/overrides/openwhisper"
-render_template \
-    installer/linux/control.in "$DEB_ROOT/DEBIAN/control" \
-    @VERSION@ "$VERSION" \
-    @ARCHITECTURE@ "$ARCHITECTURE" \
-    @GLIBC_MIN@ "$GLIBC_MIN" \
-    @INSTALLED_SIZE@ "$INSTALLED_SIZE"
-chmod 0755 "$DEB_ROOT/DEBIAN"
-chmod 0644 "$DEB_ROOT/DEBIAN/control"
-find "$DEB_ROOT/DEBIAN" "$DEB_ROOT/usr/share/lintian" -print0 | \
-    xargs -0 touch -h -d "@$SOURCE_DATE_EPOCH"
+build_deb_package() {
+    local artifact="$1"
+    local deb_root="$2"
+    local xz_level="$3"
+    local expected_bundled_model="${4:-}"
 
-rm -f -- "$DEB_ARTIFACT"
-dpkg-deb --root-owner-group -Zxz -z9 --build "$DEB_ROOT" "$DEB_ARTIFACT"
+    clone_stage "$deb_root"
+    mkdir -p \
+        "$deb_root/DEBIAN" \
+        "$deb_root/usr/share/lintian/overrides"
+    install -m 0644 installer/linux/lintian-overrides \
+        "$deb_root/usr/share/lintian/overrides/openwhisper"
+    render_template \
+        installer/linux/control.in "$deb_root/DEBIAN/control" \
+        @VERSION@ "$VERSION" \
+        @ARCHITECTURE@ "$ARCHITECTURE" \
+        @GLIBC_MIN@ "$GLIBC_MIN" \
+        @INSTALLED_SIZE@ "$INSTALLED_SIZE"
+    chmod 0755 "$deb_root/DEBIAN"
+    chmod 0644 "$deb_root/DEBIAN/control"
+    find "$deb_root/DEBIAN" "$deb_root/usr/share/lintian" -print0 | \
+        xargs -0 touch -h -d "@$SOURCE_DATE_EPOCH"
 
-dpkg-deb --info "$DEB_ARTIFACT" >/dev/null
-package_contents="$(dpkg-deb --contents "$DEB_ARTIFACT")"
-grep -q './usr/lib/openwhisper/OpenWhisper$' <<<"$package_contents" || \
-    fail "Debian package does not contain the application executable"
-grep -q './usr/bin/openwhisper$' <<<"$package_contents" || \
-    fail "Debian package does not contain the command launcher"
-grep -q './usr/bin/ow -> openwhisper$' <<<"$package_contents" || \
-    fail "Debian package does not contain the ow command alias"
-grep -q './usr/share/applications/openwhisper.desktop$' <<<"$package_contents" || \
-    fail "Debian package does not contain the desktop entry"
-grep -q './usr/share/icons/hicolor/256x256/apps/openwhisper.png$' \
-    <<<"$package_contents" || fail "Debian package does not contain the desktop icon"
-grep -q './usr/share/doc/openwhisper/linux-system-audio.md$' \
-    <<<"$package_contents" || fail "Debian package does not contain the Linux audio guide"
-[[ "$(dpkg-deb --field "$DEB_ARTIFACT" Package)" == "openwhisper" ]] || fail "wrong package name"
-[[ "$(dpkg-deb --field "$DEB_ARTIFACT" Version)" == "$VERSION" ]] || fail "wrong package version"
-[[ "$(dpkg-deb --field "$DEB_ARTIFACT" Architecture)" == "amd64" ]] || fail "wrong package architecture"
+    rm -f -- "$artifact"
+    dpkg-deb --root-owner-group -Zxz "-z$xz_level" --build "$deb_root" "$artifact"
+
+    dpkg-deb --info "$artifact" >/dev/null
+    local package_contents
+    package_contents="$(dpkg-deb --contents "$artifact")"
+    grep -q './usr/lib/openwhisper/OpenWhisper$' <<<"$package_contents" || \
+        fail "Debian package does not contain the application executable"
+    grep -q './usr/bin/openwhisper$' <<<"$package_contents" || \
+        fail "Debian package does not contain the command launcher"
+    grep -q './usr/bin/ow -> openwhisper$' <<<"$package_contents" || \
+        fail "Debian package does not contain the ow command alias"
+    grep -q './usr/share/applications/openwhisper.desktop$' <<<"$package_contents" || \
+        fail "Debian package does not contain the desktop entry"
+    grep -q './usr/share/icons/hicolor/256x256/apps/openwhisper.png$' \
+        <<<"$package_contents" || fail "Debian package does not contain the desktop icon"
+    grep -q './usr/share/doc/openwhisper/linux-system-audio.md$' \
+        <<<"$package_contents" || fail "Debian package does not contain the Linux audio guide"
+    if [[ -n "$expected_bundled_model" ]]; then
+        grep -q "./usr/lib/openwhisper/_internal/bundled_models/$expected_bundled_model/installed.json$" \
+            <<<"$package_contents" || fail "All-in-one Debian package is missing bundled model: $expected_bundled_model"
+    fi
+    [[ "$(dpkg-deb --field "$artifact" Package)" == "openwhisper" ]] || fail "wrong package name"
+    [[ "$(dpkg-deb --field "$artifact" Version)" == "$VERSION" ]] || fail "wrong package version"
+    [[ "$(dpkg-deb --field "$artifact" Architecture)" == "amd64" ]] || fail "wrong package architecture"
+
+    lintian --fail-on error "$artifact"
+}
+
+build_arch_package() {
+    local artifact="$1"
+    local pacman_root="$2"
+    local zstd_level="$3"
+    local expected_bundled_model="${4:-}"
+
+    clone_stage "$pacman_root"
+    render_template \
+        installer/linux/PKGINFO.in "$pacman_root/.PKGINFO" \
+        @VERSION@ "$VERSION" \
+        @GLIBC_MIN@ "$GLIBC_MIN" \
+        @BUILDDATE@ "$SOURCE_DATE_EPOCH" \
+        @INSTALLED_SIZE_BYTES@ "$INSTALLED_SIZE_BYTES"
+    chmod 0644 "$pacman_root/.PKGINFO"
+    touch -h -d "@$SOURCE_DATE_EPOCH" "$pacman_root/.PKGINFO"
+
+    # gzip -n keeps the header timestamp out of the reproducibility story, matching
+    # changelog.gz. Force root ownership so pacman -Qkk matches a root install.
+    (
+        cd "$pacman_root"
+        bsdtar --uid 0 --gid 0 --uname root --gname root \
+            --format=mtree \
+            --options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' \
+            -cf - .PKGINFO usr
+    ) | gzip -n -9 >"$pacman_root/.MTREE"
+    chmod 0644 "$pacman_root/.MTREE"
+    touch -h -d "@$SOURCE_DATE_EPOCH" "$pacman_root/.MTREE"
+
+    # Pipe an uncompressed ustar stream through the zstd CLI rather than bsdtar's
+    # --zstd filter so Ubuntu 22.04's libarchive build does not have to write zstd.
+    # Skip --long; the default window is what pacman's libarchive expects.
+    # .PKGINFO is the first archive member, .MTREE the second.
+    rm -f -- "$artifact"
+    (
+        cd "$pacman_root"
+        bsdtar --uid 0 --gid 0 --uname root --gname root --format=ustar \
+            -cf - .PKGINFO .MTREE usr
+    ) | zstd -T0 "-$zstd_level" -q -o "$artifact"
+
+    local arch_contents first_member ow_listing
+    arch_contents="$(zstd -d -c -- "$artifact" | bsdtar -tf -)"
+    first_member="$(head -n1 <<<"$arch_contents")"
+    [[ "$first_member" == ".PKGINFO" ]] || \
+        fail "Arch package first member must be .PKGINFO, got '$first_member'"
+    grep -q '^\.MTREE$' <<<"$arch_contents" || \
+        fail "Arch package does not contain .MTREE"
+    grep -q '^usr/lib/openwhisper/OpenWhisper$' <<<"$arch_contents" || \
+        fail "Arch package does not contain the application executable"
+    grep -q '^usr/bin/openwhisper$' <<<"$arch_contents" || \
+        fail "Arch package does not contain the command launcher"
+    grep -q '^usr/bin/ow$' <<<"$arch_contents" || \
+        fail "Arch package does not contain the ow command alias"
+    ow_listing="$(zstd -d -c -- "$artifact" | bsdtar -tvf - usr/bin/ow)"
+    grep -Eq 'usr/bin/ow -> openwhisper$' <<<"$ow_listing" || \
+        fail "Arch package ow alias is not a symlink to openwhisper"
+    grep -q '^usr/share/applications/openwhisper.desktop$' <<<"$arch_contents" || \
+        fail "Arch package does not contain the desktop entry"
+    grep -q '^usr/share/icons/hicolor/256x256/apps/openwhisper.png$' \
+        <<<"$arch_contents" || fail "Arch package does not contain the desktop icon"
+    for license_file in LICENSE PyQt6-GPL-3.0.txt Qt-LGPL-3.0.txt; do
+        grep -q "^usr/share/licenses/openwhisper/$license_file$" \
+            <<<"$arch_contents" || fail "Arch package is missing license file: $license_file"
+    done
+    grep -q '^usr/share/doc/openwhisper/linux-system-audio.md$' \
+        <<<"$arch_contents" || fail "Arch package does not contain the Linux audio guide"
+    if [[ -n "$expected_bundled_model" ]]; then
+        grep -q "^usr/lib/openwhisper/_internal/bundled_models/$expected_bundled_model/installed.json$" \
+            <<<"$arch_contents" || fail "All-in-one Arch package is missing bundled model: $expected_bundled_model"
+    fi
+    grep -q '^depend = glibc>=' "$pacman_root/.PKGINFO" || \
+        fail "Arch package metadata is missing the glibc dependency"
+}
 
 desktop-file-validate installer/linux/openwhisper.desktop
-# Fail malformed/policy-error packages while still reporting non-fatal
-# warnings. Intentional PyInstaller embedded-library exceptions are documented
-# narrowly in installer/linux/lintian-overrides.
-lintian --fail-on error "$DEB_ARTIFACT"
+
+step "Building the Debian package"
+build_deb_package "$DEB_ARTIFACT" "$REPO_ROOT/build/linux-deb" 9
 
 # There is no Ubuntu-installable equivalent of lintian for pacman packages
 # (namcap is Arch-only), so package-level validation of the .pkg.tar.zst
 # happens in the archlinux:latest workflow smoke.
 step "Building the Arch package"
-PACMAN_ROOT="$REPO_ROOT/build/linux-pacman"
-clone_stage "$PACMAN_ROOT"
-render_template \
-    installer/linux/PKGINFO.in "$PACMAN_ROOT/.PKGINFO" \
-    @VERSION@ "$VERSION" \
-    @GLIBC_MIN@ "$GLIBC_MIN" \
-    @BUILDDATE@ "$SOURCE_DATE_EPOCH" \
-    @INSTALLED_SIZE_BYTES@ "$INSTALLED_SIZE_BYTES"
-chmod 0644 "$PACMAN_ROOT/.PKGINFO"
-touch -h -d "@$SOURCE_DATE_EPOCH" "$PACMAN_ROOT/.PKGINFO"
+build_arch_package "$ARCH_ARTIFACT" "$REPO_ROOT/build/linux-pacman" 19
 
-# gzip -n keeps the header timestamp out of the reproducibility story, matching
-# changelog.gz. Force root ownership so pacman -Qkk matches a root install.
-(
-    cd "$PACMAN_ROOT"
-    bsdtar --uid 0 --gid 0 --uname root --gname root \
-        --format=mtree \
-        --options='!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link' \
-        -cf - .PKGINFO usr
-) | gzip -n -9 >"$PACMAN_ROOT/.MTREE"
-chmod 0644 "$PACMAN_ROOT/.MTREE"
-touch -h -d "@$SOURCE_DATE_EPOCH" "$PACMAN_ROOT/.MTREE"
+step "Staging bundled speech model for all-in-one Linux packages"
+ALL_IN_ONE_MODEL="$($PYTHON -c 'from services.local_asr.catalog import ALL_IN_ONE_MODEL; print(ALL_IN_ONE_MODEL)')"
+"$PYTHON" scripts/stage_bundled_model.py \
+    --dest "$STAGE_ROOT/usr/lib/openwhisper/_internal/bundled_models" \
+    --model "$ALL_IN_ONE_MODEL"
+find "$STAGE_ROOT/usr/lib/openwhisper/_internal/bundled_models" -print0 | \
+    xargs -0 touch -h -d "@$SOURCE_DATE_EPOCH"
+INSTALLED_SIZE="$(du -sk "$STAGE_ROOT/usr" | cut -f1)"
+INSTALLED_SIZE_BYTES="$(du -sb "$STAGE_ROOT/usr" | cut -f1)"
 
-# Pipe an uncompressed ustar stream through the zstd CLI rather than bsdtar's
-# --zstd filter so Ubuntu 22.04's libarchive build does not have to write zstd.
-# Skip --long; the default window is what pacman's libarchive expects.
-# .PKGINFO is the first archive member, .MTREE the second.
-rm -f -- "$ARCH_ARTIFACT"
-(
-    cd "$PACMAN_ROOT"
-    bsdtar --uid 0 --gid 0 --uname root --gname root --format=ustar \
-        -cf - .PKGINFO .MTREE usr
-) | zstd -T0 -19 -q -o "$ARCH_ARTIFACT"
+DEB_ALLINONE_ARTIFACT="$OUTPUT_DIR/OpenWhisper-AllInOne-$VERSION-linux-amd64.deb"
+ARCH_ALLINONE_ARTIFACT="$OUTPUT_DIR/OpenWhisper-AllInOne-$VERSION-linux-x86_64.pkg.tar.zst"
 
-arch_contents="$(zstd -d -c -- "$ARCH_ARTIFACT" | bsdtar -tf -)"
-first_member="$(head -n1 <<<"$arch_contents")"
-[[ "$first_member" == ".PKGINFO" ]] || \
-    fail "Arch package first member must be .PKGINFO, got '$first_member'"
-grep -q '^\.MTREE$' <<<"$arch_contents" || \
-    fail "Arch package does not contain .MTREE"
-grep -q '^usr/lib/openwhisper/OpenWhisper$' <<<"$arch_contents" || \
-    fail "Arch package does not contain the application executable"
-grep -q '^usr/bin/openwhisper$' <<<"$arch_contents" || \
-    fail "Arch package does not contain the command launcher"
-grep -q '^usr/bin/ow$' <<<"$arch_contents" || \
-    fail "Arch package does not contain the ow command alias"
-ow_listing="$(zstd -d -c -- "$ARCH_ARTIFACT" | bsdtar -tvf - usr/bin/ow)"
-grep -Eq 'usr/bin/ow -> openwhisper$' <<<"$ow_listing" || \
-    fail "Arch package ow alias is not a symlink to openwhisper"
-grep -q '^usr/share/applications/openwhisper.desktop$' <<<"$arch_contents" || \
-    fail "Arch package does not contain the desktop entry"
-grep -q '^usr/share/icons/hicolor/256x256/apps/openwhisper.png$' \
-    <<<"$arch_contents" || fail "Arch package does not contain the desktop icon"
-for license_file in LICENSE PyQt6-GPL-3.0.txt Qt-LGPL-3.0.txt; do
-    grep -q "^usr/share/licenses/openwhisper/$license_file$" \
-        <<<"$arch_contents" || fail "Arch package is missing license file: $license_file"
-done
-grep -q '^usr/share/doc/openwhisper/linux-system-audio.md$' \
-    <<<"$arch_contents" || fail "Arch package does not contain the Linux audio guide"
-grep -q '^depend = glibc>=' "$PACMAN_ROOT/.PKGINFO" || \
-    fail "Arch package metadata is missing the glibc dependency"
+# Moderate compression levels for the all-in-one packages: quantized GGUF
+# weights are nearly incompressible, so -z6 / -6 saves minutes with ~0% penalty.
+step "Building the all-in-one Debian package"
+build_deb_package "$DEB_ALLINONE_ARTIFACT" "$REPO_ROOT/build/linux-deb-allinone" 6 "$ALL_IN_ONE_MODEL"
+
+step "Building the all-in-one Arch package"
+build_arch_package "$ARCH_ALLINONE_ARTIFACT" "$REPO_ROOT/build/linux-pacman-allinone" 6 "$ALL_IN_ONE_MODEL"
 
 deb_bytes="$(stat -c %s "$DEB_ARTIFACT")"
 arch_bytes="$(stat -c %s "$ARCH_ARTIFACT")"
+deb_aio_bytes="$(stat -c %s "$DEB_ALLINONE_ARTIFACT")"
+arch_aio_bytes="$(stat -c %s "$ARCH_ALLINONE_ARTIFACT")"
 deb_digest="$(sha256sum "$DEB_ARTIFACT" | cut -d' ' -f1)"
 arch_digest="$(sha256sum "$ARCH_ARTIFACT" | cut -d' ' -f1)"
+deb_aio_digest="$(sha256sum "$DEB_ALLINONE_ARTIFACT" | cut -d' ' -f1)"
+arch_aio_digest="$(sha256sum "$ARCH_ALLINONE_ARTIFACT" | cut -d' ' -f1)"
 step "Build complete"
-echo "    Debian    : $DEB_ARTIFACT"
-echo "    Arch      : $ARCH_ARTIFACT"
-echo "    Version   : $VERSION"
-echo "    Requires  : glibc >= $GLIBC_MIN"
-echo "    Debian    : $(format_size "$deb_bytes") (installed $(format_size "$dist_bytes"))"
-echo "    Arch      : $(format_size "$arch_bytes")"
-echo "    SHA-256   : $deb_digest  $(basename "$DEB_ARTIFACT")"
-echo "    SHA-256   : $arch_digest  $(basename "$ARCH_ARTIFACT")"
+echo "    Debian            : $DEB_ARTIFACT"
+echo "    Debian All-in-One : $DEB_ALLINONE_ARTIFACT"
+echo "    Arch              : $ARCH_ARTIFACT"
+echo "    Arch All-in-One   : $ARCH_ALLINONE_ARTIFACT"
+echo "    Version           : $VERSION"
+echo "    Requires          : glibc >= $GLIBC_MIN"
+echo "    Debian            : $(format_size "$deb_bytes") (installed $(format_size "$dist_bytes"))"
+echo "    Debian All-in-One : $(format_size "$deb_aio_bytes")"
+echo "    Arch              : $(format_size "$arch_bytes")"
+echo "    Arch All-in-One   : $(format_size "$arch_aio_bytes")"
+echo "    SHA-256           : $deb_digest  $(basename "$DEB_ARTIFACT")"
+echo "    SHA-256           : $deb_aio_digest  $(basename "$DEB_ALLINONE_ARTIFACT")"
+echo "    SHA-256           : $arch_digest  $(basename "$ARCH_ARTIFACT")"
+echo "    SHA-256           : $arch_aio_digest  $(basename "$ARCH_ALLINONE_ARTIFACT")"
 echo
-echo "    Upload both Linux packages beside the Windows setup exe and win64 update archive."
+echo "    Upload all four Linux packages beside the Windows setup exes and win64 update archive."

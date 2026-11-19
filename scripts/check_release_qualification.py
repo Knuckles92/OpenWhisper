@@ -49,8 +49,13 @@ def candidate_identity(directory: Path):
                  and isinstance(signing.get("signer_subject"), str) and signing["signer_subject"],
                  "Incomplete Windows signing record")
     expected = {
-        f"OpenWhisper-Setup-{version}.exe", f"OpenWhisper-{version}-linux-amd64.deb",
-        f"OpenWhisper-{version}-linux-x86_64.pkg.tar.zst", f"OpenWhisper-{version}-macos-arm64.dmg",
+        f"OpenWhisper-Setup-{version}.exe",
+        f"OpenWhisper-AllInOne-Setup-{version}.exe",
+        f"OpenWhisper-{version}-linux-amd64.deb",
+        f"OpenWhisper-AllInOne-{version}-linux-amd64.deb",
+        f"OpenWhisper-{version}-linux-x86_64.pkg.tar.zst",
+        f"OpenWhisper-AllInOne-{version}-linux-x86_64.pkg.tar.zst",
+        f"OpenWhisper-{version}-macos-arm64.dmg",
     }
     if not metadata["windows_setup_only"]:
         expected.add(f"OpenWhisper-{version}-win64.tar.xz")

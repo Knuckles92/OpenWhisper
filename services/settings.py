@@ -1406,7 +1406,9 @@ def seed_new_install_settings(manager: Optional["SettingsManager"] = None) -> bo
 
     Existing installs keep today's output (no app_style_tones key means
     every category is Formal); only a launch that found no settings file
-    gets the casual chat tones, and only once.
+    gets the casual chat tones and (when the default engine shares its
+    decoder for live preview without an extra download) live preview on,
+    and only once.
     """
     manager = settings_manager if manager is None else manager
     is_new = getattr(manager, "is_new_install", None)
@@ -1418,6 +1420,11 @@ def seed_new_install_settings(manager: Optional["SettingsManager"] = None) -> bo
         if SettingsKey.APP_STYLE_TONES in settings:
             return False
         settings[SettingsKey.APP_STYLE_TONES] = dict(NEW_INSTALL_TONES)
+        if (
+            SettingsKey.STREAMING_ENABLED not in settings
+            and config.DEFAULT_BACKEND in config.STREAMING_PREVIEW_BACKENDS
+        ):
+            settings[SettingsKey.STREAMING_ENABLED] = True
         return True
 
     try:

@@ -429,3 +429,143 @@ def test_a_long_dictation_pastes_the_kept_stream_once(monkeypatch, tmp_path):
     slot.discard()
     assert slot.transcribe(backend, recorded) == "File words."
     assert backend.decoded == [str(tmp_path / "upload.wav"), recorded, recorded]
+
+
+# --- compact all-in-one model & bundled model cache -------------------------
+
+def _stage_fake_bundled_model(root, model_key="parakeet-110m-en"):
+    import json
+
+    spec = catalog.artifacts(model_key)
+    model_dir = root / model_key
+    model_dir.mkdir(parents=True, exist_ok=True)
+    for entry in spec["files"]:
+        (model_dir / entry["name"]).write_bytes(b"x")
+    # Write a matching spec with the stub file sizes so _dir_is_valid passes.
+    stub_spec = {
+        **spec,
+        "files": [{**entry, "size_bytes": 1} for entry in spec["files"]],
+    }
+    (model_dir / "installed.json").write_text(json.dumps(stub_spec), encoding="utf-8")
+    return model_dir, stub_spec
+
+
+def test_parakeet_110m_catalog_and_pinned_artifacts():
+    model = catalog.MODELS["parakeet-110m-en"]
+    assert catalog.ALL_IN_ONE_MODEL == "parakeet-110m-en"
+    assert (model.backend, model.streaming, model.stream_final, model.meeting) == (
+        "parakeet_unified", False, False, True
+    )
+    assert catalog.DEFAULT_MODELS["parakeet_unified"] == "parakeet-unified-en"
+    gguf, *notices = catalog.artifacts("parakeet-110m-en")["files"]
+    assert gguf["name"] == "parakeet-tdt_ctc-110m-Q8_0.gguf"
+    assert gguf["size_bytes"] == 135373280
+    assert [f["name"] for f in notices] == ["LICENSE", "NOTICE"]
+    assert "/resolve/1c3f0d5378fdd358905cc410a93ed9e64f52d170/" in gguf["url"]
+
+
+def test_bundled_parakeet_110m_is_discovered_selected_and_protected(tmp_path, monkeypatch):
+    from services import guided_setup
+    from services.local_asr import cache
+    from services.settings import MeetingSpeech, resolve_meeting_speech
+
+    bundled_root = tmp_path / "bundled_models"
+    user_cache_root = tmp_path / "user_models"
+    model_dir, stub_spec = _stage_fake_bundled_model(bundled_root, "parakeet-110m-en")
+
+    monkeypatch.setattr(cache, "bundled_model_dir", lambda key: bundled_root / key)
+    monkeypatch.setattr(cache, "model_dir", lambda key: user_cache_root / key)
+    monkeypatch.setattr(
+        cache, "artifacts", lambda key: stub_spec if key == "parakeet-110m-en" else catalog.artifacts(key)
+    )
+
+    assert cache.is_bundled("parakeet-110m-en")
+    assert cache.is_cached("parakeet-110m-en")
+    assert cache.load_path("parakeet-110m-en") == str(model_dir / "parakeet-tdt_ctc-110m-Q8_0.gguf")
+
+    inv = cache.inventory()
+    repo_id = "handy-computer/parakeet-tdt_ctc-110m-gguf"
+    assert repo_id in inv
+    assert inv[repo_id].bundled is True
+
+    # Bundled-only models cannot be deleted from the read-only install tree.
+    with pytest.raises(ValueError, match="included with OpenWhisper"):
+        cache.delete("parakeet-110m-en")
+
+    # Automatic default prefers the bundled model when no explicit choice is saved,
+    # and respects an explicit choice when the user upgrades to 0.6B.
+    assert catalog.selected_model("parakeet_unified", {}) == "parakeet-110m-en"
+    assert catalog.selected_model(
+        "parakeet_unified", {"local_asr_models": {"parakeet_unified": "parakeet-unified-en"}}
+    ) == "parakeet-unified-en"
+
+    # Meeting mode automatically follows the bundled model with no extra download.
+    settings = {"selected_model": "parakeet_unified"}
+    assert resolve_meeting_speech(settings) == MeetingSpeech("local", "parakeet-110m-en")
+    assert guided_setup.speech_model_bundled(settings) is True
+
+
+def test_model_row_widget_marks_bundled_models_included_and_hides_delete(qapp):
+    from services.hf_access import CachedModelInfo
+    from ui_qt.widgets.model_row_widget import ModelRowWidget
+
+    row = ModelRowWidget("parakeet-110m-en")
+    bundled_info = CachedModelInfo(
+        repo_id="handy-computer/parakeet-tdt_ctc-110m-gguf",
+        size_bytes=135_373_280,
+        path="/bundled/parakeet-110m-en",
+        revision_hashes=("1c3f0d5378fdd358905cc410a93ed9e64f52d170",),
+        bundled=True,
+    )
+    row.update_state(bundled_info, is_active=False, is_loaded=False, downloading=False)
+    assert row.badge.text() == "Included"
+    assert row.delete_button.isHidden()
+    assert not row.set_active_button.isHidden()
+
+    row.update_state(bundled_info, is_active=True, is_loaded=True, downloading=False)
+    assert row.badge.text() == "Active"
+    assert row.delete_button.isHidden()
+    row.deleteLater()
+
+
+def test_stage_bundled_model_verifies_hashes_and_reuses_cache(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    from pathlib import Path
+    from scripts import stage_bundled_model as stager
+
+    payload = b"fake gguf payload"
+    digest = hashlib.sha256(payload).hexdigest()
+    spec = {
+        "repo": "example/model",
+        "revision": "rev123",
+        "files": [
+            {
+                "name": "weights.gguf",
+                "url": "https://example.invalid/weights.gguf",
+                "sha256": digest,
+                "size_bytes": len(payload),
+            }
+        ],
+    }
+    monkeypatch.setattr(catalog, "artifacts", lambda key: spec)
+
+    downloads = []
+
+    def fake_download(url, expected_sha256, expected_size, dest, on_progress, cancel):
+        downloads.append(url)
+        Path(dest).write_bytes(payload)
+
+    monkeypatch.setattr(components, "_download_verified", fake_download)
+    dest = tmp_path / "staged"
+    cache_dir = tmp_path / "cache"
+
+    staged = stager.stage_model(dest, model_key="parakeet-110m-en", cache_dir=cache_dir)
+    assert staged == dest / "parakeet-110m-en"
+    assert (staged / "weights.gguf").read_bytes() == payload
+    assert json.loads((staged / "installed.json").read_text(encoding="utf-8")) == spec
+    assert len(downloads) == 1
+
+    # Second run reuses the verified cache without re-downloading.
+    stager.stage_model(dest, model_key="parakeet-110m-en", cache_dir=cache_dir)
+    assert len(downloads) == 1

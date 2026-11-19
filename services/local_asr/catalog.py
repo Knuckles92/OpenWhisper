@@ -62,6 +62,11 @@ MODELS = {
             "English dictation with readable live text", "NVIDIA Open Model License", "English",
             streaming=True, stream_final=True,
         ),
+        SpeechModel(
+            "parakeet-110m-en", "parakeet_unified", "Parakeet TDT-CTC 110M",
+            "Compact English dictation and meetings", "CC-BY-4.0", "English",
+            meeting=True,
+        ),
     )
 }
 BACKENDS = {
@@ -75,6 +80,9 @@ BACKENDS = {
 #: Backend id of the built-in faster-whisper family, which is not in MODELS.
 WHISPER_BACKEND = "local_whisper"
 DEFAULT_MODELS = {key: next(m.key for m in MODELS.values() if m.backend == key) for key in BACKENDS}
+#: Compact model bundled in the all-in-one installer so dictation works offline
+#: out of the box without any model download.
+ALL_IN_ONE_MODEL = "parakeet-110m-en"
 MLX_RUNTIME = "asr-parakeet-mlx"
 #: NeMo-Speech.cpp's Metal release: Parakeet and Nemotron on the Apple GPU.
 NVIDIA_METAL_RUNTIME = "asr-nvidia-metal"
@@ -109,10 +117,18 @@ def artifacts(key: str) -> dict:
 
 
 def selected_model(backend: str, settings: dict) -> str:
+    from services.local_asr.cache import is_bundled
     from services.settings import SettingsKey
 
     key = SettingsKey.LOCAL_ASR_MODELS.read(settings).get(backend)
-    return key if key in MODELS and MODELS[key].backend == backend else DEFAULT_MODELS[backend]
+    if key in MODELS and MODELS[key].backend == backend:
+        return key
+    # An all-in-one install bundles a ready-to-use model inside the app tree;
+    # prefer it when the user has not chosen a specific model yet.
+    for model in MODELS.values():
+        if model.backend == backend and is_bundled(model.key):
+            return model.key
+    return DEFAULT_MODELS[backend]
 
 
 def selected_device(backend: str, settings: dict) -> str:

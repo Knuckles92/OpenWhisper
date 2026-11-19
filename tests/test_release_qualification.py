@@ -15,9 +15,16 @@ def candidate(tmp_path):
     metadata = dict(schema_version=3, source_qualification="passed", version="2.6.15",
                     commit_sha="a" * 40, workflow_run_id=123, windows_setup_only=False,
                     windows_signed=False, built_at_utc="2026-10-01T00:00:00Z")
-    names = ["OpenWhisper-Setup-2.6.15.exe", "OpenWhisper-2.6.15-linux-amd64.deb",
-             "OpenWhisper-2.6.15-linux-x86_64.pkg.tar.zst", "OpenWhisper-2.6.15-macos-arm64.dmg",
-             "OpenWhisper-2.6.15-win64.tar.xz"]
+    names = [
+        "OpenWhisper-Setup-2.6.15.exe",
+        "OpenWhisper-AllInOne-Setup-2.6.15.exe",
+        "OpenWhisper-2.6.15-linux-amd64.deb",
+        "OpenWhisper-AllInOne-2.6.15-linux-amd64.deb",
+        "OpenWhisper-2.6.15-linux-x86_64.pkg.tar.zst",
+        "OpenWhisper-AllInOne-2.6.15-linux-x86_64.pkg.tar.zst",
+        "OpenWhisper-2.6.15-macos-arm64.dmg",
+        "OpenWhisper-2.6.15-win64.tar.xz",
+    ]
     for name in names:
         (tmp_path / name).write_bytes(b"candidate fixture")
     (tmp_path / "BUILD-METADATA.json").write_text(json.dumps(metadata), encoding="utf-8")

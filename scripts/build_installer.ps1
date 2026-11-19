@@ -291,34 +291,61 @@ Invoke-Native $Iscc @(
 $SetupPath = Join-Path $RepoRoot "installer\Output\OpenWhisper-Setup-$Version.exe"
 if (-not (Test-Path $SetupPath)) { throw "Installer not found at $SetupPath" }
 
+# Stage the compact English speech model into a separate overlay directory so
+# dist\OpenWhisper and the slim native update archive stay unchanged while the
+# all-in-one setup exe includes everything needed to dictate offline out of the box.
+$BundledModelStage = Join-Path $RepoRoot "build\all-in-one-models"
+Write-Step "Staging bundled speech model for all-in-one installer"
+Invoke-Native $Python @(
+    'scripts\stage_bundled_model.py',
+    '--dest', $BundledModelStage
+) -ErrorMessage "Failed to stage bundled speech model"
+
+Write-Step "Building all-in-one Windows installer"
+Invoke-Native $Iscc @(
+    "/DAppVersion=$Version"
+    "/DOutputPrefix=OpenWhisper-AllInOne"
+    "/DBundledModelDir=$BundledModelStage"
+    $InnoSignArgs
+    (Join-Path $RepoRoot 'installer\OpenWhisper.iss')
+) -ErrorMessage "Inno Setup (all-in-one) failed"
+
+$AllInOneSetupPath = Join-Path $RepoRoot "installer\Output\OpenWhisper-AllInOne-Setup-$Version.exe"
+if (-not (Test-Path $AllInOneSetupPath)) { throw "All-in-one installer not found at $AllInOneSetupPath" }
+
 # Every signature must verify, chain to a trusted root and carry a
 # timestamp; an unsigned build must not carry a stray signature either.
 Write-Step "Verifying code signatures"
 Invoke-Native $Python @(
     'scripts\windows_signing.py', 'verify', '--output', 'build\windows-signing.json',
-    $ExePath, $HelperInBundle, $SetupPath
+    $ExePath, $HelperInBundle, $SetupPath, $AllInOneSetupPath
 ) -ErrorMessage "Code signature verification failed"
 
 # Report
 $SetupSize = (Get-Item $SetupPath).Length
 $Hash = (Get-FileHash -Algorithm SHA256 $SetupPath).Hash.ToLower()
+$AllInOneSize = (Get-Item $AllInOneSetupPath).Length
+$AllInOneHash = (Get-FileHash -Algorithm SHA256 $AllInOneSetupPath).Hash.ToLower()
 $ArchiveSize = (Get-Item $ArchivePath).Length
 $ArchiveHash = (Get-FileHash -Algorithm SHA256 $ArchivePath).Hash.ToLower()
 
 Write-Step "Build complete"
 Write-Host ""
-Write-Host "  Installer : $SetupPath"
-Write-Host "  Archive   : $ArchivePath"
-Write-Host "  Version   : $Version"
-Write-Host "  Setup     : $(Format-Size $SetupSize)  (unpacked $(Format-Size $DistSize))"
-Write-Host "  Archive   : $(Format-Size $ArchiveSize)"
-Write-Host "  Setup SHA-256   : $Hash"
-Write-Host "  Archive SHA-256 : $ArchiveHash"
+Write-Host "  Installer  : $SetupPath"
+Write-Host "  All-in-One : $AllInOneSetupPath"
+Write-Host "  Archive    : $ArchivePath"
+Write-Host "  Version    : $Version"
+Write-Host "  Setup      : $(Format-Size $SetupSize)  (unpacked $(Format-Size $DistSize))"
+Write-Host "  All-in-One : $(Format-Size $AllInOneSize)"
+Write-Host "  Archive    : $(Format-Size $ArchiveSize)"
+Write-Host "  Setup SHA-256      : $Hash"
+Write-Host "  All-in-One SHA-256 : $AllInOneHash"
+Write-Host "  Archive SHA-256    : $ArchiveHash"
 Write-Host ""
 if ($SetupOnlyWindows) {
     Write-Host "  This is a required setup-only bridge release."
-    Write-Host "  Publish only the setup exe from installer\Output; the archive is validation-only."
+    Write-Host "  Publish only the setup exes from installer\Output; the archive is validation-only."
 } else {
-    Write-Host "  Upload both Windows artifacts to a draft release and wait for every digest field."
+    Write-Host "  Upload all Windows artifacts to a draft release and wait for every digest field."
 }
 Write-Host ""

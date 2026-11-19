@@ -294,6 +294,7 @@ class CachedModelInfo:
     size_bytes: int
     path: str
     revision_hashes: Tuple[str, ...]
+    bundled: bool = False
 
 
 def get_hf_cache_dir() -> str:

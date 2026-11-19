@@ -275,6 +275,7 @@ class ModelRowWidget(DownloadRow):
                 batch checkbox then cannot be toggled.
         """
         cached = info is not None
+        bundled = bool(info is not None and info.bundled)
         self.is_cached = cached
         self.is_active = is_active
         self._set_active_style(is_active and cached)
@@ -302,6 +303,8 @@ class ModelRowWidget(DownloadRow):
                 self._set_badge("Queued", "queued")
             elif is_active and cached:
                 self._set_badge("Active", "active")
+            elif bundled:
+                self._set_badge("Included", "downloaded")
             elif cached:
                 self._set_badge("Downloaded", "downloaded")
             else:
@@ -328,7 +331,7 @@ class ModelRowWidget(DownloadRow):
         self.set_active_button.setVisible(cached and not is_active)
         self.set_active_button.setEnabled(not downloading)
 
-        self.delete_button.setVisible(cached)
+        self.delete_button.setVisible(cached and not bundled)
         self.delete_button.setEnabled(not is_loaded and not downloading)
         self.delete_button.setToolTip(
             "In use — switch models first" if is_loaded else ""

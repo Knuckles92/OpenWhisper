@@ -813,7 +813,14 @@ class GuidedSetupDialog(QDialog):
             self.speech_summary.setText(f"{summary} · {models.voice_detail()}")
             tone = ""
         elif self._speech_ready:
-            self.speech_summary.setText(f"{summary} · Downloaded and ready")
+            from services.guided_setup import speech_model_bundled
+
+            status = (
+                "Included and ready"
+                if speech_model_bundled(self.manager.load_all_settings())
+                else "Downloaded and ready"
+            )
+            self.speech_summary.setText(f"{summary} · {status}")
             tone = "ready"
         else:
             problem = self._download_error or (
