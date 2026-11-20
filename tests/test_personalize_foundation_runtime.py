@@ -213,7 +213,7 @@ def _run_submitted(h):
 def test_recording_job_starts_before_the_preview_and_is_claimed_by_the_stop(h, monkeypatch):
     order = []
     h.controller.streaming_runtime.start_streaming_session.side_effect = (
-        lambda: order.append(("preview", h.runtime._job is not None)))
+        lambda *, show_overlay=True: order.append(("preview", h.runtime._job is not None)))
     h.runtime._incremental.start.side_effect = (
         lambda controller, recognition=None: order.append(("incremental", recognition)))
     stopped = []

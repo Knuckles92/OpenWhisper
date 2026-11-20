@@ -124,7 +124,7 @@ def test_recording_shows_its_selected_agent_before_streaming_starts(recording, o
     h.settings.update_settings({SettingsKey.ACTIONS: [action.to_dict()]})
     expected = f"Agent · {AGENT_NAMES[agent]}"
     observed = []
-    h.controller.streaming_runtime.start_streaming_session.side_effect = lambda: observed.append(
+    h.controller.streaming_runtime.start_streaming_session.side_effect = lambda *, show_overlay=True: observed.append(
         overlay.recording_destination
     )
     assert h.runtime.start_recording(mode=JobMode.ACTION, action_id=action.id)
