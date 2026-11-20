@@ -82,7 +82,8 @@ def test_linux_parakeet_offers_cpu_and_gpu_runtimes(monkeypatch):
     assert "GPU runtime in Downloads" in backend.last_error
     qwen = LocalSpeechBackend("qwen_asr", device="cpu")
     qwen.reload_model()
-    assert "not available on this platform" in qwen.last_error
+    assert qwen.runtime_component == "asr-transcribe"
+    assert "transcribe.cpp runtime in Downloads" in qwen.last_error
 
 
 def test_only_pre_turing_gpus_run_the_vulkan_runtime(monkeypatch):
@@ -99,10 +100,61 @@ def test_only_pre_turing_gpus_run_the_vulkan_runtime(monkeypatch):
         monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda gpu=gpu: gpu)
         assert runtime_id("parakeet", "cuda") == runtime_id("nemotron", "cuda") == expected
         assert runtime_id("parakeet", "cpu") == "asr-nvidia-cpu"
-        assert runtime_id("qwen_asr", "cuda") == "asr-qwen"
+        assert runtime_id("qwen_asr", "cuda") == "asr-transcribe"
     # Without a Vulkan release for the platform, the card keeps CUDA.
     monkeypatch.setattr("services.components.current_platform_tag", lambda: "win_amd64")
     assert runtime_id("parakeet", "cuda") == "asr-nvidia-cuda"
+
+
+@pytest.mark.parametrize("platform", ["win_amd64", "linux_x86_64", "darwin_arm64"])
+def test_qwen_runtime_and_weights_match_on_each_platform(platform, monkeypatch):
+    from services.local_asr.catalog import resolve_runtime
+
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: platform)
+    runtime, device = resolve_runtime("qwen_asr", "auto")
+    if platform == "darwin_arm64":
+        assert (runtime, device) == ("asr-qwen", "mps")
+    else:
+        assert (runtime, device) == ("asr-transcribe", "auto")
+        assert resolve_runtime("qwen_asr", "cuda") == (runtime, "cuda")
+    for key in ("qwen-0.6b", "qwen-1.7b"):
+        files = artifacts(key)["files"]
+        if platform == "darwin_arm64":
+            assert any(file["name"].endswith(".safetensors") for file in files)
+        else:
+            assert files[0]["name"].endswith("-Q8_0.gguf")
+            assert {file["name"] for file in files[1:]} == {"LICENSE", "NOTICE"}
+
+
+def test_qwen_download_replaces_legacy_weights_only_after_success(isolated_models, monkeypatch):
+    from services import components
+
+    monkeypatch.setattr(components, "current_platform_tag", lambda: "win_amd64")
+    monkeypatch.setattr(components, "is_installed", lambda _: True)
+    key = "qwen-0.6b"
+    target = cache.model_dir(key)
+    target.mkdir(parents=True)
+    legacy_weights = target / "model.safetensors"
+    legacy_weights.write_bytes(b"old model")
+    legacy_manifest = {"files": [{"name": legacy_weights.name}]}
+    (target / "installed.json").write_text(json.dumps(legacy_manifest), encoding="utf-8")
+    assert not cache.is_cached(key)
+    assert cache.needs_qwen_redownload(key)
+    assert not cache.needs_qwen_redownload("qwen-1.7b")
+    backend = LocalSpeechBackend("qwen_asr", model_name=key, device="cpu")
+    backend.reload_model()
+    assert "Download the new GGUF model" in backend.device_info
+
+    with monkeypatch.context() as failed:
+        failed.setattr(components, "_download_verified", Mock(side_effect=components.ComponentCanceled))
+        with pytest.raises(components.ComponentCanceled):
+            cache.download(key)
+        assert legacy_weights.read_bytes() == b"old model"
+
+    cache.download(key)
+    assert cache.load_path(key) == str(target / "weights.gguf")
+    assert not legacy_weights.exists()
+    assert not cache.needs_qwen_redownload(key)
 
 
 def test_auto_uses_the_vulkan_runtime_only_once_installed(monkeypatch):

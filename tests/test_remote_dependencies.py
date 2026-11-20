@@ -80,8 +80,11 @@ def test_linux_catalog_explains_cpu_gpu_and_unsupported_engines(managed, runtime
         assert cpu["installable"] and gpu["installable"]
         assert gpu["component"] == "asr-nvidia-cuda" and gpu["download_bytes"] > 0
         assert not gpu["ready"]
-    assert "platform" in models["qwen-0.6b"]["dependencies"][0]["reason"]
-    assert not models["qwen-0.6b"]["dependencies"][0]["installable"]
+    cpu, gpu = models["qwen-0.6b"]["dependencies"]
+    assert cpu["component"] == gpu["component"] == "asr-transcribe"
+    assert cpu["installable"] and gpu["installable"]
+    assert "platform" in models["moonshine-small"]["dependencies"][0]["reason"]
+    assert not models["moonshine-small"]["dependencies"][0]["installable"]
     assert models["tiny"]["dependencies"][1]["component"] == "gpu-accel"
 
 
@@ -223,8 +226,17 @@ def test_install_rejects_missing_or_older_gpu_and_unsupported_platform(
     monkeypatch.setattr(components, "current_platform_tag", lambda: "linux_x86_64")
     assert dependency_options("local_whisper")[1]["installable"]
     with pytest.raises(RuntimeError, match="platform"):
-        installer.install("qwen_asr", "qwen-0.6b", "cpu", "laptop")
+        installer.install("moonshine", "moonshine-small", "cpu", "laptop")
     assert not runtimes.calls
+
+
+def test_qwen_gpu_option_uses_shared_runtime_without_an_nvidia_gpu(runtimes, monkeypatch):
+    monkeypatch.setattr(gpu_info, "nvidia_gpu", lambda: None)
+    cpu, gpu = dependency_options("qwen_asr")
+    assert cpu["component"] == gpu["component"] == "asr-transcribe"
+    assert gpu["installable"]
+    runtimes.installed.add("asr-transcribe")
+    assert dependency_options("qwen_asr")[1]["ready"]
 
 
 def test_older_gpu_linux_host_installs_the_vulkan_runtime(runtimes, monkeypatch):

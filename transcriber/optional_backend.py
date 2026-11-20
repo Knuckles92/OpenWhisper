@@ -13,9 +13,16 @@ from typing import Any, Optional
 
 import numpy as np
 
-from transcriber.base import TranscriptionBackend
-from services.local_asr.catalog import BACKENDS, MODELS, selected_model, selected_device, resolve_runtime
 from services.local_asr import cache
+from services.local_asr.catalog import (
+    BACKENDS,
+    MODELS,
+    TRANSCRIBE_RUNTIME,
+    resolve_runtime,
+    selected_device,
+    selected_model,
+)
+from transcriber.base import TranscriptionBackend
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +124,11 @@ class LocalSpeechBackend(TranscriptionBackend):
             self._explain_missing_runtime(component, device)
             return
         if self.is_model_missing:
-            self.last_error = f"Download {MODELS[self.model_name].label} in Downloads."
+            label = MODELS[self.model_name].label
+            if cache.needs_qwen_redownload(self.model_name):
+                self.last_error = f"{label} was updated. Download the new GGUF model in Downloads to resume transcription."
+            else:
+                self.last_error = f"Download {label} in Downloads."
             return
         loaded = self._start_worker(component, requested, device, generation, cancel_event)
         if loaded is None:
@@ -149,7 +160,7 @@ class LocalSpeechBackend(TranscriptionBackend):
     def _runtime_kind(self, device) -> str:
         if self.backend_id == "parakeet_mlx":
             return "MLX"
-        if self.backend_id == "parakeet_unified":
+        if self.runtime_component == TRANSCRIBE_RUNTIME:
             return "transcribe.cpp"
         return "GPU" if device in ("cuda", "mps", "metal") else "CPU"
 

@@ -1405,6 +1405,7 @@ class DownloadsPage(QWidget):
         info: Optional[CachedModelInfo],
         context: _RowContext,
     ) -> None:
+        from services.local_asr.cache import needs_qwen_redownload
         from services.whisper_sources import model_revision
         revision = model_revision(model_name)
         row.update_state(
@@ -1422,9 +1423,10 @@ class DownloadsPage(QWidget):
         row.set_active_button.setVisible(False)
         if is_custom_model(model_name):
             self._show_custom_row_actions(model_name, row, info, context)
-        row.set_usage(
-            self._usage_for(model_name, context.dictation_model, context.meeting_model)
-        )
+        usage = self._usage_for(model_name, context.dictation_model, context.meeting_model)
+        if info is None and needs_qwen_redownload(model_name):
+            usage = "New GGUF download required" + (f" · {usage}" if usage else "")
+        row.set_usage(usage)
         if info is not None or (is_custom_model(model_name) and parse_source(model_name).local_path):
             # A model that gained files elsewhere must not stay checked.
             row.select_checkbox.setChecked(False)

@@ -1,4 +1,4 @@
-"""Parakeet Unified through transcribe.cpp's pinned ctypes binding, used only in a worker."""
+"""Speech recognition through transcribe.cpp's pinned ctypes binding, used only in a worker."""
 from __future__ import annotations
 
 import os
@@ -58,7 +58,11 @@ class TranscribeRecognizer:
     silently starting over without the speech before them.
     """
 
-    def __init__(self, runtime: str, model_path: str, device: str):
+    def __init__(self, runtime: str, model_path: str, device: str, *, family="parakeet_unified"):
+        from services.local_asr.catalog import BACKENDS
+
+        self._family = family
+        label = BACKENDS[family]
         # The binding loads this library instead of searching for a provider
         # package, and its ggml backend modules from the same folder.
         os.environ["TRANSCRIBE_LIBRARY"] = str(library_path(runtime))
@@ -71,7 +75,7 @@ class TranscribeRecognizer:
         gpu = None if device == "cpu" else choose_gpu(transcribe_cpp.backends(), required=device != "auto")
         if gpu is None and device not in ("cpu", "auto"):
             raise RuntimeError(
-                "Parakeet Unified found no Vulkan GPU. Update the graphics driver, or choose CPU."
+                f"{label} found no Vulkan GPU. Update the graphics driver, or choose CPU."
             )
         try:
             self.model = transcribe_cpp.Model(
@@ -80,7 +84,7 @@ class TranscribeRecognizer:
         except transcribe_cpp.TranscribeError as exc:
             if gpu is None:
                 raise
-            raise GpuUnavailable(f"Parakeet Unified could not load on the {gpu.description}: {exc}") from exc
+            raise GpuUnavailable(f"{label} could not load on the {gpu.description}: {exc}") from exc
         self.device = "vulkan" if gpu else "cpu"
         if gpu is not None:
             self.gpu_name = gpu.description
@@ -92,7 +96,8 @@ class TranscribeRecognizer:
         self._interrupted = set()
 
     def transcribe(self, samples, language=None):
-        language = english(language)
+        if self._family == "parakeet_unified":
+            language = english(language)
         self._end_stream(interrupted=True)
         if not samples:
             return dict(text="", segments=[])

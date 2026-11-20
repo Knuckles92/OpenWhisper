@@ -90,6 +90,7 @@ class FakePanel(QObject):
         self.shortcut = ""
         self.countdowns = []
         self.auto_mode = False
+        self.live_toolbar = False
 
     def set_snap_mode(self, mode, shortcut=None):
         self.snap_mode = mode
@@ -104,6 +105,9 @@ class FakePanel(QObject):
 
     def set_auto_mode(self, enabled):
         self.auto_mode = enabled
+
+    def set_live_toolbar(self, enabled):
+        self.live_toolbar = enabled
 
     def set_countdown(self, seconds):
         self.countdowns.append(seconds)
@@ -121,15 +125,18 @@ class FakePanel(QObject):
 class FakeDrawing(QObject):
     arming = pyqtSignal()
     drawn = pyqtSignal(object, object)
+    snap_requested = pyqtSignal(object)
     enabled_changed = pyqtSignal(bool)
     capture_changed = pyqtSignal()
     capture_delay_changed = pyqtSignal(int)
     capture_cancelled = pyqtSignal()
     interaction_changed = pyqtSignal(bool)
 
-    def __init__(self, mark_shortcuts):
+    def __init__(self, mark_shortcuts, *, auto_mode=True, snap_shortcut=""):
         super().__init__()
         self.mark_shortcuts = mark_shortcuts
+        self.auto_mode = auto_mode
+        self.snap_shortcut = snap_shortcut
         self.armed = False
         self.enabled = True
         self.busy = False
@@ -139,6 +146,10 @@ class FakeDrawing(QObject):
         self.pending = False
         self.countdown = 0
         self.captured = False
+        self.marks_by_screen = {}
+        self.default_screen = QGuiApplication.primaryScreen()
+        self.commits = 0
+        self.disarms = 0
 
     def set_capture_countdown(self, remaining, total=0):
         self.countdown = remaining
@@ -153,6 +164,23 @@ class FakeDrawing(QObject):
         if self.enabled and not self.busy:
             self.arming.emit()
             self.armed = True
+
+    def disarm(self):
+        self.disarms += 1
+        self.armed = False
+
+    def commit_active_editors(self):
+        self.commits += 1
+
+    def marks_on(self, screen):
+        return tuple(self.marks_by_screen.get(screen, ()))
+
+    def target_screen(self, *, preferred=None, from_hotkey=False, whole_screen=False):
+        if not whole_screen and self.capture_region is not None:
+            return self.capture_region[0]
+        if preferred is not None:
+            return preferred
+        return self.default_screen
 
     def set_enabled(self, enabled):
         if self.enabled == enabled:
@@ -189,6 +217,7 @@ class FakeUI:
         self.notices = []
         self.statuses = []
         self.drawing = None
+        self.live_toolbar_supported = True
 
     def snap_support(self):
         return self.supported
@@ -203,13 +232,18 @@ class FakeUI:
         self.snaps.append(snap)
         return snap
 
-    def start_walkthrough_drawing(self, *, mark_shortcuts):
-        self.drawing = FakeDrawing(mark_shortcuts)
+    def start_walkthrough_drawing(self, *, mark_shortcuts, auto_mode=True, snap_shortcut=""):
+        if not self.live_toolbar_supported or self.walkthrough_panel is None:
+            return None
+        self.drawing = FakeDrawing(
+            mark_shortcuts, auto_mode=auto_mode, snap_shortcut=snap_shortcut
+        )
         return self.drawing
 
     def stop_walkthrough_drawing(self):
-        self.drawing.set_enabled(False)
-        self.drawing = None
+        if self.drawing is not None:
+            self.drawing.set_enabled(False)
+            self.drawing = None
 
     def keep_overlay_out_of_screenshots(self, enabled):
         self.excluded.append(enabled)
@@ -699,25 +733,65 @@ def test_another_recording_must_finish_first(h):
 
 def test_a_screenshot_during_a_walkthrough_joins_it(h):
     session = _begin(h)
+    assert h.ui.drawing is not None and not h.ui.drawing.auto_mode
+    assert h.ui.walkthrough_panel.live_toolbar
 
     h.runtime.snap()
     (snap,) = h.ui.snaps
+    assert snap.take == WalkthroughSnapMode.SCREEN
     snap.keep()
 
-    assert snap.hint == RECORDING_HINT
     (shot,) = session.saved_shots()
     assert shot.number == 1 and shot.kept_at_s == 12.5
     assert h.controller.recording_destination_changed.calls == [("Walkthrough · 1 shot",)]
     assert h.ui.captions == ["Screenshot 1 added"]
     assert h.ui.walkthrough_panel.calls == [("add", 1, 12.5)]
     assert h.ui.copied == []
+    assert h.ui.drawing.captured
+    session.end()
+
+
+def test_manual_live_toolbar_snap_renders_marks_and_respects_region(h):
+    from ui_qt.snap import export
+    from ui_qt.snap.annotations import Step
+
+    session = _begin(h)
+    drawing = h.ui.drawing
+    assert drawing is not None and not drawing.auto_mode
+    screen = Mock(geometry=Mock(return_value=QRect(0, 0, 24, 16)))
+    rect = QRect(4, 2, 12, 10)
+    marks = (Step(QPointF(10, 7), 1, QColor("blue")),)
+    drawing.capture_region = (screen, rect)
+    drawing.marks_by_screen[screen] = marks
+    drawing.arm()
+
+    drawing.snap_requested.emit(None)
+    assert drawing.commits == 1
+    assert not drawing.armed
+    (snap,) = h.ui.snaps
+    assert snap.take == WalkthroughSnapMode.SCREEN
+    assert snap.screen is screen
+    raw = _image("#194754")
+    expected = export.render(raw, rect, marks)
+    snap.active = False
+    snap.kept.emit(raw)
+
+    (shot,) = session.saved_shots()
+    saved = QImage(str(shot.path))
+    assert saved.size() == expected.size()
+    assert all(saved.pixelColor(x, y) == expected.pixelColor(x, y)
+               for x in range(saved.width()) for y in range(saved.height()))
+    assert drawing.captured and drawing.captured_screen is screen
+    assert not drawing.busy
     session.end()
 
 
 def test_pressing_screenshot_again_keeps_the_one_being_drawn(h):
+    h.ui.live_toolbar_supported = False
     session = _begin(h)
 
     h.runtime.snap()
+    assert h.ui.snaps[0].hint == RECORDING_HINT
     h.runtime.snap()
 
     assert len(h.ui.snaps) == 1
@@ -727,6 +801,7 @@ def test_pressing_screenshot_again_keeps_the_one_being_drawn(h):
 
 
 def test_finishing_while_drawing_keeps_the_screenshot_then_stops(h):
+    h.ui.live_toolbar_supported = False
     session = _begin(h)
     h.runtime.snap()
 
@@ -739,7 +814,23 @@ def test_finishing_while_drawing_keeps_the_screenshot_then_stops(h):
     session.end()
 
 
+def test_finishing_waits_for_in_flight_manual_live_capture(h):
+    session = _begin(h)
+    h.runtime.snap()
+    (snap,) = h.ui.snaps
+
+    h.runtime.toggle()
+
+    h.controller.stop_recording.assert_not_called()
+    snap.keep()
+    assert session.shot_count == 1
+    h.controller.stop_recording.assert_called_once()
+    assert not h.ui.walkthrough_panel.live_toolbar
+    session.end()
+
+
 def test_finishing_waits_for_the_overlay_and_stops_even_if_it_drops(h):
+    h.ui.live_toolbar_supported = False
     _begin(h)
     h.runtime.snap()
     snap = h.ui.snaps[0]
@@ -755,6 +846,7 @@ def test_finishing_waits_for_the_overlay_and_stops_even_if_it_drops(h):
 
 
 def test_a_screenshot_still_open_when_the_walkthrough_stops_goes_to_the_clipboard(h, tmp_path, monkeypatch):
+    h.ui.live_toolbar_supported = False
     _begin(h)
     monkeypatch.setattr(storage, "new_screenshot_path", lambda taken_at: tmp_path / "plain.png")
     h.runtime.snap()
@@ -770,6 +862,7 @@ def test_a_screenshot_still_open_when_the_walkthrough_stops_goes_to_the_clipboar
 
 
 def test_canceling_drops_the_screenshot_being_drawn(h):
+    h.ui.live_toolbar_supported = False
     _begin(h)
     h.runtime.snap()
     h.recorder.capture_canceled = True
@@ -989,6 +1082,7 @@ def test_without_a_column_screenshots_still_join_the_walkthrough(h):
 
 
 def test_the_shortcut_repeats_the_kind_last_picked(h):
+    h.ui.live_toolbar_supported = False
     h.settings.values[SettingsKey.WALKTHROUGH_SNAP_MODE] = WalkthroughSnapMode.SCREEN
     session = _begin(h)
 
@@ -1000,6 +1094,7 @@ def test_the_shortcut_repeats_the_kind_last_picked(h):
 
 
 def test_the_columns_snap_means_the_window_in_front_not_the_column(h):
+    h.ui.live_toolbar_supported = False
     h.settings.values[SettingsKey.WALKTHROUGH_SNAP_MODE] = WalkthroughSnapMode.WINDOW
     session = _begin(h)
 
@@ -1034,6 +1129,7 @@ def test_outside_a_walkthrough_the_shortcut_draws_a_region(h):
 
 
 def test_in_3_seconds_counts_down_then_opens_the_overlay(h):
+    h.ui.live_toolbar_supported = False
     h.settings.values[SettingsKey.WALKTHROUGH_SNAP_MODE] = WalkthroughSnapMode.DELAYED
     session = _begin(h)
 
@@ -1050,7 +1146,23 @@ def test_in_3_seconds_counts_down_then_opens_the_overlay(h):
     session.end()
 
 
+def test_in_3_seconds_with_live_toolbar_captures_live_after_countdown(h):
+    session = _begin(h)
+
+    h.runtime.choose_snap_mode(WalkthroughSnapMode.DELAYED)
+    assert h.ui.snaps == []
+    for _ in range(3):
+        h.runtime._count_down()
+
+    (snap,) = h.ui.snaps
+    assert snap.take == WalkthroughSnapMode.SCREEN
+    assert h.ui.walkthrough_panel.countdowns[-4:] == [3, 2, 1, 0]
+    assert not h.runtime._countdown.isActive()
+    session.end()
+
+
 def test_snap_pressed_again_during_the_countdown_takes_it_now(h):
+    h.ui.live_toolbar_supported = False
     h.settings.values[SettingsKey.WALKTHROUGH_SNAP_MODE] = WalkthroughSnapMode.DELAYED
     session = _begin(h)
 
@@ -1063,6 +1175,7 @@ def test_snap_pressed_again_during_the_countdown_takes_it_now(h):
 
 
 def test_a_countdown_ends_with_its_walkthrough(h):
+    h.ui.live_toolbar_supported = False
     h.settings.values[SettingsKey.WALKTHROUGH_SNAP_MODE] = WalkthroughSnapMode.DELAYED
     _begin(h)
     h.runtime.snap()
@@ -1150,6 +1263,7 @@ def test_done_does_not_wait_out_a_capture_delay_for_a_pending_click(h, auto):
 
 
 def test_canceling_drops_the_screenshot_before_the_recorder_says_canceled(h):
+    h.ui.live_toolbar_supported = False
     _begin(h)
     h.runtime.snap()
     # As TranscriptionRuntime._cancel_recording announces the stop: the
@@ -1163,6 +1277,7 @@ def test_canceling_drops_the_screenshot_before_the_recorder_says_canceled(h):
 
 
 def test_a_snap_menu_pick_during_the_countdown_takes_that_kind(h):
+    h.ui.live_toolbar_supported = False
     _begin(h)
     h.settings.values[SettingsKey.WALKTHROUGH_SNAP_MODE] = WalkthroughSnapMode.DELAYED
     h.runtime.snap("ui")

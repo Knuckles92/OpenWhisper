@@ -113,7 +113,7 @@ For Local Whisper on Windows or Linux x86_64, install **GPU Acceleration** from 
 
 Source installs can also use `uv sync --locked --extra gpu` to install CUDA wheels on Windows or Linux x86_64. On Windows, launch with `uv run --locked --extra gpu python main.py`. On Linux, use `./scripts/openwhisper`. **Auto** selects a compatible compute type. **Downloads** shows GPU memory estimates.
 
-Other speech engines use their own runtimes from Downloads. On Apple Silicon Macs, **Auto** runs Parakeet MLX on the Apple GPU through MLX, Parakeet and Nemotron through the **NVIDIA Speech GPU (Metal)** runtime, and Qwen3-ASR through PyTorch MPS. The Pi and OpenCode SDK meeting agents are also separate components, available on Windows, Linux and macOS.
+On Windows x64 and Linux x86_64, Parakeet Unified and Qwen3-ASR share the bundled transcribe.cpp runtime, which uses Vulkan for GPU acceleration. Other speech runtimes are available in Downloads. On Apple Silicon Macs, **Auto** runs Parakeet MLX on the Apple GPU through MLX, Parakeet and Nemotron through the **NVIDIA Speech GPU (Metal)** runtime, and Qwen3-ASR through PyTorch MPS. The Pi and OpenCode SDK meeting agents are also separate components, available on Windows, Linux and macOS.
 
 ## Updates
 
@@ -171,7 +171,7 @@ Choose **Settings → App → Appearance → Theme → Omarchy desktop** to foll
 | Parakeet | TDT 0.6B v3; Orukeet TDT 0.6B community adaptation | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meeting chunks |
 | Parakeet MLX | TDT 0.6B v3, MLX Community weights | Apple Silicon, macOS 14+: Apple GPU through Metal or CPU | Dictation with preview, uploads, meeting chunks |
 | Parakeet Unified | Unified EN 0.6B (native preview); TDT-CTC 110M (compact, included in All-in-One installers), English | Windows x64 and Linux x86_64 CPU / GPU through Vulkan (NVIDIA, AMD, Intel) | Dictation with preview, uploads; meetings (TDT-CTC 110M) |
-| Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (MPS) | Dictation, uploads |
+| Qwen3-ASR | 0.6B, 1.7B | Windows x64 / Linux x86_64 CPU or Vulkan GPU; Apple Silicon CPU or Apple GPU (MPS) | Dictation, uploads |
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU; Apple Silicon CPU, macOS 15+ | Dictation, uploads, meetings with native preview |
 | API | OpenAI: GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027. Groq: Whisper Large v3 / Turbo. Your own server: whatever it serves | OpenAI or Groq in the cloud (API key required), or an OpenAI-compatible speech server you run: Speaches, LocalAI, vLLM, whisper.cpp, or custom | Dictation, uploads |

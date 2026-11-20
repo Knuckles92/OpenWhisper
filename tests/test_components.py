@@ -264,15 +264,18 @@ def test_available_component_ids_by_platform():
     # so a pretend-Windows host patches host_machine itself.
     with patch.object(components.sys, "platform", "win32"), patch.object(
         components, "host_machine", return_value="AMD64"
-    ):
+    ), patch.object(components, "is_installed", return_value=False) as installed:
         # NVIDIA publishes the Vulkan speech runtime for Linux only.
         assert components.available_component_ids() == (
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
             *(key for key in components.RUNTIME_IDS if key not in (
-                ComponentId.ASR_NVIDIA_VULKAN, ComponentId.ASR_NVIDIA_METAL, ComponentId.ASR_PARAKEET_MLX,
+                ComponentId.ASR_NVIDIA_VULKAN, ComponentId.ASR_NVIDIA_METAL,
+                ComponentId.ASR_PARAKEET_MLX, ComponentId.ASR_QWEN,
             )),
         )
+        installed.side_effect = lambda key: key == ComponentId.ASR_QWEN
+        assert ComponentId.ASR_QWEN in components.available_component_ids()
 
 
 def test_linux_offers_the_vulkan_speech_runtime_only_where_it_is_needed(monkeypatch):

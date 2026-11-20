@@ -382,6 +382,7 @@ class WalkthroughPanel(QWidget):
         # left before an "In 3 seconds" snap (0: none counting down).
         self.snap_mode = WalkthroughSnapMode.REGION
         self._auto_mode = False
+        self._live_toolbar = False
         self._snap_shortcut = ""
         # Whether a note has anyone to read it: the AI write-up is on.
         self._notes_on = True
@@ -491,6 +492,10 @@ class WalkthroughPanel(QWidget):
 
     def set_auto_mode(self, enabled: bool) -> None:
         self._auto_mode = enabled
+        self.update()
+
+    def set_live_toolbar(self, enabled: bool) -> None:
+        self._live_toolbar = enabled
         self.update()
 
     def set_countdown(self, seconds: int) -> None:
@@ -719,6 +724,11 @@ class WalkthroughPanel(QWidget):
                     text = "Draw on the live screen with the pen. Release to save a screenshot."
                 elif key == "snap-menu":
                     text = "Take a screenshot manually"
+            elif self._live_toolbar:
+                if key == "snap" and not self._countdown:
+                    text = "Take a screenshot of the screen (or selected region) with any drawings"
+                elif key == "snap-menu":
+                    text = "More screenshot options"
             if text:
                 QToolTip.showText(event.globalPos(), text, self)
             else:

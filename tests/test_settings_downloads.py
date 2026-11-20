@@ -277,6 +277,21 @@ class TestModelRows(_DialogTestCase):
         assert not row.badge.isVisibleTo(dialog)
         assert row.size_label.text() == "~76 MB"
 
+    def test_legacy_qwen_row_explains_why_a_new_download_is_needed(self, tmp_path, monkeypatch):
+        from services.local_asr import cache
+
+        monkeypatch.setattr("services.components.current_platform_tag", lambda: "win_amd64")
+        monkeypatch.setattr(cache, "local_app_dir", lambda: str(tmp_path))
+        target = cache.model_dir("qwen-0.6b")
+        target.mkdir(parents=True)
+        (target / "model.safetensors").touch()
+        dialog, _values = self._make_dialog()
+        row = dialog.rows["qwen-0.6b"]
+        assert row.download_button.isVisibleTo(dialog)
+        assert row.usage_label.isVisibleTo(dialog)
+        assert row.usage_label.text() == "New GGUF download required"
+        assert not dialog.rows["qwen-1.7b"].usage_label.isVisibleTo(dialog)
+
     def test_cached_row_shows_real_size_and_delete(self):
         dialog, _values = self._make_dialog(
             cached={TINY_REPO: _cached(TINY_REPO, 76_000_000)}

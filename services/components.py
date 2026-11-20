@@ -585,8 +585,11 @@ def available_component_ids(
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
             ComponentId.MEETING_AGENT_OPENCODE,
-            *RUNTIME_IDS,
+            *(key for key in RUNTIME_IDS if key != ComponentId.ASR_QWEN),
         )
+        # Keep an existing PyTorch runtime visible so it can be removed.
+        if platform_tag is None and is_installed(ComponentId.ASR_QWEN):
+            candidates += (ComponentId.ASR_QWEN,)
     elif tag == PLATFORM_LINUX_X86_64:
         from services.local_asr.catalog import nvidia_gpu_runtime
 

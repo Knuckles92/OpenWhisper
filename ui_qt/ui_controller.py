@@ -1088,11 +1088,24 @@ class UIController(QObject):
 
         request_access()
 
-    def start_walkthrough_drawing(self, *, mark_shortcuts: dict[str, str]):
+    def start_walkthrough_drawing(
+        self,
+        *,
+        mark_shortcuts: dict[str, str],
+        auto_mode: bool = True,
+        snap_shortcut: str = "",
+    ):
         from ui_qt.snap.live import LiveAnnotations
+        from ui_qt.utils.desktop import compositor_managed
 
+        if compositor_managed():
+            return None
         self._walkthrough_drawing = LiveAnnotations(
-            self, self._walkthrough_panel, mark_shortcuts=mark_shortcuts
+            self,
+            self._walkthrough_panel,
+            mark_shortcuts=mark_shortcuts,
+            auto_mode=auto_mode,
+            snap_shortcut=snap_shortcut,
         )
         return self._walkthrough_drawing
 
@@ -1966,6 +1979,8 @@ class UIController(QObject):
             self.on_model_batch_stop()
 
     def _show_download_progress(self, model_name: str) -> None:
+        from services.local_asr.cache import needs_qwen_redownload
+
         self._hide_download_progress()
         dialog = QProgressDialog(
             f'Downloading "{model_name}"…',
@@ -1974,7 +1989,9 @@ class UIController(QObject):
             0,
             self.main_window,
         )
-        dialog.setWindowTitle("Downloading model")
+        dialog.setWindowTitle(
+            "Updating Qwen3-ASR to GGUF" if needs_qwen_redownload(model_name) else "Downloading model"
+        )
         dialog.setMinimumDuration(0)
         dialog.setCancelButton(None)
         dialog.setAutoClose(False)

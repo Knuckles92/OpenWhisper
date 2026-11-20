@@ -17,6 +17,7 @@ from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFontMetrics, QPainter, QPen
 from PyQt6.QtWidgets import QToolTip, QWidget
 
+from ui_qt.snap import pointed
 from ui_qt.snap.annotations import SWATCHES, Tool
 from ui_qt.snap.chrome import chrome_font, paint_panel
 from ui_qt.snap.icons import paint_icon
@@ -53,7 +54,13 @@ class _Button:
 
 
 def _layout(
-    live: bool, label_metrics: QFontMetrics, mark_shortcuts: dict[str, str],
+    live: bool,
+    label_metrics: QFontMetrics,
+    mark_shortcuts: dict[str, str],
+    *,
+    auto_mode: bool = True,
+    window_picker: bool = False,
+    snap_shortcut: str = "",
 ) -> tuple[list[_Button], list[tuple[int, int]]]:
     """Buttons left to right, and the x of each group separator, inside the panel."""
     buttons: list[_Button] = []
@@ -78,7 +85,7 @@ def _layout(
             tip += f" · Hold {'Cmd' if sys.platform == 'darwin' else 'Ctrl'} to pin"
         add("tool", tool.value, tip)
     separate()
-    if not live:
+    if not live or not auto_mode:
         add("undo", "undo", "Undo (Ctrl+Z)")
         add("redo", "redo", "Redo (Ctrl+Shift+Z)")
         separate()
@@ -88,15 +95,39 @@ def _layout(
     add("infill", "infill", "Fill new boxes and ellipses with a light tint; off leaves only the outline. Remembered for future screenshots.", label="Infill")
     add("snap", "snap", "Snap to corners and window edges (S)")
     if live:
-        add("region", "region", "Select an area for automatic screenshots; close its × to capture the whole screen", label="Region")
         separate()
-        add("delay", "delay", "Screenshot delay", max(148, label_metrics.horizontalAdvance("Delay · Instant") + 61))
+        region_tip = (
+            "Select an area for automatic screenshots; close its × to capture the whole screen"
+            if auto_mode
+            else "Select an area to capture; close its × to capture the whole screen"
+        )
+        add("region", "region", region_tip, label="Region")
+        if window_picker:
+            window_tip = (
+                "Pick a window for automatic screenshots; close its × to capture the whole screen"
+                if auto_mode
+                else "Pick a window to capture; close its × to capture the whole screen"
+            )
+            add("window", "window", window_tip, label="Window")
+        if auto_mode:
+            separate()
+            add("delay", "delay", "Screenshot delay", max(148, label_metrics.horizontalAdvance("Delay · Instant") + 61))
         separate()
         keep_key = mark_shortcuts.get("keep_marks", "K while drawing")
         clear_key = mark_shortcuts.get("clear", "C while drawing")
         add("keep_marks", "keep_marks", f"Keep marks ({keep_key})", label="Keep marks")
         add("clear", "clear", f"Clear marks ({clear_key})", label="Clear marks")
-        add("drop", "drop", "Put the tool down and return to the desktop (Esc)")
+        if auto_mode:
+            add("drop", "drop", "Put the tool down and return to the desktop (Esc)")
+        else:
+            separate()
+            add("drop", "drop", "Put the tool down and return to the desktop (Esc)")
+            snap_tip = (
+                f"Take screenshot ({snap_shortcut})"
+                if snap_shortcut
+                else "Take screenshot (Enter while drawing)"
+            )
+            add("keep", "keep", snap_tip)
     else:
         add("drop", "drop", "Cancel (Esc)")
         add("keep", "keep", "Keep (Enter)")
@@ -142,10 +173,13 @@ class SnapToolbar(QWidget):
     keep_marks_clicked = pyqtSignal()
     clear_clicked = pyqtSignal()
     region_clicked = pyqtSignal()
+    window_clicked = pyqtSignal()
 
     def __init__(self, parent: QWidget | None, palette: Palette, *, live: bool = False,
+                 auto_mode: bool = True, window_picker: bool | None = None,
                  flags: Qt.WindowType = Qt.WindowType.Widget,
-                 mark_shortcuts: dict[str, str] | None = None) -> None:
+                 mark_shortcuts: dict[str, str] | None = None,
+                 snap_shortcut: str = "") -> None:
         # The delay widget also uses Snap's painting helpers. Defer this
         # import so opening the Walkthrough tab first cannot form a cycle.
         from ui_qt.widgets.capture_delay import CaptureDelay
@@ -157,12 +191,24 @@ class SnapToolbar(QWidget):
         self._palette = palette
         self._label_font = chrome_font(self.font(), 12)
         self._live = live
+        self._auto_mode = auto_mode if live else False
+        self._window_picker = (
+            (pointed.supported() if window_picker is None else window_picker)
+            if live
+            else False
+        )
         self._mark_shortcuts = mark_shortcuts or {}
+        self._snap_shortcut = snap_shortcut
         self._buttons, self._separators = _layout(
-            live, QFontMetrics(self._label_font), self._mark_shortcuts
+            live,
+            QFontMetrics(self._label_font),
+            self._mark_shortcuts,
+            auto_mode=self._auto_mode,
+            window_picker=self._window_picker,
+            snap_shortcut=self._snap_shortcut,
         )
         self.setFixedSize(self._buttons[-1].rect.right() + 1 + PAD, BUTTON + 2 * PAD)
-        self.capture_delay = CaptureDelay(self) if live else None
+        self.capture_delay = CaptureDelay(self) if (live and self._auto_mode) else None
         if self.capture_delay is not None:
             self.capture_delay.move(self.button_rect("delay").topLeft())
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -176,6 +222,7 @@ class SnapToolbar(QWidget):
         self._box_infill = False
         self._keep_marks = False
         self._region_active = False
+        self._window_active = False
         self._drop_enabled = True
         self._hover: _Button | None = None
         self._pressed: _Button | None = None
@@ -189,12 +236,20 @@ class SnapToolbar(QWidget):
             "keep_marks": self.keep_marks_clicked,
             "clear": self.clear_clicked,
             "region": self.region_clicked,
+            "window": self.window_clicked,
         }
 
     # ---- state ----
 
     def fit_to_width(self, width: int) -> None:
-        buttons, separators = _layout(self._live, QFontMetrics(self._label_font), self._mark_shortcuts)
+        buttons, separators = _layout(
+            self._live,
+            QFontMetrics(self._label_font),
+            self._mark_shortcuts,
+            auto_mode=self._auto_mode,
+            window_picker=self._window_picker,
+            snap_shortcut=self._snap_shortcut,
+        )
         if buttons[-1].rect.right() + 1 + PAD > width:
             buttons, separators = _wrap(buttons, width)
         self._buttons, self._separators = buttons, separators
@@ -224,6 +279,10 @@ class SnapToolbar(QWidget):
 
     def set_region_active(self, active: bool) -> None:
         self._region_active = active
+        self.update()
+
+    def set_window_active(self, active: bool) -> None:
+        self._window_active = active
         self.update()
 
     def set_drop_enabled(self, enabled: bool) -> None:
@@ -392,7 +451,8 @@ class SnapToolbar(QWidget):
         if ((button.kind == "snap" and self._snap_enabled)
                 or (button.kind == "infill" and self._box_infill)
                 or (button.kind == "keep_marks" and self._keep_marks)
-                or (button.kind == "region" and self._region_active)):
+                or (button.kind == "region" and self._region_active)
+                or (button.kind == "window" and self._window_active)):
             return self._palette.color("overlay-rgb", 36), self._palette.color("accent")
         if button.kind == "tool" and button.value == self._tool:
             color = text if self._tool is Tool.REDACT else QColor(SWATCHES[self._color].color)

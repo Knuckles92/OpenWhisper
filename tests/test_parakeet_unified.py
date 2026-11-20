@@ -131,7 +131,7 @@ class _Busy(Exception):
     pass
 
 
-def _fake_binding(devices=(BIG, IGPU, CPU), *, gpu_fails=False):
+def _fake_binding(devices=(BIG, IGPU, CPU), *, gpu_fails=False, timestamps=True):
     """A transcribe_cpp stand-in with the native rule that matters: one stream per model."""
     tc = types.ModuleType("transcribe_cpp")
     tc.TranscribeError = type("TranscribeError", (Exception,), {})
@@ -140,6 +140,7 @@ def _fake_binding(devices=(BIG, IGPU, CPU), *, gpu_fails=False):
     tc.set_log_callback = lambda handler: None
     tc.backends = lambda: list(devices)
     tc.loaded = []
+    tc.languages = []
 
     class Stream:
         def __init__(self, session, options):
@@ -170,8 +171,9 @@ def _fake_binding(devices=(BIG, IGPU, CPU), *, gpu_fails=False):
                 raise _Busy("a stream is active on this model")
             if len(samples) < 160:
                 raise tc.InputTooShort("too short")
-            return SimpleNamespace(text=" Hello there. ", segments=[
-                SimpleNamespace(text=" Hello there.", t0_ms=120, t1_ms=900)])
+            tc.languages.append(language)
+            segments = [SimpleNamespace(text=" Hello there.", t0_ms=120, t1_ms=900)] if timestamps else []
+            return SimpleNamespace(text=" Hello there. ", segments=segments)
 
         def stream(self, language=None, family=None):
             if self.active is not None:
@@ -268,6 +270,19 @@ def test_worker_reports_the_vulkan_gpu(binding, tmp_path):
     result = worker.load_engine(state, dict(backend="parakeet_unified", device="auto",
                                              runtime=str(tmp_path), model_path="m.gguf"))
     assert result == {"device": "vulkan", "gpu": BIG.description}
+
+
+@pytest.mark.parametrize(("language", "code"), [("auto", None), ("zh-CN", "zh"), ("French", "fr"), ("tl", "fil")])
+def test_qwen_gguf_uses_native_worker_and_preserves_language(binding, tmp_path, language, code):
+    fake = binding(timestamps=False)
+    state = worker.WorkerState()
+    load = dict(backend="qwen_asr", device="auto", runtime=str(tmp_path), model_path="qwen.gguf")
+    assert worker.load_engine(state, load) == {"device": "vulkan", "gpu": BIG.description}
+    audio = tmp_path / "speech.pcm"
+    audio.write_bytes(_samples(1).tobytes())
+    result = worker.transcribe(state, "transcribe", dict(audio_path=str(audio), language=language))
+    assert fake.languages == [code]
+    assert result == dict(text="Hello there.", segments=[dict(text="Hello there.", start=0., end=1.)])
 
 
 def test_transcribe_returns_text_and_timed_segments(binding, tmp_path):

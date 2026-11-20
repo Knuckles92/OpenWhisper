@@ -50,7 +50,7 @@ def dependency_options(family: str) -> list[dict]:
         reason = ""
         if component and component not in available:
             reason = "This runtime is not available for the host's platform."
-        elif device == "cuda" and gpu is None:
+        elif device == "cuda" and gpu is None and component != ComponentId.ASR_TRANSCRIBE:
             reason = "No NVIDIA GPU detected on the host. Check its NVIDIA driver, or use CPU."
         elif (
             # Older cards get the Vulkan runtime where the host has one.
@@ -141,7 +141,7 @@ class HostRuntimeInstaller:
         )
         if option is None:
             raise ValueError(
-                "Choose CPU or NVIDIA GPU from the host's runtime choices."
+                "Choose a device from the host's runtime choices."
             )
         with self._lock:
             if self._job.get("state") == "installing":

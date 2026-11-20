@@ -86,9 +86,7 @@ ALL_IN_ONE_MODEL = "parakeet-110m-en"
 MLX_RUNTIME = "asr-parakeet-mlx"
 #: NeMo-Speech.cpp's Metal release: Parakeet and Nemotron on the Apple GPU.
 NVIDIA_METAL_RUNTIME = "asr-nvidia-metal"
-#: transcribe.cpp's CPU + Vulkan release, the only engine that runs Parakeet
-#: Unified (NeMo-Speech.cpp has no such model through v0.3.0). One runtime
-#: serves both devices; the worker picks the GPU.
+#: Shared CPU and Vulkan runtime for Parakeet Unified and Qwen on x64.
 TRANSCRIBE_RUNTIME = "asr-transcribe"
 RUNTIME_IDS = (
     "asr-nvidia-cpu", "asr-nvidia-cuda", "asr-nvidia-vulkan", NVIDIA_METAL_RUNTIME,
@@ -106,14 +104,16 @@ def backend_of(model_name: str) -> str:
 
 
 @functools.cache
-def _artifacts() -> dict:
+def _artifacts(filename: str) -> dict:
     # Shipped with the app, so it is read once; callers only read the specs.
-    with Path(__file__).with_name("models.json").open(encoding="utf-8-sig") as stream:
+    with Path(__file__).with_name(filename).open(encoding="utf-8-sig") as stream:
         return json.load(stream)
 
 
 def artifacts(key: str) -> dict:
-    return _artifacts()[key]
+    if MODELS[key].backend == "qwen_asr" and uses_transcribe_cpp("qwen_asr"):
+        return _artifacts("qwen_gguf_models.json")[key]
+    return _artifacts("models.json")[key]
 
 
 def selected_model(backend: str, settings: dict) -> str:
@@ -167,10 +167,21 @@ def apple_silicon() -> bool:
     return current_platform_tag() == "darwin_arm64"
 
 
+def uses_transcribe_cpp(backend: str) -> bool:
+    if backend == "parakeet_unified":
+        return True
+    if backend != "qwen_asr":
+        return False
+
+    from services.components import current_platform_tag
+
+    return current_platform_tag() in ("win_amd64", "linux_x86_64")
+
+
 def runtime_id(backend: str, device: str) -> str:
     if backend == "parakeet_mlx":
         return MLX_RUNTIME
-    if backend == "parakeet_unified":
+    if uses_transcribe_cpp(backend):
         return TRANSCRIBE_RUNTIME
     if backend == "qwen_asr":
         return "asr-qwen"
@@ -188,7 +199,7 @@ def resolve_runtime(backend: str, requested: str) -> tuple[str, str]:
         if requested not in ("auto", "cpu"):
             raise ValueError("Parakeet MLX supports Auto (Apple GPU) or CPU, not CUDA.")
         return MLX_RUNTIME, "cpu" if requested == "cpu" else "metal"
-    if backend == "parakeet_unified":
+    if uses_transcribe_cpp(backend):
         # The worker asks transcribe.cpp for a GPU; Auto falls back to the
         # CPU there when none is listed.
         return TRANSCRIBE_RUNTIME, requested

@@ -94,11 +94,17 @@ is cut off at the right edge.
 - **Walkthrough** starts recording. Talk as you would to a colleague looking
   over your shoulder. The column's header says how long it has recorded and
   how many screenshots you have kept (on Wayland, the recording overlay
-  does).
-- **Screenshot** freezes the screen under the pointer. Drag out the part
-  that matters (Enter or a double-click takes the whole screen), mark it up,
-  and press Enter to keep it or Esc to throw it away. The recording keeps
-  going the whole time, so you can keep talking while you draw.
+  does). Where floating controls are supported (Windows, macOS and X11),
+  the drawing toolbar opens right away at the top center of the screen under
+  your pointer, and you can draw on any monitor at any time.
+- **Screenshot** (or the toolbar's blue **✓** button, **Snap** on the column,
+  or **Enter** while drawing) takes a screenshot immediately: the whole
+  screen by default, or the **Region** or **Window** frame you picked on the
+  toolbar, with any live marks you drew baked in. Temporary marks clear once
+  saved unless **Keep marks** is on or a mark was pinned, and the drawing
+  tool puts itself down so your mouse returns to your desktop. Outside a
+  walkthrough (and on Wayland), **Screenshot** freezes the screen so you can
+  drag a region, mark it up, and press Enter to keep it or Esc to cancel.
 - **Walkthrough** again finishes. If a screenshot is still open, it is kept
   first.
 - **Cancel** throws the walkthrough away, screenshots included.
@@ -111,18 +117,17 @@ the document will hold. What you are saying now sits in an open, dashed
 slot, **Talking… Snap to close this section**, until the next screenshot
 closes it. Under it are the walkthrough's controls:
 
-- **Snap** takes a screenshot. Its **▾** opens a menu beside the column that
-  picks what Snap takes: a **Region** you draw (the overlay below), the
-  **Window under the pointer**, the **Whole screen**, or a region **In 3
-  seconds**, which counts down on the button and then freezes the screen,
-  so you can open a menu or hover something first. Picking one takes it at
-  once, and from then on Snap and the Screenshot shortcut repeat it, in
-  later walkthroughs too. A window or the whole screen is kept straight
-  away, without the drawing overlay. From the column's button or menu, "the
-  window" is the one in front, since clicking the column leaves that app in
-  front; from the shortcut it is the one under the pointer. **Window under
-  the pointer** is offered on Windows and macOS. Outside a walkthrough the
-  Screenshot shortcut always draws a region.
+- **Snap** takes a screenshot right away (the whole screen by default, or the
+  **Region** or **Window** frame active on the top toolbar, with any drawings
+  you placed on that screen). Its **▾** opens a menu beside the column for
+  one-off captures: a frozen **Region** you draw, the **Window under the
+  pointer**, the **Whole screen**, or **In 3 seconds**, which counts down on
+  the button and then captures so you can open a menu or hover something
+  first. On desktops without the floating toolbar, Snap and the Screenshot
+  shortcut repeat the last kind picked from this menu. From the column's
+  menu, "the window" is the one in front, since clicking the column leaves
+  that app in front. **Window under the pointer** is offered on Windows and
+  macOS. Outside a walkthrough the Screenshot shortcut always draws a region.
 - **Hold for note**: hold it while you talk, and what you say goes to the AI
   write-up as an instruction, not into the document (see AI write-up). It
   shows as a purple row, **Note for the agent · not in the document**. It
@@ -211,25 +216,34 @@ On macOS 14 and later, automatic screenshots filter out the toolbar, live
 canvas, and recording controls while keeping them visible on your desktop.
 Older macOS versions briefly hide these windows to leave them out of captures.
 
-The drawing toolbar opens at the top center of the screen where you start.
-Whole-screen capture remains the default. Choose **Region** in that toolbar
-and drag an area on any monitor to keep capturing just that area after clicks.
-The outline stays on the live desktop and lets clicks through. Click its small
-**×** to return to capturing the whole clicked monitor; choosing, drawing the
-region, and closing it do not save screenshots. Press **Esc** to cancel a new
-selection. The region stays selected through pauses and manual screenshots,
-and resets when the walkthrough ends. Drawings on its monitor are cropped to
-the region too. The outline and **×** are left out of saved images.
+The drawing toolbar opens at the top center of the screen where you start
+(in both manual walkthroughs and Auto Mode). Whole-screen capture remains
+the default. Choose **Region** in that toolbar and drag an area on any
+monitor, or choose **Window** (Windows and macOS) and click a visible window,
+to keep capturing just that area. The outline stays on the live desktop and
+lets clicks through. Click its small **×** to return to capturing the whole
+screen; choosing, drawing the region or picking a window, and closing it do
+not save screenshots. Press **Esc** to cancel a new selection. The selection
+stays active through pauses and manual screenshots, and resets when the
+walkthrough ends. Drawings on its monitor are cropped to the frame too. The
+outline and **×** are left out of saved images.
 
-Choose a tool there, or click **Draw** in the column to pick the pen. Draw on
-any monitor and release the mouse to save an annotated screenshot of that
-monitor, after the chosen delay. For text, press **Enter** after typing. The tool stays selected so
-you can draw again, with the crosshair or text cursor restored after each
-capture. Choose another tool to switch, or click the selected
-tool again, click the toolbar's **×** or press **Esc** to return to the
-desktop. The **×** also cancels a screenshot that is counting down. It is
-dimmed when no tool is selected and nothing is counting down; it never ends
-the walkthrough, which **Cancel** and **Done** on the column do.
+In manual walkthroughs (Auto Mode off), pick any drawing tool on the toolbar
+and place as many marks as you want on any monitor (with Undo/Redo via the
+toolbar or **Ctrl+Z** / **Ctrl+Shift+Z**). Nothing is captured until you
+click the toolbar's blue **✓**, click **Snap** on the column, press **Enter**
+while drawing, or press the Screenshot shortcut. Once saved, temporary marks
+clear and the drawing tool disarms so you can interact with your desktop
+right away. In Auto Mode, choose a tool there or click **Draw** in the column
+to pick the pen, then draw on any monitor and release the mouse to save an
+annotated screenshot of that monitor after the chosen delay. For text, press
+**Enter** after typing. In Auto Mode the tool stays selected so you can draw
+again, with the crosshair or text cursor restored after each capture. Choose
+another tool to switch, or click the selected tool again, click the toolbar's
+**×** or press **Esc** to return to the desktop. The **×** also cancels a
+screenshot that is counting down. It is dimmed when no tool is selected and
+nothing is counting down; it never ends the walkthrough, which **Cancel** and
+**Done** on the column do.
 
 Marks disappear after about 1.5 seconds by default. Click **Keep marks** in
 the drawing toolbar or press **F8** to pin each new mark. Auto Mode remembers

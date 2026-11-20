@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Changed
+
+- **Qwen3-ASR uses the bundled speech runtime on Windows x64 and Linux x86_64.** If you previously downloaded Qwen3-ASR on Windows, your model selection carries over. Open **Settings → Downloads** for the one-time GGUF download (about 850 MB for 0.6B or 2.2 GB for 1.7B). The new runtime removes the SciPy dependency. Compatibility with Windows Smart App Control still depends on whether Windows trusts the bundled DLLs.
+
 ## [2.8.95] - 2026-11-19
 
 ### Changed

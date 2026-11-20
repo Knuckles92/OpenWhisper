@@ -15,6 +15,7 @@ from types import MappingProxyType
 from typing import Final, Mapping, Tuple
 
 from services.gpu_info import memory_guidance
+from services.local_asr import catalog as speech_catalog
 
 
 OPENAI_MODEL_TABLE_URL: Final[str] = (
@@ -434,8 +435,6 @@ _CATALOG = {
     ),
 }
 
-from services.local_asr.catalog import MODELS as SPEECH_MODELS, artifacts as speech_artifacts
-
 _MOONSHINE_SOURCE: Final[str] = "https://github.com/moonshine-ai/moonshine"
 _NATIVE_BACKENDS: Final[Tuple[str, ...]] = ("parakeet", "nemotron")
 _SPEECH_PARAMETER_COUNTS: Final[Mapping[str, str]] = MappingProxyType({
@@ -467,6 +466,7 @@ _SPEECH_RUNTIME_NOTES: Final[Mapping[str, str]] = MappingProxyType({
     "parakeet_unified": (
         "Uses the transcribe.cpp runtime included with the Windows x64 and Linux x86_64 installers."
     ),
+    "qwen_asr": "Requires its optional PyTorch runtime from Downloads on Apple Silicon.",
 })
 #: Where each backend runs, and what that costs.
 _SPEECH_DEVICE_NOTES: Final[Mapping[str, str]] = MappingProxyType({
@@ -493,17 +493,27 @@ _SPEECH_UPSTREAM_URLS: Final[Mapping[str, str]] = MappingProxyType({
 
 
 def _speech_model_details(key: str, model) -> ModelDetails:
-    spec = speech_artifacts(key)
+    spec = speech_catalog.artifacts(key)
     backend = model.backend
+    native_qwen = backend == "qwen_asr" and speech_catalog.uses_transcribe_cpp(backend)
     if backend == "moonshine":
         source = _MOONSHINE_SOURCE
     else:
         source = "https://huggingface.co/" + spec["repo"]
     if key == "orukeet-v0.1":
         license_url = "https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md"
+    elif native_qwen:
+        license_url = f"{source}/blob/{spec['revision']}/LICENSE"
     else:
         license_url = source + "#license"
     files = spec["files"]
+    runtime_format = _SPEECH_RUNTIME_FORMATS.get(backend, "Safetensors")
+    runtime_note = _SPEECH_RUNTIME_NOTES.get(backend, "Requires its optional Windows x64 runtime from Downloads.")
+    device_note = _SPEECH_DEVICE_NOTES.get(backend, "CPU and NVIDIA GPU use separately installed runtimes.")
+    if native_qwen:
+        runtime_format = "GGUF Q8"
+        runtime_note = _SPEECH_RUNTIME_NOTES["parakeet_unified"]
+        device_note = "Auto uses a dedicated GPU through Vulkan, or falls back to the CPU."
     return ModelDetails(
         model_name=key, description=model.purpose, origin_name=model.label,
         origin_url=source, repository_id=spec["repo"], repository_url=source,
@@ -513,12 +523,9 @@ def _speech_model_details(key: str, model) -> ModelDetails:
         relative_performance="Measure on your hardware; published throughput is not dictation latency.",
         memory_guidance="CPU RAM / GPU memory use depends on model and audio length.",
         download_size_mb=round(sum(f["size_bytes"] for f in files) / 1_000_000),
-        runtime_format=_SPEECH_RUNTIME_FORMATS.get(backend, "Safetensors"),
+        runtime_format=runtime_format,
         license=model.license, best_for=model.purpose,
-        limitations=(
-            _SPEECH_RUNTIME_NOTES.get(backend, "Requires its optional Windows x64 runtime from Downloads."),
-            _SPEECH_DEVICE_NOTES.get(backend, "CPU and NVIDIA GPU use separately installed runtimes."),
-        ),
+        limitations=(runtime_note, device_note),
         license_url=license_url,
         revision=spec["revision"],
         download_hosts=tuple(sorted({urlparse(f["url"]).hostname for f in files})),
@@ -527,7 +534,7 @@ def _speech_model_details(key: str, model) -> ModelDetails:
     )
 
 
-for _key, _model in SPEECH_MODELS.items():
+for _key, _model in speech_catalog.MODELS.items():
     _CATALOG[_key] = _speech_model_details(_key, _model)
 _CATALOG["parakeet-unified-en"] = replace(
     _CATALOG["parakeet-unified-en"],

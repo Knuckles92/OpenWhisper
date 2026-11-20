@@ -63,6 +63,22 @@ class TestConsentDialogCopy(_QtTestCase):
         )
         assert "HF_HUB_OFFLINE" in dialog._body_text()
 
+    def test_existing_qwen_download_explains_the_format_change(self, tmp_path, monkeypatch):
+        from services.local_asr import cache
+
+        monkeypatch.setattr("services.components.current_platform_tag", lambda: "win_amd64")
+        monkeypatch.setattr(cache, "local_app_dir", lambda: str(tmp_path))
+        target = cache.model_dir("qwen-1.7b")
+        target.mkdir(parents=True)
+        (target / "model-00001-of-00002.safetensors").touch()
+        dialog = HuggingFaceConsentDialog("qwen-1.7b", HuggingFaceAccessPolicy.ASK)
+        body = dialog._body_text()
+        assert "Download the GGUF version once" in body
+        assert "previous files will be replaced after the download succeeds" in body
+        monkeypatch.setattr("services.components.current_platform_tag", lambda: "darwin_arm64")
+        assert not cache.needs_qwen_redownload("qwen-1.7b")
+        dialog.close()
+
 
 class TestConsentDialogButtons(_QtTestCase):
     """Button availability per policy, and the result each click produces."""

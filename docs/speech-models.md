@@ -26,6 +26,12 @@ Two English models run on this engine:
 - **Final text:** The saved recording is decoded at the end, as with Parakeet v3. On Parakeet Unified EN 0.6B, a dictation of 30 seconds or more pastes the stream's own final text instead, if the stream heard all of the recording (ready about 0.3 seconds after you stop).
 - **Validated:** Windows x64 on the CPU and on an RTX 2060 through Vulkan, and Linux x86_64 on the CPU. A Linux GPU through Vulkan has not been validated with the release libraries. Parakeet TDT-CTC 110M also supports Meeting Mode chunks and preview; Parakeet Unified EN 0.6B is dictation/upload only for now.
 
+## Qwen3-ASR
+
+Windows x64 and Linux x86_64 use the same bundled transcribe.cpp runtime as Parakeet Unified. **Auto** uses a dedicated GPU through Vulkan when available and falls back to CPU. The Q8 GGUF weights are separate downloads of about 850 MB for 0.6B and 2.19 GB for 1.7B.
+
+If you used Qwen3-ASR on Windows before this change, your model selection is kept. Open **Downloads** to get the GGUF weights for that model. You can also remove the old Qwen3-ASR PyTorch runtime there. On Apple Silicon, Qwen3-ASR uses the Safetensors weights and the optional PyTorch runtime for CPU or Apple GPU.
+
 ## Orukeet
 
 Orukeet is an optional 25-language adaptation of NVIDIA Parakeet by Oruk AI, including Russian and English. Its r3 native Q8 weights are 714 MB and use the existing NVIDIA Speech runtime. It has been tested with the pinned Windows and Linux CPU/CUDA runtimes; Apple Silicon validation is pending. Orukeet is a community model, so evaluate it on your recordings. Its weights are licensed under CC BY-SA 4.0, including attribution and applicable ShareAlike terms; see the [publisher's notice](https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md).

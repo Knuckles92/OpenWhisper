@@ -546,3 +546,145 @@ def test_a_captured_delayed_shot_clears_only_its_own_monitors_marks(no_focus_mov
         assert canvas.items() == ()
     finally:
         drawing.close()
+
+
+def test_manual_live_drawing_waits_for_blue_check_or_enter_and_supports_undo_redo(
+    monkeypatch, no_focus_moves
+):
+    now = 100.0
+    monkeypatch.setattr(live, "monotonic", lambda: now)
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner, auto_mode=False, snap_shortcut="Ctrl+Alt+S")
+    drawn, snapped = [], []
+    drawing.drawn.connect(lambda *args: drawn.append(args))
+    drawing.snap_requested.connect(snapped.append)
+    try:
+        toolbar = drawing._toolbar
+        assert toolbar.capture_delay is None
+        assert not toolbar.button_rect("keep").isNull()
+        assert not toolbar.button_rect("region").isNull()
+        left = Qt.MouseButton.LeftButton
+
+        # Drawing marks does not auto-capture and marks stay until snapped or cleared.
+        QTest.mouseClick(toolbar, left, pos=toolbar.button_rect("tool", Tool.PEN).center())
+        screen = live.capture.screen_under_cursor()
+        canvas = drawing._canvases[screen]
+        QTest.mousePress(canvas, left, pos=QPoint(40, 50))
+        QTest.mouseRelease(canvas, left, pos=QPoint(100, 90))
+        QTest.mousePress(canvas, left, pos=QPoint(120, 60))
+        QTest.mouseRelease(canvas, left, Qt.KeyboardModifier.ControlModifier, QPoint(180, 110))
+        assert not drawn and not snapped
+        assert len(canvas.items()) == 2
+        assert not canvas._expire.isActive()
+        now += live.MARK_LIFETIME_S + 30
+        canvas._expire_marks()
+        assert len(canvas.items()) == 2
+
+        # Undo and redo work via toolbar buttons and keyboard shortcuts.
+        QTest.mouseClick(toolbar, left, pos=toolbar.button_rect("undo").center())
+        assert len(canvas.items()) == 1
+        QTest.mouseClick(toolbar, left, pos=toolbar.button_rect("redo").center())
+        assert len(canvas.items()) == 2
+        QTest.keyClick(canvas, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+        assert len(canvas.items()) == 1
+        QTest.keyClick(
+            canvas,
+            Qt.Key.Key_Z,
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+        )
+        assert len(canvas.items()) == 2
+
+        # Clicking the blue check commits any active text label and requests a snap.
+        drawing.arm(Tool.TEXT)
+        QTest.mouseClick(canvas, left, pos=QPoint(90, 140))
+        QTest.keyClicks(canvas.label_editor, "Click here")
+        QTest.mouseClick(toolbar, left, pos=toolbar.button_rect("keep").center())
+        assert canvas.label_editor is None
+        assert len(canvas.items()) == 3
+        assert snapped == [None]
+
+        # Enter while drawing requests a snap on that canvas's screen.
+        QTest.keyClick(canvas, Qt.Key.Key_Return)
+        assert snapped == [None, screen]
+
+        # Completing the capture clears temporary marks while preserving Ctrl-pinned marks.
+        drawing.set_capture_pending(True)
+        drawing.set_capture_pending(False, captured=True, screen=screen)
+        assert len(canvas.items()) == 1
+        assert canvas.items() == canvas.items(pinned_only=True)
+    finally:
+        drawing.close()
+
+
+def test_window_picker_highlights_and_locks_clicked_window_until_closed(
+    monkeypatch, no_focus_moves
+):
+    window_rect = QRect(120, 80, 320, 200)
+    monkeypatch.setattr(live.pointed, "supported", lambda: True)
+    monkeypatch.setattr(live.pointed, "window_targets", lambda screen, ours=(): (window_rect,))
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner, auto_mode=False)
+    try:
+        toolbar = drawing._toolbar
+        left = Qt.MouseButton.LeftButton
+        assert not toolbar.button_rect("window").isNull()
+
+        QTest.mouseClick(toolbar, left, pos=toolbar.button_rect("window").center())
+        assert drawing.armed and drawing.selecting_window
+        assert toolbar._window_active and not toolbar._region_active
+
+        screen = live.capture.screen_under_cursor()
+        canvas = drawing._canvases[screen]
+        QTest.mouseMove(canvas, QPoint(200, 150))
+        assert canvas._window_hover == window_rect.intersected(canvas.rect())
+
+        QTest.mousePress(canvas, left, pos=QPoint(200, 150))
+        QTest.mouseRelease(canvas, left, pos=QPoint(200, 150))
+        assert drawing.capture_region == (screen, window_rect.intersected(canvas.rect()))
+        assert not drawing.armed and not drawing.selecting_window
+        assert toolbar._window_active and not toolbar._region_active
+        assert drawing._region_close.isVisible()
+
+        QTest.mouseClick(drawing._region_close, left)
+        assert drawing.capture_region is None
+        assert not toolbar._window_active
+        assert not drawing._region_close.isVisible()
+    finally:
+        drawing.close()
+
+
+def test_manual_toolbar_snap_targets_the_monitor_drawn_on(monkeypatch, no_focus_moves):
+    from types import SimpleNamespace
+
+    from ui_qt.snap.annotations import Step
+
+    primary = live.capture.screen_under_cursor()
+    secondary = object()
+    monkeypatch.setattr(live.QGuiApplication, "screens", staticmethod(lambda: [primary, secondary]))
+    monkeypatch.setattr(live.capture, "screen_under_cursor", lambda: primary)
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner, auto_mode=False)
+    try:
+        # With no marks, toolbar snap defaults to the pointer's screen.
+        assert drawing.target_screen() is primary
+
+        # Simulate a mark drawn on the secondary monitor.
+        mark = Step(live.QPointF(30, 40), 1, live.QColor("blue"))
+        fake_canvas = SimpleNamespace(
+            screen=secondary,
+            _marks=[(mark, float("inf"))],
+            items=lambda *, pinned_only=False: (mark,) if not pinned_only else (),
+        )
+        drawing._canvases[secondary] = fake_canvas
+        drawing._last_drawn_screen = secondary
+
+        # Clicking the toolbar check on primary still captures secondary where the mark is.
+        assert drawing.target_screen() is secondary
+        # Hotkey while pointing at primary also catches unpinned marks on secondary.
+        assert drawing.target_screen(from_hotkey=True) is secondary
+        # Once cleared, it returns to the pointer's screen.
+        drawing._canvases.pop(secondary)
+        drawing._last_drawn_screen = None
+        assert drawing.target_screen() is primary
+    finally:
+        drawing.close()

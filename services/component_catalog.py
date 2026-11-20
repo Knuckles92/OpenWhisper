@@ -220,8 +220,8 @@ _SPEECH_RUNTIMES = (
     (
         "asr-qwen", "Qwen3-ASR runtime", "https://github.com/QwenLM/Qwen3-ASR",
         "Apache-2.0 and bundled dependency licenses",
-        "PyTorch and Qwen3-ASR: CUDA 12.8 on Windows (GTX 10 series through RTX 50 "
-        "series), the Apple GPU on Apple Silicon Macs. Also supports CPU.",
+        "PyTorch for Qwen3-ASR on Apple Silicon, using the Apple GPU or CPU. "
+        "On Windows, this is the legacy runtime.",
     ),
     (
         "asr-moonshine", "Moonshine runtime", "https://github.com/moonshine-ai/moonshine",
@@ -236,8 +236,8 @@ _SPEECH_RUNTIMES = (
     (
         "asr-transcribe", "transcribe.cpp runtime", "https://github.com/handy-computer/transcribe.cpp",
         "MIT; Python PSF",
-        "Runs Parakeet Unified on the CPU or, through Vulkan, on a dedicated GPU from any "
-        "vendor. Auto uses the GPU when one is found.",
+        "Runs Parakeet Unified and Qwen3-ASR on the CPU or, through Vulkan, on a dedicated "
+        "GPU from any vendor. Auto uses the GPU when one is found.",
     ),
 )
 _SPEECH_RUNTIME_REQUIRES = {

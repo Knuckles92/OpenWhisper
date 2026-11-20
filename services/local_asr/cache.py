@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 
 from config import bundle_root, local_app_dir
-from services.local_asr.catalog import MODELS, artifacts
+from services.local_asr.catalog import MODELS, artifacts, uses_transcribe_cpp
 
 BUNDLED_MODELS_DIRNAME = "bundled_models"
 
@@ -58,6 +58,15 @@ def active_model_dir(key: str) -> Path:
 def is_cached(key: str) -> bool:
     spec = artifacts(key)
     return _dir_is_valid(model_dir(key), spec) or _dir_is_valid(bundled_model_dir(key), spec)
+
+
+def needs_qwen_redownload(key: str) -> bool:
+    model = MODELS.get(key)
+    if model is None or model.backend != "qwen_asr" or not uses_transcribe_cpp(model.backend):
+        return False
+    # The old model lived here as one or more Safetensors files. The cache
+    # replaces that directory only after the GGUF download succeeds.
+    return any(model_dir(key).glob("*.safetensors")) and not is_cached(key)
 
 
 def load_path(key: str) -> str:
