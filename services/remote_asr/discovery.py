@@ -190,6 +190,7 @@ class DiscoveryResponder:
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        self._state_lock = threading.Lock()
         self._per_sender: Dict[str, deque] = {}
         self._all: deque = deque()
         self.port: Optional[int] = None
@@ -202,33 +203,37 @@ class DiscoveryResponder:
 
     def start(self, port: Optional[int] = None, bind: str = "0.0.0.0") -> bool:
         """Listen for queries. False (with ``error`` set) when the port is taken."""
-        if self._sock is not None:
-            return True
-        port = DISCOVERY_PORT if port is None else port
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            sock.bind((bind, port))
-        except OSError as exc:
-            sock.close()
-            self.error = f"UDP port {port} is in use ({exc.strerror or exc})"
-            logger.warning("Remote engine discovery could not listen on UDP %s: %s", port, exc)
-            return False
-        sock.settimeout(0.5)
-        self._sock = sock
-        self.port = sock.getsockname()[1]
-        self.error = ""
-        self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._serve, args=(sock,), name="RemoteEngineDiscovery", daemon=True
-        )
-        self._thread.start()
-        logger.info("Remote engine discovery answering on UDP %s:%s", bind, self.port)
+        with self._state_lock:
+            if self._sock is not None:
+                return True
+            port = DISCOVERY_PORT if port is None else port
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                sock.bind((bind, port))
+            except OSError as exc:
+                sock.close()
+                self.error = f"UDP port {port} is in use ({exc.strerror or exc})"
+                logger.warning("Remote engine discovery could not listen on UDP %s: %s", port, exc)
+                return False
+            sock.settimeout(0.5)
+            self._sock = sock
+            self.port = sock.getsockname()[1]
+            self.error = ""
+            self._stop.clear()
+            thread = threading.Thread(
+                target=self._serve, args=(sock,), name="RemoteEngineDiscovery", daemon=True
+            )
+            thread.start()
+            self._thread = thread
+            bound_port = self.port
+        logger.info("Remote engine discovery answering on UDP %s:%s", bind, bound_port)
         return True
 
     def stop(self) -> None:
-        self._stop.set()
-        sock, self._sock = self._sock, None
-        thread, self._thread = self._thread, None
+        with self._state_lock:
+            self._stop.set()
+            sock, self._sock = self._sock, None
+            thread, self._thread = self._thread, None
         if sock is not None:
             try:
                 sock.close()
