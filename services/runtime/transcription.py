@@ -605,7 +605,7 @@ class TranscriptionRuntime:
         logger.info("Recording started")
         self.controller.ui_controller.clear_transcription_stats()
         self.controller.ui_controller.main_window.clear_partial_transcription()
-        self.controller.streaming_runtime.start_streaming_session()
+        self.controller.streaming_runtime.start_streaming_session(show_overlay=mode != JobMode.WALKTHROUGH)
         if mode != JobMode.WALKTHROUGH:
             # A walkthrough is decoded section by section once it stops,
             # never as one recording, so early windows would be wasted.
@@ -707,7 +707,7 @@ class TranscriptionRuntime:
             self.controller.overlay_state_update.emit(OverlayState.RECORDING)
             self.controller.status_update.emit(f"{action.name} · Listening...")
         elif mode == JobMode.WALKTHROUGH:
-            self.controller.overlay_state_update.emit(OverlayState.RECORDING)
+            self.controller.overlay_state_update.emit(OverlayState.WALKTHROUGH_RECORDING)
             self.controller.status_update.emit(f"{WALKTHROUGH_LABEL} · Recording...")
         else:
             self.controller.overlay_state_update.emit(OverlayState.RECORDING)
@@ -760,7 +760,9 @@ class TranscriptionRuntime:
             return
 
         self.controller.recording_state_changed.emit(False)
-        self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
+        self.controller.overlay_state_update.emit(
+            OverlayState.NONE if walkthrough is not None else OverlayState.PROCESSING
+        )
         self.controller.status_update.emit("Processing...")
         self._stop_started_at = time.monotonic()
         try:
@@ -1022,18 +1024,21 @@ class TranscriptionRuntime:
                 event_catalog.RECORDING_CANCELED, event_catalog.recording_canceled(job)
             )
 
+        cancel_state = (OverlayState.WALKTHROUGH_CANCELED
+                        if job is not None and job.mode == JobMode.WALKTHROUGH
+                        else OverlayState.CANCELING)
         if recording:
-            self._cancel_recording()
+            self._cancel_recording(cancel_state)
             return True
         if self.controller.current_backend and self.controller.current_backend.is_transcribing:
-            self._cancel_transcription()
+            self._cancel_transcription(cancel_state)
             return True
         if working:
-            self.controller.overlay_state_update.emit(OverlayState.CANCELING)
+            self.controller.overlay_state_update.emit(cancel_state)
             self.controller.status_update.emit("Canceled")
         return working
 
-    def _cancel_recording(self) -> None:
+    def _cancel_recording(self, cancel_state: OverlayState) -> None:
         self.controller.streaming_runtime.cancel_streaming_session()
         self._incremental.discard()
         # Listeners can't yet read the cancel from the recorder: a walkthrough
@@ -1047,7 +1052,7 @@ class TranscriptionRuntime:
         self.controller.ui_controller.discard_clipboard_prefetch()
         self._end_walkthrough(keep=False)
         self._forget_recording()
-        self.controller.overlay_state_update.emit(OverlayState.CANCELING)
+        self.controller.overlay_state_update.emit(cancel_state)
         self.controller.status_update.emit("Recording canceled")
         logger.info("Recording canceled")
         if not self.has_active_job and self._cancel_started_at:
@@ -1055,9 +1060,9 @@ class TranscriptionRuntime:
             record_metrics(cancel_s=time.monotonic() - self._cancel_started_at)
             self._cancel_started_at = 0.0
 
-    def _cancel_transcription(self) -> None:
+    def _cancel_transcription(self, cancel_state: OverlayState) -> None:
         self.controller.current_backend.cancel_transcription()
-        self.controller.overlay_state_update.emit(OverlayState.CANCELING)
+        self.controller.overlay_state_update.emit(cancel_state)
         self.controller.status_update.emit("Transcription canceled")
         logger.info("Transcription canceled")
 
@@ -1140,7 +1145,6 @@ class TranscriptionRuntime:
         self.controller._pending_file_size = audio.stat().st_size
         self.controller._pending_streaming_text = ""
         self.controller._pending_source_name = WALKTHROUGH_LABEL
-        self.controller.overlay_state_update.emit(OverlayState.PROCESSING)
         self.controller.status_update.emit("Recovering walkthrough...")
         try:
             self._submit_transcription_job(str(audio))
@@ -1397,7 +1401,8 @@ class TranscriptionRuntime:
         self, message: str, transcribing: bool = False
     ) -> None:
         """A backend's step inside ``transcribe`` (its ``on_progress``)."""
-        if transcribing:
+        job = self._active_job
+        if transcribing and (job is None or job.mode != JobMode.WALKTHROUGH):
             self.controller.overlay_state_update.emit(OverlayState.TRANSCRIBING)
         self.controller.status_update.emit(message)
 
@@ -1566,7 +1571,8 @@ class TranscriptionRuntime:
             self._last_cleanup_failure = "cleanup unavailable"
             return self._finish_without_cleanup(prepared)
 
-        self.controller.overlay_state_update.emit(OverlayState.CLEANING)
+        if job is None or job.mode != JobMode.WALKTHROUGH:
+            self.controller.overlay_state_update.emit(OverlayState.CLEANING)
         self.controller.status_update.emit(
             f"Formatting · {profile.name}..." if profile else "Cleaning up..."
         )
@@ -1630,9 +1636,13 @@ class TranscriptionRuntime:
             if self.controller._pending_file_size is None:
                 self.controller._pending_file_size = os.path.getsize(audio_path)
             backend = self.controller.current_backend
-            self._announce_transcription(backend, audio_path)
+            walkthrough = job is not None and job.mode == JobMode.WALKTHROUGH
+            if walkthrough:
+                self.controller.status_update.emit("Transcribing walkthrough...")
+            else:
+                self._announce_transcription(backend, audio_path)
             job, recognition = self._with_final_recognition(job)
-            if job is not None and job.mode == JobMode.WALKTHROUGH:
+            if walkthrough:
                 result = self._complete_walkthrough(backend, audio_path, recognition)
             else:
                 result = self._decode_and_complete(backend, audio_path, recognition, job)

@@ -16,7 +16,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QScreen
+from PyQt6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QRegion, QScreen
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from services.settings import (
@@ -142,6 +142,9 @@ class LiveAnnotations(QObject):
         self._toolbar.region_clicked.connect(self.select_region)
         self._toolbar.window_clicked.connect(self.select_window)
         self._toolbar.set_keep_marks(self._keep_marks)
+        self._toolbar.installEventFilter(self)
+        if self._panel is not None:
+            self._panel.installEventFilter(self)
         QGuiApplication.instance().screenRemoved.connect(self._remove_screen)
         self._sync_toolbar()
         self.set_enabled(True)
@@ -348,6 +351,13 @@ class LiveAnnotations(QObject):
         if self._region_close is not None and self._region_close.isVisible():
             self._region_close.raise_()
 
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() in (QEvent.Type.Show, QEvent.Type.Hide,
+                            QEvent.Type.Move, QEvent.Type.Resize) and self.armed:
+            for canvas in self._canvases.values():
+                canvas.update_control_mask()
+        return super().eventFilter(watched, event)
+
     def set_color(self, color: int) -> None:
         self.color = color
         for canvas in self._canvases.values():
@@ -419,6 +429,7 @@ class LiveAnnotations(QObject):
                 canvas.present()
         if self._region_close is None:
             self._region_close = _RegionClose(self)
+            self._region_close.installEventFilter(self)
         self._show_region_close()
         self._sync_toolbar()
 
@@ -630,6 +641,8 @@ class _Canvas(QWidget):
 
     def _geometry_changed(self, rect: QRect) -> None:
         self.setGeometry(rect)
+        if self.live.armed:
+            self.update_control_mask()
         if self.region() is not None:
             self.live.clear_region()
 
@@ -643,6 +656,7 @@ class _Canvas(QWidget):
             return
         self.setScreen(self.screen)
         self.setGeometry(self.screen.geometry())
+        self.update_control_mask()
         if self.live.selecting_window:
             cursor = Qt.CursorShape.PointingHandCursor
         elif self.live.tool is Tool.TEXT:
@@ -659,6 +673,19 @@ class _Canvas(QWidget):
         if not affinity.is_kept_out(self):
             affinity.keep_out_of_screenshots(self, True)
         self.update()
+
+    def update_control_mask(self) -> None:
+        # Clicking a topmost canvas can raise it above its sibling controls.
+        # Leave holes for their native hit targets regardless of stacking order.
+        if not self.live.armed:
+            self.clearMask()
+            return
+        area = QRegion(self.rect())
+        for control in (self.live._toolbar, self.live._panel, self.live._region_close):
+            if control is not None and control.isVisible():
+                hole = QRect(self.mapFromGlobal(control.mapToGlobal(QPoint())), control.size())
+                area = area.subtracted(QRegion(hole))
+        self.setMask(area)
 
     def items(self, *, pinned_only: bool = False) -> tuple[Annotation, ...]:
         return tuple(mark for mark, expires in self._marks if expires is None or not pinned_only)

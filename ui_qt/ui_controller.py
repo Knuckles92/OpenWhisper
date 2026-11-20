@@ -882,6 +882,14 @@ class UIController(QObject):
         reports inside that tab instead: the overlay is feedback for a hotkey
         pressed while another application is in front.
         """
+        if state is OverlayState.WALKTHROUGH_RECORDING:
+            self.tray_manager.set_recording(True)
+            return
+
+        if state is OverlayState.WALKTHROUGH_CANCELED:
+            self._dismiss_walkthrough_panel_for_job()
+            state = OverlayState.NONE
+
         if self._upload_job_active() and self._route_upload_progress(state):
             return
 
@@ -1173,6 +1181,7 @@ class UIController(QObject):
         if panel is None:
             panel = self._walkthrough_panel = make_panel()
             if panel is None:
+                self._show_or_set_overlay(self.overlay.STATE_RECORDING)
                 return
         panel.begin()
         # After show(): the exclusion is set on the native window. Where it

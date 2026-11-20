@@ -9,9 +9,9 @@ words always go with it, since a section is the words and then the
 screenshot they led to. The footer takes screenshots (its menu picks the
 kind Snap repeats), undoes the last one, pauses, cancels and finishes.
 While Hold for note is held, what the user says is a note for the AI
-write-up, not the document: it shows as a purple row. At Done the ticks close up into lines while the
-document is written, the header says what it came to, and the column fades
-once the document is ready.
+write-up, not the document: it shows as a purple row. At Done the ticks close
+up into lines while the document is written. When it is ready, the header
+briefly shows the summary and the column slides out.
 
 The column never takes focus, so the app being shown keeps the keyboard,
 and it is left out of screenshots. It can be dragged aside by anything
@@ -125,8 +125,9 @@ TICK_GROW_S = 0.12
 SHOT_IN_S = 0.5
 MORPH_S = 0.7
 FADE_S = 0.32
-#: How long the finished column says what the walkthrough came to.
-HOLD_S = 2.6
+HOLD_S = 0.22
+EXIT_S = 0.18
+EXIT_DRIFT = 14.0
 #: The document never came (it failed without saying so): stop waiting.
 #: Past the slowest real job: a long walkthrough transcribed on the CPU,
 #: then an AI write-up, which may take up to 5 minutes.
@@ -363,6 +364,7 @@ class WalkthroughPanel(QWidget):
         self._recorded_s = 0.0
         self._summary = ""
         self._state_at = 0.0
+        self._exit_at: float | None = None
         self._last = 0.0
         self._scroll = 0.0
         # How far the user scrolled back from the newest, in pixels.
@@ -406,6 +408,7 @@ class WalkthroughPanel(QWidget):
         self._scroll = self._scrolled_back = 0.0
         self._confirm_cancel_until = 0.0
         self._summary = ""
+        self._exit_at = None
         self._recorded_s = 0.0
         self._hover = self._pressed = ""
         self._hover_shot = 0
@@ -539,24 +542,26 @@ class WalkthroughPanel(QWidget):
         self._enter(self.WRITING)
 
     def complete(self, result) -> None:
-        """The document is ready: say what it came to, then fade."""
+        """The document is ready: show its summary, then slide out."""
         if self.state not in (self.RECORDING, self.WRITING):
             return
         self.end_capture_animation()
         count = f"{result.shots} screenshot{'' if result.shots == 1 else 's'}"
         self._summary = f"{clock(result.duration_s)} · {count}"
         self._enter(self.DONE)
+        self._exit_at = self._state_at + HOLD_S
 
     def dismiss(self) -> None:
-        """Canceled or failed: fade at once."""
+        """Canceled or failed: start the outro immediately."""
+        now = self._now()
+        if self.state == self.HIDDEN or (self._exit_at is not None and self._exit_at <= now):
+            return
         self.end_capture_animation()
         self._close_menu()
         self._hold(False)
-        if self.state in (self.RECORDING, self.WRITING, self.DONE):
-            self._summary = ""
-            self._enter(self.DONE)
-            # Start the fade now instead of after the hold.
-            self._state_at -= HOLD_S
+        self._summary = ""
+        self._enter(self.DONE)
+        self._exit_at = now
 
     # ---- frames ----
 
@@ -577,6 +582,11 @@ class WalkthroughPanel(QWidget):
     def _since(self) -> float:
         return self._now() - self._state_at
 
+    def _exit_progress(self, now: float) -> float:
+        if self._exit_at is None:
+            return 0.0
+        return min(1.0, max(0.0, (now - self._exit_at) / EXIT_S))
+
     def _advance(self) -> None:
         now = self._now()
         if self._flight is not None and self._flight.number:
@@ -590,19 +600,16 @@ class WalkthroughPanel(QWidget):
         dt, self._last = min(0.1, now - self._last), now
         if self.state == self.RECORDING and not self.paused:
             self.column.advance(dt, now)
-        target = 1.0
-        if self.state == self.DONE:
-            target = 0.0 if self._since() >= HOLD_S else 1.0
-        elif self.state == self.WRITING and self._since() >= GIVE_UP_S:
-            target = 0.0
-        step = dt / FADE_S
-        self._opacity = min(target, self._opacity + step) if target > self._opacity \
-            else max(target, self._opacity - step)
-        if target == 0.0 and self._opacity <= 0.0:
+        if self.state == self.WRITING and now - self._state_at >= GIVE_UP_S:
+            self.dismiss()
+        if self._exit_progress(now) >= 1.0:
             self._frame.stop()
             self.state = self.HIDDEN
+            self._opacity = 0.0
             self.hide()
             return
+        if self._exit_at is None or now < self._exit_at:
+            self._opacity = min(1.0, self._opacity + dt / FADE_S)
         self.update()
 
     def _place(self) -> None:
@@ -879,7 +886,9 @@ class WalkthroughPanel(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setOpacity(ease_out(self._opacity))
+        exit_progress = self._exit_progress(self._now())
+        painter.setOpacity(ease_out(self._opacity) * (1.0 - exit_progress) ** 1.5)
+        painter.translate(EXIT_DRIFT * ease_out(exit_progress), 0.0)
         card = self._card()
         # Shadow, then the card.
         for i in range(SHADOW, 0, -2):
@@ -1002,7 +1011,11 @@ class WalkthroughPanel(QWidget):
         clip.addRect(body.adjusted(-SHADOW, 0, SHADOW, 0))
         painter.setClipPath(clip)
         now = self._now()
-        morph = ease_out(self._since() / MORPH_S) if self.state in (self.WRITING, self.DONE) else 0.0
+        morph = 0.0
+        if self.state == self.WRITING:
+            morph = ease_out(self._since() / MORPH_S)
+        elif self.state == self.DONE:
+            morph = 1.0
         self._shot_rects = {}
         for kind, item, top, height in laid:
             y = body.top() + top - self._scroll
@@ -1239,6 +1252,8 @@ class WalkthroughPanel(QWidget):
             paint_icon(painter, "x" if name == "remove" else name, rect.center(), 14, ink)
 
     def _paint_footer(self, painter: QPainter) -> None:
+        if self.state == self.DONE:
+            return
         # Once it records no more, the buttons fade, all but Cancel, which
         # stays while it is written.
         fade = 1.0 - ease_out(self._since() / FADE_S) if self.state != self.RECORDING else 1.0
@@ -1311,11 +1326,11 @@ class WalkthroughPanel(QWidget):
             else:
                 paint_icon(painter, "pause", rect.center(), 15, token_color("text"))
         elif key == "keep":
-            self._paint_label(painter, rect, "", "Keep walkthrough", token_color("text"))
+            self._paint_label(painter, rect, "", "Keep", token_color("text"))
         elif key == "cancel":
             ink = token_color("danger-text-soft")
             if self._confirming_cancel():
-                self._paint_label(painter, rect, "x", "Discard walkthrough", ink)
+                self._paint_label(painter, rect, "x", "Discard", ink)
             elif rect.width() > FOOT_ICON_W * 2.5:
                 self._paint_label(painter, rect, "x", "Cancel", ink)
             else:

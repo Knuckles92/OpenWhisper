@@ -17,6 +17,7 @@ from services.settings import (
 )
 from services.walkthrough import write_up
 from services.walkthrough.styles import load_styles
+from ui_qt.overlay_state import OverlayState
 from ui_qt.overlays import waveform_overlay
 from ui_qt.overlays.waveform_overlay import WaveformOverlay
 from ui_qt.ui_controller import UIController
@@ -768,12 +769,47 @@ def test_the_controller_lets_the_column_stand_in_for_the_overlay(monkeypatch):
     panel.dismiss.assert_called_once_with()
 
 
-def test_without_a_column_wayland_keeps_the_overlay(monkeypatch):
+def test_without_a_column_wayland_keeps_the_overlay(monkeypatch, overlay):
     from ui_qt.widgets import walkthrough_panel
 
     monkeypatch.setattr(walkthrough_panel, "make_panel", lambda: None)
-    ui = SimpleNamespace(_walkthrough_panel=None, overlay=Mock())
+    ui = SimpleNamespace(_walkthrough_panel=None, overlay=overlay)
+    ui._show_or_set_overlay = UIController._show_or_set_overlay.__get__(ui)
+    overlay.set_walkthrough_controls(True)
 
     UIController._show_walkthrough_panel(ui, True)
 
-    ui.overlay.set_stand_in.assert_not_called()
+    assert overlay.isVisible() and overlay.current_state == overlay.STATE_RECORDING
+    height = overlay.height()
+    overlay.update_streaming_text("Preview words " * 20)
+    assert overlay.height() == height
+
+
+def test_walkthrough_start_leaves_the_recording_feedback_to_the_panel():
+    ui = SimpleNamespace(tray_manager=Mock(), _show_listening_overlay=Mock())
+
+    UIController.set_overlay_state(ui, OverlayState.WALKTHROUGH_RECORDING)
+
+    ui.tray_manager.set_recording.assert_called_once_with(True)
+    ui._show_listening_overlay.assert_not_called()
+
+
+@pytest.mark.parametrize("walkthrough", [False, True])
+def test_only_quick_record_plays_the_cancel_animation(walkthrough):
+    ui = SimpleNamespace(
+        _upload_job_active=lambda: False,
+        _dismiss_walkthrough_panel_for_job=Mock(),
+        _start_cancel_animation=Mock(),
+        main_window=Mock(),
+        tray_manager=Mock(),
+        hide_overlay=Mock(),
+        hide_streaming_overlay=Mock(),
+    )
+    state = OverlayState.WALKTHROUGH_CANCELED if walkthrough else OverlayState.CANCELING
+
+    UIController.set_overlay_state(ui, state)
+
+    ui._dismiss_walkthrough_panel_for_job.assert_called_once_with()
+    ui.tray_manager.set_recording.assert_called_once_with(False)
+    assert ui.hide_overlay.called is walkthrough
+    assert ui._start_cancel_animation.called is not walkthrough

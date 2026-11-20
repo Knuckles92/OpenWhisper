@@ -122,7 +122,7 @@ class StreamingRuntime(QObject):
         if self.controller._streaming_enabled and text:
             self.streaming_text_update.emit(text, is_final)
 
-    def start_streaming_session(self) -> None:
+    def start_streaming_session(self, *, show_overlay: bool = True) -> None:
         """Start real-time streaming transcription for an active recording."""
         if not self.controller.streaming_transcriber:
             return
@@ -144,7 +144,7 @@ class StreamingRuntime(QObject):
             return
         logger.info("Streaming transcription started")
 
-        if self.controller._streaming_enabled:
+        if show_overlay and self.controller._streaming_enabled:
             # Set synchronously so a queued RECORDING overlay update does not
             # flash the waveform before the streaming overlay show is delivered.
             self.controller.ui_controller.streaming_flow_active = True

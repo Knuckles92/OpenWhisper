@@ -293,6 +293,10 @@ class WaveformOverlay(QWidget):
 
     def _draw_state(self, painter: QPainter, rect: QRect) -> None:
         """Paint what the current state shows over the background."""
+        if self._walkthrough_controls and self.current_state == self.STATE_RECORDING:
+            if not self._caption:
+                self._draw_status(painter, "Recording walkthrough…", token_color("overlay-text"))
+            return
         if self.current_state in self._WORK_STATES:
             self._draw_work(painter)
             return
@@ -649,6 +653,8 @@ class WaveformOverlay(QWidget):
             text: Full preview transcript so far.
             is_final: Unused; kept for API compatibility with prior overlay.
         """
+        if self._walkthrough_controls and self.current_state == self.STATE_RECORDING:
+            return
         self._streaming_preview_text = (text or "").strip()
         self._apply_height()
         self.update()

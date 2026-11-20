@@ -97,7 +97,7 @@ is cut off at the right edge.
   does). Where floating controls are supported (Windows, macOS and X11),
   the drawing toolbar opens right away at the top center of the screen under
   your pointer, and you can draw on any monitor at any time.
-- **Screenshot** (or the toolbar's blue **✓** button, **Snap** on the column,
+- **Screenshot** (or the toolbar's camera button, **Snap** on the column,
   or **Enter** while drawing) takes a screenshot immediately: the whole
   screen by default, or the **Region** or **Window** frame you picked on the
   toolbar, with any live marks you drew baked in. Temporary marks clear once
@@ -231,7 +231,7 @@ outline and **×** are left out of saved images.
 In manual walkthroughs (Auto Mode off), pick any drawing tool on the toolbar
 and place as many marks as you want on any monitor (with Undo/Redo via the
 toolbar or **Ctrl+Z** / **Ctrl+Shift+Z**). Nothing is captured until you
-click the toolbar's blue **✓**, click **Snap** on the column, press **Enter**
+click the toolbar's camera button, click **Snap** on the column, press **Enter**
 while drawing, or press the Screenshot shortcut. Once saved, temporary marks
 clear and the drawing tool disarms so you can interact with your desktop
 right away. In Auto Mode, choose a tool there or click **Draw** in the column

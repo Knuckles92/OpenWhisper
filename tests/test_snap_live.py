@@ -3,10 +3,10 @@
 from unittest.mock import Mock
 
 import pytest
-from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, Qt
+from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt
 from PyQt6.QtGui import QGuiApplication, QHelpEvent
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QToolTip
+from PyQt6.QtWidgets import QApplication, QToolTip, QWidget
 
 from ui_qt.snap import live
 from ui_qt.snap.annotations import Label, Redaction, Stroke, Tool
@@ -325,6 +325,51 @@ def test_live_tool_stays_selected_until_switched_or_toggled_off(monkeypatch, no_
         assert len(shots) == 2
     finally:
         drawing.close()
+
+
+def test_drawn_boxes_leave_snap_and_tool_toggle_reachable(no_focus_moves):
+    owner = QObject()
+    panel = QWidget(None, live._FLOATING | live._NO_FOCUS)
+    screen = live.capture.screen_under_cursor()
+    panel.setGeometry(QRect(screen.geometry().center(), QSize(80, 40)))
+    panel.show()
+    drawing = live.LiveAnnotations(owner, panel, auto_mode=False)
+    try:
+        toolbar = drawing._toolbar
+        box = toolbar.button_rect("tool", Tool.BOX).center()
+        snap = toolbar.button_rect("keep").center()
+        left = Qt.MouseButton.LeftButton
+        QTest.mouseClick(toolbar, left, pos=box)
+        canvas = drawing._canvases[screen]
+        for start in (QPoint(80, 200), QPoint(150, 200)):
+            QTest.mousePress(canvas, left, pos=start)
+            QTest.mouseRelease(canvas, left, pos=start + QPoint(40, 40))
+        assert len(canvas.items()) == 2
+        canvas.raise_()
+
+        def check_target(widget, pos):
+            at = widget.mapToGlobal(pos)
+            assert not canvas.mask().contains(canvas.mapFromGlobal(at))
+            if QGuiApplication.platformName() == "windows":
+                assert QGuiApplication.topLevelAt(at) == widget.windowHandle()
+
+        check_target(toolbar, snap)
+        check_target(toolbar, box)
+        previous = canvas.mapFromGlobal(panel.geometry().center())
+        panel.move(panel.pos() + QPoint(100, 0))
+        check_target(panel, panel.rect().center())
+        assert canvas.mask().contains(previous)
+        requested = Mock()
+        drawing.snap_requested.connect(requested)
+        QTest.mouseClick(toolbar, left, pos=snap)
+        requested.assert_called_once_with(None)
+        QTest.mouseClick(toolbar, left, pos=box)
+        assert not drawing.armed
+        assert canvas.windowFlags() & Qt.WindowType.WindowTransparentForInput
+        assert len(canvas.items()) == 2
+    finally:
+        drawing.close()
+        panel.close()
 
 
 def test_live_toolbar_keeps_new_marks_and_clears_them_without_arming(monkeypatch, no_focus_moves):
@@ -678,7 +723,7 @@ def test_manual_toolbar_snap_targets_the_monitor_drawn_on(monkeypatch, no_focus_
         drawing._canvases[secondary] = fake_canvas
         drawing._last_drawn_screen = secondary
 
-        # Clicking the toolbar check on primary still captures secondary where the mark is.
+        # Clicking the toolbar camera on primary still captures secondary where the mark is.
         assert drawing.target_screen() is secondary
         # Hotkey while pointing at primary also catches unpinned marks on secondary.
         assert drawing.target_screen(from_hotkey=True) is secondary

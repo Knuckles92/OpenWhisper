@@ -22,6 +22,7 @@ from ui_qt.snap.annotations import SWATCHES, Tool
 from ui_qt.snap.chrome import chrome_font, paint_panel
 from ui_qt.snap.icons import paint_icon
 from ui_qt.utils.palette import Palette
+from ui_qt.widgets.walkthrough_icons import paint_icon as paint_walkthrough_icon
 
 BUTTON = 34
 SWATCH = 26
@@ -409,6 +410,9 @@ class SnapToolbar(QWidget):
             painter.drawRoundedRect(rect, 8, 8)
         if button.label:
             self._paint_labeled_button(painter, button, rect, icon)
+            return
+        if self._live and button.kind == "keep":
+            paint_walkthrough_icon(painter, "camera", rect.center(), ICON, icon)
             return
         inset = (rect.width() - ICON) / 2
         paint_icon(

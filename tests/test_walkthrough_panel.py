@@ -7,7 +7,6 @@ from PyQt6.QtGui import QColor, QImage
 
 from ui_qt.widgets import walkthrough_panel
 from ui_qt.widgets.walkthrough_panel import (
-    HOLD_S,
     TICK_S,
     Paragraph,
     ShotItem,
@@ -125,9 +124,9 @@ def test_a_walkthrough_fills_the_column_then_it_fades_once_ready(panel, clock):
 
     panel.complete(SimpleNamespace(shots=1, duration_s=75.0))
     assert panel._summary == "1:15 · 1 screenshot"
-    _run(panel, clock, HOLD_S - 0.5)
+    _run(panel, clock, 0.15)
     assert panel.isVisible()
-    _run(panel, clock, 1.5)
+    _run(panel, clock, 0.30)
     assert not panel.isVisible() and panel.state == panel.HIDDEN
 
 
@@ -136,7 +135,11 @@ def test_a_canceled_walkthrough_fades_at_once(panel, clock):
     _run(panel, clock, 0.5, level=LOUD)
     panel.finish()
     panel.dismiss()
-    _run(panel, clock, 0.6)
+    _run(panel, clock, 0.08)
+    assert panel.isVisible()
+    panel.grab()  # paints the outro in flight
+    panel.dismiss()
+    _run(panel, clock, 0.13)
     assert not panel.isVisible()
 
 
