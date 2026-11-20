@@ -7,9 +7,13 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.96] - 2026-11-20
+
 ### Changed
 
 - **Qwen3-ASR uses the bundled speech runtime on Windows x64 and Linux x86_64.** If you previously downloaded Qwen3-ASR on Windows, your model selection carries over. Open **Settings → Downloads** for the one-time GGUF download (about 850 MB for 0.6B or 2.2 GB for 1.7B). The new runtime removes the SciPy dependency. Compatibility with Windows Smart App Control still depends on whether Windows trusts the bundled DLLs.
+- **Manual walkthroughs can be annotated before taking a screenshot.** On desktops that support the floating toolbar, you can draw on the live desktop, choose a capture region or window where supported, and save the marked screenshot when ready. Recording feedback appears in the walkthrough panel.
+- **Hugging Face telemetry is disabled** in the app and its worker processes.
 
 ## [2.8.95] - 2026-11-19
 
