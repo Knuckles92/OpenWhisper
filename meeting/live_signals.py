@@ -377,10 +377,10 @@ class LiveSignals:
         """
         if self.closed or not self.allowed() or not resolve_typesafe_feature_enabled("highlights"):
             return
-        deadline = time.monotonic() + timeout_s
+        started_at = time.monotonic()
         rows = self.repository.get_segments(self.store.meeting_id)
         for minute in sorted({int(r["start_s"] // 60) for r in rows if r["start_s"] >= 0}, reverse=True):
-            remaining = deadline - time.monotonic()
+            remaining = timeout_s - (time.monotonic() - started_at)
             if remaining <= 0 or self.closed or not self.allowed():
                 logger.info("Final highlight catch-up stopped meeting_id=%s minute=%s remaining_s=%.2f",
                             self.store.meeting_id, minute, max(0.0, remaining))

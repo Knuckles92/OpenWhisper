@@ -521,6 +521,11 @@ def test_topic_shift_caps_a_slow_model(client):
 
 def test_final_highlight_pass_goes_newest_first_with_the_judges_budget(monkeypatch):
     monkeypatch.setattr("meeting.live_signals.resolve_typesafe_feature_enabled", lambda _: True)
+    # Windows can return the same monotonic reading twice. Adding a deadline
+    # before subtracting this reading can round the remaining budget up.
+    start = 483.007
+    ticks = iter((start, start, start + 2, start + 3))
+    monkeypatch.setattr("meeting.live_signals.time", SimpleNamespace(monotonic=lambda: next(ticks)))
     target = MeetingStateStore(MeetingState("m_final", status="ended", cloud_enabled=False))
     rows = [{"id": f"sg_{m}", "text": f"Minute {m} words here.", "start_s": m * 60 + 5, "end_s": m * 60 + 9}
             for m in range(3)]
@@ -535,4 +540,4 @@ def test_final_highlight_pass_goes_newest_first_with_the_judges_budget(monkeypat
     LiveSignals(target, Repo(rows), SimpleNamespace(ask=ask), lambda: True,
                 executor=ImmediateExecutor()).finalize(timeout_s=30.0)
     assert [sid for sid, _ in seen] == ["sg_2", "sg_1", "sg_0"]
-    assert all(20.0 < budget <= 30.0 for _, budget in seen)
+    assert [budget for _, budget in seen] == [30.0, 28.0, 27.0]

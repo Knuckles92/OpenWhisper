@@ -7,7 +7,7 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
-## [2.8.96] - 2026-11-20
+## [2.8.97] - 2026-11-20
 
 ### Changed
 
