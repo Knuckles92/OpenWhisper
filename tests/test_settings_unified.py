@@ -365,7 +365,7 @@ class TestRouting:
         dialog.models.speech_download_button.click()
 
         assert dialog.rail.current_key() == DOWNLOADS
-        assert dialog.downloads.backend_filter_combo.currentData() == "parakeet"
+        assert dialog.downloads.current_rail_key() == "parakeet"
 
     def test_cleanup_profiles_model_link_opens_the_cleanup_model(self, make_dialog):
         dialog, _store = make_dialog()

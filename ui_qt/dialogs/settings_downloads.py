@@ -1,24 +1,24 @@
-"""Settings → Models & storage → Downloads: the speech-model catalog,
+"""Settings → Models & storage → Downloads: engine-grouped speech models,
 optional components, and each model's technical profile.
 
 This is the one page in Settings whose list scrolls on its own: the header,
-toolbar, and selection bar stay put while the catalog moves. Settings is
-non-modal, so a multi-gigabyte download never locks the user out of
-recording.
+engine rail, runtime banner, toolbar, and footer stay put while the catalog
+moves. Settings is non-modal, so a multi-gigabyte download never locks the
+user out of recording.
 
-The profile inspector docks beside the catalog when the page is wide enough
-for both, and floats over the catalog's right edge when it is not, so a large
-font scale never squeezes the rows below the point where a name or a size is
-still readable.
+An Engine Rail on the left separates choosing a speech engine from managing
+its models and runtime. The technical profile inspector slides over the
+catalog's right edge on demand when a model is selected, leaving the full
+catalog width clear when nothing is selected.
 """
 import itertools
 import logging
 import threading
 import math
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Set
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import QObject, QRect, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import QObject, QPoint, QRect, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QDialog,
@@ -61,13 +61,12 @@ from services.settings import (
 )
 from ui_qt.dialogs.component_details_dialog import ComponentDetailsDialog
 from ui_qt.utils.app_icon import app_icon
-from ui_qt.utils.restyle import set_style_property
+from ui_qt.utils.restyle import repolish, set_style_property
 from ui_qt.widgets import Button, ElidingComboBox, ElidingLabel, PrimaryButton
 from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.buttons import fit_compact_button
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
 from ui_qt.widgets.empty_state import EmptyState
-from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.model_row_widget import ModelRowWidget
 
 logger = logging.getLogger(__name__)
@@ -76,6 +75,159 @@ from ui_qt.widgets.speech_backend_picker import (
     backend_picker_label,
     backend_picker_tooltip,
 )
+
+
+@dataclass(frozen=True)
+class _EngineMeta:
+    """Visual identity and brief guidance for one speech engine in the rail."""
+
+    short: str
+    rgb: str
+    tagline: str
+    device: str
+
+
+_ENGINE_META: Dict[str, _EngineMeta] = {
+    "parakeet_unified": _EngineMeta(
+        short="Parakeet Unified",
+        rgb="56, 189, 248",
+        tagline="English dictation with live streaming",
+        device="GPU (Vulkan) / CPU",
+    ),
+    "local_whisper": _EngineMeta(
+        short="Whisper",
+        rgb="167, 139, 250",
+        tagline="99 languages & translation (CTranslate2)",
+        device="NVIDIA CUDA / CPU",
+    ),
+    "parakeet": _EngineMeta(
+        short="Parakeet",
+        rgb="52, 211, 153",
+        tagline="Fast 25-language dictation & meetings (NeMo)",
+        device="GPU / CPU",
+    ),
+    "qwen_asr": _EngineMeta(
+        short="Qwen3-ASR",
+        rgb="251, 191, 36",
+        tagline="30 languages & 22 Chinese dialects",
+        device="GPU / CPU",
+    ),
+    "nemotron": _EngineMeta(
+        short="Nemotron",
+        rgb="244, 114, 182",
+        tagline="Low-latency live streaming & meetings",
+        device="GPU / CPU",
+    ),
+    "moonshine": _EngineMeta(
+        short="Moonshine",
+        rgb="251, 146, 60",
+        tagline="Ultra-light CPU streaming & live meetings",
+        device="CPU",
+    ),
+    "parakeet_mlx": _EngineMeta(
+        short="Parakeet MLX",
+        rgb="45, 212, 191",
+        tagline="Apple Silicon GPU dictation & meetings",
+        device="Apple GPU / CPU",
+    ),
+}
+
+_FALLBACK_ENGINE_META = _EngineMeta(
+    short="Speech",
+    rgb="148, 163, 184",
+    tagline="Local speech recognition engine",
+    device="CPU",
+)
+
+
+def _engine_meta(backend_id: str) -> _EngineMeta:
+    return _ENGINE_META.get(backend_id, _FALLBACK_ENGINE_META)
+
+
+def _engine_order() -> Tuple[str, ...]:
+    """Stable rail ordering: platform default first, then remaining engines."""
+    from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND
+
+    if parakeet_mlx_supported():
+        preferred = (
+            "parakeet_mlx",
+            "parakeet_unified",
+            WHISPER_BACKEND,
+            "parakeet",
+            "qwen_asr",
+            "nemotron",
+            "moonshine",
+        )
+    else:
+        preferred = (
+            "parakeet_unified",
+            WHISPER_BACKEND,
+            "parakeet",
+            "qwen_asr",
+            "nemotron",
+            "moonshine",
+            "parakeet_mlx",
+        )
+    known = {WHISPER_BACKEND, *BACKENDS}
+    ordered = [key for key in preferred if key in known]
+    extras = sorted(known - set(ordered))
+    return tuple([*ordered, *extras])
+
+
+class _EngineRailItem(QPushButton):
+    """One selectable row inside the Downloads left Engine Rail."""
+
+    def __init__(
+        self,
+        key: str,
+        label: str,
+        *,
+        dot_rgb: str = "",
+        tooltip: str = "",
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.key = key
+        self.setObjectName("downloadsRailItem")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFixedHeight(25)
+        self.setToolTip(tooltip or label)
+        self.setAccessibleName(label)
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(7, 0, 7, 0)
+        row.setSpacing(6)
+
+        if dot_rgb:
+            dot = QLabel()
+            dot.setFixedSize(8, 8)
+            dot.setStyleSheet(
+                f"background-color: rgb({dot_rgb}); border: none; border-radius: 4px;"
+            )
+            dot.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            row.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.name_label = ElidingLabel(label)
+        self.name_label.setObjectName("downloadsRailItemLabel")
+        self.name_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        row.addWidget(self.name_label, stretch=1)
+
+        self.count_label = QLabel("")
+        self.count_label.setObjectName("downloadsRailItemCount")
+        self.count_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.count_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        row.addWidget(self.count_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
+    def set_selected(self, selected: bool) -> None:
+        set_style_property(self, "selected", selected)
+        set_style_property(self.name_label, "selected", selected)
+        set_style_property(self.count_label, "selected", selected)
+
+    def set_count(self, text: str, *, attention: bool = False) -> None:
+        self.count_label.setText(text)
+        set_style_property(self.count_label, "attention", attention)
 
 
 def _current_cache_info(
@@ -218,7 +370,9 @@ def _scan_relay() -> _ScanRelay:
 class DownloadsPage(QWidget):
     """The catalog page Settings hosts under Models & storage."""
 
-    #: Width the side profile takes when it docks beside the catalog.
+    #: Width of the left Engine Rail.
+    RAIL_WIDTH = 164
+    #: Width the on-demand slide-over technical profile takes.
     INSPECTOR_WIDTH = 300
 
     component_install_requested = pyqtSignal(str)
@@ -268,8 +422,10 @@ class DownloadsPage(QWidget):
         self._batch_failed = 0
         self._downloads_blocked = False
         self._cached_sizes: Dict[str, int] = {}
-        self._inspector_docked = True
         self._inspector_open = False
+        self._active_rail_key = "all"
+        self._banner_component_id: Optional[str] = None
+        self._banner_action_installs = False
 
         self._ui_built = False
         self._inventory = {}
@@ -278,10 +434,25 @@ class DownloadsPage(QWidget):
             self.ensure_ui()
 
     _UI_ATTRIBUTES = frozenset({
-        'tabs',
+        'engine_rail',
+        'engine_rail_scroll',
+        '_rail_items',
+        '_active_rail_key',
+        '_rail_extras_label',
+        'right_pane',
         'models_section',
         'components_section',
         'components_scroll',
+        'context_banner',
+        'banner_dot',
+        'banner_title',
+        'banner_subtitle',
+        'banner_device',
+        'banner_runtime_badge',
+        'banner_runtime_button',
+        'selection_bar',
+        'show_all_engines_button',
+        'inspector_engine',
         'inspector_best_for_heading',
         'inspector_detail_scroll',
         'inspector_empty',
@@ -293,7 +464,6 @@ class DownloadsPage(QWidget):
         '_downloading_model',
         '_batch_queue',
         '_toolbar_layout',
-        'backend_filter_combo',
         'download_all_button',
         'stats_label',
         'inspector_close_button',
@@ -336,7 +506,6 @@ class DownloadsPage(QWidget):
         'inspector_facts',
         'filter_edit',
         'inspector_name',
-        '_inspector_docked',
         'rows',
         'fact_labels',
     })
@@ -361,34 +530,21 @@ class DownloadsPage(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-
-        # Models and components are different jobs. The catalog has its own
-        # filters and batch bar, and components used to sit under all of it,
-        # six screens down. One-line tabs, since the model list needs the height.
-        self.tabs = SegmentedBar(
-            (("Speech models", ""), ("Components", "")), compact=True
-        )
-        self.tabs.setAccessibleName("Downloads section")
-        self.tabs.currentIndexChanged.connect(self._show_section)
-        layout.addWidget(self.tabs)
-
-        self.models_section = QWidget()
-        self.models_section.setObjectName("downloadsModelsSection")
-        models_layout = QVBoxLayout(self.models_section)
-        models_layout.setContentsMargins(0, 0, 0, 0)
-        models_layout.setSpacing(6)
+        layout.setSpacing(5)
 
         header_row = QHBoxLayout()
         header_row.setSpacing(8)
         # Elides rather than wraps: the cache path is long and would otherwise
-        # push the toolbar and the list down by two lines.
+        # push the rail and catalog down.
         self.stats_label = ElidingLabel("")
         self.stats_label.setObjectName("downloadsSubtitle")
         header_row.addWidget(self.stats_label, stretch=1)
 
-        self.custom_models_button = Button("Add custom models…")
+        self.custom_models_button = Button("Add custom…")
         self.custom_models_button.setObjectName("downloadsToolButton")
+        self.custom_models_button.setToolTip(
+            "Add custom Whisper / CTranslate2 models"
+        )
         fit_compact_button(self.custom_models_button, 0)
         self.custom_models_button.clicked.connect(self._add_custom_models)
         header_row.addWidget(self.custom_models_button)
@@ -410,14 +566,7 @@ class DownloadsPage(QWidget):
         )
         open_folder_btn.clicked.connect(self._on_open_cache_folder)
         header_row.addWidget(open_folder_btn)
-        models_layout.addLayout(header_row)
-
-        # Settings places the Hugging Face download policy here, next to the
-        # catalog it governs.
-        self.policy_row = QHBoxLayout()
-        self.policy_row.setContentsMargins(0, 0, 0, 0)
-        self.policy_row.setSpacing(10)
-        models_layout.addLayout(self.policy_row)
+        layout.addLayout(header_row)
 
         self.env_banner = QLabel(
             "Downloads are disabled by the HF_HUB_OFFLINE environment "
@@ -426,24 +575,46 @@ class DownloadsPage(QWidget):
         self.env_banner.setObjectName("downloadsEnvBanner")
         self.env_banner.setWordWrap(True)
         self.env_banner.setVisible(False)
-        models_layout.addWidget(self.env_banner)
+        layout.addWidget(self.env_banner)
 
-        self._split = QHBoxLayout()
-        self._split.setSpacing(12)
-        self.catalog_column = self._build_catalog_column()
-        self._split.addWidget(self.catalog_column, stretch=1)
-        self.inspector = self._build_inspector()
-        self._split.addWidget(self.inspector)
-        models_layout.addLayout(self._split, stretch=1)
-        layout.addWidget(self.models_section, stretch=1)
-
+        # Build components first so the rail knows whether Extras should show.
         self.components_section = self._build_components_section()
         self.components_section.hide()
-        layout.addWidget(self.components_section, stretch=1)
-        # A platform with nothing installable has nothing to switch to.
-        self.tabs.setVisible(bool(self._component_rows))
 
-        # Shared by both tabs: batch progress and component install results.
+        self._split = QHBoxLayout()
+        self._split.setContentsMargins(0, 0, 0, 0)
+        self._split.setSpacing(10)
+
+        self.engine_rail = self._build_engine_rail()
+        self._split.addWidget(self.engine_rail)
+
+        self.right_pane = QWidget()
+        self.right_pane.setObjectName("downloadsRightPane")
+        right_layout = QVBoxLayout(self.right_pane)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+
+        self.models_section = QWidget()
+        self.models_section.setObjectName("downloadsModelsSection")
+        models_layout = QVBoxLayout(self.models_section)
+        models_layout.setContentsMargins(0, 0, 0, 0)
+        models_layout.setSpacing(0)
+        self.catalog_column = self._build_catalog_column()
+        models_layout.addWidget(self.catalog_column, stretch=1)
+        right_layout.addWidget(self.models_section, stretch=1)
+        right_layout.addWidget(self.components_section, stretch=1)
+
+        self._split.addWidget(self.right_pane, stretch=1)
+        layout.addLayout(self._split, stretch=1)
+
+        # Settings places the Hugging Face download policy cleanly in the quiet
+        # footer area so the engine rail and model list start immediately.
+        self.policy_row = QHBoxLayout()
+        self.policy_row.setContentsMargins(0, 0, 0, 0)
+        self.policy_row.setSpacing(10)
+        layout.addLayout(self.policy_row)
+
+        # Shared by models and components: batch progress and install results.
         self.message_row = QHBoxLayout()
         self.message_row.setSpacing(8)
         self.message_label = QLabel("")
@@ -460,8 +631,163 @@ class DownloadsPage(QWidget):
         self.message_row.addWidget(self.stop_batch_button)
         layout.addLayout(self.message_row)
 
+        # On-demand slide-over technical profile: stays hidden until a row is picked.
+        self.inspector = self._build_inspector()
+        self.inspector.setParent(self)
+        set_style_property(self.inspector, "overlay", True)
+        shadow = QGraphicsDropShadowEffect(self.inspector)
+        shadow.setBlurRadius(28)
+        shadow.setOffset(-6, 0)
+        shadow.setColor(QColor(0, 0, 0, 110))
+        self.inspector.setGraphicsEffect(shadow)
+        self.inspector.hide()
+
+        self._active_rail_key = self._default_rail_key()
+        self._apply_rail_selection(self._active_rail_key)
+
+    def _default_rail_key(self) -> str:
+        """Open focused on the active local speech engine when one is selected."""
+        settings = self._settings_snapshot()
+        selected_backend = SettingsKey.SELECTED_MODEL.read(settings)
+        if selected_backend in self._rail_items:
+            return selected_backend
+        return "all"
+
+    def _build_engine_rail(self) -> QFrame:
+        """Build the left Engine Rail that separates engines from models."""
+        from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND
+
+        rail = QFrame()
+        rail.setObjectName("downloadsEngineRail")
+        rail.setFixedWidth(self.RAIL_WIDTH)
+        outer = QVBoxLayout(rail)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("downloadsEngineRailScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setMinimumHeight(24)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.engine_rail_scroll = scroll
+
+        content = QWidget()
+        content.setObjectName("downloadsRailContent")
+        rail_layout = QVBoxLayout(content)
+        rail_layout.setContentsMargins(6, 6, 6, 6)
+        rail_layout.setSpacing(1)
+
+        self._rail_items: Dict[str, _EngineRailItem] = {}
+
+        def add_section(title: str) -> QLabel:
+            lbl = QLabel(title)
+            lbl.setObjectName("downloadsRailSection")
+            rail_layout.addWidget(lbl)
+            return lbl
+
+        def add_item(
+            key: str, label: str, *, dot_rgb: str = "", tooltip: str = ""
+        ) -> _EngineRailItem:
+            item = _EngineRailItem(
+                key, label, dot_rgb=dot_rgb, tooltip=tooltip, parent=content
+            )
+            item.clicked.connect(lambda _checked=False, k=key: self.select_rail(k))
+            self._rail_items[key] = item
+            rail_layout.addWidget(item)
+            return item
+
+        add_section("OVERVIEW")
+        add_item("all", "All models", tooltip="Show models from every speech engine")
+        add_item("installed", "Installed", tooltip="Show models already downloaded on this computer")
+
+        add_section("SPEECH ENGINES")
+        backend_names = {WHISPER_BACKEND: "Whisper", **BACKENDS}
+        for backend_id in _engine_order():
+            meta = _engine_meta(backend_id)
+            display = backend_names.get(backend_id, meta.short)
+            rail_name = meta.short
+            if parakeet_mlx_supported() and backend_id == "parakeet_mlx":
+                rail_name = "Parakeet MLX ★"
+            tip = backend_picker_tooltip(display)
+            if meta.tagline and meta.tagline not in tip:
+                tip = f"{tip} — {meta.tagline}" if tip else meta.tagline
+            add_item(backend_id, rail_name, dot_rgb=meta.rgb, tooltip=tip)
+
+        self._rail_extras_label = add_section("EXTRAS")
+        comp_item = add_item(
+            "components",
+            "Components",
+            tooltip="Speech runtimes and optional meeting add-ons",
+        )
+        has_components = bool(self._component_rows)
+        self._rail_extras_label.setVisible(has_components)
+        comp_item.setVisible(has_components)
+
+        rail_layout.addStretch()
+        scroll.setWidget(content)
+        outer.addWidget(scroll, stretch=1)
+        return rail
+
+    def _build_context_banner(self) -> QFrame:
+        """Build the focused engine / runtime banner above the model list."""
+        banner = QFrame()
+        banner.setObjectName("downloadsContextBanner")
+        outer = QHBoxLayout(banner)
+        outer.setContentsMargins(12, 7, 12, 7)
+        outer.setSpacing(10)
+
+        left = QVBoxLayout()
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(2)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(7)
+
+        self.banner_dot = QLabel()
+        self.banner_dot.setFixedSize(9, 9)
+        self.banner_dot.setVisible(False)
+        title_row.addWidget(self.banner_dot, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.banner_title = QLabel("")
+        self.banner_title.setObjectName("downloadsBannerTitle")
+        title_row.addWidget(self.banner_title)
+
+        self.banner_device = QLabel("")
+        self.banner_device.setObjectName("downloadsBannerDevice")
+        self.banner_device.setVisible(False)
+        title_row.addWidget(self.banner_device, 0, Qt.AlignmentFlag.AlignVCenter)
+        title_row.addStretch()
+        left.addLayout(title_row)
+
+        self.banner_subtitle = ElidingLabel("")
+        self.banner_subtitle.setObjectName("downloadsBannerSubtitle")
+        left.addWidget(self.banner_subtitle)
+
+        outer.addLayout(left, stretch=1)
+
+        right = QHBoxLayout()
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(6)
+
+        self.banner_runtime_badge = QLabel("")
+        self.banner_runtime_badge.setObjectName("downloadsRuntimeBadge")
+        self.banner_runtime_badge.setVisible(False)
+        right.addWidget(self.banner_runtime_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.banner_runtime_button = QPushButton("")
+        self.banner_runtime_button.setObjectName("downloadsBannerAction")
+        self.banner_runtime_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.banner_runtime_button.clicked.connect(self._on_banner_runtime_clicked)
+        self.banner_runtime_button.setVisible(False)
+        right.addWidget(self.banner_runtime_button, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        outer.addLayout(right)
+        return banner
+
     def add_policy_control(self, label: str, control: QWidget) -> None:
-        """Place a labeled control on the row under the header."""
+        """Place a labeled control on the quiet footer row."""
         caption = QLabel(label)
         caption.setObjectName("downloadsPolicyLabel")
         self.policy_row.addWidget(caption)
@@ -469,49 +795,32 @@ class DownloadsPage(QWidget):
         self.policy_row.addStretch()
 
     def _build_catalog_column(self) -> QWidget:
-        """Stack the filters directly above the rows they filter."""
+        """Stack the context banner, compact filters, batch bar, and rows."""
         column = QWidget()
         column.setObjectName("downloadsCatalogColumn")
         column_layout = QVBoxLayout(column)
         column_layout.setContentsMargins(0, 0, 0, 0)
-        column_layout.setSpacing(8)
+        column_layout.setSpacing(5)
+
+        self.context_banner = self._build_context_banner()
+        column_layout.addWidget(self.context_banner)
 
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
-        toolbar.setSpacing(8)
+        toolbar.setSpacing(6)
         self._toolbar_layout = toolbar
+
         self.filter_edit = QLineEdit()
         self.filter_edit.setObjectName("modelManagerSearch")
         self.filter_edit.setPlaceholderText("Search models")
+        self.filter_edit.setMinimumWidth(80)
         self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.textChanged.connect(self._apply_filter)
         toolbar.addWidget(self.filter_edit, stretch=1)
 
-        # Three combos share this row with the search box. Eliding combos
-        # keep a wide item ("Nemotron Streaming" at a large font scale) from
-        # squeezing the search field down to a few characters; the popup
-        # still shows every item in full.
-        #
-        # One entry per speech backend, so "all the Parakeet models" is one
-        # click: models are downloaded and run per backend, and a row's name
-        # alone (base, qwen-0.6b) does not always say which one owns it.
-        from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND
-        self.backend_filter_combo = ElidingComboBox()
-        self.backend_filter_combo.setObjectName("modelManagerBackendFilter")
-        self.backend_filter_combo.addItem("All backends", "all")
-        backends = {WHISPER_BACKEND: "Whisper", **BACKENDS}
-        for backend_id, backend_label in sorted(backends.items(), key=lambda item: item[1].casefold()):
-            self.backend_filter_combo.addItem(backend_picker_label(backend_label), backend_id)
-            self.backend_filter_combo.setItemData(
-                self.backend_filter_combo.count() - 1,
-                backend_picker_tooltip(backend_label), Qt.ItemDataRole.ToolTipRole,
-            )
-        self.backend_filter_combo.setToolTip("Show one speech backend's models")
-        self.backend_filter_combo.currentIndexChanged.connect(self._apply_filter)
-        toolbar.addWidget(self.backend_filter_combo)
-
         self.status_filter_combo = ElidingComboBox()
         self.status_filter_combo.setObjectName("modelManagerStatusFilter")
+        self.status_filter_combo.setMinimumWidth(78)
         self.status_filter_combo.addItem("All", "all")
         self.status_filter_combo.addItem("Downloaded", "downloaded")
         self.status_filter_combo.addItem("Not downloaded", "not_downloaded")
@@ -521,16 +830,19 @@ class DownloadsPage(QWidget):
 
         self.sort_combo = ElidingComboBox()
         self.sort_combo.setObjectName("modelManagerSort")
+        self.sort_combo.setMinimumWidth(96)
         self.sort_combo.addItem("Recommended", "recommended")
         self.sort_combo.addItem("Downloaded first", "downloaded")
         self.sort_combo.addItem("Smallest first", "size")
         self.sort_combo.addItem("Name A-Z", "name")
-        self.sort_combo.addItem("By backend", "backend")
+        self.sort_combo.addItem("By engine", "backend")
         self.sort_combo.setToolTip("Sort model list")
         self.sort_combo.currentIndexChanged.connect(self._apply_filter)
         toolbar.addWidget(self.sort_combo)
+
         column_layout.addLayout(toolbar)
-        column_layout.addWidget(self._build_selection_bar())
+        self.selection_bar = self._build_selection_bar()
+        column_layout.addWidget(self.selection_bar)
         column_layout.addWidget(self._build_list(), stretch=1)
         return column
 
@@ -570,9 +882,9 @@ class DownloadsPage(QWidget):
         self.library_scroll_area = QScrollArea()
         self.library_scroll_area.setObjectName("modelManagerLibraryScroll")
         self.library_scroll_area.setWidgetResizable(True)
-        # Low floor: at Settings' smallest size the filters, the batch bar and the
-        # section tabs already fill most of the page, and the list scrolls anyway.
-        self.library_scroll_area.setMinimumHeight(40)
+        # Low floor: at Settings' smallest size the banner, filters, and rail
+        # fit comfortably while the list scrolls smoothly.
+        self.library_scroll_area.setMinimumHeight(24)
         self.library_scroll_area.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
@@ -592,7 +904,7 @@ class DownloadsPage(QWidget):
             row = ModelRowWidget(model_name)
             row.download_clicked.connect(self._on_download_clicked)
             row.delete_clicked.connect(self._on_delete_clicked)
-            row.details_requested.connect(self.select_model)
+            row.details_requested.connect(self._on_row_details_requested)
             row.selection_toggled.connect(self._on_selection_toggled)
             self.rows[model_name] = row
             self.list_layout.addWidget(row)
@@ -602,6 +914,16 @@ class DownloadsPage(QWidget):
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_label.setVisible(False)
         self.list_layout.addWidget(self.empty_label)
+
+        self.show_all_engines_button = Button("Show all engines")
+        self.show_all_engines_button.setObjectName("downloadsFlatButton")
+        fit_compact_button(self.show_all_engines_button, 0)
+        self.show_all_engines_button.clicked.connect(lambda: self.select_rail("all"))
+        self.show_all_engines_button.setVisible(False)
+        self.list_layout.addWidget(
+            self.show_all_engines_button, 0, Qt.AlignmentFlag.AlignHCenter
+        )
+
         self.list_layout.addStretch()
 
         self.library_scroll_area.setWidget(list_container)
@@ -637,72 +959,241 @@ class DownloadsPage(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._sync_toolbar_gutter()
-        self._update_inspector_mode()
+        self._position_inspector()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._sync_toolbar_gutter()
-        self._update_inspector_mode()
+        self._position_inspector()
 
-    # ---- inspector docking ----
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape and self._inspector_open:
+            self.close_inspector()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
-    def _catalog_min_width(self) -> int:
-        """Width the catalog needs before its rows start eliding sizes."""
-        rows = [row for row in self.rows.values() if not row.isHidden()] or list(
-            self.rows.values()
+    # ---- rail navigation & context banner ----
+
+    def current_rail_key(self) -> str:
+        return self._active_rail_key
+
+    def select_rail(self, key: str) -> None:
+        """Switch the Engine Rail selection and refresh the focused pane."""
+        if key not in self._rail_items:
+            key = "all"
+        if key == "components" and not self._component_rows:
+            key = "all"
+        self._active_rail_key = key
+        self.close_inspector()
+        self._apply_rail_selection(key)
+
+    def _apply_rail_selection(self, key: str) -> None:
+        for item_key, item in self._rail_items.items():
+            item.set_selected(item_key == key)
+        show_components = key == "components"
+        self.models_section.setVisible(not show_components)
+        self.components_section.setVisible(show_components)
+        if not show_components:
+            is_installed = key == "installed"
+            self.status_filter_combo.setVisible(not is_installed)
+            self._update_context_banner()
+            self._apply_filter()
+            self._update_selection_bar()
+
+    def _refresh_rail_counts(self) -> None:
+        if not self._ui_built:
+            return
+        total_models = len(self.rows)
+        installed_models = sum(1 for row in self.rows.values() if row.is_cached)
+        if self._cache_inventory_loading:
+            self._rail_items["all"].set_count("…")
+            self._rail_items["installed"].set_count("…")
+        else:
+            self._rail_items["all"].set_count(f"{installed_models}/{total_models}")
+            self._rail_items["installed"].set_count(str(installed_models))
+
+        for backend_id in _engine_order():
+            item = self._rail_items.get(backend_id)
+            if item is None:
+                continue
+            backend_rows = [row for row in self.rows.values() if row.backend == backend_id]
+            if self._cache_inventory_loading:
+                item.set_count("…")
+            else:
+                dl = sum(1 for row in backend_rows if row.is_cached)
+                item.set_count(f"{dl}/{len(backend_rows)}")
+
+    def _runtime_for_backend(self, backend_id: str) -> Optional[str]:
+        """Return the primary component ID associated with a speech backend."""
+        from services.components import component_is_published
+        from services.local_asr.catalog import (
+            BACKENDS,
+            WHISPER_BACKEND,
+            resolve_runtime,
+            selected_device,
         )
-        widest = max((row.minimumSizeHint().width() for row in rows), default=0)
-        scroll_bar = self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
-        toolbar = self._toolbar_layout.minimumSize().width()
-        return max(widest + scroll_bar + 8, toolbar)
+
+        if backend_id == WHISPER_BACKEND:
+            return "gpu-accel" if component_is_published("gpu-accel") else None
+        if backend_id not in BACKENDS:
+            return None
+        settings = self._settings_snapshot()
+        try:
+            comp_id, _device = resolve_runtime(
+                backend_id, selected_device(backend_id, settings)
+            )
+        except Exception:
+            return None
+        return comp_id if component_is_published(comp_id) else None
+
+    def _update_context_banner(self) -> None:
+        from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND
+
+        key = self._active_rail_key
+        self._banner_component_id = None
+        self._banner_action_installs = False
+        self.banner_runtime_badge.setVisible(False)
+        self.banner_runtime_button.setVisible(False)
+        self.banner_device.setVisible(False)
+        self.banner_dot.setVisible(False)
+
+        if key == "all":
+            total = len(self.rows)
+            downloaded = sum(1 for row in self.rows.values() if row.is_cached)
+            total_bytes = sum(self._cached_sizes.values())
+            self.banner_title.setText("All speech models")
+            if self._cache_inventory_loading:
+                self.banner_subtitle.setText("Checking downloaded models…")
+            else:
+                self.banner_subtitle.setText(
+                    f"{downloaded} of {total} downloaded · {format_size_bytes(total_bytes)} used · "
+                    "Pick an engine on the left to focus."
+                )
+            return
+
+        if key == "installed":
+            installed_rows = [row for row in self.rows.values() if row.is_cached]
+            engines_used = len({row.backend for row in installed_rows})
+            total_bytes = sum(self._cached_sizes.values())
+            self.banner_title.setText("Installed on this computer")
+            if self._cache_inventory_loading:
+                self.banner_subtitle.setText("Checking downloaded models…")
+            elif installed_rows:
+                noun = "model" if len(installed_rows) == 1 else "models"
+                eng_noun = "engine" if engines_used == 1 else "engines"
+                self.banner_subtitle.setText(
+                    f"{len(installed_rows)} {noun} · {format_size_bytes(total_bytes)} across {engines_used} {eng_noun}"
+                )
+            else:
+                self.banner_subtitle.setText(
+                    "No speech models are downloaded yet. Pick an engine on the left to download one."
+                )
+            return
+
+        meta = _engine_meta(key)
+        names = {WHISPER_BACKEND: "Whisper", **BACKENDS}
+        display_name = backend_picker_label(names.get(key, meta.short))
+        self.banner_dot.setStyleSheet(
+            f"background-color: rgb({meta.rgb}); border: none; border-radius: 4px;"
+        )
+        self.banner_dot.setVisible(True)
+        self.banner_title.setText(display_name)
+        self.banner_device.setText(meta.device)
+        self.banner_device.setVisible(True)
+        self.banner_subtitle.setText(meta.tagline)
+
+        comp_id = self._runtime_for_backend(key)
+        if not comp_id or comp_id not in self._component_rows:
+            if key == WHISPER_BACKEND:
+                self.banner_runtime_badge.setText("Built-in engine")
+                set_style_property(self.banner_runtime_badge, "tone", "ready")
+                self.banner_runtime_badge.setVisible(True)
+            return
+
+        info = component_coordinator.describe(comp_id)
+        self._banner_component_id = comp_id
+        short_name = info.display_name.replace(" runtime", "")
+        if info.state == ComponentState.UPDATE_AVAILABLE:
+            self.banner_runtime_badge.setText(f"{short_name} · Update")
+            set_style_property(self.banner_runtime_badge, "tone", "update")
+            self.banner_runtime_button.setText("Update")
+            set_style_property(self.banner_runtime_button, "tone", "primary")
+            self._banner_action_installs = False
+        elif info.is_usable:
+            self.banner_runtime_badge.setText(f"{short_name} · Ready")
+            set_style_property(self.banner_runtime_badge, "tone", "ready")
+            self.banner_runtime_button.setText("Manage")
+            set_style_property(self.banner_runtime_button, "tone", "")
+            self._banner_action_installs = False
+        elif key == WHISPER_BACKEND:
+            self.banner_runtime_badge.setText("CPU ready · CUDA optional")
+            set_style_property(self.banner_runtime_badge, "tone", "neutral")
+            self.banner_runtime_button.setText("Install CUDA")
+            set_style_property(self.banner_runtime_button, "tone", "")
+            self._banner_action_installs = True
+        else:
+            self.banner_runtime_badge.setText(f"{short_name} · Required")
+            set_style_property(self.banner_runtime_badge, "tone", "missing")
+            self.banner_runtime_button.setText("Install runtime")
+            set_style_property(self.banner_runtime_button, "tone", "primary")
+            self._banner_action_installs = True
+
+        self.banner_runtime_badge.setVisible(True)
+        self.banner_runtime_button.setVisible(True)
+        repolish(self.banner_runtime_button)
+
+    def _on_banner_runtime_clicked(self) -> None:
+        comp_id = self._banner_component_id
+        if not comp_id:
+            return
+        if self._banner_action_installs:
+            self.focus_component(comp_id)
+            self.component_install_requested.emit(comp_id)
+        else:
+            self.focus_component(comp_id)
+
+    # ---- inspector (on-demand slide-over) ----
 
     def inspector_docked(self) -> bool:
-        return self._inspector_docked
+        """The profile inspector slides over on demand rather than docking empty."""
+        return False
 
-    def _update_inspector_mode(self) -> None:
-        """Dock the profile beside the catalog when both fit, else float it."""
-        needed = (
-            self._catalog_min_width() + self._split.spacing() + self.INSPECTOR_WIDTH
-        )
-        docked = self.width() >= needed
-        if docked != self._inspector_docked:
-            self._inspector_docked = docked
-            if docked:
-                self.inspector.setGraphicsEffect(None)
-                self._split.addWidget(self.inspector)
-            else:
-                self._split.removeWidget(self.inspector)
-                shadow = QGraphicsDropShadowEffect(self.inspector)
-                shadow.setBlurRadius(28)
-                shadow.setOffset(-6, 0)
-                shadow.setColor(QColor(0, 0, 0, 110))
-                self.inspector.setGraphicsEffect(shadow)
-            set_style_property(self.inspector, "overlay", not docked)
-            self.inspector_close_button.setVisible(not docked)
-        if docked:
-            self.inspector.setVisible(True)
+    def _position_inspector(self) -> None:
+        """Float the slide-over profile over the catalog column's right edge."""
+        if not self._inspector_open or self._active_rail_key == "components":
+            self.inspector.setVisible(False)
             return
-        column = self.catalog_column.geometry()
+        origin = self.catalog_column.mapTo(self, QPoint(0, 0))
+        width = min(self.INSPECTOR_WIDTH, max(240, self.catalog_column.width()))
+        self.inspector.setFixedWidth(width)
         self.inspector.setGeometry(
             QRect(
-                column.right() - self.INSPECTOR_WIDTH + 1,
-                column.top(),
-                self.INSPECTOR_WIDTH,
-                column.height(),
+                origin.x() + self.catalog_column.width() - width,
+                origin.y(),
+                width,
+                max(120, self.catalog_column.height()),
             )
         )
-        self.inspector.setVisible(self._inspector_open)
-        if self._inspector_open:
-            self.inspector.raise_()
+        self.inspector.setVisible(True)
+        self.inspector.raise_()
 
     def close_inspector(self) -> None:
-        """Hide the floating profile; a docked profile always stays open."""
+        """Hide the slide-over profile and clear the row selection highlight."""
         self._inspector_open = False
-        if not self._inspector_docked:
-            self.inspector.setVisible(False)
+        self.inspector.setVisible(False)
+        for row in self.rows.values():
+            if row.property("selected"):
+                set_style_property(row, "selected", False)
+
+    def _on_row_details_requested(self, model_name: str) -> None:
+        if self._inspector_open and self._selected_model == model_name:
+            self.close_inspector()
+            return
+        self.select_model(model_name)
 
     def _build_inspector(self) -> QWidget:
-        """Build the side profile that replaced the Model Details dialog."""
+        """Build the slide-over technical profile panel."""
         panel = QFrame()
         panel.setObjectName("downloadsInspector")
         panel.setFixedWidth(self.INSPECTOR_WIDTH)
@@ -716,16 +1207,19 @@ class DownloadsPage(QWidget):
         eyebrow.setObjectName("settingsTileGroupTitle")
         eyebrow_row.addWidget(eyebrow)
         eyebrow_row.addStretch()
-        # Only shown while the profile floats over the catalog.
         self.inspector_close_button = QPushButton("✕")
         self.inspector_close_button.setObjectName("downloadsInspectorClose")
         self.inspector_close_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.inspector_close_button.setToolTip("Close the model profile")
         self.inspector_close_button.setFixedSize(26, 26)
         self.inspector_close_button.clicked.connect(self.close_inspector)
-        self.inspector_close_button.setVisible(False)
         eyebrow_row.addWidget(self.inspector_close_button)
         outer.addLayout(eyebrow_row)
+
+        self.inspector_engine = QLabel("")
+        self.inspector_engine.setObjectName("downloadsInspectorEngine")
+        self.inspector_engine.setVisible(False)
+        outer.addWidget(self.inspector_engine, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self.inspector_name = ElidingLabel("")
         self.inspector_name.setObjectName("downloadsInspectorName")
@@ -754,20 +1248,11 @@ class DownloadsPage(QWidget):
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         detail_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        # A resizable scroll area propagates its content's minimum height, which
-        # here is taller than the panel: without a floor of its own it would ask
-        # for the whole profile and the column would pay for it by squeezing the
-        # name, the facts, and the source buttons.
-        # Small, because this region scrolls: at the window's minimum height the page
-        # must still fit once the section tabs above it have taken their share.
         detail_scroll.setMinimumHeight(60)
         self.inspector_detail_scroll = detail_scroll
 
         content = QWidget()
         content.setObjectName("downloadsInspectorContent")
-        # Horizontal scrolling is off, so the content must be exactly as wide as the
-        # viewport. By default it would grow to its widest unbreakable word, wrap
-        # every paragraph for that width, and be cut off at the viewport's edge.
         content.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         detail = QVBoxLayout(content)
         detail.setContentsMargins(0, 0, 6, 0)
@@ -851,7 +1336,7 @@ class DownloadsPage(QWidget):
         return panel
 
     def _build_components_section(self) -> QScrollArea:
-        """The optional components, on their own tab with room to breathe."""
+        """The optional components, on their own rail view with room to breathe."""
         scroll = QScrollArea()
         scroll.setObjectName("downloadsComponentsScroll")
         scroll.setWidgetResizable(True)
@@ -868,10 +1353,6 @@ class DownloadsPage(QWidget):
         self.components_scroll = scroll
         return scroll
 
-    def _show_section(self, index: int) -> None:
-        self.models_section.setVisible(index == 0)
-        self.components_section.setVisible(index == 1)
-
     def _build_component_strip(self) -> QWidget:
         """Build the optional-components strip.
 
@@ -886,7 +1367,7 @@ class DownloadsPage(QWidget):
         strip = QFrame()
         strip.setObjectName("downloadsComponentStrip")
         layout = QVBoxLayout(strip)
-        layout.setContentsMargins(0, 2, 0, 12)
+        layout.setContentsMargins(0, 0, 0, 12)
         layout.setSpacing(8)
 
         infos = component_coordinator.list_components()
@@ -894,11 +1375,20 @@ class DownloadsPage(QWidget):
             strip.setVisible(False)
             return strip
 
+        banner = QFrame()
+        banner.setObjectName("downloadsContextBanner")
+        banner_layout = QVBoxLayout(banner)
+        banner_layout.setContentsMargins(12, 10, 12, 10)
+        banner_layout.setSpacing(2)
+        title = QLabel("Runtimes & add-ons")
+        title.setObjectName("downloadsBannerTitle")
+        banner_layout.addWidget(title)
         caption = WrappedLabel(
-            "Optional add-ons, downloaded on demand so the installer stays small."
+            "Speech runtimes and optional add-ons, downloaded on demand so the installer stays small."
         )
-        caption.setObjectName("infoLabel")
-        layout.addWidget(caption)
+        caption.setObjectName("downloadsBannerSubtitle")
+        banner_layout.addWidget(caption)
+        layout.addWidget(banner)
 
         for info in infos:
             row = ComponentRowWidget(info.component_id)
@@ -914,36 +1404,43 @@ class DownloadsPage(QWidget):
     # ---- inspector ----
 
     def select_model(self, model_name: str) -> None:
-        """Show one catalog model's bundled profile in the side inspector."""
+        """Show one catalog model's bundled profile in the slide-over inspector."""
         if model_name == "auto" or model_name not in self.rows:
             return
         self._selected_model = model_name
         self._details = (custom_model_details(model_name) if is_custom_model(model_name)
                          else get_model_details(model_name))
         self._render_inspector()
+        dictation_resolved, meeting_model, _loaded = self._models_in_use(
+            self._settings_snapshot()
+        )
+        self.inspector_usage.setText(
+            self._usage_for(model_name, dictation_resolved, meeting_model)
+        )
+        self.inspector_usage.setVisible(bool(self.inspector_usage.text()))
         for name, row in self.rows.items():
             set_style_property(row, "selected", name == model_name)
         self._inspector_open = True
-        self._update_inspector_mode()
+        self._position_inspector()
 
     def reveal_model(self, model_name: str) -> None:
-        """Clear filters that hide a model, select it, and scroll to it."""
+        """Switch to the model's engine, clear blocking filters, select it, and scroll to it."""
         row = self.rows.get(model_name)
         if row is None:
             return
+        if self._active_rail_key not in ("all", row.backend):
+            self.select_rail(row.backend)
         if row.isHidden():
             self.filter_edit.clear()
-            self.backend_filter_combo.setCurrentIndex(0)
             self.status_filter_combo.setCurrentIndex(0)
-        self.tabs.setCurrentIndex(0)
+            if row.isHidden():
+                self.select_rail(row.backend)
         self.select_model(model_name)
         self.library_scroll_area.ensureWidgetVisible(row, 0, 12)
 
     def show_backend(self, backend: str) -> None:
-        """Filter the catalog to one backend; an empty value shows every model."""
-        self.tabs.setCurrentIndex(0)
-        index = self.backend_filter_combo.findData(backend or "all")
-        self.backend_filter_combo.setCurrentIndex(max(0, index))
+        """Select one backend in the Engine Rail; an empty value shows all models."""
+        self.select_rail(backend or "all")
 
     def _render_inspector(self) -> None:
         details = self._details
@@ -951,13 +1448,27 @@ class DownloadsPage(QWidget):
             self._set_inspector_enabled(False)
             return
         self._set_inspector_enabled(True)
-        from services.local_asr.catalog import MODELS
+        from services.local_asr.catalog import BACKENDS, MODELS, backend_of
         if details.model_name in MODELS:
             name = MODELS[details.model_name].label
         elif is_custom_model(details.model_name):
             name = custom_model_label(details.model_name)
         else:
             name = details.model_name
+        backend_id = backend_of(details.model_name)
+        meta = _engine_meta(backend_id)
+        engine_label = BACKENDS.get(backend_id, "Whisper")
+        self.inspector_engine.setText(engine_label)
+        self.inspector_engine.setStyleSheet(
+            f"QLabel#downloadsInspectorEngine {{"
+            f" background-color: rgba({meta.rgb}, 0.14);"
+            f" color: rgb({meta.rgb});"
+            f" border: 1px solid rgba({meta.rgb}, 0.30);"
+            f" border-radius: 6px; padding: 2px 8px;"
+            f" font-size: 10px; font-weight: 600;"
+            f"}}"
+        )
+        self.inspector_engine.setVisible(True)
         self.inspector_name.setText(name)
         self.inspector_name.setToolTip(details.model_name)
         self.inspector_tags.setText(details.compact_tags)
@@ -1023,12 +1534,14 @@ class DownloadsPage(QWidget):
 
     def _set_inspector_enabled(self, enabled: bool) -> None:
         if not enabled:
+            self.inspector_engine.setVisible(False)
             self.inspector_name.setText("")
             self.inspector_description.setText("")
             self.inspector_tags.setVisible(False)
             self.inspector_best_for.setText("")
             self.inspector_tradeoffs.setText("")
         self.inspector_empty.setVisible(not enabled)
+        self.inspector_engine.setVisible(enabled)
         self.inspector_name.setVisible(enabled)
         self.inspector_detail_scroll.setVisible(enabled)
         for widget in (
@@ -1098,7 +1611,7 @@ class DownloadsPage(QWidget):
             row = ModelRowWidget(name)
             row.download_clicked.connect(self._on_download_clicked)
             row.delete_clicked.connect(self._on_delete_clicked)
-            row.details_requested.connect(self.select_model)
+            row.details_requested.connect(self._on_row_details_requested)
             row.selection_toggled.connect(self._on_selection_toggled)
             self.rows[name] = row
             self.list_layout.insertWidget(len(self.rows) - 1, row)
@@ -1142,10 +1655,11 @@ class DownloadsPage(QWidget):
         self._update_selection_bar()
 
     def _on_select_all_clicked(self) -> None:
-        """Check every row that still needs a download (cached rows excluded)."""
-        missing = set(self._missing_names())
+        """Check every missing row in the active rail scope (cached excluded)."""
+        missing = set(self._scoped_missing_names())
         for row in self.rows.values():
-            row.select_checkbox.setChecked(row.model_name in missing)
+            if row.model_name in missing:
+                row.select_checkbox.setChecked(True)
 
     def _on_clear_selection_clicked(self) -> None:
         for row in self.rows.values():
@@ -1160,6 +1674,16 @@ class DownloadsPage(QWidget):
         return [name for name, row in self.rows.items() if not row.is_cached
                 and not (is_custom_model(name) and parse_source(name).local_path)]
 
+    def _scoped_missing_names(self) -> List[str]:
+        """Missing models belonging to the active Engine Rail scope."""
+        key = self._active_rail_key
+        missing = self._missing_names()
+        if key in ("all", "components"):
+            return missing
+        if key == "installed":
+            return []
+        return [name for name in missing if self.rows[name].backend == key]
+
     def _download_slot_busy(self) -> bool:
         return self._downloading_model is not None or bool(self._batch_queue)
 
@@ -1171,16 +1695,18 @@ class DownloadsPage(QWidget):
         estimate = (f"~{format_size_bytes(total_bytes)} to download"
                     if all(math.isfinite(size) for size in sizes) else "download size unknown")
         busy = self._download_slot_busy()
-        any_selectable = (
-            bool(self._missing_names())
-            and not busy
-            and not self._downloads_blocked
+        any_missing = bool(self._missing_names())
+        any_scoped = bool(self._scoped_missing_names())
+        any_selectable = any_missing and not busy and not self._downloads_blocked
+        scoped_selectable = any_scoped and not busy and not self._downloads_blocked
+        self.selection_bar.setVisible(
+            self._active_rail_key != "installed" or bool(names)
         )
         # Nothing ticked: say what the bar is for, or the disabled button
         # reads as broken.
         self.selection_summary.setText(
             f"{count} selected · {estimate}" if count
-            else "Tick models to download several at once" if any_selectable
+            else "Tick models to download several at once" if scoped_selectable
             else ""
         )
         noun = "model" if count == 1 else "models"
@@ -1196,9 +1722,9 @@ class DownloadsPage(QWidget):
             else "Tick the models to download first"
         )
         self.clear_selection_button.setEnabled(bool(names) and not busy)
-        self.select_all_button.setEnabled(any_selectable)
+        self.select_all_button.setEnabled(scoped_selectable)
         self.download_all_button.setEnabled(any_selectable)
-        self.download_all_button.setVisible(bool(self._missing_names()))
+        self.download_all_button.setVisible(any_missing)
 
     def _request_batch(self, model_names: List[str]) -> None:
         """Confirm sizes and destination, then hand the plan to the app."""
@@ -1225,11 +1751,11 @@ class DownloadsPage(QWidget):
         """Bring a required runtime and its install action into view."""
         if component_id not in self._component_rows:
             return
-        self.tabs.setCurrentIndex(1)
+        self.select_rail("components")
         for cid, row in self._component_rows.items():
             set_style_property(row, "selected", cid == component_id)
         row = self._component_rows[component_id]
-        # The tab was just shown: lay it out so the row has a position to scroll to.
+        # The section was just shown: lay it out so the row has a position to scroll to.
         self.components_scroll.widget().layout().activate()
         self.components_scroll.ensureWidgetVisible(row, 0, 12)
         row.setFocus(Qt.FocusReason.OtherFocusReason)
@@ -1345,7 +1871,9 @@ class DownloadsPage(QWidget):
             self._refresh_row(model_name, row, info, context)
 
         self._show_cache_totals(seen_repos)
+        self._refresh_rail_counts()
         self.refresh_components()
+        self._update_context_banner()
         self._apply_filter(self.filter_edit.text())
         if self._selected_model:
             self.inspector_usage.setText(
@@ -1457,11 +1985,7 @@ class DownloadsPage(QWidget):
             self.stats_label.setText(
                 f"Checking downloaded models… · {get_hf_cache_dir()}"
             )
-            self.tabs.set_title(0, "Speech models")
         else:
-            self.tabs.set_title(
-                0, f"Speech models · {len(seen_repos)} of {len(self.rows)} downloaded"
-            )
             self.stats_label.setText(
                 f"{len(seen_repos)} of {len(self.rows)} speech models · "
                 f"{format_size_bytes(total_bytes)} used · {get_hf_cache_dir()}"
@@ -1523,12 +2047,20 @@ class DownloadsPage(QWidget):
             info = component_coordinator.describe(component_id)
             infos.append(info)
             row.update_state(info, component_coordinator.is_installing(component_id))
-        if infos:
+        comp_item = self._rail_items.get("components")
+        if comp_item is not None and infos:
+            installed = sum(info.is_usable for info in infos)
             updates = sum(info.state == ComponentState.UPDATE_AVAILABLE for info in infos)
-            title = f"Components · {sum(info.is_usable for info in infos)} of {len(infos)} installed"
+            count_text = f"{installed}/{len(infos)}"
             if updates:
-                title += f" · {updates} update" + ("s" if updates > 1 else "")
-            self.tabs.set_title(1, title)
+                count_text += f" · {updates}!"
+            comp_item.set_count(count_text, attention=bool(updates))
+            tip = f"Runtimes & add-ons · {installed} of {len(infos)} installed"
+            if updates:
+                tip += f" · {updates} update" + ("s" if updates > 1 else "") + " available"
+            comp_item.setToolTip(tip)
+        if self._ui_built and self._active_rail_key not in ("all", "installed", "components"):
+            self._update_context_banner()
 
     def set_component_progress(
         self, component_id: str, phase: str, done: int, total: int
@@ -1632,15 +2164,20 @@ class DownloadsPage(QWidget):
 
     def _apply_filter(self, _value=None) -> None:
         needle = self.filter_edit.text().strip().lower()
-        status = self.status_filter_combo.currentData()
-        backend = self.backend_filter_combo.currentData()
+        key = self._active_rail_key
+        if key == "components":
+            return
+        status = "downloaded" if key == "installed" else self.status_filter_combo.currentData()
+        show_engine_badges = key in ("all", "installed")
         any_visible = False
         rows = sorted(self.rows.values(), key=self._sort_key)
         for index, row in enumerate(rows):
             self.list_layout.insertWidget(index, row)
+            meta = _engine_meta(row.backend)
+            row.set_engine_badge(meta.short, meta.rgb, visible=show_engine_badges)
             visible = row.matches_filter(needle) if needle else True
-            if backend != "all":
-                visible = visible and row.backend == backend
+            if key not in ("all", "installed"):
+                visible = visible and row.backend == key
             if status == "downloaded":
                 visible = visible and row.is_cached
             elif status == "not_downloaded":
@@ -1648,6 +2185,16 @@ class DownloadsPage(QWidget):
             row.setVisible(visible)
             any_visible = any_visible or visible
         self.empty_label.setVisible(not any_visible)
+        if not any_visible:
+            if key == "installed" and not needle:
+                self.empty_label.setText("No models downloaded yet")
+            elif key not in ("all", "installed") and needle:
+                self.empty_label.setText(
+                    f"No matches in {_engine_meta(key).short}"
+                )
+            else:
+                self.empty_label.setText("No models match")
+        self.show_all_engines_button.setVisible(not any_visible and key != "all")
 
     def _sort_key(self, row: ModelRowWidget):
         """Return a stable sort key for the selected built-in ordering."""
@@ -1662,8 +2209,9 @@ class DownloadsPage(QWidget):
         # Recommended: prefer MLX on a supported Mac, then downloaded and size.
         recommended = (not row.is_cached, row.sort_size_bytes, name)
         if mode == "backend":
-            # Match the alphabetical filter combo, recommended order inside.
-            return (self.backend_filter_combo.findData(row.backend), *recommended)
+            order = _engine_order()
+            rank = order.index(row.backend) if row.backend in order else len(order)
+            return (rank, *recommended)
         return (parakeet_mlx_supported() and row.backend != "parakeet_mlx", *recommended)
 
     @staticmethod

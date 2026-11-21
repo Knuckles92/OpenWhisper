@@ -331,6 +331,8 @@ QDialog#pairRequestDialog QLabel {
 
 QWidget#modelManagerBody,
 QWidget#modelManagerStack,
+QWidget#downloadsRightPane,
+QWidget#downloadsRailContent,
 QWidget#downloadsModelsSection,
 QWidget#downloadsCatalogColumn,
 QWidget#downloadsSelectionBar,
@@ -836,7 +838,164 @@ QPushButton#downloadsToolButton:hover {
 QFrame#downloadsComponentStrip {
     background-color: transparent;
     border: none;
-    border-top: 1px solid @slate-border-subtle;
+}
+
+/* Engine Sidebar Rail (Downloads master-detail navigation). */
+QFrame#downloadsEngineRail {
+    background-color: @slate-rail;
+    border: 1px solid @slate-border;
+    border-radius: 11px;
+}
+
+QLabel#downloadsRailSection {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: none;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    padding: 4px 8px 1px 8px;
+}
+
+QPushButton#downloadsRailItem {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 0px;
+    text-align: left;
+}
+
+QPushButton#downloadsRailItem:hover {
+    background-color: @slate-rail-hover;
+    border-color: @slate-border;
+}
+
+QPushButton#downloadsRailItem[selected="true"] {
+    background-color: @accent-tint;
+    border-color: @accent-border;
+}
+
+QLabel#downloadsRailItemLabel {
+    color: @slate-text-2;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+QLabel#downloadsRailItemLabel[selected="true"] {
+    color: @slate-text;
+    font-weight: 600;
+}
+
+QLabel#downloadsRailItemCount {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+QLabel#downloadsRailItemCount[selected="true"] {
+    color: @accent-soft;
+    font-weight: 600;
+}
+
+QLabel#downloadsRailItemCount[attention="true"] {
+    color: @warning-text-strong;
+    font-weight: 600;
+}
+
+/* Focused engine / overview header banner above the model list. */
+QFrame#downloadsContextBanner {
+    background-color: @slate-surface;
+    border: 1px solid @slate-border;
+    border-radius: 10px;
+}
+
+QLabel#downloadsBannerTitle {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+QLabel#downloadsBannerSubtitle {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+QLabel#downloadsBannerDevice {
+    color: @slate-text-3;
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 5px;
+    padding: 1px 7px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+QLabel#downloadsRuntimeBadge {
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLabel#downloadsRuntimeBadge[tone="ready"] {
+    background-color: rgba(@success-rgb, 0.12);
+    color: @success-text-strong;
+    border: 1px solid rgba(@success-rgb, 0.28);
+}
+
+QLabel#downloadsRuntimeBadge[tone="missing"],
+QLabel#downloadsRuntimeBadge[tone="update"] {
+    background-color: rgba(@warning-rgb, 0.14);
+    color: @warning-text-strong;
+    border: 1px solid rgba(@warning-rgb, 0.32);
+}
+
+QLabel#downloadsRuntimeBadge[tone="neutral"] {
+    background-color: @slate-field;
+    color: @slate-text-3;
+    border: 1px solid @slate-border;
+}
+
+QPushButton#downloadsBannerAction {
+    color: @slate-text-2;
+    background-color: @slate-field;
+    border: 1px solid @slate-border-strong;
+    border-radius: 7px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QPushButton#downloadsBannerAction:hover {
+    color: @slate-text;
+    background-color: @slate-raised;
+    border-color: @slate-border-hover;
+}
+
+QPushButton#downloadsBannerAction[tone="primary"] {
+    background-color: @accent;
+    color: @on-accent;
+    border: 1px solid @accent;
+}
+
+QPushButton#downloadsBannerAction[tone="primary"]:hover {
+    background-color: @accent-hover;
+    border-color: @accent-hover;
+}
+
+QLabel#downloadsInspectorEngine {
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 600;
 }
 
 /* The batch action sits in a 34 px toolbar row, so it drops the
@@ -4367,7 +4526,8 @@ QPushButton#downloadsInspectorClose {
     background-color: transparent;
     border: 1px solid @slate-border;
     border-radius: 7px;
-    font-size: 11px;
+    padding: 0px;
+    font-size: 12px;
 }
 
 QPushButton#downloadsInspectorClose:hover {

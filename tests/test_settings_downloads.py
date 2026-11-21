@@ -144,20 +144,10 @@ class TestPageShell(_DialogTestCase):
         finally:
             self.app.setStyleSheet(previous_stylesheet)
 
-    def test_inspector_docks_when_the_page_is_wide_enough(self):
+    def test_inspector_stays_hidden_until_a_model_is_picked(self):
         dialog, _values = self._make_dialog()
         dialog.show()
         dialog.resize(1400, 640)
-        self.app.processEvents()
-
-        assert dialog.inspector_docked()
-        assert dialog.inspector.isVisible()
-        assert not dialog.inspector_close_button.isVisibleTo(dialog)
-
-    def test_narrow_page_floats_the_inspector_until_a_model_is_picked(self):
-        dialog, _values = self._make_dialog()
-        dialog.show()
-        dialog.resize(640, 560)
         self.app.processEvents()
 
         assert not dialog.inspector_docked()
@@ -168,33 +158,37 @@ class TestPageShell(_DialogTestCase):
         assert dialog.inspector.isVisible()
         assert dialog.inspector.property("overlay") is True
         assert dialog.inspector_close_button.isVisibleTo(dialog)
-        catalog = dialog.catalog_column.geometry()
-        assert dialog.inspector.geometry().right() == catalog.right()
+        catalog_right = (
+            dialog.catalog_column.mapTo(dialog, QPoint(dialog.catalog_column.width(), 0)).x() - 1
+        )
+        assert dialog.inspector.geometry().right() == catalog_right
 
         dialog.inspector_close_button.click()
         assert not dialog.inspector.isVisible()
 
-    def test_widening_again_docks_the_inspector(self):
+    def test_clicking_selected_row_again_closes_inspector(self):
         dialog, _values = self._make_dialog()
         dialog.show()
-        dialog.resize(640, 560)
-        self.app.processEvents()
-        dialog.resize(1400, 640)
+        dialog.resize(1000, 600)
         self.app.processEvents()
 
-        assert dialog.inspector_docked()
+        dialog.rows["tiny"].details_requested.emit("tiny")
         assert dialog.inspector.isVisible()
-        assert dialog.inspector.property("overlay") is False
+
+        dialog.rows["tiny"].details_requested.emit("tiny")
+        assert not dialog.inspector.isVisible()
 
     def test_only_the_designated_regions_scroll(self):
-        """The catalog, the inspector, and the components tab; never the page."""
+        """The engine rail, catalog, inspector, and components view; never the page."""
         dialog, _values = self._make_dialog()
         scrollers = dialog.findChildren(QScrollArea)
         assert set(scrollers) == {
+            dialog.engine_rail_scroll,
             dialog.library_scroll_area,
             dialog.inspector_detail_scroll,
             dialog.components_scroll,
         }
+        assert dialog.engine_rail_scroll.widgetResizable()
         assert dialog.library_scroll_area.widgetResizable()
         assert dialog.inspector_detail_scroll.widgetResizable()
         assert dialog.components_scroll.widgetResizable()
@@ -286,6 +280,7 @@ class TestModelRows(_DialogTestCase):
         target.mkdir(parents=True)
         (target / "model.safetensors").touch()
         dialog, _values = self._make_dialog()
+        dialog.show_backend("qwen_asr")
         row = dialog.rows["qwen-0.6b"]
         assert row.download_button.isVisibleTo(dialog)
         assert row.usage_label.isVisibleTo(dialog)
@@ -453,16 +448,17 @@ class TestFilter(_DialogTestCase):
         assert not dialog.rows["base"].isVisibleTo(dialog)
         assert not dialog.rows["tiny.en"].isVisibleTo(dialog)
 
-    def test_backend_filter_shows_one_family(self):
+    def test_engine_rail_shows_one_family_and_hides_row_engine_badge(self):
         dialog, _values = self._make_dialog()
-        _pick(dialog.backend_filter_combo, "parakeet")
+        dialog.select_rail("parakeet")
         assert dialog.rows["parakeet-v3"].isVisibleTo(dialog)
+        assert not dialog.rows["parakeet-v3"].engine_badge.isVisibleTo(dialog)
         assert not dialog.rows["qwen-0.6b"].isVisibleTo(dialog)
         assert not dialog.rows["base"].isVisibleTo(dialog)
 
-    def test_backend_filter_whisper_covers_distilled_checkpoints(self):
+    def test_engine_rail_whisper_covers_distilled_checkpoints(self):
         dialog, _values = self._make_dialog()
-        _pick(dialog.backend_filter_combo, "local_whisper")
+        dialog.select_rail("local_whisper")
         whisper_rows = [
             name for name, row in dialog.rows.items() if row.isVisibleTo(dialog)
         ]
@@ -470,21 +466,23 @@ class TestFilter(_DialogTestCase):
         assert any(name.startswith("distil-") for name in whisper_rows)
         assert not any(name.startswith(("parakeet", "qwen", "nemotron", "moonshine")) for name in whisper_rows)
 
-    def test_backend_filter_lists_every_backend_once(self):
+    def test_engine_rail_lists_every_backend_once(self):
         from services.local_asr.catalog import BACKENDS
         dialog, _values = self._make_dialog()
-        combo = dialog.backend_filter_combo
-        ids = [combo.itemData(i) for i in range(combo.count())]
-        backends = {"local_whisper": "Whisper", **BACKENDS}
-        expected = sorted(backends, key=lambda key: backends[key].casefold())
-        assert ids == ["all", *expected]
-        assert combo.currentData() == "all"
+        engine_keys = [
+            key for key in dialog._rail_items if key not in ("all", "installed", "components")
+        ]
+        expected = {"local_whisper", *BACKENDS}
+        assert set(engine_keys) == expected
+        assert len(engine_keys) == len(expected)
+        # Active engine from _make_dialog is local_whisper.
+        assert dialog.current_rail_key() == "local_whisper"
 
-    def test_backend_filter_combines_with_status_and_search(self):
+    def test_engine_rail_combines_with_status_and_search(self):
         dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
         )
-        _pick(dialog.backend_filter_combo, "moonshine")
+        dialog.select_rail("moonshine")
         _pick(dialog.status_filter_combo, "not_downloaded")
         assert dialog.rows["moonshine-small"].isVisibleTo(dialog)
         assert dialog.rows["moonshine-medium"].isVisibleTo(dialog)
@@ -495,13 +493,22 @@ class TestFilter(_DialogTestCase):
         assert not dialog.rows["medium"].isVisibleTo(dialog)
         _pick(dialog.status_filter_combo, "downloaded")
         assert dialog.empty_label.isVisibleTo(dialog)
+        assert dialog.show_all_engines_button.isVisibleTo(dialog)
 
-    def test_backend_filter_all_restores_every_row(self):
-        dialog, _values = self._make_dialog()
-        combo = dialog.backend_filter_combo
-        combo.setCurrentIndex(combo.findData("nemotron"))
-        combo.setCurrentIndex(combo.findData("all"))
+    def test_engine_rail_all_and_installed_show_engine_badges(self):
+        dialog, _values = self._make_dialog(
+            cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
+        )
+        dialog.select_rail("all")
         assert all(row.isVisibleTo(dialog) for row in dialog.rows.values())
+        assert dialog.rows["base"].engine_badge.isVisibleTo(dialog)
+        assert dialog.rows["base"].engine_badge.text() == "Whisper"
+
+        dialog.select_rail("installed")
+        assert dialog.rows["base"].isVisibleTo(dialog)
+        assert dialog.rows["base"].engine_badge.isVisibleTo(dialog)
+        assert not dialog.rows["tiny"].isVisibleTo(dialog)
+        assert not dialog.status_filter_combo.isVisibleTo(dialog)
 
 
 class TestSorting(_DialogTestCase):
@@ -547,15 +554,13 @@ class TestSorting(_DialogTestCase):
         assert order == sorted(order, key=str.casefold)
 
     def test_backend_sort_keeps_each_family_contiguous(self):
-        """Families follow the alphabetical backend filter."""
+        """Families follow the Engine Rail ordering."""
         dialog, _values = self._make_dialog(active_model="medium")
+        dialog.select_rail("all")
         _pick(dialog.sort_combo, "backend")
         backends = [dialog.rows[name].backend for name in self._row_order(dialog)]
         first_seen = list(dict.fromkeys(backends))
-        assert first_seen == [
-            "moonshine", "nemotron", "parakeet", "parakeet_mlx", "parakeet_unified", "qwen_asr",
-            "local_whisper",
-        ]
+        assert first_seen == list(dialog_module._engine_order())
         assert backends == sorted(backends, key=first_seen.index)
         # Inside a family the recommended order still applies.
         whisper_order = [name for name in self._row_order(dialog) if dialog.rows[name].backend == "local_whisper"]
@@ -605,9 +610,9 @@ class TestActions(_DialogTestCase):
 class TestInspector(_DialogTestCase):
     """The side inspector replaced the separate Model Details dialog."""
 
-    def test_inspector_is_empty_until_a_model_is_selected(self):
+    def test_inspector_is_hidden_until_a_model_is_selected(self):
         dialog, _values = self._make_dialog()
-        assert dialog.inspector_empty.isVisibleTo(dialog)
+        assert not dialog.inspector.isVisibleTo(dialog)
         assert not dialog.inspector_name.isVisibleTo(dialog)
         assert not dialog.inspector_repo_button.isVisibleTo(dialog)
         assert "Select a model" in dialog.inspector_empty.text()
@@ -705,7 +710,7 @@ class TestInspector(_DialogTestCase):
     def test_auto_has_no_profile_to_show(self):
         dialog, _values = self._make_dialog()
         dialog.select_model("auto")
-        assert dialog.inspector_empty.isVisibleTo(dialog)
+        assert not dialog.inspector.isVisibleTo(dialog)
         assert not dialog.inspector_name.isVisibleTo(dialog)
 
     def test_inspector_reports_the_selected_model_usage(self):
@@ -1200,8 +1205,8 @@ class TestComponents(_DialogTestCase):
         distinct.close()
 
 
-class TestSectionTabs(_DialogTestCase):
-    """Models and components are separate tabs; components were six screens down."""
+class TestSectionRail(_DialogTestCase):
+    """Models and components are separated cleanly by the left Engine Rail."""
 
     def _components_dialog(self):
         dialog, values = self._make_dialog()
@@ -1217,24 +1222,25 @@ class TestSectionTabs(_DialogTestCase):
             assert dialog.components_section.isAncestorOf(row)
             assert not dialog.library_scroll_area.isAncestorOf(row)
 
-    def test_opens_on_models_and_the_tabs_switch_sections(self):
+    def test_opens_on_active_engine_and_rail_switches_to_components(self):
         dialog = self._components_dialog()
-        assert dialog.tabs.currentIndex() == 0
+        assert dialog.current_rail_key() == "local_whisper"
         assert dialog.models_section.isVisible() and not dialog.components_section.isVisible()
-        dialog.tabs.buttons[1].click()
+        dialog._rail_items["components"].click()
+        assert dialog.current_rail_key() == "components"
         assert dialog.components_section.isVisible() and not dialog.models_section.isVisible()
         # Every component is on screen at once, not behind a scroll.
         first = next(iter(dialog._component_rows.values()))
         assert first.isVisibleTo(dialog)
 
-    def test_tab_titles_count_what_is_downloaded_and_installed(self):
+    def test_rail_counts_reflect_downloaded_and_installed_totals(self):
         dialog = self._components_dialog()
-        models = dialog.tabs.buttons[0]._title.text()
-        components = dialog.tabs.buttons[1]._title.text()
-        assert models.startswith("Speech models · ") and f"of {len(dialog.rows)} downloaded" in models
-        assert components.startswith("Components · ") and f"of {len(dialog._component_rows)} installed" in components
+        assert dialog._rail_items["all"].count_label.text() == f"0/{len(dialog.rows)}"
+        assert dialog._rail_items["installed"].count_label.text() == "0"
+        comp_count = dialog._rail_items["components"].count_label.text()
+        assert f"/{len(dialog._component_rows)}" in comp_count
 
-    def test_an_available_update_is_visible_from_the_tab(self):
+    def test_an_available_update_is_visible_from_the_rail(self):
         dialog = self._components_dialog()
         target = next(iter(dialog._component_rows))
         real = component_coordinator.describe
@@ -1253,32 +1259,37 @@ class TestSectionTabs(_DialogTestCase):
         # Pinned for every component, so the real machine's state can't change the count.
         with patch.object(component_coordinator, "describe", describe_with(set())):
             dialog.refresh_components()
-        assert "update" not in dialog.tabs.buttons[1]._title.text()
+        assert not dialog._rail_items["components"].count_label.property("attention")
+        assert "update" not in dialog._rail_items["components"].toolTip()
         with patch.object(component_coordinator, "describe", describe_with({target})):
             dialog.refresh_components()
-        assert dialog.tabs.buttons[1]._title.text().endswith("· 1 update")
+        assert dialog._rail_items["components"].count_label.property("attention") is True
+        assert "1 update available" in dialog._rail_items["components"].toolTip()
         with patch.object(component_coordinator, "describe", describe_with(set(dialog._component_rows))):
             dialog.refresh_components()
-        assert dialog.tabs.buttons[1]._title.text().endswith(f"· {len(dialog._component_rows)} updates")
+        assert f"{len(dialog._component_rows)} updates available" in dialog._rail_items["components"].toolTip()
 
-    def test_deep_links_switch_to_the_tab_that_has_what_they_want(self):
+    def test_deep_links_switch_to_the_rail_item_that_has_what_they_want(self):
         dialog = self._components_dialog()
         component_id = next(iter(dialog._component_rows))
         dialog.focus_component(component_id)
-        assert dialog.tabs.currentIndex() == 1 and dialog.components_section.isVisible()
+        assert dialog.current_rail_key() == "components" and dialog.components_section.isVisible()
         assert dialog._component_rows[component_id].property("selected")
         dialog.show_backend("parakeet")
-        assert dialog.tabs.currentIndex() == 0 and dialog.models_section.isVisible()
+        assert dialog.current_rail_key() == "parakeet" and dialog.models_section.isVisible()
         dialog.focus_component(component_id)
         dialog.reveal_model("base")
-        assert dialog.tabs.currentIndex() == 0
+        assert dialog.current_rail_key() == "local_whisper"
+        assert dialog.models_section.isVisible()
 
-    def test_a_platform_with_no_components_shows_no_tabs(self):
+    def test_a_platform_with_no_components_hides_extras_in_rail(self):
         with patch.object(component_coordinator, "list_components", return_value=[]):
             dialog, _values = self._make_dialog()
             dialog.show()
             self.app.processEvents()
-        assert dialog.tabs.isHidden() and dialog.models_section.isVisible()
+        assert dialog._rail_items["components"].isHidden()
+        assert dialog._rail_extras_label.isHidden()
+        assert dialog.models_section.isVisible()
 
 
 @pytest.mark.parametrize("parented", [False, True])

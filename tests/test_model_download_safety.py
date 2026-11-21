@@ -89,6 +89,7 @@ def test_downloads_offers_selected_version_when_only_old_snapshot_is_cached(monk
     monkeypatch.setattr(settings_downloads, "scan_cached_models", lambda **_: cached)
     monkeypatch.setattr("services.local_asr.cache.inventory", lambda: {})
     page = settings_downloads.DownloadsPage(background_cache_scan=False)
+    page.show_backend("local_whisper")
     assert not page.rows["base"].is_cached
     assert page.rows["base"].download_button.isVisibleTo(page)
     assert page.rows["base"].download_button.isEnabled()
