@@ -1,5 +1,6 @@
 """Tests for the thin Qt entrypoint import behavior and startup profiler."""
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -95,6 +96,81 @@ assert 'services.application_controller' not in sys.modules
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_main_disables_huggingface_telemetry_for_app_and_workers_only():
+    code = """
+import os
+import main
+import huggingface_hub.constants as hf_constants
+from services.process_env import external_env
+
+assert os.environ.get('HF_HUB_DISABLE_TELEMETRY') == '1'
+assert hf_constants.HF_HUB_DISABLE_TELEMETRY is True
+assert 'HF_HUB_DISABLE_TELEMETRY' not in external_env()
+"""
+    env = dict(os.environ)
+    env.pop("HF_HUB_DISABLE_TELEMETRY", None)
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_main_respects_user_hf_telemetry_override():
+    code = """
+import os
+import main
+from services.process_env import external_env
+
+assert os.environ.get('HF_HUB_DISABLE_TELEMETRY') == '0'
+assert external_env().get('HF_HUB_DISABLE_TELEMETRY') == '0'
+"""
+    env = dict(os.environ)
+    env["HF_HUB_DISABLE_TELEMETRY"] = "0"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_speech_process_disables_huggingface_telemetry_by_default(monkeypatch):
+    import io
+    from unittest.mock import MagicMock
+
+    from services.local_asr import process as local_process
+
+    captured = {}
+
+    def fake_popen(cmd, **kwargs):
+        captured["env"] = kwargs["env"]
+        proc = MagicMock()
+        proc.stdin = io.StringIO()
+        proc.stdout = io.StringIO()
+        proc.stderr = io.StringIO()
+        proc.poll.return_value = 0
+        return proc
+
+    monkeypatch.delenv("HF_HUB_DISABLE_TELEMETRY", raising=False)
+    monkeypatch.setattr(local_process.subprocess, "Popen", fake_popen)
+
+    worker = local_process.SpeechProcess(sys.executable, isolated=True)
+    try:
+        assert captured["env"]["HF_HUB_DISABLE_TELEMETRY"] == "1"
+    finally:
+        worker.close()
 
 
 def test_windowed_missing_stdio_becomes_writable(monkeypatch):

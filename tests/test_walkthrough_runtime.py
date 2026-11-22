@@ -293,7 +293,8 @@ def test_a_walkthrough_records_like_a_dictation_without_early_decoding(h):
     assert h.runtime.recording_walkthrough is h.session
     assert h.controller.recording_destination_changed.calls == [("Walkthrough",)]
     assert h.controller.status_update.calls[-1] == ("Walkthrough · Recording...",)
-    assert h.controller.overlay_state_update.calls[-1] == (OverlayState.RECORDING,)
+    assert h.controller.overlay_state_update.calls[-1] == (OverlayState.WALKTHROUGH_RECORDING,)
+    h.controller.streaming_runtime.start_streaming_session.assert_called_once_with(show_overlay=False)
     h.runtime._incremental.start.assert_not_called()
     # Nothing is pasted, so the user's clipboard isn't snapshotted for it.
     assert h.ui.prefetches == 0
@@ -325,6 +326,11 @@ def test_each_section_is_transcribed_and_the_document_copied(h):
 
     h.runtime.transcribe_audio_file(str(h.audio))
 
+    assert h.controller.overlay_state_update.calls == [
+        (OverlayState.WALKTHROUGH_RECORDING,),
+        (OverlayState.NONE,),
+        (OverlayState.NONE,),
+    ]
     assert h.backend.paths == ["section-1.wav", "section-2.wav", "section-3.wav"]
     (built,) = h.built
     assert built.texts == ["first part", "second part", "last part"]
@@ -603,6 +609,23 @@ def test_canceling_a_walkthrough_deletes_its_screenshots(h):
     assert not shot.path.exists()
     assert h.runtime._walkthrough is None
     assert h.runtime.recording_walkthrough is None
+    assert h.controller.overlay_state_update.calls[-1] == (OverlayState.WALKTHROUGH_CANCELED,)
+
+
+@pytest.mark.parametrize("decoding", [False, True])
+def test_canceling_a_stopped_walkthrough_uses_the_walkthrough_state(h, decoding):
+    _record(h)
+    h.backend.is_transcribing = decoding
+    h.backend.cancel_transcription = Mock()
+
+    assert h.runtime.cancel()
+
+    assert h.controller.overlay_state_update.calls == [
+        (OverlayState.WALKTHROUGH_RECORDING,),
+        (OverlayState.NONE,),
+        (OverlayState.WALKTHROUGH_CANCELED,),
+    ]
+    assert h.backend.cancel_transcription.called is decoding
 
 
 def test_a_failed_walkthrough_keeps_its_screenshots_and_says_where(h):

@@ -264,14 +264,13 @@ class DropZoneWidget(QFrame):
         return _is_supported_audio(path)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
-        if event.mimeData().hasUrls():
-            paths, _ = _audio_paths_from_mime(event.mimeData())
-            if paths:
-                event.acceptProposedAction()
-                self.setStyleSheet(self._HOVER_STYLE)
-                return
-            self.setStyleSheet(self._REJECT_STYLE)
-        event.ignore()
+        paths, skipped = _audio_paths_from_mime(event.mimeData())
+        if paths or skipped:
+            # Accept URL drags here so Qt delivers drop and leave for invalid files too.
+            event.acceptProposedAction()
+            self.setStyleSheet(self._HOVER_STYLE if paths else self._REJECT_STYLE)
+        else:
+            event.ignore()
 
     def dragLeaveEvent(self, event):
         self.setStyleSheet(self._IDLE_STYLE)
@@ -1256,7 +1255,7 @@ class UploadFileTab(TranscriptionTabBase):
                 item.state = "pending"
             logger.info(f"File loaded: {result.file_name}")
         else:
-            message = str(result)
+            message = str(result) or "This audio file could not be read."
             logger.error(f"Could not read {path}: {message}")
             if len(self._items) == 1:
                 # Alone, an unreadable file goes back to the drop zone, which
@@ -1323,7 +1322,7 @@ class UploadFileTab(TranscriptionTabBase):
         if count == 0:
             self.clear_file()
             return
-        if count == 1:
+        if count == 1 and not self._items[0].error:
             item = self._items[0]
             card.set_mode("single")
             self._audio_path = item.path
@@ -1620,7 +1619,7 @@ class UploadFileTab(TranscriptionTabBase):
 
     def _on_copy(self):
         """Emit the current display transcript for the shared clipboard path."""
-        text = (self._fixed_text or "").strip()
+        text = self.shown_transcript().strip()
         if text:
             self.copy_requested.emit(text)
 

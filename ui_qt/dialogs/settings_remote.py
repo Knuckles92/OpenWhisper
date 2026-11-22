@@ -1181,6 +1181,12 @@ class RemoteEngineSection(QObject):
             # Sharing and not using another computer: the host side is the one in use.
             self.tabs.setCurrentIndex(1)
 
+    def reveal_target(self, target: QWidget) -> None:
+        self._tab_chosen = True
+        self.tabs.setCurrentIndex(int(self.host_container.isAncestorOf(target)))
+        if target is self.client_tile and target.isHidden():
+            self._show_manual()
+
     def _show_section(self, index: int) -> None:
         self.client_container.setVisible(index == 0)
         self.host_container.setVisible(index == 1)

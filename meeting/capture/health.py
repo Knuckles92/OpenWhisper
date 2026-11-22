@@ -45,6 +45,7 @@ class CaptureSignalMonitor:
             self.last_block_mono: float | None = None
             self._sum_squares = 0.0
             self._samples = 0
+            self._rms = 0.0
             self._sample_rate = 0
             self._consecutive_signal_windows = 0
             self._last_reported_signal_mono: float | None = None
@@ -66,6 +67,7 @@ class CaptureSignalMonitor:
         with self._lock:
             self.last_block_mono = receipt
             if not signal_enabled:
+                self._rms = 0.0
                 self._sum_squares = 0.0
                 self._samples = 0
                 self._consecutive_signal_windows = 0
@@ -78,8 +80,8 @@ class CaptureSignalMonitor:
             self._sum_squares += squares
             self._samples += int(frames.size)
             if self._samples >= max(1, int(round(rate * SIGNAL_WINDOW_S))):
-                rms = math.sqrt(self._sum_squares / self._samples)
-                if rms >= self._signal_rms:
+                self._rms = math.sqrt(self._sum_squares / self._samples)
+                if self._rms >= self._signal_rms:
                     self._consecutive_signal_windows += 1
                     if (self._consecutive_signal_windows >= MIN_CONSECUTIVE_SIGNAL_WINDOWS
                             and (self._last_reported_signal_mono is None
@@ -94,18 +96,22 @@ class CaptureSignalMonitor:
                 self._sum_squares = 0.0
                 self._samples = 0
 
-    def snapshot(self, now: float | None = None) -> Dict[str, Any]:
+    def snapshot(self, now: float | None = None, *, include_level: bool = False) -> Dict[str, Any]:
         """Return the minimal state required by watchdog and guided checks."""
         instant = time.monotonic() if now is None else now
         with self._lock:
             last = self.last_block_mono
             started = self.started_mono
             signals = self.signal_windows
+            rms = self._rms
             generation = self._generation
         age = instant - (last if last is not None else started)
-        return {
+        snapshot = {
             "receiving": last is not None and age < BLOCK_STALL_S,
             "stalled": age >= (BLOCK_STALL_S if last is not None else FIRST_BLOCK_GRACE_S),
             "signal_windows": signals,
             "generation": generation,
         }
+        if include_level:
+            snapshot["rms"] = rms if snapshot["receiving"] else 0.0
+        return snapshot

@@ -6,8 +6,10 @@ import shutil
 import threading
 from pathlib import Path
 
-from config import local_app_dir
-from services.local_asr.catalog import MODELS, artifacts
+from config import bundle_root, local_app_dir
+from services.local_asr.catalog import MODELS, artifacts, uses_transcribe_cpp
+
+BUNDLED_MODELS_DIRNAME = "bundled_models"
 
 _locks = {key: threading.Lock() for key in MODELS}
 
@@ -18,23 +20,62 @@ def model_dir(key: str) -> Path:
     return Path(local_app_dir()) / "speech-models" / key
 
 
-def is_cached(key: str) -> bool:
-    directory = model_dir(key)
-    spec = artifacts(key)
+def bundled_model_dir(key: str) -> Path:
+    """Return the read-only path of a model packaged inside the app bundle."""
+    if key not in MODELS:
+        raise ValueError("Unknown speech model")
+    return Path(bundle_root()) / BUNDLED_MODELS_DIRNAME / key
+
+
+def _dir_is_valid(directory: Path, spec: dict) -> bool:
     try:
-        if json.loads((directory / "installed.json").read_text()) != spec:
+        if json.loads((directory / "installed.json").read_text(encoding="utf-8")) != spec:
             return False
         return all((directory / f["name"]).stat().st_size == f["size_bytes"] for f in spec["files"])
     except (OSError, ValueError):
         return False
 
 
+def is_bundled(key: str) -> bool:
+    """True when ``key`` is shipped intact inside the application bundle."""
+    if key not in MODELS:
+        return False
+    return _dir_is_valid(bundled_model_dir(key), artifacts(key))
+
+
+def active_model_dir(key: str) -> Path:
+    """Return the user-downloaded directory when valid, else the bundled one."""
+    user_dir = model_dir(key)
+    spec = artifacts(key)
+    if _dir_is_valid(user_dir, spec):
+        return user_dir
+    bundled = bundled_model_dir(key)
+    if _dir_is_valid(bundled, spec):
+        return bundled
+    return user_dir
+
+
+def is_cached(key: str) -> bool:
+    spec = artifacts(key)
+    return _dir_is_valid(model_dir(key), spec) or _dir_is_valid(bundled_model_dir(key), spec)
+
+
+def needs_qwen_redownload(key: str) -> bool:
+    model = MODELS.get(key)
+    if model is None or model.backend != "qwen_asr" or not uses_transcribe_cpp(model.backend):
+        return False
+    # The old model lived here as one or more Safetensors files. The cache
+    # replaces that directory only after the GGUF download succeeds.
+    return any(model_dir(key).glob("*.safetensors")) and not is_cached(key)
+
+
 def load_path(key: str) -> str:
     if not is_cached(key):
         raise RuntimeError(f"{MODELS[key].label} is not downloaded. Open Downloads.")
+    directory = active_model_dir(key)
     spec = artifacts(key)
     gguf = next((f["name"] for f in spec["files"] if f["name"].endswith(".gguf")), None)
-    return str(model_dir(key) / gguf if gguf else model_dir(key))
+    return str(directory / gguf if gguf else directory)
 
 
 def download(key: str, progress_callback=None, cancel: threading.Event | None = None) -> str:
@@ -58,7 +99,7 @@ def download(key: str, progress_callback=None, cancel: threading.Event | None = 
         if not target.exists() and backup.exists():
             os.replace(backup, target)
         if is_cached(key):
-            return str(target)
+            return str(active_model_dir(key))
         staging = target.with_name(target.name + ".partial")
         staging.mkdir(parents=True, exist_ok=True)
 
@@ -99,26 +140,36 @@ def _swap_into_place(staging: Path, target: Path) -> None:
 def delete(key: str) -> None:
     from filelock import FileLock
     target = model_dir(key)
+    user_dirs = (
+        target,
+        target.with_name(target.name + ".partial"),
+        # An interrupted swap leaves this; download() would move it back.
+        target.with_name(target.name + ".previous"),
+    )
+    if not any(d.exists() for d in user_dirs) and is_bundled(key):
+        raise ValueError(f"{MODELS[key].label} is included with OpenWhisper and cannot be deleted.")
     target.parent.mkdir(parents=True, exist_ok=True)
     with _locks[key], FileLock(str(target) + ".lock"):
-        for directory in (
-            target,
-            target.with_name(target.name + ".partial"),
-            # An interrupted swap leaves this; download() would move it back.
-            target.with_name(target.name + ".previous"),
-        ):
+        for directory in user_dirs:
             if directory.exists():
                 shutil.rmtree(directory)
 
 
 def inventory() -> dict:
     from services.hf_access import CachedModelInfo
-    return {
-        artifacts(key)["repo"]: CachedModelInfo(
-            artifacts(key)["repo"],
-            sum(f["size_bytes"] for f in artifacts(key)["files"]),
-            str(model_dir(key)),
-            (artifacts(key)["revision"],),
+    result = {}
+    for key in MODELS:
+        spec = artifacts(key)
+        user_valid = _dir_is_valid(model_dir(key), spec)
+        bundled_valid = _dir_is_valid(bundled_model_dir(key), spec)
+        if not (user_valid or bundled_valid):
+            continue
+        directory = model_dir(key) if user_valid else bundled_model_dir(key)
+        result[spec["repo"]] = CachedModelInfo(
+            spec["repo"],
+            sum(f["size_bytes"] for f in spec["files"]),
+            str(directory),
+            (spec["revision"],),
+            bundled=not user_valid and bundled_valid,
         )
-        for key in MODELS if is_cached(key)
-    }
+    return result

@@ -252,7 +252,7 @@ def test_paste_failure_still_records_history(h):
 
     assert "commit" in h.events
     assert [entry["text"] for entry in h.history.entries] == ["hello world"]
-    assert h.ui.statuses[-1] == "Transcription complete (paste failed)"
+    assert h.ui.statuses[-1].startswith("Auto-paste failed. Copied. Press ")
     assert not h.runtime.has_active_job
 
 

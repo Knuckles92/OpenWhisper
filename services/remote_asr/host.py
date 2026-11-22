@@ -470,25 +470,26 @@ class SpeechHost:
             self._server = server
             self.history.start()
             self.port = server.socket.getsockname()[1]
-            self._thread = threading.Thread(
+            thread = threading.Thread(
                 target=server.serve_forever, name="RemoteEngineHost", daemon=True
             )
-            self._thread.start()
+            thread.start()
+            self._thread = thread
             self.activity.reset()
+            if discovery_port is not None:
+                self.discovery.start(discovery_port, bind)
         logger.info("Remote engine host listening on %s:%s", bind, self.port)
-        if discovery_port is not None:
-            self.discovery.start(discovery_port, bind)
         self._emit("state", {})
         return self.port
 
     def stop(self) -> None:
         self.history.remove()
-        self.discovery.stop()
         with self._lock:
             server, self._server = self._server, None
             thread, self._thread = self._thread, None
             self._pairing = None
             request = self._request
+        self.discovery.stop()
         if request is not None:
             request.stopped = True
             request.done.set()

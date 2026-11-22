@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import sys
 import threading
 from concurrent.futures import Future
@@ -10,7 +11,7 @@ from queue import Empty, SimpleQueue
 
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import QDialog, QVBoxLayout
+from PyQt6.QtWidgets import QDialog, QLabel, QProgressBar, QVBoxLayout, QWidget
 
 from meeting.platform import (
     SCREEN_RECORDING_SETTINGS_URL,
@@ -41,6 +42,7 @@ class MeetingSetupDialog(QDialog):
         self._pending_result = None
         self._cancel = threading.Event()
         self._progress = SimpleQueue()
+        self._audio_progress = SimpleQueue()
         self._timer = QTimer(self)
         self._timer.setInterval(80)
         self._timer.timeout.connect(self._poll)
@@ -64,6 +66,20 @@ class MeetingSetupDialog(QDialog):
 
         self.audio_status = self._label("Microphone and system audio have not been checked.")
         layout.addWidget(self.audio_status)
+        self.audio_levels = QWidget()
+        levels_layout = QVBoxLayout(self.audio_levels)
+        levels_layout.setContentsMargins(0, 0, 0, 0)
+        self.audio_meters = []
+        for source in ("Microphone", "System audio"):
+            meters_label = QLabel(source)
+            levels_layout.addWidget(meters_label)
+            meter = QProgressBar()
+            meter.setAccessibleName(f"{source} input level")
+            meter.setTextVisible(False)
+            levels_layout.addWidget(meter)
+            self.audio_meters.append(meter)
+        self.audio_levels.hide()
+        layout.addWidget(self.audio_levels)
         self.audio_button = Button("Check audio")
         self.audio_button.clicked.connect(self._check_audio)
         layout.addWidget(self.audio_button)
@@ -84,6 +100,8 @@ class MeetingSetupDialog(QDialog):
         self.skip_button.setVisible(starting)
         self.skip_button.clicked.connect(self.accept)
         footer.addWidget(self.skip_button)
+        self.start_hint = self._label("")
+        footer.addWidget(self.start_hint)
         self.finish_button = SuccessButton("Start Meeting" if starting else "Done")
         self.finish_button.clicked.connect(self._finish)
         footer.addWidget(self.finish_button)
@@ -128,11 +146,14 @@ class MeetingSetupDialog(QDialog):
                 self._status_label.setText(self._progress.get_nowait())
         except Empty:
             pass
+        if self._checking_audio and self._pending_result is None:
+            self._show_audio_progress()
         if not self._future.done():
             return
         self._timer.stop()
         future, self._future = self._future, None
         self._checking_audio = False
+        self.audio_levels.hide()
         if self._pending_result is not None:
             self.done(self._pending_result)
             return
@@ -170,13 +191,36 @@ class MeetingSetupDialog(QDialog):
         self.skip_button.setText(
             "Start with microphone only" if self._permission_missing else "Start anyway"
         )
-        self.audio_status.setText("Listening… Speak and play audio through your call output.")
+        self.audio_status.setText("Opening audio devices…")
+        for meter in self.audio_meters:
+            meter.setValue(0)
+        self.audio_levels.show()
         cancel = self._cancel
+        self._audio_progress = SimpleQueue()
+        report = self._audio_progress.put
         self._checking_audio = True
         self._run(
-            lambda: check_audio(cancel, system_audio_allowed=allowed),
+            lambda: check_audio(cancel, system_audio_allowed=allowed,
+                                progress=lambda *sample: report(sample)),
             self._show_audio, self.audio_status,
         )
+
+    def _show_audio_progress(self) -> None:
+        sample = None
+        try:
+            while True:
+                sample = self._audio_progress.get_nowait()
+        except Empty:
+            pass
+        if sample is None:
+            return
+        remaining, *levels = sample
+        self.audio_status.setText(
+            f"Listening… {math.ceil(remaining)} s left. Speak and play audio through your call output."
+        )
+        for meter, rms in zip(self.audio_meters, levels, strict=True):
+            dbfs = 20 * math.log10(max(1.0, rms) / 32768.0)
+            meter.setValue(round(max(0, min(100, 100 * (1 + dbfs / 65)))))
 
     def _show_audio(self, audio):
         self._checked_audio = True
@@ -200,6 +244,18 @@ class MeetingSetupDialog(QDialog):
         ready = idle and self._models_ready and self._audio_ready
         self.finish_button.set_active(ready)
         self.finish_button.setEnabled(ready)
+        if not idle:
+            hint = "Wait for the audio check." if self._checking_audio else "Wait for model preparation."
+        elif not self._models_ready:
+            hint = "Prepare the required meeting models to continue."
+        elif not self._checked_audio:
+            hint = "Run the audio check to continue."
+        elif not self._audio_ready:
+            hint = "Retry the audio check after resolving the issues above."
+        else:
+            hint = ""
+        self.start_hint.setText(hint)
+        self.start_hint.setVisible(bool(hint))
 
     def _finish(self):
         try:

@@ -8,6 +8,7 @@ shift whenever PortAudio re-reads its devices.
 """
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import threading
@@ -45,6 +46,8 @@ SYSTEM_DEFAULT = ""
 OUTCOME_REFRESHED = "refreshed"
 OUTCOME_BUSY = "busy"
 IN_USE = "Microphones are in use. Refresh when recording or the meeting ends."
+_device_tokens = itertools.count(1)
+_device_delivery: HistoryDelivery | None = None
 
 
 def entry_token(entry: dict) -> str:
@@ -124,6 +127,10 @@ class MicrophoneSection:
     """Builds the Microphone group and keeps it in step with the saved order."""
 
     def __init__(self, dialog, list_devices: Callable[[], list]):
+        global _device_delivery
+        if _device_delivery is None:
+            _device_delivery = HistoryDelivery()
+        _device_delivery.loaded.connect(dialog._apply_audio_devices)
         self.dialog = dialog
         self._list_devices = list_devices
         # None until the first enumeration arrives: until then nothing can be
@@ -183,10 +190,8 @@ class MicrophoneSection:
     def enumerate(self, *, refresh: bool = False) -> None:
         """List devices off the Qt thread; the driver can take seconds to answer."""
         dialog = self.dialog
-        dialog._audio_device_generation += 1
-        generation = dialog._audio_device_generation
-        delivery = HistoryDelivery()
-        delivery.loaded.connect(dialog._apply_audio_devices)
+        dialog._audio_device_generation = generation = next(_device_tokens)
+        loaded = _device_delivery.loaded
         # Bound here: through the section the worker would hold the window.
         list_devices = self._list_devices
 
@@ -199,7 +204,7 @@ class MicrophoneSection:
             except Exception:
                 logger.warning("Couldn't discover audio inputs", exc_info=True)
                 devices = []
-            delivery.loaded.emit(generation, outcome, devices, "")
+            loaded.emit(generation, outcome, devices, "")
 
         threading.Thread(target=load, name="settings-audio-devices", daemon=True).start()
 

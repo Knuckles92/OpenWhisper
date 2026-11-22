@@ -32,6 +32,7 @@ from services.update_contract import (
     INTERNAL_DIRNAME,
     MANAGED_TOP_LEVEL_DIRS,
     MANAGED_TOP_LEVEL_FILES,
+    BUNDLED_MODELS_RELATIVE,
     MANIFEST_NAME,
     MANIFEST_SCHEMA_VERSION,
     MINIMUM_UPDATER_VERSION,
@@ -1270,7 +1271,7 @@ def preserve_compat_files(
     candidate_dir: str,
     registration: InstallRegistration,
 ) -> Tuple[List[str], bool]:
-    """Copy Inno uninstall files and a leftover NVIDIA tree into the candidate."""
+    """Copy Inno uninstall files, leftover NVIDIA libs, and bundled models into the candidate."""
     preserved: List[str] = []
     for name in uninstaller_basenames(registration):
         source = os.path.join(app_dir, name)
@@ -1284,6 +1285,11 @@ def preserve_compat_files(
         reject_reparse(nvidia_src, "Legacy NVIDIA directory")
         shutil.copytree(nvidia_src, nvidia_dst, symlinks=False)
         copied_nvidia = True
+    bundled_models_src = os.path.join(app_dir, BUNDLED_MODELS_RELATIVE)
+    bundled_models_dst = os.path.join(candidate_dir, BUNDLED_MODELS_RELATIVE)
+    if os.path.isdir(bundled_models_src) and not os.path.exists(bundled_models_dst):
+        reject_reparse(bundled_models_src, "Bundled models directory")
+        shutil.copytree(bundled_models_src, bundled_models_dst, symlinks=False)
     return preserved, copied_nvidia
 
 

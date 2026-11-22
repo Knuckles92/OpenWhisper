@@ -101,16 +101,38 @@ class TestField:
         assert field.chips[1].toolTip() == "Parakeet can't use this language."
         assert field.caption.text() == "Dictation uses English. Add another to switch between them."
 
-    @pytest.mark.parametrize("backend,reason", [
-        ("moonshine", "Moonshine understands English only."),
-        ("parakeet_mlx", "Parakeet MLX detects the language by itself."),
+    @pytest.mark.parametrize("backend,reason,offers_switch", [
+        ("moonshine", "Moonshine understands English only.", True),
+        ("parakeet_unified", "Parakeet Unified understands English only.", True),
+        ("parakeet_mlx", "Parakeet MLX detects the language by itself.", False),
     ])
-    def test_single_language_engines_show_why_instead(self, make_dialog, backend, reason):
+    def test_single_language_engines_show_why_instead(
+        self, make_dialog, backend, reason, offers_switch,
+    ):
         _dialog, field = make_dialog({SettingsKey.DICTATION_LANGUAGES: ["en", "es"]})
         field.set_backend(backend)
         assert field.chip_area.isHidden()
         assert field.caption.text() == reason
+        assert (not field.switch_engine_button.isHidden()) is offers_switch
         assert settings_manager.get(SettingsKey.DICTATION_LANGUAGES) == ["en", "es"]
+
+    def test_switch_multilingual_engine_menu_switches_backend(self, make_dialog):
+        dialog, field = make_dialog({
+            SettingsKey.SELECTED_MODEL: "parakeet_unified",
+            SettingsKey.DICTATION_LANGUAGES: ["en", "es"],
+        })
+        assert not field.switch_engine_button.isHidden()
+        field._open_switch_engine_menu()
+        try:
+            actions = field.switch_engine_menu.actions()
+            assert any("Local Whisper" in action.text() for action in actions)
+            whisper_action = next(action for action in actions if "Local Whisper" in action.text())
+            whisper_action.trigger()
+        finally:
+            field.switch_engine_menu.close()
+        assert settings_manager.get(SettingsKey.SELECTED_MODEL) == "local_whisper"
+        assert field.switch_engine_button.isHidden()
+        assert not field.chip_area.isHidden()
 
     def test_engine_switch_on_the_page_updates_the_field(self, make_dialog):
         dialog, field = make_dialog({
@@ -118,6 +140,7 @@ class TestField:
             SettingsKey.DICTATION_LANGUAGES: ["en", "es"],
         })
         assert not field.chip_area.isHidden()
+        assert field.switch_engine_button.isHidden()
         dialog.models._update_ondemand_whisper_enabled = MagicMock(
             wraps=dialog.models._update_ondemand_whisper_enabled
         )
@@ -127,6 +150,7 @@ class TestField:
             pytest.skip("Moonshine is not offered on this platform")
         combo.setCurrentIndex(index)
         assert field.chip_area.isHidden()
+        assert not field.switch_engine_button.isHidden()
         assert field.caption.text() == "Moonshine understands English only."
 
     def test_never_writes_the_engine_language(self, make_dialog):

@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -26,17 +27,14 @@ from PyQt6.QtWidgets import (
 )
 
 from services.walkthrough import library
-from services.walkthrough.document import clock
 from services.walkthrough.storage import captures_root
 from ui_qt.utils.icons import design_icon
-from ui_qt.widgets.walkthrough_review import (
-    WalkthroughReview,
-    _day,
-    _pill,
-    _shots,
-    _started,
-    _time,
+from ui_qt.widgets.past_walkthroughs import (
+    Summary,
+    load_summaries,
+    walkthrough_list_relay,
 )
+from ui_qt.widgets.walkthrough_review import WalkthroughReview, _day, _pill, _time
 
 #: Retention choices; another saved value is offered as itself.
 KEEP_CHOICES = ((0, "Forever"), (7, "1 week"), (30, "30 days"), (90, "90 days"), (365, "1 year"))
@@ -136,22 +134,23 @@ _STYLE = """
 class _Entry(QWidget):
     """One walkthrough in the list: when, how long, and what it holds."""
 
-    def __init__(self, folder: Path, today: date):
+    def __init__(self, summary: Summary, today: date):
         super().__init__()
         self.setObjectName("wlEntry")
-        draft = (folder / library.DRAFT_NAME).exists()
-        try:
-            document = library.load_document(folder)
-        except (OSError, ValueError, KeyError, TypeError):
-            document = None
-        when = _started(folder, document)
+        when = summary.when
         column = QVBoxLayout(self)
         column.setContentsMargins(12, 9, 12, 10)
         column.setSpacing(3)
+        title = QLabel(summary.title)
+        title.setObjectName("wlEntryDay")
+        title.setTextFormat(Qt.TextFormat.PlainText)
+        title.setWordWrap(True)
+        title.setMaximumWidth(230)
+        column.addWidget(title)
         top = QHBoxLayout()
         top.setSpacing(6)
-        day = QLabel(_day(when, today) if when else folder.name)
-        day.setObjectName("wlEntryDay")
+        day = QLabel(_day(when, today) if when else summary.folder.name)
+        day.setObjectName("wlEntryTime")
         top.addWidget(day)
         top.addStretch(1)
         if when:
@@ -161,22 +160,16 @@ class _Entry(QWidget):
         column.addLayout(top)
         bottom = QHBoxLayout()
         bottom.setSpacing(6)
-        if document is not None:
-            count = sum(1 for section in document.sections if section.shot)
-            meta = f"{_shots(count)} · {clock(document.duration_s)}"
-        else:
-            meta = "Not finished" if draft else "Can't be opened"
-        label = QLabel(meta)
+        label = QLabel(summary.meta)
         label.setObjectName("wlEntryMeta")
         bottom.addWidget(label)
         bottom.addStretch(1)
-        if draft:
-            bottom.addWidget(_pill("Interrupted", "warning"))
-        elif library.written_up(folder):
-            bottom.addWidget(_pill("AI write-up"))
+        if summary.pill:
+            bottom.addWidget(_pill(summary.pill, summary.pill_tone))
         column.addLayout(bottom)
-        self.summary = f"{day.text()} {_time(when) if when else ''}, {meta}" + (
-            ", interrupted" if draft else "")
+        self.summary = ", ".join(filter(None, (summary.title, day.text(),
+                                                _time(when) if when else "",
+                                                summary.meta, summary.pill)))
 
 
 class WalkthroughLibraryDialog(QDialog):
@@ -193,6 +186,11 @@ class WalkthroughLibraryDialog(QDialog):
         self.setStyleSheet(_STYLE)
         self.root = Path(root) if root is not None else captures_root()
         self._today = today
+        self._load_token = 0
+        self._requested_folder = None
+        self._reload_review = False
+        self._loading = False
+        walkthrough_list_relay().loaded.connect(self._on_loaded)
         self.review = WalkthroughReview(copy_files=copy_files, recover=recover, acquire=acquire,
                                         release=release, submit=submit)
         self.review.changed.connect(self._review_changed)
@@ -244,6 +242,11 @@ class WalkthroughLibraryDialog(QDialog):
         self.refresh_button.clicked.connect(self._refresh_requested)
         head.addWidget(self.refresh_button, 0, Qt.AlignmentFlag.AlignTop)
         column.addLayout(head)
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search walkthroughs")
+        self.search_input.setAccessibleName("Search walkthroughs")
+        self.search_input.textChanged.connect(self._filter)
+        column.addWidget(self.search_input)
         self.list = QListWidget()
         self.list.setObjectName("wlList")
         self.list.setAccessibleName("Saved walkthroughs and interrupted drafts")
@@ -274,26 +277,55 @@ class WalkthroughLibraryDialog(QDialog):
 
     # ---- the list ----
 
-    def refresh(self, folder=None):
+    def refresh(self, folder=None, *, reload_review=True):
+        self._requested_folder = Path(folder) if folder is not None else None
+        self._reload_review = reload_review
+        self._loading = True
+        self.count_label.setText("Loading walkthroughs…")
+        self._load_token = load_summaries(self.root, self._today(), thumbnails=False)
+
+    def _on_loaded(self, token, result):
+        if token != self._load_token:
+            return
+        self._loading = False
+        summaries, _total = result
+        review_locked = self.review._busy or self.review._dirty
+        folder = self.review.folder if review_locked else self._requested_folder
         self.list.blockSignals(True)
         self.list.clear()
         today = self._today()
-        folders = library.entries(self.root)
-        for path in folders:
-            entry = _Entry(path, today)
+        for summary in summaries:
+            entry = _Entry(summary, today)
             item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole, str(path))
+            item.setData(Qt.ItemDataRole.UserRole, str(summary.folder))
             item.setData(Qt.ItemDataRole.AccessibleTextRole, entry.summary)
+            item.setData(Qt.ItemDataRole.UserRole + 1, summary.words)
             item.setSizeHint(entry.sizeHint())
             self.list.addItem(item)
             self.list.setItemWidget(item, entry)
-            if folder is not None and path == Path(folder):
+            if summary.folder == folder:
                 self.list.setCurrentItem(item)
-        if self.list.currentRow() < 0 and self.list.count():
+        if self.list.currentRow() < 0 and self.list.count() and not review_locked:
             self.list.setCurrentRow(0)
         self.list.blockSignals(False)
-        self.count_label.setText(f"{len(folders)} saved" if folders else "None yet")
-        self._selected(self.list.currentItem(), None)
+        self._filter()
+        item = self.list.currentItem()
+        selected = Path(item.data(Qt.ItemDataRole.UserRole)) if item else None
+        if not review_locked and (self._reload_review or selected != self.review.folder):
+            self.review.show_folder(selected)
+
+    def _filter(self, *_args):
+        terms = self.search_input.text().casefold().split()
+        count = 0
+        for row in range(self.list.count()):
+            item = self.list.item(row)
+            words = item.data(Qt.ItemDataRole.UserRole + 1).casefold()
+            matched = all(term in words for term in terms)
+            item.setHidden(not matched)
+            count += matched
+        message = f"{count} saved" if count else "No matches" if terms else "None yet"
+        if not self._loading:
+            self.count_label.setText(message)
 
     def _refresh_requested(self):
         if self.review.discard_changes():
@@ -307,10 +339,14 @@ class WalkthroughLibraryDialog(QDialog):
             self.list.setCurrentItem(previous)
             self.list.blockSignals(False)
             return
-        self.review.show_folder(Path(item.data(Qt.ItemDataRole.UserRole)) if item else None)
+        folder = Path(item.data(Qt.ItemDataRole.UserRole)) if item else None
+        if self._loading:
+            self._requested_folder = folder
+        self.review.show_folder(folder)
 
     def _review_changed(self, folder):
-        self.refresh(folder)
+        self.review.show_folder(folder)
+        self.refresh(folder, reload_review=False)
         self.changed.emit()
 
     def _review_busy(self, busy: bool):

@@ -410,6 +410,7 @@ def test_the_main_window_shows_a_tab_with_its_list_open(expanded):
 
     calls = []
     window = SimpleNamespace(
+        _host_mode=False,
         restore_from_tray=lambda: calls.append("restore"),
         tabbed_content=SimpleNamespace(set_current_index=lambda index: calls.append(index)),
         history_sidebar=SimpleNamespace(is_expanded=expanded),

@@ -8,14 +8,19 @@ controller; rows disable themselves once acted on.
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
+    QScrollArea,
     QVBoxLayout,
+    QWidget,
 )
 
+from services.history_calendar import local_wall_time
 from ui_qt.widgets import Button, DangerButton, PrimaryButton
 
 logger = logging.getLogger(__name__)
@@ -38,6 +43,7 @@ class MeetingRecoveryDialog(QDialog):
             "Finalize captured audio into meeting history or permanently discard it."
         )
         self.setMinimumWidth(520)
+        self.resize(640, min(520, 250 + 65 * len(meetings)))
         self.setModal(True)
 
         # Assigned by the UI controller; each receives a meeting id.
@@ -65,8 +71,18 @@ class MeetingRecoveryDialog(QDialog):
         body.setWordWrap(True)
         layout.addWidget(body)
 
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        rows = QWidget()
+        rows_layout = QVBoxLayout(rows)
+        rows_layout.setContentsMargins(0, 0, 0, 0)
         for meeting in meetings:
-            layout.addWidget(self._build_row(meeting))
+            rows_layout.addWidget(self._build_row(meeting))
+        rows_layout.addStretch()
+        scroll.setWidget(rows)
+        layout.addWidget(scroll, 1)
 
         layout.addSpacing(8)
         button_layout = QHBoxLayout()
@@ -87,14 +103,15 @@ class MeetingRecoveryDialog(QDialog):
         row_layout.setSpacing(8)
 
         title = meeting.get("title") or "Untitled meeting"
-        started_at = str(meeting.get("started_at") or "")
-        # ISO timestamps read fine truncated to minutes.
-        started_display = started_at.replace("T", " ")[:16]
+        when = local_wall_time(meeting.get("started_at"))
+        started_display = when.strftime("%b %d, %Y at %I:%M %p") if when else ""
 
         label = QLabel(
             f"{title} — {started_display}" if started_display else str(title)
         )
         label.setObjectName("meetingRecoveryRowLabel")
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        label.setWordWrap(True)
         row_layout.addWidget(label, stretch=1)
 
         finalize_btn = PrimaryButton("Finalize")
@@ -122,6 +139,14 @@ class MeetingRecoveryDialog(QDialog):
             settle("finalizing")
 
         def do_discard() -> None:
+            answer = QMessageBox.question(
+                self, "Discard interrupted meeting?",
+                f"Permanently delete this meeting and its captured audio?\n\n{title}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
             logger.info(f"Recovery: discard meeting '{meeting_id}'")
             if self.on_discard:
                 self.on_discard(meeting_id)

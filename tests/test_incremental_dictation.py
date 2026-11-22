@@ -572,7 +572,7 @@ def test_runtime_cancel_discards_the_session(recorder, backend):
     with patch.object(config, "INCREMENTAL_DICTATION_POLL_SEC", 0.01):
         runtime._incremental.start(controller)
         session = runtime._incremental._session
-        runtime._cancel_recording()
+        assert runtime.cancel()
         session._thread.join(5)
     assert session._invalid == "the recording was canceled"
     assert runtime._incremental._session is None

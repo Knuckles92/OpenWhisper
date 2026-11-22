@@ -95,6 +95,7 @@ def test_the_tray_item_copies_and_never_pastes():
         app_ui.on_paste_text_now = lambda text: pasted.append(text) or True
         app_ui.set_status = statuses.append
 
+        app_ui.tray_manager._refresh_menu()
         app_ui.tray_manager.copy_original_action.trigger()
 
         assert copied == ["um hello world"] and pasted == []

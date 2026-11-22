@@ -222,12 +222,14 @@ def test_opening_and_copying_records(dialog):
     assert [e.id for e in opened] == ["d1", "d1"]
 
 
-def test_a_host_kept_meeting_is_fetched_before_it_opens(dialog):
+@pytest.mark.parametrize("action", ("open", "copy"))
+def test_a_host_kept_meeting_is_fetched_before_use(dialog, action):
     hosted = item("mh", datetime(2026, 9, 27, 19, 0), kind=MEETING, place=(ON, "jed"),
                   title="Remote sync", source={"id": "mh"})
     window = dialog(remote=[hosted])
     meetings = []
-    window.meeting_requested.connect(meetings.append)
+    signal = window.meeting_requested if action == "open" else window.meeting_copy_requested
+    signal.connect(meetings.append)
     calls = []
 
     def check_out(kind, record_id, progress):
@@ -237,7 +239,8 @@ def test_a_host_kept_meeting_is_fetched_before_it_opens(dialog):
     with patch("services.remote_records.sync.record_sync.check_out", side_effect=check_out), \
             patch("threading.Thread") as thread:
         thread.side_effect = lambda target, **kwargs: SimpleNamespace(start=target)
-        window._open(window._card("mh").item)
+        handler = window._open if action == "open" else window._copy
+        handler(window._card("mh").item)
     QApplication.processEvents()
     assert calls == [("meeting", "mh")]
     assert meetings == ["mh"]

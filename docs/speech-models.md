@@ -14,12 +14,23 @@ On Apple Silicon, **Parakeet MLX** needs its runtime and roughly 2.5 GB of model
 
 ## Parakeet Unified
 
-Parakeet Unified EN 0.6B is NVIDIA's English Parakeet trained to run both offline and as a stream. OpenWhisper runs it on [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp), installed from **Downloads** as the transcribe.cpp runtime (about 30 MB). NVIDIA's own runtime has no Unified model. Its 731 MB Q8 weights come from [handy-computer's GGUF conversion](https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf). They are licensed under the [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/), and its text and NVIDIA's notice are saved beside them.
+Parakeet Unified is the default dictation engine on new Windows x64 and Linux x86_64 installs. OpenWhisper runs it on [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp), which ships bundled inside the packaged Windows and Linux installers (source checkouts download it from **Downloads** as the transcribe.cpp runtime, about 30 MB). Non-English users can switch to a multilingual engine (**Parakeet TDT v3**, **Local Whisper**, or **Qwen3-ASR**) directly from Guided Setup or **Settings → Dictation → Voice model → Languages I dictate in**.
+
+Two English models run on this engine:
+
+- **Parakeet Unified EN 0.6B (731 MB Q8)** — default on standard installers; NVIDIA's unified streaming + offline model from [handy-computer's GGUF conversion](https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf). Licensed under the [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/), with its text and NVIDIA's notice saved beside the weights.
+- **Parakeet TDT-CTC 110M (135 MB Q8)** — compact CC-BY-4.0 model from [handy-computer's GGUF conversion](https://huggingface.co/handy-computer/parakeet-tdt_ctc-110m-gguf). Included inside the optional `OpenWhisper-AllInOne` Windows and Linux installers so dictation, live preview, uploads, and meetings work completely offline on first launch with no model download. On an all-in-one install, OpenWhisper selects it automatically until you pick another model (such as upgrading to Parakeet Unified EN 0.6B).
 
 - **Device:** **Auto** uses a dedicated GPU from any vendor through Vulkan, else the CPU. Choosing the GPU also accepts an integrated one.
-- **Live preview:** with live preview on, the preview follows the model's own stream instead of re-decoding 3-second windows. Words appear about 2 seconds into speaking, short dictations included. In a 2026-10-31 test on a GTX 1050 Ti, 16% of the words in its live text were wrong, against 55% for Parakeet v3's preview.
-- **Final text:** the saved recording is decoded at the end, as with Parakeet v3. A dictation of 30 seconds or more pastes the stream's own final text instead, if the stream heard all of the recording. That text is ready about 0.3 seconds after you stop, however long you spoke.
-- **Validated:** Windows x64 on the CPU and on an RTX 2060 through Vulkan, and Linux x86_64 on the CPU. A Linux GPU through Vulkan has not been validated with the release libraries. Meetings use other models for now.
+- **Live preview:** On **Parakeet Unified EN 0.6B**, live preview follows the model's own stream instead of re-decoding 3-second windows. Words appear about 2 seconds into speaking, short dictations included. In a 2026-10-31 test on a GTX 1050 Ti, 16% of the words in its live text were wrong, against 55% for Parakeet v3's preview. On **Parakeet TDT-CTC 110M**, live preview re-decodes short windows with the same loaded model (no extra download).
+- **Final text:** The saved recording is decoded at the end, as with Parakeet v3. On Parakeet Unified EN 0.6B, a dictation of 30 seconds or more pastes the stream's own final text instead, if the stream heard all of the recording (ready about 0.3 seconds after you stop).
+- **Validated:** Windows x64 on the CPU and on an RTX 2060 through Vulkan, and Linux x86_64 on the CPU. A Linux GPU through Vulkan has not been validated with the release libraries. Parakeet TDT-CTC 110M also supports Meeting Mode chunks and preview; Parakeet Unified EN 0.6B is dictation/upload only for now.
+
+## Qwen3-ASR
+
+Windows x64 and Linux x86_64 use the same bundled transcribe.cpp runtime as Parakeet Unified. **Auto** uses a dedicated GPU through Vulkan when available and falls back to CPU. The Q8 GGUF weights are separate downloads of about 850 MB for 0.6B and 2.19 GB for 1.7B.
+
+If you used Qwen3-ASR on Windows before this change, your model selection is kept. Open **Downloads** to get the GGUF weights for that model. You can also remove the old Qwen3-ASR PyTorch runtime there. On Apple Silicon, Qwen3-ASR uses the Safetensors weights and the optional PyTorch runtime for CPU or Apple GPU.
 
 ## Orukeet
 

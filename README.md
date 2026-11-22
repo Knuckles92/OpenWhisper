@@ -39,13 +39,15 @@ The app also includes microphone selection, a system tray where available, and d
 
 ## Install
 
-Download the package for your platform from [Releases](https://github.com/Knuckles92/OpenWhisper/releases/latest). Native packages include Python and the app dependencies. See the [code signing policy](#code-signing-policy) for how releases are built and signed.
+Download the package for your platform from [Releases](https://github.com/Knuckles92/OpenWhisper/releases/latest). Native packages include Python, the app dependencies, and (on Windows x64 and Linux x86_64) the `transcribe.cpp` speech runtime. Choose the **All-in-One** (`OpenWhisper-AllInOne-*`) installer on Windows or Linux to also bundle the compact English **Parakeet TDT-CTC 110M** model (~135 MB) so offline dictation, live preview, and meetings work right out of the box with no extra download.
+
+See the [code signing policy](#code-signing-policy) for how releases are built and signed.
 
 | Platform | Install |
 | --- | --- |
-| Windows | Run the `.exe` installer. It installs per-user without admin rights. |
+| Windows | Run `OpenWhisper-Setup-<version>.exe` (slim; downloads your speech model on first use) or `OpenWhisper-AllInOne-Setup-<version>.exe` (ready offline out of the box). Both install per-user without admin rights and upgrade in place. |
 | macOS | Open the `.dmg` and drag OpenWhisper into Applications. Requires Apple Silicon and macOS 14+. Unless a release says it is notarized, approve first launch in **Privacy & Security → Open Anyway**. Intel Macs run [from source](#run-from-source). |
-| Linux | Install the `.deb` on Debian 12+ / Ubuntu 22.04+, or `.pkg.tar.zst` on Arch-compatible distributions. Both packages require x86_64. |
+| Linux | Install the `.deb` on Debian 12+ / Ubuntu 22.04+, or `.pkg.tar.zst` on Arch-compatible distributions (`OpenWhisper-*` slim or `OpenWhisper-AllInOne-*` with the bundled English model). Both packages require x86_64. |
 
 On Linux, use the matching command, replacing `<version>` with your download's version:
 
@@ -113,7 +115,7 @@ For Local Whisper on Windows or Linux x86_64, install **GPU Acceleration** from 
 
 Source installs can also use `uv sync --locked --extra gpu` to install CUDA wheels on Windows or Linux x86_64. On Windows, launch with `uv run --locked --extra gpu python main.py`. On Linux, use `./scripts/openwhisper`. **Auto** selects a compatible compute type. **Downloads** shows GPU memory estimates.
 
-Other speech engines use their own runtimes from Downloads. On Apple Silicon Macs, **Auto** runs Parakeet MLX on the Apple GPU through MLX, Parakeet and Nemotron through the **NVIDIA Speech GPU (Metal)** runtime, and Qwen3-ASR through PyTorch MPS. The Pi and OpenCode SDK meeting agents are also separate components, available on Windows, Linux and macOS.
+On Windows x64 and Linux x86_64, Parakeet Unified and Qwen3-ASR share the bundled transcribe.cpp runtime, which uses Vulkan for GPU acceleration. Other speech runtimes are available in Downloads. On Apple Silicon Macs, **Auto** runs Parakeet MLX on the Apple GPU through MLX, Parakeet and Nemotron through the **NVIDIA Speech GPU (Metal)** runtime, and Qwen3-ASR through PyTorch MPS. The Pi and OpenCode SDK meeting agents are also separate components, available on Windows, Linux and macOS.
 
 ## Updates
 
@@ -130,8 +132,8 @@ When a package upgrade or pull replaces the app while it runs, OpenWhisper offer
 
 ## Get started
 
-1. Open **Settings → Dictation → Voice model** and choose a speech backend. New Windows x64 and Linux x86_64 installs default to Parakeet, and Apple Silicon Macs on macOS 14 or later to Parakeet MLX; other platforms default to Local Whisper. Existing installs keep the engine they use.
-2. Download the model and runtime through **Settings → Models & storage → Downloads**, or add an OpenAI key in **Settings → App → API keys** for cloud transcription.
+1. Open **Settings → Dictation → Voice model** and choose a speech backend. New Windows x64 and Linux x86_64 installs default to **Parakeet Unified** (English, with its `transcribe.cpp` CPU/Vulkan runtime bundled in the installer), and Apple Silicon Macs on macOS 14 or later default to **Parakeet MLX**; other platforms default to Local Whisper. Dictating in another language? Switch to **Parakeet TDT v3**, **Local Whisper**, or **Qwen3-ASR** from Guided Setup or **Voice model → Languages I dictate in**. Existing installs keep the engine they use.
+2. Download the model (and any optional runtime for other engines) through Guided Setup or **Settings → Models & storage → Downloads**, or add an OpenAI key in **Settings → App → API keys** for cloud transcription.
 3. Choose your microphone in **Settings → Dictation → Recording**. On macOS, grant the [required permissions](#macos-permissions).
 4. Use **Quick Record** or the recording hotkey. Stop recording to transcribe. Dictation follows your clipboard and auto-paste settings. If the remote engine goes offline before transcription, the recording overlay shows up to three reconnect attempts within 12 seconds. If transcription fails, open **History** to play the saved recording or choose **Retry transcription**. Recovered transcripts and **Upload File** results are ready to copy in the app.
 
@@ -170,8 +172,8 @@ Choose **Settings → App → Appearance → Theme → Omarchy desktop** to foll
 | Local Whisper | Standard Whisper sizes, turbo, Distil-Whisper | All platforms, CPU; NVIDIA CUDA on Windows/Linux | Dictation with preview, uploads, meetings |
 | Parakeet | TDT 0.6B v3; Orukeet TDT 0.6B community adaptation | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meeting chunks |
 | Parakeet MLX | TDT 0.6B v3, MLX Community weights | Apple Silicon, macOS 14+: Apple GPU through Metal or CPU | Dictation with preview, uploads, meeting chunks |
-| Parakeet Unified | Unified EN 0.6B, English | Windows x64 and Linux x86_64 CPU / GPU through Vulkan (NVIDIA, AMD, Intel) | Dictation with native preview, uploads |
-| Qwen3-ASR | 0.6B, 1.7B | Windows x64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (MPS) | Dictation, uploads |
+| Parakeet Unified | Unified EN 0.6B (native preview); TDT-CTC 110M (compact, included in All-in-One installers), English | Windows x64 and Linux x86_64 CPU / GPU through Vulkan (NVIDIA, AMD, Intel) | Dictation with preview, uploads; meetings (TDT-CTC 110M) |
+| Qwen3-ASR | 0.6B, 1.7B | Windows x64 / Linux x86_64 CPU or Vulkan GPU; Apple Silicon CPU or Apple GPU (MPS) | Dictation, uploads |
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU; Apple Silicon CPU, macOS 15+ | Dictation, uploads, meetings with native preview |
 | API | OpenAI: GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027. Groq: Whisper Large v3 / Turbo. Your own server: whatever it serves | OpenAI or Groq in the cloud (API key required), or an OpenAI-compatible speech server you run: Speaches, LocalAI, vLLM, whisper.cpp, or custom | Dictation, uploads |

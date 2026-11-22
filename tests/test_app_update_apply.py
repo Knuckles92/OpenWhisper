@@ -233,6 +233,9 @@ class TestPreserveAndEligibility:
         nvidia = app / "_internal" / "nvidia" / "cublas" / "bin"
         nvidia.mkdir(parents=True)
         (nvidia / "cublas64_12.dll").write_bytes(b"gpu")
+        bundled = app / "_internal" / "bundled_models" / "parakeet-110m-en"
+        bundled.mkdir(parents=True)
+        (bundled / "parakeet-tdt_ctc-110m-Q8_0.gguf").write_bytes(b"weights")
         preserved, copied = preserve_compat_files(
             str(app), str(cand), _registration(app)
         )
@@ -240,6 +243,9 @@ class TestPreserveAndEligibility:
         assert copied
         assert (cand / "unins000.exe").read_bytes() == b"unins"
         assert (cand / "_internal" / "nvidia" / "cublas" / "bin" / "cublas64_12.dll").exists()
+        assert (
+            cand / "_internal" / "bundled_models" / "parakeet-110m-en" / "parakeet-tdt_ctc-110m-Q8_0.gguf"
+        ).read_bytes() == b"weights"
 
     def test_hklm_is_not_native_eligible(self, tmp_path):
         app = tmp_path / "app"

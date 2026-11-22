@@ -924,11 +924,12 @@ class RemoteEngineService:
     def shutdown(self) -> None:
         if self._history_client is not None:
             self._history_client.stop()
-        with self._lock:
-            host = self._host
-            self._pending_pairing = None
-        if host is not None:
-            host.stop()
+        with self._apply_lock:
+            with self._lock:
+                host = self._host
+                self._pending_pairing = None
+            if host is not None:
+                host.stop()
 
     def start_client_history(self):
         if self._history_client is None:

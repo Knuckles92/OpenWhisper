@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import QMenu
 import services
 from config import config
 from services.settings import settings_manager
-from ui_qt import history_actions
+from ui_qt import history_actions, system_tray
 from ui_qt.dialogs import stats_dialog
 from ui_qt.dialogs.settings_destinations import DICTIONARY
 from ui_qt.overlay_state import OverlayState
@@ -53,6 +53,15 @@ def _language_in_effect():
     if reason:
         return reason
     return dictation_language.label(dictation_language.current_language(settings))
+
+
+def _language_menu_footer():
+    from services import dictation_language
+
+    settings = settings_manager.load_all_settings()
+    if dictation_language.is_english_only_engine(settings):
+        return "Switch to a multilingual engine\u2026"
+    return "Choose languages\u2026"
 
 
 def _menu_texts(menu):
@@ -199,7 +208,7 @@ class TestEmptyStates:
         menu.addAction("Stale")
         language_menu.populate(menu, ui)
         language_menu.populate(menu, ui)
-        assert _menu_texts(menu) == [_language_in_effect(), "Choose languages…"]
+        assert _menu_texts(menu) == [_language_in_effect(), _language_menu_footer()]
         assert not menu.actions()[0].isEnabled()
 
 
@@ -220,7 +229,7 @@ class TestAppWiring:
             assert text in texts
         assert texts.index("Start Recording") < texts.index("Copy original of last dictation")
         assert texts.index("Scratchpad") < texts.index("Settings")
-        assert _menu_texts(tray.language_menu) == [_language_in_effect(), "Choose languages…"]
+        assert _menu_texts(tray.language_menu) == [_language_in_effect(), _language_menu_footer()]
 
         calls = []
         monkeypatch.setattr(scratchpad, "toggle", lambda ui: calls.append(("scratchpad", ui)))
@@ -231,6 +240,8 @@ class TestAppWiring:
         monkeypatch.setattr(
             language_menu, "populate", lambda menu, ui: calls.append(("language", menu, ui))
         )
+        monkeypatch.setattr(system_tray, "can_copy_last_original", lambda: True)
+        tray.menu.aboutToShow.emit()
         tray.scratchpad_action.trigger()
         tray.stats_action.trigger()
         tray.copy_original_action.trigger()

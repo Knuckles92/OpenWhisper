@@ -92,8 +92,8 @@ class TestDropZoneWidget:
         assert not widget._is_valid_audio("image.png")
         assert not widget._is_valid_audio("video.mp4")
 
-    @pytest.mark.parametrize("name, accepted", [("test.wav", True), ("test.txt", False)])
-    def test_drag_enter_accepts_only_audio(self, name, accepted):
+    @pytest.mark.parametrize("name, supported", [("test.wav", True), ("test.txt", False)])
+    def test_file_drag_always_gets_a_leave_event(self, name, supported):
         widget = DropZoneWidget()
         mime_data = QMimeData()
         mime_data.setUrls([QUrl.fromLocalFile(f"/path/to/{name}")])
@@ -106,7 +106,11 @@ class TestDropZoneWidget:
             Qt.KeyboardModifier.NoModifier,
         )
         widget.dragEnterEvent(event)
-        assert event.isAccepted() is accepted
+        assert event.isAccepted()
+        style = widget._HOVER_STYLE if supported else widget._REJECT_STYLE
+        assert widget.styleSheet() == style
+        widget.dragLeaveEvent(None)
+        assert widget.styleSheet() == widget._IDLE_STYLE
 
     def test_drop_event_emits_files_selected(self):
         widget = DropZoneWidget()
@@ -570,6 +574,10 @@ class TestUploadFileTab:
         assert tab.transcript_text.toPlainText() == "a.mp3\nraw um"
         assert tab.transcript_text.document().begin().blockFormat().headingLevel() == 2
         assert tab.shown_transcript() == "## a.mp3\n\nraw um"
+        copied = []
+        tab.copy_requested.connect(copied.append)
+        tab._on_copy()
+        assert copied == ["## a.mp3\n\nraw um"]
 
     def test_expand_button_sits_in_the_pane_corner_only_while_there_is_a_transcript(self):
         tab = UploadFileTab()
@@ -777,6 +785,24 @@ class TestUploadFileTab:
         assert tab._audio_path == paths[0]
         assert tab.file_info_card.transcribe_btn.isEnabled()
         assert queue.note_label.isHidden()
+
+    def test_removing_the_good_file_keeps_the_failed_file_and_error_visible(self, tmp_path):
+        paths = [str(tmp_path / name) for name in ("good.wav", "bad.wav")]
+        with _isolated_settings():
+            tab = UploadFileTab()
+        with patch("ui_qt.widgets.upload_file_tab._run_in_thread"):
+            tab._on_files_selected(paths, 0)
+        token = tab._preview_token
+        tab._on_preview_ready(token, paths[0], _preview(file_name="good.wav"))
+        tab._on_preview_ready(token, paths[1], "Could not decode audio.")
+
+        tab._remove(paths[0])
+
+        queue = tab.file_info_card.queue
+        assert not queue.isHidden()
+        assert queue.row_for(paths[1]).state == "failed"
+        assert "1 could not be read" in queue.note_label.text()
+        assert not tab.file_info_card.transcribe_btn.isEnabled()
 
     def test_a_tab_deleted_mid_preview_is_not_held_by_the_worker(self, tmp_path):
         # The worker used to capture the tab: it kept a deleted tab alive,

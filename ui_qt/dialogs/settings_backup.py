@@ -225,7 +225,7 @@ class BackupSettingsPage(QWidget):
         self.frequency_combo.addItem("Off", "off")
         self.frequency_combo.addItem("Daily", "daily")
         self.frequency_combo.addItem("Weekly", "weekly")
-        self.frequency_combo.currentIndexChanged.connect(self._update_schedule_controls)
+        self.frequency_combo.currentIndexChanged.connect(self._on_frequency_changed)
         fields_layout.addWidget(self._field_row("Frequency", self.frequency_combo))
 
         self.destination_edit = QLineEdit()
@@ -250,10 +250,10 @@ class BackupSettingsPage(QWidget):
         self.retention_spin.setSuffix(" backups")
         self.retention_spin.setKeyboardTracking(False)
         fields_layout.addWidget(self._field_row("Keep latest", self.retention_spin))
-        self.save_schedule_button = neutral_button(Button("Save schedule"))
-        self.save_schedule_button.setObjectName("backupSaveScheduleButton")
-        self.save_schedule_button.clicked.connect(self._save_schedule)
-        fields_layout.addWidget(self.save_schedule_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.retention_spin.valueChanged.connect(self._save_schedule)
+        self.schedule_feedback = settings_caption("")
+        self.schedule_feedback.hide()
+        fields_layout.addWidget(self.schedule_feedback)
         fields_layout.addWidget(settings_caption(
             "Runs while OpenWhisper is open and idle, with saved recordings included. "
             "Older automatic backups are removed after the limit is reached. "
@@ -439,7 +439,6 @@ class BackupSettingsPage(QWidget):
         self.inspect_button.setEnabled(available)
         self.restore_button.setEnabled(available and bool(self._inspected_path))
         self.frequency_combo.setEnabled(available)
-        self.save_schedule_button.setEnabled(available)
         self._update_schedule_controls()
         cancelable = self._busy and self._operation in ("backup", "Creating backup")
         self.cancel_button.setVisible(cancelable)
@@ -494,35 +493,55 @@ class BackupSettingsPage(QWidget):
             path = self._inspected_path
             self._start("Preparing restore", lambda: self._coordinator.prepare_restore(path))
 
-    def _choose_schedule_destination(self) -> None:
+    @property
+    def saved_frequency(self) -> str:
+        return self._saved_frequency
+
+    def _on_frequency_changed(self) -> None:
+        self._update_schedule_controls()
+        if self._loading_schedule:
+            return
+        if self.frequency_combo.currentData() != "off" and not self.destination_edit.text().strip():
+            if not self._choose_schedule_destination():
+                self.refresh()
+        else:
+            self._save_schedule()
+
+    def _choose_schedule_destination(self) -> bool:
         folder = QFileDialog.getExistingDirectory(
             self, "Choose automatic backup folder", self.destination_edit.text().strip()
         )
-        if folder:
-            self.destination_edit.setText(folder)
+        if not folder:
+            return False
+        self.destination_edit.setText(folder)
+        self._save_schedule()
+        return True
 
     def _save_schedule(self) -> None:
-        if self._coordinator is None or self._busy:
+        if self._loading_schedule or self._coordinator is None:
+            return
+        if self._busy:
+            self._schedule_error("Wait for the current backup operation to finish.")
             return
         frequency = self.frequency_combo.currentData()
         destination = self.destination_edit.text().strip()
         if frequency != "off" and not destination:
-            self.status_label.setText("Choose a destination folder for automatic backups.")
+            self._schedule_error("Choose a destination folder for automatic backups.")
             return
         if frequency != "off":
             try:
                 folder = Path(destination).resolve()
                 if not folder.is_dir():
-                    self.status_label.setText("The automatic backup destination must be an existing folder.")
+                    self._schedule_error("The automatic backup destination must be an existing folder.")
                     return
                 owned_folders = (Path(config.RECORDINGS_FOLDER).resolve(),
                                  Path(config.MEETINGS_FOLDER).resolve(),
                                  captures_root().resolve())
             except OSError as exc:
-                self.status_label.setText(f"Could not check backup destination: {exc}")
+                self._schedule_error(f"Could not check backup destination: {exc}")
                 return
             if any(folder.is_relative_to(owned) for owned in owned_folders):
-                self.status_label.setText(
+                self._schedule_error(
                     "Choose a folder outside OpenWhisper's recordings, meetings, and captures folders."
                 )
                 return
@@ -530,12 +549,14 @@ class BackupSettingsPage(QWidget):
             self._coordinator.set_schedule(frequency, self.retention_spin.value(), destination)
         except Exception as exc:
             logger.warning("Could not save automatic backup settings", exc_info=True)
-            self.status_label.setText(f"Could not save automatic backup settings: {exc}")
+            self._schedule_error(f"Could not save automatic backup settings: {exc}")
             return
-        self.status_label.setText(
-            "Automatic backups are off." if frequency == "off" else
-            f"Automatic backups set to {frequency}."
-        )
+        self.schedule_feedback.hide()
+
+    def _schedule_error(self, message: str) -> None:
+        self.refresh()
+        self.schedule_feedback.setText(message)
+        self.schedule_feedback.show()
 
     def _start(self, operation: str, request) -> None:
         self._operation = operation

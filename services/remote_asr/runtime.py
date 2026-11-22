@@ -4,6 +4,7 @@ from __future__ import annotations
 from services.local_asr.catalog import (
     BACKENDS,
     NVIDIA_VULKAN_RUNTIME,
+    TRANSCRIBE_RUNTIME,
     WHISPER_BACKEND,
     apple_silicon,
     runtime_id,
@@ -63,7 +64,7 @@ def runtime_state(engine: dict) -> dict:
     else:
         # The Vulkan runtime needs only the card, not the CUDA libraries
         # CTranslate2 counts it with.
-        cuda = cuda or runtime_id(family, "cuda") == NVIDIA_VULKAN_RUNTIME
+        cuda = cuda or runtime_id(family, "cuda") in (NVIDIA_VULKAN_RUNTIME, TRANSCRIBE_RUNTIME)
         devices = [device for device in ("cpu", "cuda")
                    if (device != "cuda" or (family != "moonshine" and cuda))
                    and is_installed(runtime_id(family, device))]

@@ -108,6 +108,42 @@ def single_language_reason(settings: Mapping) -> str:
     return "This engine uses one language."
 
 
+def is_english_only_engine(settings: Mapping) -> bool:
+    """True when the selected speech engine only supports English."""
+    return engine(settings) in ("parakeet_unified", "moonshine")
+
+
+def multilingual_engine_options() -> tuple[tuple[str, str, str], ...]:
+    """Multilingual local engines available on this platform: ``(backend, label, detail)``."""
+    from config import config
+
+    available = {
+        config.MODEL_VALUE_MAP[display]
+        for display in config.MODEL_CHOICES
+        if display in config.MODEL_VALUE_MAP
+    }
+    options: list[tuple[str, str, str]] = []
+    if "parakeet" in available:
+        options.append((
+            "parakeet",
+            "Parakeet TDT v3",
+            "25 European languages \u00b7 downloads runtime & model",
+        ))
+    if "local_whisper" in available:
+        options.append((
+            "local_whisper",
+            "Local Whisper",
+            "99+ languages \u00b7 built-in runtime",
+        ))
+    if "qwen_asr" in available:
+        options.append((
+            "qwen_asr",
+            "Qwen3-ASR",
+            "30 languages & Chinese dialects \u00b7 downloads runtime & model",
+        ))
+    return tuple(options)
+
+
 def chosen_languages(settings: Mapping) -> list[str]:
     """``dictation_languages`` as saved: known codes, in order, without repeats."""
     raw = SettingsKey.DICTATION_LANGUAGES.read(settings)

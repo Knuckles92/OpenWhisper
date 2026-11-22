@@ -259,6 +259,7 @@ class MeetingAfterSection(QObject):
                 self.meeting_review_check.blockSignals(True)
                 self.meeting_review_check.setChecked(False)
                 self.meeting_review_check.blockSignals(False)
+                self.meeting_review_tile._sync_checked_property(False)
                 return
         # One write, so the consent and the switch never disagree on disk.
         self._persist_many({
@@ -272,7 +273,9 @@ class MeetingAfterSection(QObject):
         self._persist(SettingsKey.MEETING_END_REPORT, bool(checked))
 
     def _on_report_view_toggled(self, key: str, _checked: bool) -> None:
-        self._guard_report_views()
+        if self._is_loading():
+            return
+        fallback = self._guard_report_views()
         actual = {
             SettingsKey.MEETING_REPORT_RIBBON: (
                 self.meeting_report_ribbon_check.isChecked()
@@ -284,7 +287,10 @@ class MeetingAfterSection(QObject):
                 self.meeting_report_signal_check.isChecked()
             ),
         }
-        self._persist(key, actual[key])
+        if fallback:
+            self._persist_many(actual)
+        else:
+            self._persist(key, actual[key])
 
     def _report_view_checks(self):
         return (
@@ -306,12 +312,14 @@ class MeetingAfterSection(QObject):
         if not enabled:
             self.meeting_report_views_hint.hide()
 
-    def _guard_report_views(self) -> None:
+    def _guard_report_views(self) -> bool:
         if any(check.isChecked() for check in self._report_view_checks()):
             self.meeting_report_views_hint.hide()
-            return
+            return False
         blocker = self.meeting_report_ribbon_check.blockSignals(True)
         self.meeting_report_ribbon_check.setChecked(True)
         self.meeting_report_ribbon_check.blockSignals(blocker)
+        self.meeting_report_ribbon_tile._sync_checked_property(True)
         self.meeting_report_views_hint.show()
+        return True
 

@@ -541,6 +541,7 @@ class WalkthroughTab(QWidget):
     settings_requested = pyqtSignal(str)
     #: The storyboard saved, rewrote or deleted a walkthrough: lists of them are stale.
     walkthroughs_changed = pyqtSignal()
+    walkthrough_shown = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -649,7 +650,7 @@ class WalkthroughTab(QWidget):
             lambda on: settings_manager.save_setting(SettingsKey.WALKTHROUGH_AUTO_MODE, on))
         self.auto_row = self._row(
             "Auto Mode", self.auto_switch,
-            "Save screenshots after clicks and drawings. Use the toolbar at the top to draw.")
+            "Automatically save screenshots after clicks and drawings.")
         body.addWidget(self.auto_row)
         self.capture_delay = CaptureDelay()
         self.delay_row = self._row(
@@ -1341,6 +1342,7 @@ class WalkthroughTab(QWidget):
         if review._busy or (review._dirty and not (ask and review.discard_changes())):
             return False
         review.show_folder(folder)
+        self.walkthrough_shown.emit(review.folder)
         self._show_stage()
         return True
 

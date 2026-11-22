@@ -157,3 +157,23 @@ def test_seeding_tolerates_stand_in_managers():
         pass
 
     assert not seed_new_install_settings(Bare())
+
+
+def test_new_install_enables_live_preview_only_on_shared_decoder_defaults(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DEFAULT_BACKEND", "parakeet_unified")
+    manager = SettingsManager(str(tmp_path / "unified.json"))
+    assert seed_new_install_settings(manager)
+    assert manager.get(SettingsKey.STREAMING_ENABLED) is True
+
+    monkeypatch.setattr(config, "DEFAULT_BACKEND", "local_whisper")
+    whisper_manager = SettingsManager(str(tmp_path / "whisper.json"))
+    assert seed_new_install_settings(whisper_manager)
+    assert SettingsKey.STREAMING_ENABLED not in whisper_manager.load_all_settings()
+
+    # Existing installs are never modified even when DEFAULT_BACKEND supports preview.
+    monkeypatch.setattr(config, "DEFAULT_BACKEND", "parakeet_unified")
+    existing = tmp_path / "existing.json"
+    existing.write_text(json.dumps({"ui_theme": "dark"}), encoding="utf-8")
+    existing_manager = SettingsManager(str(existing))
+    assert not seed_new_install_settings(existing_manager)
+    assert SettingsKey.STREAMING_ENABLED not in existing_manager.load_all_settings()

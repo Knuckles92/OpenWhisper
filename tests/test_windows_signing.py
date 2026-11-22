@@ -215,6 +215,20 @@ class TestReleaseMetadata:
         with pytest.raises(ws.SigningError, match="does not match"):
             ws.release_metadata(self._report(release, setup_bytes=b"other build"), release)
 
+    def test_report_must_also_describe_all_in_one_setup_exe(self, release):
+        aio_name = "OpenWhisper-AllInOne-Setup-2.9.0.exe"
+        (release / aio_name).write_bytes(b"allinone")
+        report = self._report(release)
+        with pytest.raises(ws.SigningError, match=aio_name):
+            ws.release_metadata(report, release)
+        aio_entry = dict(_signed(aio_name, status="Valid"))
+        aio_entry["sha256"] = hashlib.sha256(b"allinone").hexdigest()
+        report["files"].append(aio_entry)
+        assert ws.release_metadata(report, release)["windows_signed"] is True
+        aio_entry["sha256"] = hashlib.sha256(b"tampered").hexdigest()
+        with pytest.raises(ws.SigningError, match=aio_name):
+            ws.release_metadata(report, release)
+
     @pytest.mark.parametrize("change", [
         {"schema_version": 2}, {"signed": "yes"}, {"files": None}, {"method": "magic"},
     ])

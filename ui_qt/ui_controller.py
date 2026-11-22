@@ -372,6 +372,7 @@ class UIController(QObject):
         self.on_meeting_defer_insights: Optional[Callable] = None
         self.get_meeting_active: Optional[Callable] = None  # Provider: meeting running?
         self._meeting_active = False
+        self._meeting_cloud_enabled = False
         self._meeting_urls: dict = {}
 
         self._settings_dialog = None
@@ -545,6 +546,7 @@ class UIController(QObject):
         meeting_tab.end_requested.connect(self._on_meeting_end_requested)
         meeting_tab.open_dashboard_requested.connect(self._on_meeting_open_dashboard)
         meeting_tab.open_report_requested.connect(self._on_meeting_open_report)
+        meeting_tab.copy_transcript_requested.connect(self._on_finalization_copy_requested)
         meeting_tab.copy_guest_link_requested.connect(
             lambda: self.on_meeting_copy_guest_link and self.on_meeting_copy_guest_link()
         )
@@ -880,6 +882,14 @@ class UIController(QObject):
         reports inside that tab instead: the overlay is feedback for a hotkey
         pressed while another application is in front.
         """
+        if state is OverlayState.WALKTHROUGH_RECORDING:
+            self.tray_manager.set_recording(True)
+            return
+
+        if state is OverlayState.WALKTHROUGH_CANCELED:
+            self._dismiss_walkthrough_panel_for_job()
+            state = OverlayState.NONE
+
         if self._upload_job_active() and self._route_upload_progress(state):
             return
 
@@ -1086,11 +1096,24 @@ class UIController(QObject):
 
         request_access()
 
-    def start_walkthrough_drawing(self, *, mark_shortcuts: dict[str, str]):
+    def start_walkthrough_drawing(
+        self,
+        *,
+        mark_shortcuts: dict[str, str],
+        auto_mode: bool = True,
+        snap_shortcut: str = "",
+    ):
         from ui_qt.snap.live import LiveAnnotations
+        from ui_qt.utils.desktop import compositor_managed
 
+        if compositor_managed():
+            return None
         self._walkthrough_drawing = LiveAnnotations(
-            self, self._walkthrough_panel, mark_shortcuts=mark_shortcuts
+            self,
+            self._walkthrough_panel,
+            mark_shortcuts=mark_shortcuts,
+            auto_mode=auto_mode,
+            snap_shortcut=snap_shortcut,
         )
         return self._walkthrough_drawing
 
@@ -1158,6 +1181,7 @@ class UIController(QObject):
         if panel is None:
             panel = self._walkthrough_panel = make_panel()
             if panel is None:
+                self._show_or_set_overlay(self.overlay.STATE_RECORDING)
                 return
         panel.begin()
         # After show(): the exclusion is set on the native window. Where it
@@ -1292,7 +1316,10 @@ class UIController(QObject):
             copied = self.copy_files_to_clipboard(files, text=text)
             self.set_status("Walkthrough copied" if copied else "Couldn't copy the walkthrough")
         except (OSError, ValueError, KeyError, TypeError) as exc:
+            copied = False
             self.set_status(f"Couldn't open the walkthrough: {exc}")
+        if self._walkthrough_ready is not None:
+            self._walkthrough_ready.show_copy_status(result, copy_format, copied=copied)
 
     def cancel_walkthrough_library(self) -> None:
         """Stop review work in Saved Walkthroughs and the Walkthrough tab (quitting)."""
@@ -1961,6 +1988,8 @@ class UIController(QObject):
             self.on_model_batch_stop()
 
     def _show_download_progress(self, model_name: str) -> None:
+        from services.local_asr.cache import needs_qwen_redownload
+
         self._hide_download_progress()
         dialog = QProgressDialog(
             f'Downloading "{model_name}"…',
@@ -1969,7 +1998,9 @@ class UIController(QObject):
             0,
             self.main_window,
         )
-        dialog.setWindowTitle("Downloading model")
+        dialog.setWindowTitle(
+            "Updating Qwen3-ASR to GGUF" if needs_qwen_redownload(model_name) else "Downloading model"
+        )
         dialog.setMinimumDuration(0)
         dialog.setCancelButton(None)
         dialog.setAutoClose(False)
@@ -2193,6 +2224,12 @@ class UIController(QObject):
             self.set_meeting_status("Transcript copied")
             self.show_copied_animation()
 
+    def _on_finalization_copy_requested(self, meeting_id: str) -> None:
+        text = self.on_meeting_copy_transcript(meeting_id) if self.on_meeting_copy_transcript else ""
+        copied = bool(text and self.copy_to_clipboard(text))
+        self._update_screen("meeting", "show_transcript_copy_status", copied)
+        self.set_status("Transcript copied" if copied else "Couldn't copy the meeting transcript")
+
     def _on_past_meeting_delete_requested(
         self, meeting_id: str, delete_recordings: bool = True
     ) -> None:
@@ -2217,12 +2254,14 @@ class UIController(QObject):
         """Confirm the irreversible capture stop before ending a meeting."""
         if not self._meeting_active or not self.on_meeting_end:
             return
+        settings = settings_manager.load_all_settings()
+        report = getattr(self, "_meeting_cloud_enabled", False) and SettingsKey.MEETING_END_REPORT.read(settings)
+        deliverables = "transcript and report" if report else "transcript"
         answer = QMessageBox.question(
             self.main_window,
             "End meeting?",
             "End this meeting now? Audio capture will stop immediately. "
-            "OpenWhisper will keep working in the background to finish the "
-            "transcript and report.",
+            f"OpenWhisper will finish the {deliverables} in the background.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -2241,6 +2280,8 @@ class UIController(QObject):
         """
         if not isinstance(payload, dict):
             return
+        if "cloud_enabled" in payload:
+            self._meeting_cloud_enabled = bool(payload["cloud_enabled"])
         if payload.get("dashboard_available") is False:
             self._meeting_urls = {}
         has_dashboard = bool(
@@ -2286,7 +2327,6 @@ class UIController(QObject):
     def set_meeting_status(self, status: str) -> None:
         if not status:
             return
-        self._update_screen("meeting", "set_status_text", status)
         self.set_status(status)
 
     def on_meeting_error(self, message: str) -> None:
@@ -2430,6 +2470,7 @@ class UIController(QObject):
         QApplication.clipboard().setText(url)
         self._meeting_urls["guest_url"] = url
         self.set_meeting_status("Guest link copied")
+        self._update_screen("meeting", "show_guest_link_copied")
         self.show_copied_animation()
 
     def _on_settings_hotkeys_changed(self, hotkeys: dict) -> None:

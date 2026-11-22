@@ -106,7 +106,7 @@ def test_without_coordinator_controls_are_unavailable():
     page = BackupSettingsPage()
     assert not page.create_button.isEnabled()
     assert not page.inspect_button.isEnabled()
-    assert not page.save_schedule_button.isEnabled()
+    assert not page.frequency_combo.isEnabled()
     assert "unavailable" in page.status_label.text()
 
 
@@ -153,55 +153,56 @@ def test_restore_requires_inspection_and_explicit_confirmation(monkeypatch):
     assert "Bad archive" in page.inspection_label.text()
 
 
-def test_automatic_backup_is_off_until_explicitly_saved(monkeypatch, tmp_path):
+def test_automatic_backup_saves_updates_after_a_folder_is_chosen(monkeypatch, tmp_path):
     coordinator = FakeCoordinator()
     page = BackupSettingsPage(coordinator)
     assert page.frequency_combo.currentData() == "off"
-    assert not coordinator.calls
 
+    monkeypatch.setattr("ui_qt.dialogs.settings_backup.QFileDialog.getExistingDirectory",
+                        lambda *_args: "")
     page.frequency_combo.setCurrentIndex(page.frequency_combo.findData("daily"))
-    page.save_schedule_button.click()
     assert not coordinator.calls
-    assert "destination folder" in page.status_label.text()
+    assert page.frequency_combo.currentData() == page.saved_frequency == "off"
 
     folder = tmp_path / "backups"
     folder.mkdir()
     monkeypatch.setattr("ui_qt.dialogs.settings_backup.QFileDialog.getExistingDirectory",
                         lambda *_args: str(folder))
-    page.destination_button.click()
+    page.frequency_combo.setCurrentIndex(page.frequency_combo.findData("daily"))
+    assert coordinator.calls == [("schedule", "daily", 7, str(folder))]
+    assert page.saved_frequency == "daily"
+
     page.retention_spin.setValue(5)
-    assert not coordinator.calls
-    page.save_schedule_button.click()
-    assert coordinator.calls == [("schedule", "daily", 5, str(folder))]
+    assert coordinator.calls[-1] == ("schedule", "daily", 5, str(folder))
 
     page.frequency_combo.setCurrentIndex(page.frequency_combo.findData("off"))
-    page.save_schedule_button.click()
     assert coordinator.calls[-1] == ("schedule", "off", 5, str(folder))
 
 
 def test_schedule_rejects_missing_and_recording_destinations(monkeypatch, tmp_path):
     coordinator = FakeCoordinator()
     page = BackupSettingsPage(coordinator)
+    monkeypatch.setattr("ui_qt.dialogs.settings_backup.QFileDialog.getExistingDirectory",
+                        lambda *_args: str(tmp_path / "missing"))
     page.frequency_combo.setCurrentIndex(page.frequency_combo.findData("weekly"))
-    page.destination_edit.setText(str(tmp_path / "missing"))
-    page.save_schedule_button.click()
     assert not coordinator.calls
-    assert "existing folder" in page.status_label.text()
+    assert "existing folder" in page.schedule_feedback.text()
 
     recordings = tmp_path / "recordings"
     nested = recordings / "backups"
     nested.mkdir(parents=True)
     monkeypatch.setattr("ui_qt.dialogs.settings_backup.config.RECORDINGS_FOLDER", str(recordings))
-    page.destination_edit.setText(str(nested))
-    page.save_schedule_button.click()
+    monkeypatch.setattr("ui_qt.dialogs.settings_backup.QFileDialog.getExistingDirectory",
+                        lambda *_args: str(nested))
+    page.frequency_combo.setCurrentIndex(page.frequency_combo.findData("weekly"))
     assert not coordinator.calls
-    assert "outside" in page.status_label.text()
+    assert "outside" in page.schedule_feedback.text()
 
 
-def test_calendar_shows_saved_schedule_and_latest_backup_only():
+def test_calendar_shows_saved_schedule_and_latest_backup_only(tmp_path):
     coordinator = FakeCoordinator()
     coordinator.state.update(
-        last_backup=_info("/tmp/manual.owbackup"), frequency="weekly",
+        last_backup=_info("/tmp/manual.owbackup"), frequency="weekly", destination=str(tmp_path),
         next_backup_at=datetime(2026, 10, 11, 12, tzinfo=timezone.utc).timestamp(),
     )
     page = BackupSettingsPage(coordinator)
@@ -214,7 +215,7 @@ def test_calendar_shows_saved_schedule_and_latest_backup_only():
     assert not calendar.grid.is_planned(due_date + timedelta(days=1))
 
     page.frequency_combo.setCurrentIndex(page.frequency_combo.findData("daily"))
-    assert not calendar.grid.is_planned(due_date + timedelta(days=1))
+    assert calendar.grid.is_planned(due_date + timedelta(days=1))
     calendar.select_day(due_date)
     assert "Automatic backup planned" in calendar.detail_label.text()
     calendar.select_day(date(2026, 10, 4))
@@ -226,7 +227,7 @@ def test_calendar_shows_saved_schedule_and_latest_backup_only():
     today = date.today()
     assert calendar.selected_date == today
     assert calendar.view == (today.year, today.month)
-    assert not coordinator.calls
+    assert coordinator.calls == [("schedule", "daily", 7, str(tmp_path))]
 
     coordinator.state.update(frequency="off", next_backup_at=None)
     coordinator.schedule_changed.emit()
@@ -303,7 +304,7 @@ def test_backup_card_text_has_no_opaque_background_and_controls_fit(
             assert page.width() == 360, month
             assert page.schedule_layout.direction() == QBoxLayout.Direction.TopToBottom
             for control in (page.create_button, page.inspect_button, page.restore_button,
-                            page.save_schedule_button, page.destination_edit, page.calendar):
+                            page.frequency_combo, page.destination_edit, page.calendar):
                 right = control.mapTo(page, QPoint(control.width(), 0)).x()
                 assert right <= page.width()
     finally:
@@ -346,7 +347,7 @@ def test_backup_page_is_lazy_searchable_and_usable_at_narrow_size(
                 assert dialog.page_title.text() == "Backup & restore"
                 for control in (dialog.backup_page.create_button,
                                 dialog.backup_page.inspect_button,
-                                dialog.backup_page.save_schedule_button):
+                                dialog.backup_page.frequency_combo):
                     assert control.width() > 0
                     assert control.isVisibleTo(dialog)
                     right = control.mapTo(dialog.backup_page, QPoint(control.width(), 0)).x()

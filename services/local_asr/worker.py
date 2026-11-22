@@ -16,7 +16,7 @@ sys.path[:] = [entry for entry in sys.path if Path(entry).resolve() != worker_di
 # Frozen builds keep collected packages here too; the runtime's copies must win.
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
-from services.local_asr.languages import native_language_code, qwen_language_name  # noqa: E402
+from services.local_asr.languages import native_language_code, qwen_language_code, qwen_language_name  # noqa: E402
 
 
 def use_runtime_packages(runtime):
@@ -94,19 +94,21 @@ class WorkerState:
         self.engine = None
         self.family = None
         self.device = None
+        self.native = False
 
 
 def load_engine(state, request):
     state.family = request["backend"]
     state.device = request["device"]
     family = state.family
+    native_qwen = family == "qwen_asr" and Path(request["model_path"]).suffix.lower() == ".gguf"
     if family == "parakeet_mlx":
         from services.local_asr.mlx import MlxRecognizer
         state.engine = MlxRecognizer(request["runtime"], request["model_path"], state.device)
     elif family in ("parakeet", "nemotron"):
         from services.local_asr.nvidia import NvidiaRecognizer
         state.engine = NvidiaRecognizer(request["runtime"], request["model_path"], state.device)
-    elif family == "parakeet_unified":
+    elif family == "parakeet_unified" or native_qwen:
         load_transcribe(state, request)
     elif family == "moonshine":
         use_runtime_packages(request.get("runtime"))
@@ -117,6 +119,7 @@ def load_engine(state, request):
         load_qwen(state, request)
     else:
         raise ValueError("Unknown speech backend")
+    state.native = native_qwen or family in NATIVE_FAMILIES
     result = {"device": state.device}
     if getattr(state.engine, "gpu_name", ""):
         result["gpu"] = state.engine.gpu_name
@@ -128,7 +131,9 @@ def load_transcribe(state, request):
     use_runtime_packages(request.get("runtime"))
     from services.local_asr.transcribe_engine import GpuUnavailable, TranscribeRecognizer
     try:
-        state.engine = TranscribeRecognizer(request["runtime"], request["model_path"], state.device)
+        state.engine = TranscribeRecognizer(
+            request["runtime"], request["model_path"], state.device, family=state.family,
+        )
     except GpuUnavailable as exc:
         # Auto retries on the CPU, as for a GPU Qwen's PyTorch can't run.
         raise UnsupportedGpu(str(exc)) from exc
@@ -195,14 +200,15 @@ def transcribe(state, op, request):
         raise RuntimeError("No model loaded")
     samples = read_samples(request)
     language = request.get("language")
-    if state.family in NATIVE_FAMILIES:
+    if state.native:
         return transcribe_native(state, op, request, samples)
     return transcribe_qwen(state.engine, samples, language)
 
 
 def transcribe_native(state, op, request, samples):
     engine, family = state.engine, state.family
-    language = native_language_code(family, request.get("language"))
+    language = request.get("language")
+    language = qwen_language_code(language) if family == "qwen_asr" else native_language_code(family, language)
     phrases = boost_phrases(family, request.get("phrases"))
     if op == "stream":
         boost = {"phrases": phrases} if phrases else {}

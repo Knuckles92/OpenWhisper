@@ -34,20 +34,27 @@ _QWEN_LANGUAGES = {
     "th": "Thai", "vi": "Vietnamese", "ja": "Japanese", "tr": "Turkish",
     "hi": "Hindi", "ms": "Malay", "nl": "Dutch", "sv": "Swedish",
     "da": "Danish", "fi": "Finnish", "pl": "Polish", "cs": "Czech",
-    "tl": "Filipino", "fil": "Filipino", "fa": "Persian", "el": "Greek",
+    "fil": "Filipino", "fa": "Persian", "el": "Greek",
     "ro": "Romanian", "hu": "Hungarian", "mk": "Macedonian",
 }
 
 
-def qwen_language_name(language: str | None) -> str | None:
+def qwen_language_code(language: str | None) -> str | None:
     if not language or language == "auto":
         return None
-    if language in _QWEN_LANGUAGES.values():
-        return language
+    for code, name in _QWEN_LANGUAGES.items():
+        if language == name:
+            return code
     code = language.replace("_", "-").split("-", 1)[0].lower()
+    if code == "tl":
+        code = "fil"
     if code not in _QWEN_LANGUAGES:
         raise ValueError(f"Qwen does not support language {language!r}. Choose Auto or a supported language.")
-    return _QWEN_LANGUAGES[code]
+    return code
+
+
+def qwen_language_name(language: str | None) -> str | None:
+    return _QWEN_LANGUAGES.get(qwen_language_code(language))
 
 
 def native_language_code(backend: str, language: str | None) -> str | None:

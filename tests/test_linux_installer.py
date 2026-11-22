@@ -54,6 +54,7 @@ def test_pkginfo_template_has_native_runtime_dependencies():
         "libegl",
         "libgl",
         "portaudio",
+        "vulkan-icd-loader",
         "wayland",
         "xcb-util-cursor",
         "xcb-util-wm",
@@ -81,6 +82,7 @@ def test_control_template_has_native_runtime_dependencies():
         "libegl1",
         "libgl1",
         "libportaudio2",
+        "libvulkan1",
         "libwayland-client0",
         "libwayland-cursor0",
         "libwayland-egl1",
@@ -200,11 +202,14 @@ def test_release_workflow_smokes_advertised_linux_baselines():
     assert "pacman -Sy --noconfirm archlinux-keyring" in smoke
     assert "/^NoExtract/{next}" in smoke
     assert "rm -f /etc/pacman.conf.d/noextract.conf" in smoke
-    # Normal releases ship five application artifacts; the documented
-    # Windows recovery switch may omit only the native archive.
-    assert "expected_artifacts=5" in workflow
-    assert "expected_artifacts=4" in workflow
+    # Normal releases ship eight application artifacts (slim + Windows/Linux
+    # all-in-one); the documented Windows recovery switch may omit only the
+    # native archive.
+    assert "expected_artifacts=8" in workflow
+    assert "expected_artifacts=7" in workflow
     assert "OpenWhisper-*-linux-x86_64.pkg.tar.zst" in workflow
+    assert "OpenWhisper-AllInOne-$BUILD_VERSION-linux-amd64.deb" in workflow
+    assert "OpenWhisper-AllInOne-$BUILD_VERSION-linux-x86_64.pkg.tar.zst" in workflow
     assert "OpenWhisper-*-macos-arm64.dmg" in workflow
     assert "pacman -Qkk openwhisper" in smoke
     assert 'package_info="$(pacman -Qi openwhisper)"' in smoke
@@ -222,7 +227,9 @@ def test_release_workflow_smokes_advertised_linux_baselines():
 def test_release_artifact_name_is_versioned_and_arch_specific():
     script = BUILD_SCRIPT.read_text(encoding="utf-8")
     assert "OpenWhisper-$VERSION-linux-amd64.deb" in script
+    assert "OpenWhisper-AllInOne-$VERSION-linux-amd64.deb" in script
     assert "OpenWhisper-$VERSION-linux-x86_64.pkg.tar.zst" in script
+    assert "OpenWhisper-AllInOne-$VERSION-linux-x86_64.pkg.tar.zst" in script
     assert "dpkg-deb --root-owner-group" in script
     assert 'xvfb-run -a "$PYTHON" -m PyInstaller' in script
     assert "patchelf --remove-rpath" in script
@@ -234,9 +241,11 @@ def test_release_artifact_name_is_versioned_and_arch_specific():
     assert 'bsdtar --uid 0 --gid 0 --uname root --gname root --format=ustar' in script
     assert '--format=mtree' in script
     assert '-cf - .PKGINFO usr' in script
-    assert "zstd -T0 -19" in script
+    assert 'zstd -T0 "-$zstd_level"' in script
+    assert 'build_arch_package "$ARCH_ARTIFACT" "$REPO_ROOT/build/linux-pacman" 19' in script
+    assert 'build_arch_package "$ARCH_ALLINONE_ARTIFACT" "$REPO_ROOT/build/linux-pacman-allinone" 6 "$ALL_IN_ONE_MODEL"' in script
     assert ".PKGINFO" in script
-    assert 'gzip -n -9 >"$PACMAN_ROOT/.MTREE"' in script
+    assert 'gzip -n -9 >"$pacman_root/.MTREE"' in script
     assert "libstdc++.so*" in script
     assert "libgcc_s.so*" in script
 

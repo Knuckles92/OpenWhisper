@@ -148,8 +148,8 @@ class _MicrophoneCombo(ElidingComboBox):
         self._before_popup = before_popup
 
     def showPopup(self) -> None:
-        self._before_popup()
-        super().showPopup()
+        if self._before_popup():
+            super().showPopup()
 
 
 class HomeCard(QFrame):
@@ -509,10 +509,23 @@ class HomePage(QWidget):
             settings_microphones.preferred_token,
         )
 
-    def _load_microphones(self):
+    def _load_microphones(self) -> bool:
         if RECORDING not in self.dialog._built_pages:
             self.dialog.ensure_page(RECORDING)
-            self._refresh_microphone(self.dialog._settings_snapshot())
+        if self.dialog._microphones.devices is not None:
+            return True
+        combo = self.controls[SettingsKey.AUDIO_INPUT_PRIORITY]
+        combo.setPlaceholderText("Finding microphones…")
+        combo.setCurrentIndex(-1)
+        return False
+
+    def microphones_ready(self) -> None:
+        combo = self.controls[SettingsKey.AUDIO_INPUT_PRIORITY]
+        waiting = bool(combo.placeholderText())
+        combo.setPlaceholderText("")
+        self._refresh_microphone(self.dialog._settings_snapshot())
+        if waiting and combo.isVisible() and combo.hasFocus():
+            combo.showPopup()
 
     def _shortcut(self, group):
         holder = QWidget()

@@ -7,10 +7,12 @@ class OverlayState(Enum):
 
     NONE = "none"
     RECORDING = "recording"
+    WALKTHROUGH_RECORDING = "walkthrough_recording"
     PROCESSING = "processing"
     TRANSCRIBING = "transcribing"
     CLEANING = "cleaning"
     CANCELING = "canceling"
+    WALKTHROUGH_CANCELED = "walkthrough_canceled"
     STT_ENABLED = "stt_enabled"
     STT_DISABLED = "stt_disabled"
     COMMAND_LISTENING = "command_listening"

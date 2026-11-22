@@ -58,6 +58,7 @@ LEGACY_ALIASES: Final[dict] = {
     "library": DOWNLOADS,
     "voice": DOWNLOADS,
     "engine_downloads": DOWNLOADS,
+    "runtime": DOWNLOADS,
 }
 
 

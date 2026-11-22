@@ -217,6 +217,12 @@ def _handle_package_self_test() -> None:
 
 _handle_early_cli()
 
+# Turn off huggingface_hub telemetry before anything can import it; set_for_app
+# keeps the override off external programs and respects a user-set value.
+from services.process_env import set_for_app  # noqa: E402
+
+set_for_app("HF_HUB_DISABLE_TELEMETRY", "1", keep_existing=True)
+
 from services import native_libraries  # noqa: E402
 
 

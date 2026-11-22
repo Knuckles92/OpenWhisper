@@ -430,6 +430,7 @@ class ModelAssignments(QObject):
         from ui_qt.widgets.local_engine_controls import DictationLanguagesField
         self.dictation_languages = DictationLanguagesField()
         self.dictation_languages.changed.connect(self._on_dictation_languages_changed)
+        self.dictation_languages.engine_requested.connect(self.choose_backend)
         card.addWidget(self._field("Languages I dictate in", self.dictation_languages))
 
         self.engine_inventory_title = self._group_title(layout, "On this computer")
@@ -1900,8 +1901,7 @@ class ModelAssignments(QObject):
             device = DEVICE_LABELS[selected_device(MODELS[model].backend, self._settings_snapshot())]
             self.meeting_runtime_label.setText(
                 f"Uses {MODELS[model].label} with its {device} device preference. "
-                "Set that engine's device on Dictation → Voice model. Install "
-                "its runtime and model in Downloads."
+                "Set its device or install its runtime and model in Models & storage → Downloads."
             )
             return
         settings = self._settings_snapshot()
@@ -1909,7 +1909,7 @@ class ModelAssignments(QObject):
         device = DEVICE_LABELS.get(device, device)
         compute = SettingsKey.WHISPER_COMPUTE_TYPE.read(settings)
         self.meeting_runtime_label.setText(
-            f"Device and quantization come from Models & storage → Runtime "
+            f"Device and quantization come from Models & storage → Downloads "
             f"({device} · {compute}) and are shared with dictation's Local "
             "Whisper."
         )
@@ -2298,5 +2298,6 @@ class ModelAssignments(QObject):
         self.rail.set_value(VOICE_MODEL, self.voice_summary())
         self.rail.set_value(MEETING_VOICE, self.meeting_voice_summary())
         self.rail.set_value(MEETING_INTELLIGENCE, self.meeting_text_summary())
-        self.rail.set_value(RUNTIME, self.runtime_summary())
+        if RUNTIME in self.rail.keys():
+            self.rail.set_value(RUNTIME, self.runtime_summary())
         self.assignments_changed.emit()

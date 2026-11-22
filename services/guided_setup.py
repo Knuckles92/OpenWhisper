@@ -110,3 +110,12 @@ def speech_model_downloaded(settings: dict) -> bool | None:
     except Exception:
         logger.debug("Could not check the speech model cache", exc_info=True)
         return None
+
+
+def speech_model_bundled(settings: dict) -> bool:
+    """True when dictation's selected local model is shipped inside the app bundle."""
+    from services.local_asr.cache import is_bundled
+    from services.local_asr.catalog import MODELS
+
+    model = speech_model_name(settings)
+    return bool(model in MODELS and is_bundled(model))

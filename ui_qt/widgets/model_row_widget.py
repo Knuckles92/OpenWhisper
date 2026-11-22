@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QProgressBar,
+    QSizePolicy,
     QVBoxLayout,
 )
 
@@ -83,6 +84,12 @@ _ROW_STYLE = row_style(
         font-size: 10px;
         font-weight: 600;
     }
+    QLabel#modelRowEngine {
+        border-radius: 5px;
+        padding: 1px 6px;
+        font-size: 10px;
+        font-weight: 600;
+    }
     QPushButton#modelSetActiveButton {
         background-color: @slate-raised;
         color: @slate-text;
@@ -140,8 +147,8 @@ class ModelRowWidget(DownloadRow):
 
     def _setup_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(14, 10, 12, 10)
-        layout.setSpacing(12)
+        layout.setContentsMargins(12, 9, 12, 9)
+        layout.setSpacing(10)
 
         self.select_checkbox = QCheckBox()
         self.select_checkbox.setObjectName("modelSelectCheckbox")
@@ -159,13 +166,27 @@ class ModelRowWidget(DownloadRow):
         from services.whisper_sources import custom_model_label, is_custom_model
         label = (speech_model_picker_label(self.model_name) if self.model_name in MODELS else
                  custom_model_label(self.model_name) if is_custom_model(self.model_name) else self.model_name)
+
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(6)
+
         name_label = ElidingLabel(label)
         name_label.setToolTip(self.model_name)
         name_label.setObjectName("modelRowName")
         name_font = QFont("Segoe UI", 10)
         name_font.setBold(True)
         name_label.setFont(name_font)
-        identity.addWidget(name_label)
+        title_row.addWidget(name_label, stretch=1)
+
+        self.engine_badge = QLabel("")
+        self.engine_badge.setObjectName("modelRowEngine")
+        self.engine_badge.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
+        )
+        self.engine_badge.setVisible(False)
+        title_row.addWidget(self.engine_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        identity.addLayout(title_row)
 
         # Elides: this secondary line is long enough that a plain QLabel would
         # raise the whole window's minimum width past the list column.
@@ -180,7 +201,7 @@ class ModelRowWidget(DownloadRow):
         self.size_label = QLabel("")
         self.size_label.setObjectName("modelRowSize")
         self.size_label.setFont(QFont("Segoe UI", 9))
-        self.size_label.setMinimumWidth(72)
+        self.size_label.setMinimumWidth(56)
         self.size_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
@@ -275,6 +296,7 @@ class ModelRowWidget(DownloadRow):
                 batch checkbox then cannot be toggled.
         """
         cached = info is not None
+        bundled = bool(info is not None and info.bundled)
         self.is_cached = cached
         self.is_active = is_active
         self._set_active_style(is_active and cached)
@@ -302,6 +324,8 @@ class ModelRowWidget(DownloadRow):
                 self._set_badge("Queued", "queued")
             elif is_active and cached:
                 self._set_badge("Active", "active")
+            elif bundled:
+                self._set_badge("Included", "downloaded")
             elif cached:
                 self._set_badge("Downloaded", "downloaded")
             else:
@@ -328,7 +352,7 @@ class ModelRowWidget(DownloadRow):
         self.set_active_button.setVisible(cached and not is_active)
         self.set_active_button.setEnabled(not downloading)
 
-        self.delete_button.setVisible(cached)
+        self.delete_button.setVisible(cached and not bundled)
         self.delete_button.setEnabled(not is_loaded and not downloading)
         self.delete_button.setToolTip(
             "In use — switch models first" if is_loaded else ""
@@ -380,5 +404,33 @@ class ModelRowWidget(DownloadRow):
         self.usage_label.setText(text)
         self.usage_label.setVisible(bool(text))
 
+    def set_engine_badge(
+        self, label: str, rgb: str = "", visible: bool = True
+    ) -> None:
+        """Show a compact engine pill in cross-engine views (All / Installed)."""
+        if not visible or not label:
+            self.engine_badge.setVisible(False)
+            return
+        self.engine_badge.setText(label)
+        if rgb:
+            self.engine_badge.setStyleSheet(
+                f"QLabel#modelRowEngine {{"
+                f" background-color: rgba({rgb}, 0.14);"
+                f" color: rgb({rgb});"
+                f" border: 1px solid rgba({rgb}, 0.30);"
+                f" border-radius: 5px; padding: 1px 6px;"
+                f" font-size: 10px; font-weight: 600;"
+                f"}}"
+            )
+        self.engine_badge.setVisible(True)
+
     def matches_filter(self, text: str) -> bool:
-        return fuzzy_match(text, self.model_name) or fuzzy_match(text, self.repo_id)
+        from services.local_asr.catalog import BACKENDS, MODELS
+        backend_label = BACKENDS.get(self.backend, "Whisper")
+        display_label = MODELS[self.model_name].label if self.model_name in MODELS else ""
+        return (
+            fuzzy_match(text, self.model_name)
+            or fuzzy_match(text, self.repo_id)
+            or fuzzy_match(text, backend_label)
+            or (bool(display_label) and fuzzy_match(text, display_label))
+        )

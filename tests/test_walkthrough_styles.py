@@ -125,6 +125,11 @@ def test_a_redo_with_instructions_uses_them_instead_of_settings(capture, monkeyp
 @pytest.fixture
 def review(capture):
     widget = WalkthroughLibraryDialog(root=capture.root, copy_files=Mock(return_value=True))
+    for _ in range(300):
+        if not widget._loading:
+            break
+        QTest.qWait(10)
+    assert not widget._loading
     yield widget.review
     widget.review._dirty = False
     widget.close()
@@ -193,13 +198,14 @@ def test_canceling_the_new_prompt_writes_nothing_up(review, redone, monkeypatch)
     assert not review._busy and redone == []
 
 
-def test_unsaved_edits_hold_a_redo_with_a_new_prompt(review, redone, monkeypatch):
-    opened = Mock()
-    monkeypatch.setattr(WriteUpPromptDialog, "exec", opened)
+def test_redo_with_a_new_prompt_saves_edits_first(review, redone, monkeypatch, capture):
+    monkeypatch.setattr(WriteUpPromptDialog, "exec", lambda dialog: 1)
+    monkeypatch.setattr(WriteUpPromptDialog, "prompt_text", lambda dialog: "A new prompt.")
     review._editors[0].setPlainText("corrected")
     review.prompt_button.trigger()
-    opened.assert_not_called()
-    assert "Save" in review.notice.text()
+    _wait(review)
+    assert redone == ["A new prompt."]
+    assert "corrected" in library.load_result(capture.folder).clipboard_text
 
 
 # ---- the prompt dialog ----

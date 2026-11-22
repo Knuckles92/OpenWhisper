@@ -227,8 +227,8 @@ def run(args):
                         backend = LocalSpeechBackend(MODELS[key].backend, key, device)
                         backend.reload_model()
                         row['artifacts'] = artifacts(key)
-                        from services.components import component_dir
-                        installed = Path(component_dir(backend.runtime_component))/'manifest.json'
+                        from services.components import active_component_dir
+                        installed = Path(active_component_dir(backend.runtime_component))/'manifest.json'
                         row['runtime_manifest'] = json.loads(installed.read_text()) if installed.exists() else None
                     row['load_s'] = time.perf_counter()-began
                     row['requested_device'], row['actual_device'] = device, backend.device

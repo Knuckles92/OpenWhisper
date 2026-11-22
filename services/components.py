@@ -446,6 +446,7 @@ class ComponentState:
 
     NOT_INSTALLED: Final[str] = "not_installed"
     EXTERNAL: Final[str] = "external"
+    BUNDLED: Final[str] = "bundled"
     INSTALLED: Final[str] = "installed"
     UPDATE_AVAILABLE: Final[str] = "update_available"
     INCOMPATIBLE: Final[str] = "incompatible"
@@ -488,6 +489,7 @@ class ComponentInfo:
     def is_usable(self) -> bool:
         return self.state in (
             ComponentState.EXTERNAL,
+            ComponentState.BUNDLED,
             ComponentState.INSTALLED,
             ComponentState.UPDATE_AVAILABLE,
         )
@@ -583,8 +585,11 @@ def available_component_ids(
             ComponentId.GPU_ACCEL,
             ComponentId.MEETING_AGENT,
             ComponentId.MEETING_AGENT_OPENCODE,
-            *RUNTIME_IDS,
+            *(key for key in RUNTIME_IDS if key != ComponentId.ASR_QWEN),
         )
+        # Keep an existing PyTorch runtime visible so it can be removed.
+        if platform_tag is None and is_installed(ComponentId.ASR_QWEN):
+            candidates += (ComponentId.ASR_QWEN,)
     elif tag == PLATFORM_LINUX_X86_64:
         from services.local_asr.catalog import nvidia_gpu_runtime
 
@@ -678,8 +683,65 @@ def gpu_runtime_available() -> bool:
     return False
 
 
+BUNDLED_COMPONENTS_DIRNAME: Final[str] = "bundled_components"
+
+
 def component_dir(component_id: str) -> str:
     return os.path.join(components_root(), component_id)
+
+
+def bundled_component_dir(component_id: str) -> Optional[str]:
+    """Return the read-only bundled component tree inside the app, if shipped."""
+    if (
+        not component_id
+        or os.path.sep in component_id
+        or "/" in component_id
+        or component_id in (".", "..")
+    ):
+        return None
+    candidate = os.path.join(bundle_root(), BUNDLED_COMPONENTS_DIRNAME, component_id)
+    if os.path.isfile(os.path.join(candidate, _SENTINEL_NAME)):
+        return candidate
+    return None
+
+
+def _is_user_installed(component_id: str) -> bool:
+    return os.path.isfile(os.path.join(component_dir(component_id), _SENTINEL_NAME))
+
+
+def is_bundled(component_id: str) -> bool:
+    """True when ``component_id`` ships inside the packaged application."""
+    return bundled_component_dir(component_id) is not None
+
+
+def active_component_dir(component_id: str) -> str:
+    """Directory of the active copy of ``component_id`` to execute from.
+
+    Prefers a user-installed copy in ``component_dir`` so user updates can
+    override a bundled runtime, unless the user copy is incompatible or older
+    than a valid bundled copy matching the shipped catalog pin.
+    """
+    bundled = bundled_component_dir(component_id)
+    if _is_user_installed(component_id):
+        user_dir = component_dir(component_id)
+        if bundled is not None:
+            user_manifest = _read_manifest_from(user_dir)
+            bundled_manifest = _read_manifest_from(bundled)
+            if bundled_manifest is not None and not check_compatibility(bundled_manifest):
+                if user_manifest is None or check_compatibility(user_manifest):
+                    return bundled
+                entry = catalog_entry_for_platform(component_id)
+                expected = entry.get("version") if entry else None
+                if (
+                    expected
+                    and bundled_manifest.get("version") == expected
+                    and user_manifest.get("version") != expected
+                ):
+                    return bundled
+        return user_dir
+    if bundled is not None:
+        return bundled
+    return component_dir(component_id)
 
 
 def staging_dir() -> str:
@@ -697,12 +759,12 @@ def cache_dir() -> str:
 
 
 def is_installed(component_id: str) -> bool:
-    """True when a complete component tree is present.
+    """True when a complete component tree is present (user-installed or bundled).
 
     Checks the sentinel rather than the directory, so a tree left behind by an
     interrupted extract is correctly reported as missing.
     """
-    return os.path.isfile(os.path.join(component_dir(component_id), _SENTINEL_NAME))
+    return _is_user_installed(component_id) or is_bundled(component_id)
 
 
 def _payload_has_sidecar_bundle(payload_dir: str) -> bool:
@@ -1073,9 +1135,9 @@ def ensure_speaker_model() -> str:
         return path
 
 
-def read_manifest(component_id: str) -> Optional[dict]:
-    """Load a component manifest, rejecting non-dict or unsafe field types."""
-    path = os.path.join(component_dir(component_id), _MANIFEST_NAME)
+def _read_manifest_from(directory: str) -> Optional[dict]:
+    """Load a component manifest from ``directory``, rejecting unsafe field types."""
+    path = os.path.join(directory, _MANIFEST_NAME)
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
@@ -1099,6 +1161,11 @@ def read_manifest(component_id: str) -> Optional[dict]:
         if isinstance(version, bool) or not isinstance(version, (str, int, float)):
             return None
     return data
+
+
+def read_manifest(component_id: str) -> Optional[dict]:
+    """Load the active component manifest, rejecting non-dict or unsafe field types."""
+    return _read_manifest_from(active_component_dir(component_id))
 
 
 #: Tree sizes keyed by install path, valid while the install fingerprint holds.
@@ -2236,6 +2303,9 @@ class ComponentCoordinator:
             if entry else 0
         )
 
+        bundled = bundled_component_dir(component_id)
+        active_dir = active_component_dir(component_id)
+        using_bundled = bundled is not None and active_dir == bundled
         installed_manifest = read_manifest(component_id)
         present = is_installed(component_id)
 
@@ -2312,8 +2382,11 @@ class ComponentCoordinator:
         elif outdated:
             # Say what the user gets, since an update is their choice: a slimmer
             # payload reclaims disk, and the row already shows the download size.
-            reclaimed = installed_size_bytes(component_id) - int(
-                (entry or {}).get("install_bytes", 0) or 0
+            reclaimed = (
+                0
+                if using_bundled
+                else installed_size_bytes(component_id)
+                - int((entry or {}).get("install_bytes", 0) or 0)
             )
             state = ComponentState.UPDATE_AVAILABLE
             reason = (
@@ -2321,6 +2394,8 @@ class ComponentCoordinator:
                 if reclaimed > 0
                 else ""
             )
+        elif using_bundled:
+            state, reason = ComponentState.BUNDLED, ""
         else:
             state, reason = ComponentState.INSTALLED, ""
 
@@ -2332,7 +2407,7 @@ class ComponentCoordinator:
             installed_version=installed_version,
             available_version=available_version,
             download_bytes=download_bytes,
-            install_bytes=installed_size_bytes(component_id),
+            install_bytes=0 if using_bundled else installed_size_bytes(component_id),
             reason=reason,
         )
 

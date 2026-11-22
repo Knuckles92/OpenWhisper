@@ -68,6 +68,15 @@ def paste_last_original(ui) -> None:
     _report(ui, PASTED, "Original pasted", done=True)
 
 
+def can_copy_last_original() -> bool:
+    try:
+        entry = history_manager.last_dictation()
+        return entry is not None and bool(entry_version(entry))
+    except Exception:
+        logger.debug("Could not read the last dictation for the tray menu", exc_info=True)
+        return False
+
+
 def copy_last_original(ui) -> None:
     """Put the last dictation's text from before AI cleanup on the clipboard.
 

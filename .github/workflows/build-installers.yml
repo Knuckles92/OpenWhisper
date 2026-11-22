@@ -216,6 +216,7 @@ jobs:
           name: openwhisper-windows
           path: |
             installer/Output/OpenWhisper-Setup-*.exe
+            installer/Output/OpenWhisper-AllInOne-Setup-*.exe
             installer/Output/OpenWhisper-*-win64.tar.xz
           if-no-files-found: error
           retention-days: 14
@@ -246,7 +247,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             binutils build-essential desktop-file-utils dpkg-dev file \
             libarchive-tools lintian patchelf xauth xvfb zstd \
-            libdrm2 libegl1 libgl1 libportaudio2 \
+            libdrm2 libegl1 libgl1 libportaudio2 libvulkan1 \
             libwayland-client0 libwayland-cursor0 libwayland-egl1 \
             libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
             libxcb-xkb1 libxkbcommon-x11-0
@@ -268,10 +269,9 @@ jobs:
           if-no-files-found: ignore
       - name: Smoke-test package lifecycle in clean Ubuntu
         run: |
-          artifacts=(installer/Output/OpenWhisper-*-linux-amd64.deb)
           version="$(./venv/bin/python -c 'import _version; print(_version.__version__)')"
-          test "${#artifacts[@]}" -eq 1
-          artifact="$(realpath "${artifacts[0]}")"
+          artifact="$(realpath "installer/Output/OpenWhisper-$version-linux-amd64.deb")"
+          test -f "$artifact"
           docker run --rm \
             -e EXPECTED_VERSION="$version" \
             -v "$artifact:/tmp/openwhisper.deb:ro" \
@@ -303,12 +303,30 @@ jobs:
               test ! -e /usr/bin/openwhisper
               test ! -e /usr/bin/ow
             '
+      - name: Smoke-test all-in-one Debian package in clean Ubuntu
+        run: |
+          version="$(./venv/bin/python -c 'import _version; print(_version.__version__)')"
+          artifact="$(realpath "installer/Output/OpenWhisper-AllInOne-$version-linux-amd64.deb")"
+          test -f "$artifact"
+          docker run --rm \
+            -e EXPECTED_VERSION="$version" \
+            -v "$artifact:/tmp/openwhisper.deb:ro" \
+            ubuntu:22.04 bash -euo pipefail -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends xauth xvfb /tmp/openwhisper.deb
+              test "$(openwhisper --version)" = "OpenWhisper $EXPECTED_VERSION"
+              test -f /usr/lib/openwhisper/_internal/bundled_models/parakeet-110m-en/installed.json
+              test -f /usr/lib/openwhisper/_internal/bundled_models/parakeet-110m-en/parakeet-tdt_ctc-110m-Q8_0.gguf
+              xvfb-run -a openwhisper --self-test
+              apt-get remove -y openwhisper
+              test ! -e /usr/lib/openwhisper
+            '
       - name: Smoke-test advertised Debian 12 support
         run: |
-          artifacts=(installer/Output/OpenWhisper-*-linux-amd64.deb)
           version="$(./venv/bin/python -c 'import _version; print(_version.__version__)')"
-          test "${#artifacts[@]}" -eq 1
-          artifact="$(realpath "${artifacts[0]}")"
+          artifact="$(realpath "installer/Output/OpenWhisper-$version-linux-amd64.deb")"
+          test -f "$artifact"
           docker run --rm \
             -e EXPECTED_VERSION="$version" \
             -v "$artifact:/tmp/openwhisper.deb:ro" \
@@ -327,10 +345,9 @@ jobs:
             '
       - name: Smoke-test advertised Arch Linux support
         run: |
-          artifacts=(installer/Output/OpenWhisper-*-linux-x86_64.pkg.tar.zst)
           version="$(./venv/bin/python -c 'import _version; print(_version.__version__)')"
-          test "${#artifacts[@]}" -eq 1
-          artifact="$(realpath "${artifacts[0]}")"
+          artifact="$(realpath "installer/Output/OpenWhisper-$version-linux-x86_64.pkg.tar.zst")"
+          test -f "$artifact"
           docker run --rm \
             -e EXPECTED_VERSION="$version" \
             -v "$artifact:/tmp/openwhisper.pkg.tar.zst:ro" \
@@ -488,23 +505,26 @@ jobs:
           BUILD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SETUP_ONLY_WINDOWS: ${{ inputs.setup_only_windows }}
         run: |
+          export BUILD_COMMIT="$(git rev-parse HEAD)"
+          export BUILD_VERSION="$(python3 -c 'import _version; print(_version.__version__)')"
+          export BUILT_AT_UTC="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           bridge="$(python3 -c 'from _version import __version__; from services.update_contract import is_setup_bridge_release; print(str(is_setup_bridge_release(__version__)).lower())')"
           if [[ "$bridge" == "true" ]]; then export SETUP_ONLY_WINDOWS=true; fi
           if [[ "$SETUP_ONLY_WINDOWS" == "true" ]]; then
             rm -f release/OpenWhisper-*-win64.tar.xz
-            expected_artifacts=4
+            expected_artifacts=7
           else
-            expected_artifacts=5
+            expected_artifacts=8
           fi
           test "$(find release -maxdepth 1 -type f | wc -l)" -eq "$expected_artifacts"
-          test "$(find release -maxdepth 1 -name 'OpenWhisper-Setup-*.exe' | wc -l)" -eq 1
-          test "$(find release -maxdepth 1 -name 'OpenWhisper-*-linux-amd64.deb' | wc -l)" -eq 1
-          test "$(find release -maxdepth 1 -name 'OpenWhisper-*-linux-x86_64.pkg.tar.zst' | wc -l)" -eq 1
-          test "$(find release -maxdepth 1 -name 'OpenWhisper-*-macos-arm64.dmg' | wc -l)" -eq 1
-          export BUILD_COMMIT="$(git rev-parse HEAD)"
-          export BUILD_VERSION="$(python3 -c 'import _version; print(_version.__version__)')"
-          export BUILT_AT_UTC="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          # Bound to the exact setup exe: a report from another build fails.
+          test -f "release/OpenWhisper-Setup-$BUILD_VERSION.exe"
+          test -f "release/OpenWhisper-AllInOne-Setup-$BUILD_VERSION.exe"
+          test -f "release/OpenWhisper-$BUILD_VERSION-linux-amd64.deb"
+          test -f "release/OpenWhisper-AllInOne-$BUILD_VERSION-linux-amd64.deb"
+          test -f "release/OpenWhisper-$BUILD_VERSION-linux-x86_64.pkg.tar.zst"
+          test -f "release/OpenWhisper-AllInOne-$BUILD_VERSION-linux-x86_64.pkg.tar.zst"
+          test -f "release/OpenWhisper-$BUILD_VERSION-macos-arm64.dmg"
+          # Bound to the exact setup exes: a report from another build fails.
           export WINDOWS_SIGNING="$(python3 scripts/windows_signing.py metadata \
             --report signing/windows-signing.json --release release)"
           if [[ "$(python3 -c 'import json, os; print(json.loads(os.environ["WINDOWS_SIGNING"])["windows_signed"])')" == "True" ]]; then

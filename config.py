@@ -74,15 +74,14 @@ def host_machine() -> str:
 def parakeet_default_supported(
     platform_name: str = None, machine: str = None
 ) -> bool:
-    """True where native Parakeet is the default engine: Windows x64, Linux x86_64.
+    """True where Parakeet Unified is the default engine: Windows x64, Linux x86_64.
 
-    Both have packaged CPU and NVIDIA GPU runtimes. On Linux, Parakeet made
-    fewer word errors than the Whisper defaults and finished much sooner on
-    GPU (docs/linux-asr-default-2026-10-09.md). Apple Silicon uses Parakeet
-    MLX when supported; Linux ARM, with no Parakeet package, keeps Local
-    Whisper. Mirrors ``services.components.current_platform_tag``
-    without importing it: that module imports this one, so the check is
-    repeated here.
+    Both ship with the bundled transcribe.cpp CPU + Vulkan runtime, so new
+    installs run on dedicated GPUs of any vendor (or CPU) with no extra
+    runtime download. Apple Silicon uses Parakeet MLX when supported; Windows
+    ARM64 and Linux ARM keep Local Whisper. Mirrors
+    ``services.components.current_platform_tag`` without importing it: that
+    module imports this one, so the check is repeated here.
     """
     host = platform_name or sys.platform
     if not host.startswith(("win", "linux")):
@@ -804,7 +803,7 @@ class AppConfig:
         if self.DEFAULT_BACKEND is None:
             self.DEFAULT_BACKEND = (
                 'parakeet_mlx' if parakeet_mlx_supported() else
-                'parakeet' if parakeet_default_supported() else 'local_whisper'
+                'parakeet_unified' if parakeet_default_supported() else 'local_whisper'
             )
 
         if self.MEETING_ASR_MODEL is None:

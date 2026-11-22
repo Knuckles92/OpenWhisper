@@ -52,7 +52,7 @@ from ui_qt.dialogs.settings_destinations import (
     MCP,
     OVERVIEW,
     RECORDING,
-    RUNTIME,
+    REMOTE_ENGINE,
     VOICE_MODEL,
     resolve_destination,
 )
@@ -113,6 +113,24 @@ def make_dialog():
 
 
 class TestRouting:
+    def test_escape_and_window_close_run_the_same_cleanup(self, make_dialog):
+        dialog, _store = make_dialog()
+        with patch.object(dialog.home, "cancel_capture") as cancel, patch.object(
+            dialog.cleanup_rules, "release_recorder"
+        ) as release:
+            dialog.show()
+            before = cancel.call_count
+            QTest.keyClick(dialog, Qt.Key.Key_Escape)
+            assert not dialog.isVisible()
+            assert cancel.call_count == before + 1
+            release.assert_called_once()
+
+            dialog.show()
+            before = cancel.call_count
+            dialog.close()
+            assert not dialog.isVisible()
+            assert cancel.call_count == before + 1
+            assert release.call_count == 2
     @pytest.mark.usefixtures("isolated_app_theme")
     def test_page_transitions_keep_sidebar_rows_over_their_click_targets(self, make_dialog):
         from ui_qt.utils.font_scale import apply_ui_font_scale
@@ -323,7 +341,7 @@ class TestRouting:
         ("ondemand", VOICE_MODEL),
         ("text", CLEANUP),
         ("meeting", MEETING_VOICE),
-        ("runtime", RUNTIME),
+        ("runtime", DOWNLOADS),
         ("downloads", DOWNLOADS),
         ("library", DOWNLOADS),
         ("voice", DOWNLOADS),
@@ -346,7 +364,7 @@ class TestRouting:
         dialog.models.speech_download_button.click()
 
         assert dialog.rail.current_key() == DOWNLOADS
-        assert dialog.downloads.backend_filter_combo.currentData() == "parakeet"
+        assert dialog.downloads.current_rail_key() == "parakeet"
 
     def test_cleanup_profiles_model_link_opens_the_cleanup_model(self, make_dialog):
         dialog, _store = make_dialog()
@@ -410,10 +428,13 @@ class TestHome:
         combo = dialog.home.controls[SettingsKey.AUDIO_INPUT_PRIORITY]
         assert RECORDING not in dialog._built_pages
         with patch.object(settings_dialog_module.AudioRecorder, "get_input_devices", return_value=[]):
-            dialog.home._load_microphones()
+            assert not dialog.home._load_microphones()
+        assert "Finding microphones" in combo.placeholderText()
         assert RECORDING in dialog._built_pages
         desk = InputDevice(index=11, name="Desk microphone", hostapi="MME", default_api=True)
         dialog._apply_audio_devices(dialog._audio_device_generation, "", [desk], "")
+        assert not combo.placeholderText()
+        assert dialog.home._load_microphones()
         combo.setCurrentIndex(combo.findData(entry_token(desk.key)))
         assert store.get(SettingsKey.AUDIO_INPUT_PRIORITY) == [desk.key]
         # The pre-ranking index follows along for a downgrade.
@@ -590,8 +611,8 @@ class TestChapters:
             assert checked == ["Hooks"]
             headings = [action for action in menu.actions() if action.text() in dialog.rail.chapters()]
             assert headings and not any(action.isEnabled() for action in headings)
-            next(action for action in menu.actions() if action.text() == "Runtime").trigger()
-            assert dialog.rail.current_key() == RUNTIME
+            next(action for action in menu.actions() if action.text() == "Downloads").trigger()
+            assert dialog.rail.current_key() == DOWNLOADS
         finally:
             menu.close()
 
@@ -855,6 +876,24 @@ class TestSearchMatching:
 
 
 class TestSearchPalette:
+    def test_lazy_search_reveals_remote_host_and_fast_judgment_settings(self, make_dialog):
+        dialog, _store = make_dialog()
+        dialog.show()
+        index = dialog._search_index()
+        cases = [
+            (REMOTE_ENGINE, "Paired computers", lambda: dialog.remote_section.devices_tile),
+            (MEETING_FAST, "Live highlight pulses",
+             lambda: dialog.typesafe_feature_tiles["highlights"]),
+        ]
+        for destination, title, target in cases:
+            assert destination not in dialog._built_pages
+            entry = next(e for e in index if e.destination == destination and e.title == title)
+            dialog._on_search_activated(entry)
+            QApplication.processEvents()
+            assert target().isVisible()
+            assert target().property("searchHit") is True
+        dialog.close()
+
     def test_history_sharing_search_opens_and_marks_its_mcp_control(self, make_dialog):
         dialog, _store = make_dialog()
         try:

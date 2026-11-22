@@ -13,6 +13,9 @@
 #endif
 
 #define AppName "OpenWhisper"
+#ifndef OutputPrefix
+  #define OutputPrefix AppName
+#endif
 #define AppPublisher "Fiori Labs"
 #define AppURL "https://openwhisper.fiorilabs.tech"
 #define AppExeName "OpenWhisper.exe"
@@ -55,7 +58,7 @@ MinVersion=10.0
 
 LicenseFile=..\LICENSE
 OutputDir=Output
-OutputBaseFilename={#AppName}-Setup-{#AppVersion}
+OutputBaseFilename={#OutputPrefix}-Setup-{#AppVersion}
 SetupIconFile=..\ui_qt\assets\openwhisper.ico
 WizardStyle=modern
 ; Solid compression is a large win here: the payload is ~300 MB of DLLs and
@@ -91,6 +94,11 @@ Name: "startupicon"; Description: "Start {#AppName} when I sign in"; GroupDescri
 [Files]
 Source: "{#SourceDir}\OpenWhisperUpdater.exe"; Flags: dontcopy
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+#ifdef BundledModelDir
+; Quantized GGUF weights are high-entropy and barely compress under LZMA2;
+; storing them uncompressed avoids 32-bit ISCC memory pressure and speeds up builds.
+Source: "{#BundledModelDir}\*"; DestDir: "{app}\_internal\bundled_models"; Flags: ignoreversion recursesubdirs createallsubdirs nocompression
+#endif
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"

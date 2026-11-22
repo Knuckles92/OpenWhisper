@@ -20,6 +20,16 @@ The native Windows and Linux distributions include, among other dependencies:
   Copyright 2014 The DM Sans Project Authors and Copyright 2022 The
   Instrument Serif Project Authors. Bundled into the meeting dashboard from
   the Fontsource packages; the license texts ship in `webui/dist/licenses`.
+- **transcribe.cpp and ggml** — MIT License. The packaged Windows x64 and
+  Linux x86_64 builds include the `transcribe.cpp` speech runtime for
+  Parakeet Unified under `_internal/bundled_components/asr-transcribe`
+  (with upstream license texts in `transcribe-native/licenses`; Windows
+  also bundles an embedded CPython 3.12 runtime under the PSF License).
+- **NVIDIA Parakeet TDT-CTC 110M Q8 weights (all-in-one installers)** —
+  CC-BY-4.0. The optional `OpenWhisper-AllInOne` Windows x64 and Linux x86_64
+  packages include `handy-computer/parakeet-tdt_ctc-110m-gguf` under
+  `_internal/bundled_models/parakeet-110m-en` together with its upstream
+  `LICENSE` and `NOTICE` files.
 
 Additional Python distributions retain their upstream license files under
 `_internal` (typically in `*.dist-info/licenses`, package-specific `LICENSE`
@@ -36,6 +46,7 @@ The additional Windows x64 backends are downloaded on demand; their model weight
 | Native Parakeet/Nemotron runtime | [NVIDIA NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) | Apache-2.0; bundled third-party components retain their own notices |
 | transcribe.cpp runtime (Parakeet Unified) | [transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) release libraries and Python binding, with [ggml](https://github.com/ggml-org/ggml) | MIT; upstream license files retained in `transcribe-native/licenses` |
 | Parakeet Unified EN 0.6B Q8 weights | [NVIDIA Parakeet Unified](https://huggingface.co/nvidia/parakeet-unified-en-0.6b), [GGUF conversion by handy-computer](https://huggingface.co/handy-computer/parakeet-unified-en-0.6b-gguf) | NVIDIA Open Model License; its text and NVIDIA's notice download with the weights |
+| Parakeet TDT-CTC 110M Q8 weights | [NVIDIA Parakeet TDT-CTC 110M](https://huggingface.co/nvidia/parakeet-tdt_ctc-110m), [GGUF conversion by handy-computer](https://huggingface.co/handy-computer/parakeet-tdt_ctc-110m-gguf) | CC-BY-4.0; its `LICENSE` and `NOTICE` ship with the weights (included in all-in-one installers) |
 | Orukeet TDT 0.6B r3 Q8 weights | [Oruk AI Orukeet](https://huggingface.co/oruk/orukeet), adapted from NVIDIA Parakeet; [weight license and attribution](https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md) | CC-BY-SA-4.0; retain attribution and applicable ShareAlike terms |
 | Parakeet TDT 0.6B v3 weights | [NVIDIA Parakeet](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | CC-BY-4.0 |
 | Parakeet TDT 0.6B v3 MLX weights | [MLX Community conversion](https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3) | CC-BY-4.0 |

@@ -249,10 +249,12 @@ class TestSelecting:
 
 
 class TestToolbar:
-    @pytest.mark.parametrize("live", [False, True])
+    @pytest.mark.parametrize("live,auto_mode", [(False, False), (True, True), (True, False)])
     @pytest.mark.parametrize("width", [320, 480, 640, 800, 1280])
-    def test_wrapped_tools_stay_visible_and_clickable(self, live, width):
-        toolbar = SnapToolbar(None, DARK_PALETTE, live=live)
+    def test_wrapped_tools_stay_visible_and_clickable(self, live, auto_mode, width):
+        toolbar = SnapToolbar(
+            None, DARK_PALETTE, live=live, auto_mode=auto_mode, window_picker=live
+        )
         toolbar.fit_to_width(width)
         assert toolbar.width() <= width
         buttons = toolbar._buttons
@@ -262,9 +264,14 @@ class TestToolbar:
         chosen = Spy(toolbar.tool_chosen)
         _click(toolbar, *_center(toolbar.button_rect("tool", Tool.REDACT)))
         assert chosen.calls == [(Tool.REDACT.value,)]
-        if live:
+        if live and auto_mode:
             assert toolbar.rect().contains(toolbar.capture_delay.geometry())
             assert toolbar.capture_delay.pos() == toolbar.button_rect("delay").topLeft()
+        elif live:
+            assert toolbar.capture_delay is None
+            assert not toolbar.button_rect("keep").isNull()
+            assert not toolbar.button_rect("window").isNull()
+            assert not toolbar.button_rect("region").isNull()
 
     def test_unsaved_infill_starts_off(self, make_overlay):
         overlay = make_overlay()

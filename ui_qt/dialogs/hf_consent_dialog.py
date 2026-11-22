@@ -210,6 +210,7 @@ class HuggingFaceConsentDialog(QDialog):
 
     def _body_text(self) -> str:
         from services.component_catalog import get_component_details
+        from services.local_asr.cache import needs_qwen_redownload
         from services.local_asr.catalog import MODELS, gpu_runtime_offer, missing_runtime
         from services.settings import settings_manager
 
@@ -225,8 +226,14 @@ class HuggingFaceConsentDialog(QDialog):
             details = None
         repo = resolve_model_repo(self.model_name)
         label = MODELS[self.model_name].label if self.model_name in MODELS else self.model_name
+        availability = f'The speech model "{label}" is not on this computer.'
+        if needs_qwen_redownload(self.model_name):
+            availability = (
+                f"{label} now runs on a new speech runtime. Download the GGUF version once "
+                "to use your selected model again. The previous files will be replaced after the download succeeds."
+            )
         lines = [
-            f'The speech model "{label}" is not on this computer.',
+            availability,
             (f"Downloading connects to {', '.join(details.download_hosts)}. Source: {repo}."
              if details and details.download_hosts != ("huggingface.co",) else
              f"It can be downloaded from Hugging Face (huggingface.co), repository {repo}."),

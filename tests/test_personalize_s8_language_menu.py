@@ -52,11 +52,16 @@ class TestMenu:
         ui.overlay.show_language_notice.assert_not_called()
         ui.set_status.assert_called_once_with("Dictation language: French")
 
-    def test_single_language_engines_explain_themselves(self, ui):
-        _save("moonshine")
+    @pytest.mark.parametrize("backend,reason,bottom_label", [
+        ("moonshine", "Moonshine understands English only.", "Switch to a multilingual engine\u2026"),
+        ("parakeet_unified", "Parakeet Unified understands English only.", "Switch to a multilingual engine\u2026"),
+        ("parakeet_mlx", "Parakeet MLX detects the language by itself.", "Choose languages\u2026"),
+    ])
+    def test_single_language_engines_explain_themselves(self, ui, backend, reason, bottom_label):
+        _save(backend)
         menu = QMenu()
         language_menu.populate(menu, ui)
-        assert _texts(menu) == ["Moonshine understands English only.", "Choose languages…"]
+        assert _texts(menu) == [reason, bottom_label]
         assert not menu.actions()[0].isEnabled()
 
     def test_choose_languages_opens_the_voice_model_page(self, ui):

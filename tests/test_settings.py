@@ -944,6 +944,27 @@ def test_keeping_the_engine_tolerates_stand_in_managers():
     assert not keep_unchosen_engine(object())
 
 
+@pytest.mark.parametrize("host,kept", [
+    ("win32", "parakeet"),
+    ("linux", "local_whisper"),
+])
+def test_existing_install_keeps_prior_default_when_parakeet_unified_becomes_default(
+    tmp_path, monkeypatch, host, kept,
+):
+    from services.settings import keep_unchosen_engine
+
+    monkeypatch.setattr(sys, "platform", host)
+    monkeypatch.setattr(config, "DEFAULT_BACKEND", "parakeet_unified")
+    path = tmp_path / "openwhisper_settings.json"
+    path.write_text(json.dumps({"ui_theme": "dark"}), encoding="utf-8")
+    manager = SettingsManager(str(path))
+
+    assert keep_unchosen_engine(manager)
+    assert manager.load_model_selection() == kept
+    assert manager.get("ui_theme") == "dark"
+    assert not keep_unchosen_engine(manager)
+
+
 def test_default_backend_prefers_the_supported_platform_runtime():
     from config import parakeet_default_supported, parakeet_mlx_supported
 
@@ -956,7 +977,7 @@ def test_default_backend_prefers_the_supported_platform_runtime():
     assert not parakeet_default_supported("darwin", "arm64")
     assert not parakeet_default_supported("darwin", "x86_64")
     expected = ("parakeet_mlx" if parakeet_mlx_supported() else
-                "parakeet" if parakeet_default_supported() else "local_whisper")
+                "parakeet_unified" if parakeet_default_supported() else "local_whisper")
     assert config.DEFAULT_BACKEND == expected
     assert config.DEFAULT_BACKEND in config.MODEL_VALUE_MAP.values()
 
@@ -1022,10 +1043,10 @@ def test_windows_kernel_reports_a_known_architecture():
     ("darwin", "arm64", "", "local_whisper", ""),
     ("darwin", "arm64", "unknown", "local_whisper", ""),
     ("darwin", "x86_64", "14.0", "local_whisper", ""),
-    ("win32", "AMD64", "", "parakeet", ""),
+    ("win32", "AMD64", "", "parakeet_unified", ""),
     ("win32", "ARM64", "", "local_whisper", ""),
     ("linux", "aarch64", "14.0", "local_whisper", ""),
-    ("linux", "x86_64", "", "parakeet", ""),
+    ("linux", "x86_64", "", "parakeet_unified", ""),
 ])
 def test_speech_defaults_follow_mlx_hardware_and_os_support(
     monkeypatch, host, arch, release, backend, meeting_model,

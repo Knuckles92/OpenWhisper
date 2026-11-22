@@ -1,0 +1,50 @@
+{
+  "qwen-0.6b": {
+    "repo": "handy-computer/Qwen3-ASR-0.6B-gguf",
+    "revision": "7e7c69a577fa2725dfedbe34b5e999336e30a19b",
+    "files": [
+      {
+        "name": "Qwen3-ASR-0.6B-Q8_0.gguf",
+        "url": "https://huggingface.co/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/7e7c69a577fa2725dfedbe34b5e999336e30a19b/Qwen3-ASR-0.6B-Q8_0.gguf",
+        "size_bytes": 850423456,
+        "sha256": "f081b2d5e23bd669d92cc331d722a8a0681943b8e6f34b48996fd5c319b5acd8"
+      },
+      {
+        "name": "LICENSE",
+        "url": "https://huggingface.co/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/7e7c69a577fa2725dfedbe34b5e999336e30a19b/LICENSE",
+        "size_bytes": 11358,
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "name": "NOTICE",
+        "url": "https://huggingface.co/handy-computer/Qwen3-ASR-0.6B-gguf/resolve/7e7c69a577fa2725dfedbe34b5e999336e30a19b/NOTICE",
+        "size_bytes": 392,
+        "sha256": "8ce09c74b1929991d1c775bd21662e2a7a863e9669d2537ddba15b780b138adc"
+      }
+    ]
+  },
+  "qwen-1.7b": {
+    "repo": "handy-computer/Qwen3-ASR-1.7B-gguf",
+    "revision": "0e0a596e3959c3f3f2ab7d443a5b6f0f4a4bba6f",
+    "files": [
+      {
+        "name": "Qwen3-ASR-1.7B-Q8_0.gguf",
+        "url": "https://huggingface.co/handy-computer/Qwen3-ASR-1.7B-gguf/resolve/0e0a596e3959c3f3f2ab7d443a5b6f0f4a4bba6f/Qwen3-ASR-1.7B-Q8_0.gguf",
+        "size_bytes": 2185030624,
+        "sha256": "9a0d81792dfea2d5f278b8a63deb3ea6e02139ce42c2301f32ea19c4f77526b7"
+      },
+      {
+        "name": "LICENSE",
+        "url": "https://huggingface.co/handy-computer/Qwen3-ASR-1.7B-gguf/resolve/0e0a596e3959c3f3f2ab7d443a5b6f0f4a4bba6f/LICENSE",
+        "size_bytes": 11358,
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "name": "NOTICE",
+        "url": "https://huggingface.co/handy-computer/Qwen3-ASR-1.7B-gguf/resolve/0e0a596e3959c3f3f2ab7d443a5b6f0f4a4bba6f/NOTICE",
+        "size_bytes": 392,
+        "sha256": "0d167723bb72621e2d203810459ac8c1f382cfe252a46ff18b42bb5cd4a3a74c"
+      }
+    ]
+  }
+}

@@ -114,23 +114,23 @@ def test_snap_and_done_give_the_headers_clock_and_look_a_line_of_their_own(walkt
     assert room.bottom() < above, "the words start under the header"
 
 
-def test_the_compact_look_sits_under_snap_and_done(walkthrough, monkeypatch):
+def test_the_static_recording_status_sits_under_snap_and_done(walkthrough, monkeypatch):
     walkthrough.set_recording_look(recording_looks.BARS)
     walkthrough.set_state(walkthrough.STATE_RECORDING)
     walkthrough.timer.stop()
-    tops = []
-    draw_band = walkthrough._draw_listening_band
+    labels = []
+    draw_status = walkthrough._draw_status
 
-    def spy(painter, status, tone, top=0.0):
-        tops.append(top)
-        draw_band(painter, status, tone, top)
+    def spy(painter, status, tone):
+        labels.append(status)
+        draw_status(painter, status, tone)
 
-    monkeypatch.setattr(walkthrough, "_draw_listening_band", spy)
+    monkeypatch.setattr(walkthrough, "_draw_status", spy)
     walkthrough.grab()
-    top = tops[-1]
-    assert top >= walkthrough._control_rects["snap"].bottom()
-    assert walkthrough.height() == walkthrough._base_height + top
-    assert walkthrough._status_rect().bottom() < walkthrough.height()
+    assert labels == ["Recording walkthrough…"]
+    status = walkthrough._status_rect()
+    assert walkthrough._control_rects["snap"].bottom() <= status.top()
+    assert status.bottom() < walkthrough.height()
 
 
 def test_the_work_stages_stay_under_the_walkthrough_badge(walkthrough, monkeypatch):

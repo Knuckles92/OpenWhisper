@@ -48,6 +48,7 @@ class SpeechProcess:
         self._errors = deque(maxlen=25)
         environment = os.environ.copy()
         environment.update(PYTHONUTF8="1")
+        environment.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
         if not isolated:
             environment.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
         command = [python, "-u", str(Path(__file__).with_name("worker.py"))]

@@ -160,6 +160,46 @@ def test_the_responder_limits_how_often_it_answers_one_address():
     assert responder.answer(query, "8.8.8.8") is None
 
 
+def test_stopping_discovery_while_it_is_starting_waits_for_the_thread(monkeypatch):
+    responder = discovery.DiscoveryResponder(lambda: {"name": "devbox", "port": 1, "fingerprint": "AB" * 32})
+    before_start = threading.Event()
+    release_start = threading.Event()
+    real_thread = discovery.threading.Thread
+
+    class PausedStartThread(real_thread):
+        def start(self):
+            before_start.set()
+            assert release_start.wait(timeout=5)
+            super().start()
+
+    monkeypatch.setattr(discovery.threading, "Thread", PausedStartThread)
+
+    starter = real_thread(target=responder.start, kwargs={"port": 0, "bind": "127.0.0.1"})
+    starter.start()
+    assert before_start.wait(timeout=5)
+
+    stop_errors = []
+
+    def stop_now():
+        try:
+            responder.stop()
+        except Exception as exc:
+            stop_errors.append(exc)
+
+    stopper = real_thread(target=stop_now)
+    stopper.start()
+    # Give stop() a moment to race against the unstarted thread before letting start() finish.
+    time.sleep(0.05)
+    release_start.set()
+    starter.join(timeout=5)
+    stopper.join(timeout=5)
+
+    assert not starter.is_alive()
+    assert not stopper.is_alive()
+    assert stop_errors == []
+    assert not responder.running
+
+
 def test_a_taken_discovery_port_leaves_sharing_running(tmp_path, monkeypatch, engine):
     from services.remote_asr.service import RemoteEngineService
     from services.settings import SettingsKey, settings_manager

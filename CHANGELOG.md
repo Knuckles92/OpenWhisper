@@ -7,6 +7,50 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.98] - 2026-11-21
+
+### Changed
+
+- **Downloads organizes speech models by engine and includes per-engine runtime settings.** **Settings → Downloads** now groups models under an engine rail with model counts, installed models, and optional components, showing runtime status and model details on demand. Device and Local Whisper quantization preferences previously under **Settings → Runtime** now live directly on each engine's Downloads view, with inline runtime installation and update progress.
+
+### Fixed
+
+- **Remote discovery shuts down cleanly.** Starting and stopping remote host discovery is now serialized against application shutdown to prevent race conditions on exit.
+
+## [2.8.97] - 2026-11-20
+
+### Changed
+
+- **Qwen3-ASR uses the bundled speech runtime on Windows x64 and Linux x86_64.** If you previously downloaded Qwen3-ASR on Windows, your model selection carries over. Open **Settings → Downloads** for the one-time GGUF download (about 850 MB for 0.6B or 2.2 GB for 1.7B). The new runtime removes the SciPy dependency. Compatibility with Windows Smart App Control still depends on whether Windows trusts the bundled DLLs.
+- **Manual walkthroughs can be annotated before taking a screenshot.** On desktops that support the floating toolbar, you can draw on the live desktop, choose a capture region or window where supported, and save the marked screenshot when ready. Recording feedback appears in the walkthrough panel.
+- **Hugging Face telemetry is disabled** in the app and its worker processes.
+
+## [2.8.95] - 2026-11-19
+
+### Changed
+
+- **Meeting audio checks show live levels** for the microphone and system audio, with a countdown while the check runs. Meeting Mode also shows the brief's character count and confirms when you copy a guest link or transcript.
+- **Walkthroughs are easier to find and review.** Search the library, see the selected walkthrough in History, and zoom screenshots during review. OpenWhisper asks before discarding unsaved walkthrough edits when you quit.
+- **Settings search and backups are easier to use.** Search takes you to the matching control, including options in collapsed remote settings. Automatic backup settings save as you change them and show feedback if a destination or schedule cannot be saved.
+
+### Fixed
+
+- **Dictation failures are easier to recover from.** Notifications tell you when a recording was kept in History or when a failed auto-paste left the transcript on the clipboard.
+- **History and upload feedback are clearer.** History can show local results while paired-host records load, and failed file previews stay visible on the affected rows.
+- **The tray reflects the current app state.** It shows the applicable Show or Hide action, enables copying the last original dictation when one is available, and reports active recordings, meetings, or walkthroughs in the tooltip.
+
+## [2.8.94] - 2026-11-18
+
+### Added
+
+- **All-in-one offline installers for Windows and Linux** — alongside the slim installers, releases now ship `OpenWhisper-AllInOne-Setup-2.8.94.exe` (Windows x64) and `OpenWhisper-AllInOne-2.8.94-linux-{amd64.deb,x86_64.pkg.tar.zst}` (Debian/Ubuntu and Arch Linux). Each all-in-one package bundles both the `transcribe.cpp` speech runtime and the compact **Parakeet TDT-CTC 110M** English model (135 MB), so dictation, live preview, file uploads, and Meeting Mode work completely offline right after installation with zero extra downloads. Bundled models show an **Included** badge in Settings, appear as **Included and ready** in Guided Setup, and are preserved across future Windows in-app updates.
+- **One-click non-English switching** — choosing a non-English language in Guided Setup or Settings while using Parakeet Unified now offers a direct **Switch to Whisper** path so multilingual users can switch immediately without hunting through engine menus.
+
+### Changed
+
+- **Parakeet Unified is now the default engine on Windows x64 and Linux x86_64** — fresh installs start with Parakeet Unified (`transcribe.cpp`, supporting Vulkan GPUs and CPU) bundled directly in the installer, removing the separate runtime download step. Existing installations keep whichever speech engine they already chose.
+- **Live preview on by default for new installs** — brand-new installations using engines that share a single loaded decoder (Parakeet Unified on Windows/Linux and Parakeet MLX on Apple Silicon) now start with live streaming preview enabled out of the box, leaving existing installations untouched.
+
 ### Fixed
 
 - **Clearer macOS auto-paste setup** — opening Accessibility Settings keeps the current permission entry intact. If an old entry stops working after an update, a separate **Repair old Accessibility entry…** action resets it, explains how to enable the current copy, and offers manual recovery if the reset fails. Settings Home now updates its permission warning while open. Release builds reject incomplete signing credentials and can require Developer ID signing to prevent accidental ad-hoc releases that lose permission across updates.

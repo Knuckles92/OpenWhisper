@@ -1406,7 +1406,9 @@ def seed_new_install_settings(manager: Optional["SettingsManager"] = None) -> bo
 
     Existing installs keep today's output (no app_style_tones key means
     every category is Formal); only a launch that found no settings file
-    gets the casual chat tones, and only once.
+    gets the casual chat tones and (when the default engine shares its
+    decoder for live preview without an extra download) live preview on,
+    and only once.
     """
     manager = settings_manager if manager is None else manager
     is_new = getattr(manager, "is_new_install", None)
@@ -1418,6 +1420,11 @@ def seed_new_install_settings(manager: Optional["SettingsManager"] = None) -> bo
         if SettingsKey.APP_STYLE_TONES in settings:
             return False
         settings[SettingsKey.APP_STYLE_TONES] = dict(NEW_INSTALL_TONES)
+        if (
+            SettingsKey.STREAMING_ENABLED not in settings
+            and config.DEFAULT_BACKEND in config.STREAMING_PREVIEW_BACKENDS
+        ):
+            settings[SettingsKey.STREAMING_ENABLED] = True
         return True
 
     try:
@@ -1433,8 +1440,9 @@ def keep_unchosen_engine(manager: Optional["SettingsManager"] = None) -> bool:
     Such an install has no saved selection and follows
     ``config.DEFAULT_BACKEND``, so moving a platform's default would switch
     it to an engine it hasn't downloaded. A new install saves the default
-    it starts with. An existing Linux x86_64 install keeps Local Whisper,
-    its default until Parakeet replaced it (October 2026). Run before the
+    it starts with. Existing installs without a saved selection keep their
+    previous default (Local Whisper on Linux x86_64, Parakeet on Windows x64)
+    so upgrading does not switch them to an uncached model. Run before the
     main window reads the selection.
     """
     manager = settings_manager if manager is None else manager
@@ -1443,6 +1451,13 @@ def keep_unchosen_engine(manager: Optional["SettingsManager"] = None) -> bool:
         return False
     if is_new():
         engine = config.DEFAULT_BACKEND
+    elif config.DEFAULT_BACKEND == "parakeet_unified":
+        if sys.platform.startswith("linux"):
+            engine = "local_whisper"
+        elif sys.platform == "win32":
+            engine = "parakeet"
+        else:
+            return False
     elif sys.platform.startswith("linux") and config.DEFAULT_BACKEND == "parakeet":
         engine = "local_whisper"
     else:

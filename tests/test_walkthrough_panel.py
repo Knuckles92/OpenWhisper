@@ -7,7 +7,6 @@ from PyQt6.QtGui import QColor, QImage
 
 from ui_qt.widgets import walkthrough_panel
 from ui_qt.widgets.walkthrough_panel import (
-    HOLD_S,
     TICK_S,
     Paragraph,
     ShotItem,
@@ -125,9 +124,9 @@ def test_a_walkthrough_fills_the_column_then_it_fades_once_ready(panel, clock):
 
     panel.complete(SimpleNamespace(shots=1, duration_s=75.0))
     assert panel._summary == "1:15 · 1 screenshot"
-    _run(panel, clock, HOLD_S - 0.5)
+    _run(panel, clock, 0.15)
     assert panel.isVisible()
-    _run(panel, clock, 1.5)
+    _run(panel, clock, 0.30)
     assert not panel.isVisible() and panel.state == panel.HIDDEN
 
 
@@ -136,7 +135,11 @@ def test_a_canceled_walkthrough_fades_at_once(panel, clock):
     _run(panel, clock, 0.5, level=LOUD)
     panel.finish()
     panel.dismiss()
-    _run(panel, clock, 0.6)
+    _run(panel, clock, 0.08)
+    assert panel.isVisible()
+    panel.grab()  # paints the outro in flight
+    panel.dismiss()
+    _run(panel, clock, 0.13)
     assert not panel.isVisible()
 
 
@@ -261,10 +264,15 @@ def test_the_footer_snaps_undoes_cancels_and_finishes(panel, clock):
 
     _click(panel, _footer_button(panel, "undo"))  # no screenshot to undo yet
     panel.add_shot(1, _image(), 3.0)
-    for key in ("snap", "undo", "cancel", "done"):
+    for key in ("snap", "undo", "cancel"):
         _click(panel, _footer_button(panel, key))
+    assert heard == ["snap", "undo"]
+    _click(panel, _footer_button(panel, "keep"))
+    _click(panel, _footer_button(panel, "done"))
+    _click(panel, _footer_button(panel, "cancel"))
+    _click(panel, _footer_button(panel, "cancel"))
 
-    assert heard == ["snap", "undo", "cancel", "done"]
+    assert heard == ["snap", "undo", "done", "cancel"]
 
 
 def test_while_it_is_written_only_cancel_is_left(panel, clock):

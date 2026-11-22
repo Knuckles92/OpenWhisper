@@ -34,7 +34,7 @@ def run(args):
     import psutil  # Optional developer dependency: pip install psutil
     import main as _app_bootstrap  # noqa: F401 -- registers production native library paths
     from faster_whisper.audio import decode_audio
-    from services.local_asr.catalog import MODELS
+    from services.local_asr.catalog import MODELS, TRANSCRIBE_RUNTIME
     from services.local_asr import cache
     from transcriber.local_backend import LocalWhisperBackend
     from transcriber.optional_backend import LocalSpeechBackend
@@ -62,7 +62,8 @@ def run(args):
             root = args.test_root.resolve()
             mapping = {"asr-nvidia-cpu": "nemo-cpu", "asr-nvidia-cuda": "nemo-cuda",
                        "asr-nvidia-vulkan": "nemo-vulkan",
-                       "asr-qwen": "qwen-runtime", "asr-moonshine": "moonshine-runtime"}
+                       "asr-qwen": "qwen-runtime", "asr-moonshine": "moonshine-runtime",
+                       TRANSCRIBE_RUNTIME: "transcribe-runtime"}
             context.enter_context(patch.object(cache, "local_app_dir", return_value=str(root/"test-app")))
             context.enter_context(patch("services.components.component_dir", side_effect=lambda key: str(root/mapping[key])))
             context.enter_context(patch("services.components.is_installed", side_effect=lambda key: (root/mapping[key]/"python.exe").exists()))
@@ -95,7 +96,10 @@ def run(args):
                     raise RuntimeError(backend.device_info)
                 row["device_info"] = backend.device_info
                 row["actual_device"] = backend.device
-                if backend.device != device:
+                expected = device
+                if device == "cuda" and getattr(backend, "runtime_component", None) == TRANSCRIBE_RUNTIME:
+                    expected = "vulkan"
+                if backend.device != expected:
                     raise RuntimeError(f"Requested {device}, but loaded {backend.device}: {backend.device_info}")
                 row["model_identity"] = model_identity(backend)
                 timings = []

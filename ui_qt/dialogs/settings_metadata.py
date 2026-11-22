@@ -302,7 +302,23 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                            'Backup agent',
                            'If AI insights stop working during a meeting, this agent takes over '
                            'and receives the transcript through its own sign-in.')],
- 'meeting_fast': [('typesafe_key_notice', 'No TypeSafe API key', ''),
+ 'remote_engine': [
+     ('find_tile', 'Find a computer', 'Discover hosts, enter an address or pair with a code'),
+     ('client_tile', 'Paired host', 'Connect to another computer and use its engine'),
+     ('storage_tile', 'Where records are kept', 'History, recordings and meetings on this computer or host'),
+     ('share_tile', "Share this computer's engine", 'Host, listen and accept pair requests'),
+     ('management_tile', 'Allow paired computers to manage models', 'Remote model downloads'),
+     ('keep_records_tile', 'Keep records for paired computers', 'Remote history and recordings'),
+     ('manage_mcp_tile', 'Allow paired computers to manage MCP', 'Remote MCP server'),
+     ('tailscale_tile', 'Pair my Tailscale computers without a code', 'Tailnet pairing'),
+     ('port_tile', 'Port', 'Clients connect to this port'),
+     ('devices_tile', 'Paired computers', 'Pair, manage or remove computers'),
+ ],
+ 'meeting_fast': [('typesafe_feature_tiles.citations', 'Advisory citation checks', 'Flag weak evidence'),
+                  ('typesafe_feature_tiles.semantic_search', 'Semantic history search', 'Rank past excerpts by meaning'),
+                  ('typesafe_feature_tiles.question_radar', 'Open questions radar', 'Find unanswered questions'),
+                  ('typesafe_feature_tiles.highlights', 'Live highlight pulses', 'Mark decisions and takeaways'),
+                  ('typesafe_key_notice', 'No TypeSafe API key', ''),
                   ('typesafe_route_tile',
                    'Judge',
                    'Run fast judgments on Jev with a TypeSafe key or through OpenRouter, or on '
@@ -387,7 +403,12 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                    ('meeting_source_combo', 'Runs on', ''),
                    ('meeting_language_combo', 'Spoken language', ''),
                    ('meeting_speaker_id_combo', 'Speaker identification', '')],
- 'runtime': [('device_combo', 'Device', ''), ('compute_combo', 'Quantization', '')],
+ 'downloads': [('engine_device_combo',
+                'Device',
+                'Choose Auto, GPU, or CPU per speech engine. Dictation and Meeting Mode inherit these.'),
+               ('engine_compute_combo',
+                'Quantization',
+                'Precision for Local Whisper (auto, float16, int8). Shared by Dictation and Meeting Mode.')],
  'backup': [('backup_create_tile', 'Back up local data',
              'Save local settings, transcription history, meeting data, and optionally recordings.'),
             ('backup_restore_tile', 'Inspect and restore',
@@ -398,9 +419,7 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
 PAGE_HELP_TEXT = {'voice_model': ['For dictation previews, Nemotron uses native streaming; Parakeet transcribes '
                  'short audio chunks with the loaded model; Local Whisper uses a separate tiny.en '
                  'model. The final transcript uses your selected model. Nemotron and Moonshine '
-                 'provide native live previews in Meeting Mode.'],
- 'runtime': ['Parakeet, Nemotron, Moonshine, and Qwen3-ASR set their device on Dictation → Voice '
-             'model. Downloaded models and optional components are managed in Downloads.']}
+                 'provide native live previews in Meeting Mode.']}
 
 
 def merge_page_module(key: str, module) -> None:

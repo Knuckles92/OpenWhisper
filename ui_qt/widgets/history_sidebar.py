@@ -6,6 +6,7 @@ width clips/reveals pre-laid-out content instead of re-running layout and text
 wrapping on every frame.
 """
 import itertools
+from copy import copy
 import logging
 import os
 import threading
@@ -39,7 +40,7 @@ from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_EASING,
 )
 from ui_qt.utils.file_reveal import reveal_in_file_manager
-from ui_qt.utils.list_reconcile import HistoryDelivery, reconcile_cards
+from ui_qt.utils.list_reconcile import reconcile_cards
 from ui_qt.widgets.context_menu import context_menu
 from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets import history_playback
@@ -181,6 +182,7 @@ class _RemoteRelay(QObject):
     audio_ready = pyqtSignal(int, str, str)
     #: The asking sidebar's token, the entry id, error.
     deleted = pyqtSignal(int, str, str)
+    loaded = pyqtSignal(int, str, object, str)
 
 
 _relay: _RemoteRelay | None = None
@@ -802,9 +804,12 @@ class HistorySidebar(QWidget):
         self._page = self.HISTORY
         #: The Walkthroughs page, made the first time it shows.
         self.walkthroughs_content_widget = None
+        self._selected_walkthrough = None
         self._history_load_generation = 0
         self._history_cards = {}
         self._history_cancel = threading.Event()
+        self._history_closed = threading.Event()
+        self.destroyed.connect(self._history_closed.set)
         #: Host-kept entries shown now, by id, for opening, copying, deleting.
         self._remote_entries = {}
         #: Entries kept here and copied to the host: id -> the host's name.
@@ -816,6 +821,7 @@ class HistorySidebar(QWidget):
         self._setup_meetings_ui()
         self._apply_style()
         _remote_relay().deleted.connect(self._on_remote_deleted)
+        _remote_relay().loaded.connect(self._apply_history_results)
 
         self.setMinimumWidth(self.COLLAPSED_WIDTH)
         self.setMaximumWidth(self.COLLAPSED_WIDTH)
@@ -1114,6 +1120,12 @@ class HistorySidebar(QWidget):
         panel.setFixedWidth(self.EXPANDED_WIDTH)
         panel.setGeometry(0, 0, self.EXPANDED_WIDTH, self.height())
         panel.walkthrough_selected.connect(self.walkthrough_selected)
+        panel.set_selected_folder(self._selected_walkthrough)
+
+    def set_selected_walkthrough(self, folder) -> None:
+        self._selected_walkthrough = folder
+        if self.walkthroughs_content_widget is not None:
+            self.walkthroughs_content_widget.set_selected_folder(folder)
 
     @property
     def is_expanded(self) -> bool:
@@ -1153,19 +1165,18 @@ class HistorySidebar(QWidget):
     def _on_search_text_changed(self, text: str):
         # Invalidate an in-flight result immediately; the debounced replacement
         # query starts after the user pauses typing.
-        self._history_load_generation += 1
+        self._history_load_generation = next(_tokens)
+        self._history_cancel.set()
         self._search_timer.start()
 
     def _load_history(self):
         query = self.search_input.text().strip().lower()
-        self._history_load_generation += 1
-        generation = self._history_load_generation
+        self._history_load_generation = generation = next(_tokens)
         self._history_cancel.set()
         canceled = threading.Event()
         self._history_cancel = canceled
-        self.destroyed.connect(canceled.set)
-        delivery = HistoryDelivery()
-        delivery.loaded.connect(self._apply_history_results)
+        loaded = _remote_relay().loaded
+        closed = self._history_closed
         if self.history_list_layout.count() == 0:
             self.history_list_layout.addWidget(
                 self._make_empty_label("Loading history…")
@@ -1178,24 +1189,24 @@ class HistorySidebar(QWidget):
 
         def load() -> None:
             entries, error = _read_local_history(query, limit)
-            if canceled.is_set():
+            if canceled.is_set() or closed.is_set():
                 return
             if error:
-                delivery.loaded.emit(generation, query, entries, error)
+                loaded.emit(generation, query, entries, error)
                 return
             remote = start_remote_listing(query, limit, entries)
             if remote is None:
-                delivery.loaded.emit(generation, query, entries, "")
+                loaded.emit(generation, query, entries, "")
                 return
             done, merged = remote
             if not done.wait(merge_wait_s):
                 # Show this computer's entries now rather than wait on the host.
-                delivery.loaded.emit(generation, query, entries, "")
+                loaded.emit(generation, query, entries, "")
                 while not done.wait(0.1):
-                    if canceled.is_set():
+                    if canceled.is_set() or closed.is_set():
                         return
-            if not canceled.is_set():
-                delivery.loaded.emit(generation, query, merged(), "")
+            if not (canceled.is_set() or closed.is_set()):
+                loaded.emit(generation, query, merged(), "")
 
         threading.Thread(
             target=load,
@@ -1227,7 +1238,7 @@ class HistorySidebar(QWidget):
                 result["items"] = records.list_remote("dictation", query, limit)
             except Exception as exc:
                 logger.warning("Could not list host-kept History entries: %s", exc)
-                result["notice"] = str(exc)
+                result["notice"] = str(exc) or type(exc).__name__
             finally:
                 done.set()
 
@@ -1242,12 +1253,15 @@ class HistorySidebar(QWidget):
                 host = host or records.status().host_name
             except Exception:
                 logger.debug("Could not read the host's name for History", exc_info=True)
+            local = []
             for entry in entries:
                 if entry.id in result["copies"]:
+                    entry = copy(entry)
                     entry.also_on = host or "the host"
+                local.append(entry)
             remote = [remote_history_entry(item) for item in result["items"]
                       if item.get("id") not in local_ids]
-            combined = sorted([*entries, *remote], key=lambda e: e.timestamp or "", reverse=True)
+            combined = sorted([*local, *remote], key=lambda e: e.timestamp or "", reverse=True)
             return {"entries": combined[:limit], "notice": result["notice"]}
 
         return done, merged
@@ -1277,6 +1291,8 @@ class HistorySidebar(QWidget):
 
         if not shown:
             self._show_history_message("No matching entries" if query else "No history yet")
+            if notice:
+                self._add_remote_notice(notice)
             return
 
         settings = settings_manager.load_all_settings()
@@ -1395,6 +1411,7 @@ class HistorySidebar(QWidget):
         if remote is not None:
             self.delete_remote_entry(entry_id)
             return
+        history_playback.stop_all()
         if history_manager.delete_entry(
             entry_id,
             delete_audio_file=delete_audio_file,
@@ -1494,6 +1511,7 @@ class HistorySidebar(QWidget):
 
     def delete_remote_entry(self, entry_id: str) -> None:
         """Delete a host-kept entry there, off the UI thread."""
+        history_playback.stop_all()
         # Bound here: the worker must not reach back into the sidebar.
         token, deleted = self._token, _remote_relay().deleted
 
@@ -1565,6 +1583,7 @@ class HistorySidebar(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
+        history_playback.stop_all()
         history_manager.clear_history()
         self.refresh()
 
@@ -1581,6 +1600,7 @@ class HistorySidebar(QWidget):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
+        history_playback.stop_all()
         history_manager.clear_history_and_recordings()
         self.refresh()
 

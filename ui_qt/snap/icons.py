@@ -142,6 +142,17 @@ def _clear(painter: QPainter, color: QColor) -> None:
     painter.strokePath(_path((5.5, 5.5), (7, 17), (13, 17), (14.5, 5.5)), pen)
 
 
+def _window(painter: QPainter, color: QColor) -> None:
+    painter.setPen(_line_pen(color))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawRoundedRect(QRectF(2.8, 3.6, 14.4, 12.8), 2.4, 2.4)
+    painter.drawLine(QPointF(2.8, 7.6), QPointF(17.2, 7.6))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawEllipse(QPointF(5.5, 5.6), 0.9, 0.9)
+    painter.drawEllipse(QPointF(8.0, 5.6), 0.9, 0.9)
+
+
 _GLYPHS: dict[str, Callable[[QPainter, QColor], None]] = {
     "arrow": _arrow,
     "box": _box,
@@ -157,6 +168,7 @@ _GLYPHS: dict[str, Callable[[QPainter, QColor], None]] = {
     "drop": _cross,
     "snap": _snap,
     "region": _snap,
+    "window": _window,
     "clear": _clear,
 }
 
