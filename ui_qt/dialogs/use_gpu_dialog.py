@@ -68,7 +68,7 @@ class UseGpuDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.addStretch()
         later = Button("Keep using the CPU")
-        later.setToolTip("GPU Acceleration stays available in Settings → Downloads.")
+        later.setToolTip("GPU Acceleration stays available in Settings → Models & engines.")
         later.clicked.connect(self.reject)
         buttons.addWidget(later)
         use = PrimaryButton("Use this GPU")

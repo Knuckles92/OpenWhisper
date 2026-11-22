@@ -728,7 +728,7 @@ class ModelAssignments(QObject):
             self._footnote(
                 "Parakeet, Nemotron, Moonshine, and Qwen3-ASR set their device on "
                 "Dictation → Voice model. Downloaded models and optional "
-                "components are managed in Downloads."
+                "components are managed in Models & engines."
             )
         )
         self._built.add(RUNTIME)
@@ -737,9 +737,9 @@ class ModelAssignments(QObject):
         if self._pi_payload_available:
             return "Pi (sidecar)"
         if meeting_agent_needs_update():
-            return "Pi (update from Downloads)"
+            return "Pi (update from Models & engines)"
         if is_frozen():
-            return "Pi (install from Downloads)"
+            return "Pi (install from Models & engines)"
         return "Pi (sidecar not built)"
 
     def _opencode_label(self) -> str:
@@ -749,8 +749,8 @@ class ModelAssignments(QObject):
         if current_platform_tag() not in SUPPORTED_PLATFORMS:
             return "OpenCode SDK (Windows and Linux only)"
         if not _opencode_in_downloads():
-            return "OpenCode SDK (not in Downloads yet)"
-        return "OpenCode SDK (install from Downloads)"
+            return "OpenCode SDK (not in Models & engines yet)"
+        return "OpenCode SDK (install from Models & engines)"
 
     # ---- navigation hooks ----
 
@@ -1131,12 +1131,12 @@ class ModelAssignments(QObject):
         notice = ""
         if core == MeetingAgentCore.PI and not self._pi_payload_available:
             if is_frozen():
-                fix = "Install or update Pi from Downloads → Components."
+                fix = "Install or update Pi from Models & engines → Components."
             else:
-                fix = "Build the Pi sidecar, or install/update it from Downloads → Components."
+                fix = "Build the Pi sidecar, or install/update it from Models & engines → Components."
             notice = f"{fix} Or choose an installed coding agent above."
         elif core == MeetingAgentCore.OPENCODE and not self._opencode_payload_available:
-            notice = "Install OpenCode SDK from Downloads → Components, or choose another agent above."
+            notice = "Install OpenCode SDK from Models & engines → Components, or choose another agent above."
         if notice:
             notice += " Meetings can still record without AI insights; there is no direct API fallback."
         self.meeting_agent_core_notice.setText(notice)
@@ -1853,7 +1853,7 @@ class ModelAssignments(QObject):
                 return
         except Exception:
             logger.debug("Engine inventory lookup failed", exc_info=True)
-            text = "Open Downloads to see which models are on this computer."
+            text = "Open Models & engines to see which models are on this computer."
         self.engine_inventory_label.setText(text)
 
     def _on_engine_runtime_checked(
@@ -1901,7 +1901,7 @@ class ModelAssignments(QObject):
             device = DEVICE_LABELS[selected_device(MODELS[model].backend, self._settings_snapshot())]
             self.meeting_runtime_label.setText(
                 f"Uses {MODELS[model].label} with its {device} device preference. "
-                "Set its device or install its runtime and model in Models & storage → Downloads."
+                "Set its device or install its runtime and model in Models & storage → Models & engines."
             )
             return
         settings = self._settings_snapshot()
@@ -1909,7 +1909,7 @@ class ModelAssignments(QObject):
         device = DEVICE_LABELS.get(device, device)
         compute = SettingsKey.WHISPER_COMPUTE_TYPE.read(settings)
         self.meeting_runtime_label.setText(
-            f"Device and quantization come from Models & storage → Downloads "
+            f"Device and quantization come from Models & storage → Models & engines "
             f"({device} · {compute}) and are shared with dictation's Local "
             "Whisper."
         )

@@ -9,7 +9,7 @@ from ui_qt.widgets import Button, PrimaryButton
 
 _THIRD_PARTY_NOTICE = (
     "This installs third-party executable software. Archive integrity checks do not guarantee "
-    "security. Keep speech runtimes updated. See the runtime's source and license in Downloads."
+    "security. Keep speech runtimes updated. See the runtime's source and license in Models & engines."
 )
 
 
@@ -46,7 +46,7 @@ class RequiredRuntimeDialog(QDialog):
             f"Install {runtime} now? This is a separate {format_size_bytes(size)} download, "
             "shared by compatible models. After both downloads finish, the selected model loads automatically.\n\n"
             f"{_THIRD_PARTY_NOTICE}\n\n"
-            "If you choose Later, the model will remain unavailable until you install this runtime in Downloads."
+            "If you choose Later, the model will remain unavailable until you install this runtime in Models & engines."
         )
         self.body.setWordWrap(True)
         layout.addWidget(self.body)
@@ -102,10 +102,10 @@ class GpuRuntimeDialog(QDialog):
             f"{_size(gpu_download)} download, {_size(gpu_disk)} on disk.\n\n"
             f"• Use the CPU: {get_component_details(cpu_component).display_name} runs it on the "
             f"processor. {_size(cpu_download)} download, {_size(cpu_disk)} on disk.\n\n"
-            "You can add the other runtime later in Downloads. The model loads automatically "
+            "You can add the other runtime later in Models & engines. The model loads automatically "
             "once it and the runtime are both downloaded.\n\n"
             f"{_THIRD_PARTY_NOTICE}\n\n"
-            "If you choose Later, the model stays unavailable until you install a runtime in Downloads."
+            "If you choose Later, the model stays unavailable until you install a runtime in Models & engines."
         )
         self.body.setWordWrap(True)
         layout.addWidget(self.body)

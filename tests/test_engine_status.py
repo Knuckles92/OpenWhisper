@@ -118,6 +118,10 @@ def test_long_messages_keep_details_and_download_action(tab):
     tab.resolved_label.linkActivated.emit("downloads")
     assert opened == [True]
     assert tab.engine_card.minimumSizeHint().width() <= original_width
+    tab.set_status("Install model in Models & engines.")
+    QApplication.processEvents()
+    assert 'href="downloads"' in QLabel.text(tab.resolved_label)
+    assert ">Models &amp; engines</a>." in QLabel.text(tab.resolved_label)
 
 
 def test_engine_messages_after_an_upload_reach_the_visible_status(tab):

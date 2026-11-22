@@ -69,6 +69,7 @@ from ui_qt.widgets.buttons import fit_compact_button
 from ui_qt.widgets.component_row_widget import ComponentRowWidget
 from ui_qt.widgets.empty_state import EmptyState
 from ui_qt.widgets.model_row_widget import ModelRowWidget
+from ui_qt.widgets.segmented_bar import SegmentedBar
 
 logger = logging.getLogger(__name__)
 from ui_qt.widgets.wrapped_label import WrappedLabel
@@ -337,7 +338,7 @@ class BatchDownloadDialog(QDialog):
 
         note = WrappedLabel(
             "Models download one at a time, in the order listed. You can "
-            "stop after the current model from Settings → Downloads while "
+            "stop after the current model from Settings → Models & engines while "
             "the queue runs. Models such as Parakeet also need a separate "
             "runtime to work; you will be prompted to install any missing "
             "required runtime."
@@ -370,7 +371,14 @@ class _ScanRelay(QObject):
     finished = pyqtSignal(int, object)
 
 
+class _RemoteServiceRelay(QObject):
+    """Brings remote pairing changes to the Qt thread without holding a page."""
+
+    service_event = pyqtSignal(int, str)
+
+
 _relay: Optional[_ScanRelay] = None
+_remote_service_relay: Optional[_RemoteServiceRelay] = None
 #: Scan generations, unique across pages because they share the relay.
 _tokens = itertools.count(1)
 
@@ -380,6 +388,13 @@ def _scan_relay() -> _ScanRelay:
     if _relay is None:
         _relay = _ScanRelay()
     return _relay
+
+
+def _remote_relay() -> _RemoteServiceRelay:
+    global _remote_service_relay
+    if _remote_service_relay is None:
+        _remote_service_relay = _RemoteServiceRelay()
+    return _remote_service_relay
 
 
 class DownloadsPage(QWidget):
@@ -446,6 +461,17 @@ class DownloadsPage(QWidget):
         self._banner_component_id: Optional[str] = None
         self._banner_action_mode = "manage"  # "manage" | "install" | "cancel"
         self._component_progress: Dict[str, Tuple[str, int, int]] = {}
+        self._remote_service = None
+        self._remote_pairing = None
+        self._remote_token = next(_tokens)
+        remote_event = _remote_relay().service_event
+        token = self._remote_token
+
+        def _remote_listener(kind: str) -> None:
+            remote_event.emit(token, kind)
+
+        self._remote_listener = _remote_listener
+        _remote_relay().service_event.connect(self._on_remote_service_event)
 
         self._ui_built = False
         self._inventory = {}
@@ -454,6 +480,9 @@ class DownloadsPage(QWidget):
             self.ensure_ui()
 
     _UI_ATTRIBUTES = frozenset({
+        'target_bar',
+        'local_pane',
+        'host_pane',
         'engine_rail',
         'engine_rail_scroll',
         '_rail_items',
@@ -558,9 +587,28 @@ class DownloadsPage(QWidget):
     # ---- construction ----
 
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+        self._outer_layout = outer
+
+        self.target_bar = SegmentedBar(
+            (("This computer", ""), ("Remote host", "")),
+            compact=True,
+        )
+        self.target_bar.setAccessibleName("Whose models and engines to manage")
+        self.target_bar.currentIndexChanged.connect(self._on_target_changed)
+        self.target_bar.hide()
+        outer.addWidget(self.target_bar)
+
+        self.local_pane = QWidget()
+        self.local_pane.setObjectName("downloadsLocalPane")
+        layout = QVBoxLayout(self.local_pane)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(5)
+        outer.addWidget(self.local_pane, stretch=1)
+
+        self.host_pane = None
 
         header_row = QHBoxLayout()
         header_row.setSpacing(8)
@@ -674,6 +722,114 @@ class DownloadsPage(QWidget):
 
         self._active_rail_key = self._default_rail_key()
         self._apply_rail_selection(self._active_rail_key)
+        self._refresh_remote_pairing()
+
+    # ---- local / remote host target switcher ----
+
+    def bind_remote_service(self, service) -> None:
+        """Attach the remote engine service so paired host models can be managed here."""
+        if service is not self._remote_service:
+            if self._remote_service is not None:
+                self._remote_service.remove_listener(self._remote_listener)
+            self._remote_service = service
+            if service is not None:
+                listener = self._remote_listener
+                service.add_listener(listener)
+                self.destroyed.connect(lambda *_: service.remove_listener(listener))
+        if self._ui_built:
+            self._refresh_remote_pairing()
+
+    def _on_remote_service_event(self, token: int, kind: str) -> None:
+        if token != self._remote_token:
+            return
+        if kind in ("client", "host_renamed") and self._ui_built:
+            self._refresh_remote_pairing()
+
+    def _ensure_host_pane(self):
+        if self.host_pane is None:
+            from ui_qt.dialogs.remote_models import RemoteModelsPane
+
+            self.host_pane = RemoteModelsPane(
+                self._remote_service,
+                getattr(self._remote_pairing, "host_name", ""),
+                parent=self,
+            )
+            self.host_pane.hide()
+            self._outer_layout.addWidget(self.host_pane, stretch=1)
+        return self.host_pane
+
+    def _refresh_remote_pairing(self) -> None:
+        pairing = (
+            self._remote_service.client_pairing()
+            if self._remote_service is not None
+            else None
+        )
+        self._remote_pairing = pairing
+        if pairing is None:
+            self.target_bar.hide()
+            if self.target_bar.currentIndex() != 0:
+                self.target_bar.setCurrentIndex(0)
+            self.local_pane.show()
+            if self.host_pane is not None:
+                self.host_pane.bind(self._remote_service, None)
+                self.host_pane.hide()
+            return
+        host_label = f"{pairing.host_name} (host)"
+        self.target_bar.set_title(1, host_label)
+        self.target_bar.show()
+        if self.host_pane is not None:
+            self.host_pane.bind(self._remote_service, pairing)
+
+    def _on_target_changed(self, index: int) -> None:
+        show_host = index == 1 and self._remote_pairing is not None
+        if show_host:
+            self.close_inspector()
+            self.local_pane.hide()
+            pane = self._ensure_host_pane()
+            pane.bind(self._remote_service, self._remote_pairing)
+            pane.show()
+        else:
+            if self.host_pane is not None:
+                self.host_pane.hide()
+            self.local_pane.show()
+            self._sync_toolbar_gutter()
+            self._position_inspector()
+
+    def showing_host(self) -> bool:
+        return (
+            self._ui_built
+            and self._remote_pairing is not None
+            and self.target_bar.currentIndex() == 1
+        )
+
+    def show_local(self) -> None:
+        """Switch to this computer's local models and engines."""
+        if not self._ui_built:
+            return
+        if self.target_bar.currentIndex() != 0:
+            self.target_bar.setCurrentIndex(0)
+        else:
+            self._on_target_changed(0)
+
+    def show_host(self) -> bool:
+        """Switch to the paired host's models and engines; returns False if unpaired."""
+        self.ensure_ui()
+        self._refresh_remote_pairing()
+        if self._remote_pairing is None:
+            self.show_local()
+            return False
+        if self.target_bar.currentIndex() != 1:
+            self.target_bar.setCurrentIndex(1)
+        else:
+            self._on_target_changed(1)
+            if self.host_pane is not None:
+                self.host_pane.refresh_host()
+        return True
+
+    def on_shown(self) -> None:
+        """Refresh the paired host catalog when returning to this page on the host tab."""
+        if self.showing_host() and self.host_pane is not None:
+            self.host_pane.refresh_host()
 
     def _default_rail_key(self) -> str:
         """Open focused on the active local speech engine when one is selected."""
@@ -1690,6 +1846,7 @@ class DownloadsPage(QWidget):
 
     def reveal_model(self, model_name: str) -> None:
         """Switch to the model's engine, clear blocking filters, select it, and scroll to it."""
+        self.show_local()
         row = self.rows.get(model_name)
         if row is None:
             return
@@ -1705,6 +1862,7 @@ class DownloadsPage(QWidget):
 
     def show_backend(self, backend: str) -> None:
         """Select one backend in the Engine Rail; an empty value shows all models."""
+        self.show_local()
         self.select_rail(backend or "all")
 
     def _render_inspector(self) -> None:
@@ -2014,6 +2172,7 @@ class DownloadsPage(QWidget):
 
     def focus_component(self, component_id: str) -> None:
         """Bring a required runtime and its install action into view."""
+        self.show_local()
         if component_id not in self._component_rows:
             return
         self.select_rail("components")

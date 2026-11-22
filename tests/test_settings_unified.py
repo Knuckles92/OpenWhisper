@@ -611,7 +611,7 @@ class TestChapters:
             assert checked == ["Hooks"]
             headings = [action for action in menu.actions() if action.text() in dialog.rail.chapters()]
             assert headings and not any(action.isEnabled() for action in headings)
-            next(action for action in menu.actions() if action.text() == "Downloads").trigger()
+            next(action for action in menu.actions() if action.text() == "Models & engines").trigger()
             assert dialog.rail.current_key() == DOWNLOADS
         finally:
             menu.close()

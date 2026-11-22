@@ -20,15 +20,25 @@ class DownloadsLabel(ElidingLabel):
         if link == "downloads":
             self.downloads_requested.emit()
 
+    _LINK_TARGETS = ("Models & engines", "Downloads")
+
+    def _matched_target(self) -> str:
+        for label in self._LINK_TARGETS:
+            if self._full_text.endswith(f" in {label}."):
+                return label
+        return ""
+
     def minimumSizeHint(self) -> QSize:
         hint = super().minimumSizeHint()
-        if self._full_text.endswith(" in Downloads."):
-            link_width = self.fontMetrics().horizontalAdvance("… Downloads.")
+        target = self._matched_target()
+        if target:
+            link_width = self.fontMetrics().horizontalAdvance(f"… {target}.")
             hint.setWidth(max(hint.width(), link_width))
         return hint
 
     def _apply_elide(self) -> None:
-        has_link = self._full_text.endswith(" in Downloads.")
+        target = self._matched_target()
+        has_link = bool(target)
         self.setTextFormat(
             Qt.TextFormat.RichText if has_link else Qt.TextFormat.PlainText
         )
@@ -42,7 +52,7 @@ class DownloadsLabel(ElidingLabel):
             return
 
         metrics = self.fontMetrics()
-        suffix = " Downloads."
+        suffix = f" {target}."
         prefix = self._full_text[:-len(suffix)]
         available = (
             self.contentsRect().width() or metrics.horizontalAdvance(self._full_text)
@@ -56,5 +66,5 @@ class DownloadsLabel(ElidingLabel):
             self,
             f'{escape(prefix)} <a href="downloads" '
             f'style="color: {current_palette().css("accent")}; '
-            'text-decoration: underline;">Downloads</a>.',
+            f'text-decoration: underline;">{escape(target)}</a>.',
         )

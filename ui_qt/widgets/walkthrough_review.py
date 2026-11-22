@@ -17,7 +17,17 @@ import threading
 from datetime import date, datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QMimeData, QPoint, QPointF, QRectF, QSize, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import (
+    QEvent,
+    QMimeData,
+    QPoint,
+    QPointF,
+    QRectF,
+    QSize,
+    Qt,
+    QUrl,
+    pyqtSignal,
+)
 from PyQt6.QtGui import (
     QActionGroup,
     QColor,
@@ -28,6 +38,7 @@ from PyQt6.QtGui import (
     QKeySequence,
     QPainter,
     QPainterPath,
+    QPen,
     QPixmap,
     QShortcut,
 )
@@ -37,18 +48,24 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStyle,
+    QStyleOptionButton,
     QTextEdit,
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 from services.settings import (
+    SettingsKey,
     WalkthroughCopyFormat,
+    resolve_walkthrough_copy_format,
     resolve_walkthrough_write_up_instructions,
     settings_manager,
 )
@@ -56,16 +73,17 @@ from services.walkthrough import library
 from services.walkthrough.document import clock
 from services.walkthrough.write_up import DEFAULT_INSTRUCTIONS
 from ui_qt.utils.file_reveal import reveal_in_file_manager
-from ui_qt.utils.icons import design_icon
-from ui_qt.utils.palette import token_color
-from ui_qt.widgets.context_menu import context_menu
+from ui_qt.utils.icons import design_icon, tabler_icon
+from ui_qt.utils.palette import current_palette, token_color
+from ui_qt.utils.restyle import set_style_property
+from ui_qt.widgets.context_menu import CONTEXT_MENU_STYLESHEET, context_menu
 from ui_qt.widgets.flow_layout import FlowLayout
 from ui_qt.widgets.reflow import Reflow
 from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.walkthrough_copy_tips import set_copy_tip
 from ui_qt.widgets.walkthrough_icons import paint_icon
-from ui_qt.widgets.walkthrough_ready import FileChip
+from ui_qt.widgets.walkthrough_send import SendButton, relay, start_send
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +95,6 @@ PREVIEW_SIZE = QSize(360, 225)
 PREVIEW_MIN_WIDTH = 140
 #: How a row's width splits between its screenshot and its words.
 PREVIEW_STRETCH, WORDS_STRETCH = 3, 4
-SPOKEN_HINT = ("Fix any words, drag a row to move a screenshot and its words, or switch a "
-               "screenshot off to leave it out. Original screenshots are kept.")
-WRITE_UP_HINT = ("Fix the write-up's words or drag a row to move a screenshot. "
-                 "Saving rebuilds its PDF and Word document.")
 #: The two versions of a written-up walkthrough, in the switch's order.
 VERSIONS = (("AI write-up", "What the agent wrote; choose a saved write-up with the version menu"),
             ("As spoken", "Your words as you said them, a section per screenshot"))
@@ -88,9 +102,21 @@ VERSION_BAR_WIDTH = 250
 #: The copy button in a screenshot's corner: its size, and its inset from the corner.
 SHOT_COPY_SIZE, SHOT_COPY_INSET = 28, 6
 _ROW_MIME = "application/x-openwhisper-walkthrough-row"
+_COPY_ACTIONS = (
+    (WalkthroughCopyFormat.PDF, "Copy PDF"),
+    (WalkthroughCopyFormat.AGENT_TASK, "Copy for agent"),
+    (WalkthroughCopyFormat.BOTH, "Copy PDF + Markdown"),
+    (WalkthroughCopyFormat.AGENT, "Copy Markdown"),
+    (WalkthroughCopyFormat.WORD, "Copy Word"),
+)
+_COPY_LABELS = dict(_COPY_ACTIONS)
+_COMPACT_COPY_LABELS = _COPY_LABELS | {
+    WalkthroughCopyFormat.BOTH: "Copy PDF + MD",
+}
 _COPIED = {
     WalkthroughCopyFormat.PDF: "PDF copied.",
-    WalkthroughCopyFormat.AGENT_TASK: "Instructions copied. Paste them, then drag the PDF into your chat.",
+    WalkthroughCopyFormat.AGENT_TASK: "Instructions copied. Paste them, then attach the PDF to your chat.",
+    WalkthroughCopyFormat.BOTH: "PDF and Markdown copied.",
     WalkthroughCopyFormat.AGENT: "Markdown copied.",
     WalkthroughCopyFormat.WORD: "Word document copied.",
 }
@@ -182,6 +208,85 @@ _STYLE = """
         background-color: rgba(@accent-rgb, 0.35);
         color: rgba(@on-accent-rgb, 0.7);
     }
+    QFrame#wlCopySplit {
+        background: transparent;
+        border: none;
+    }
+    QPushButton#wlCopyPrimary {
+        background-color: @accent;
+        color: @on-accent;
+        border: 1px solid @accent;
+        border-right: none;
+        border-top-left-radius: 14px;
+        border-bottom-left-radius: 14px;
+        border-top-right-radius: 0px;
+        border-bottom-right-radius: 0px;
+        padding: 6px 12px 6px 15px;
+        font-size: 13px;
+        font-weight: 600;
+    }
+    QPushButton#wlCopyPrimary:hover {
+        background-color: @accent-hover;
+        border-color: @accent-hover;
+    }
+    QPushButton#wlCopyPrimary:pressed {
+        background-color: @accent-pressed;
+        border-color: @accent-pressed;
+    }
+    QPushButton#wlCopyPrimary:disabled {
+        border-color: transparent;
+        background-color: rgba(@accent-rgb, 0.35);
+        color: rgba(@on-accent-rgb, 0.7);
+    }
+    QToolButton#wlCopyCaret {
+        background-color: @accent;
+        color: @on-accent;
+        border: 1px solid @accent;
+        border-left: 1px solid rgba(@on-accent-rgb, 0.25);
+        border-top-left-radius: 0px;
+        border-bottom-left-radius: 0px;
+        border-top-right-radius: 14px;
+        border-bottom-right-radius: 14px;
+        padding: 0px;
+        min-width: 30px;
+        max-width: 30px;
+    }
+    QToolButton#wlCopyCaret:hover {
+        background-color: @accent-hover;
+        border-color: @accent-hover;
+        border-left: 1px solid rgba(@on-accent-rgb, 0.28);
+    }
+    QToolButton#wlCopyCaret:pressed, QToolButton#wlCopyCaret:menu-open {
+        background-color: @accent-pressed;
+        border-color: @accent-pressed;
+        border-left: 1px solid rgba(@on-accent-rgb, 0.28);
+    }
+    QToolButton#wlCopyCaret:disabled {
+        border-color: transparent;
+        border-left: 1px solid rgba(@on-accent-rgb, 0.16);
+        background-color: rgba(@accent-rgb, 0.35);
+    }
+    QToolButton#wlCopyCaret::menu-indicator {
+        image: none;
+        width: 0px;
+    }
+    QToolButton#wlSendTo {
+        background-color: @surface;
+        color: @text;
+        border: 1px solid rgba(@overlay-rgb, 0.1);
+        border-radius: 14px;
+        padding: 6px 30px 6px 14px;
+        font-size: 13px;
+        font-weight: 600;
+    }
+    QToolButton#wlSendTo:hover, QToolButton#wlSendTo:menu-open {
+        background-color: @surface-hover;
+    }
+    QToolButton#wlSendTo:disabled { color: @text-muted; }
+    QToolButton#wlSendTo::menu-indicator {
+        image: none;
+        width: 0px;
+    }
     QPushButton#wlSecondary {
         background-color: @surface;
         color: @text;
@@ -225,7 +330,8 @@ _STYLE = """
         border-radius: 1px;
     }
     QLabel#wlStamp, QLabel#wlInclude, QWidget#wlPreview, QLabel#wlNoShot,
-    QWidget#wlActionGroup, QWidget#wlRowLine {
+    QWidget#wlActionGroup, QWidget#wlRowLine, QWidget#wlHeaderBlock,
+    QWidget#wlVersionRow, QWidget#wlNoticeRow, QWidget#wlCloseWrap {
         background: transparent;
     }
     QLabel#wlStep {
@@ -738,20 +844,260 @@ class _Board(QWidget):
             self.moved.emit(start, end)
 
 
-class _CopyGroup(QWidget):
-    """The copy buttons and the file: one line while they fit, wrapping once they don't."""
+class _SplitChevron(QToolButton):
+    """The menu half of the split Copy button, with a painted chevron."""
 
-    def __init__(self, *widgets: QWidget):
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setObjectName("wlCopyCaret")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        self.setAccessibleName("More copy formats")
+        self.setToolTip("Choose a format to copy or set as default")
+
+    def sizeHint(self) -> QSize:
+        # Height comes from the primary button beside it, so both halves match at any font scale.
+        return QSize(30, 0)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setOpacity(1.0 if self.isEnabled() else 0.7)
+        painter.setPen(QPen(token_color("on-accent"), 1.5, Qt.PenStyle.SolidLine,
+                            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        cx, cy = self.width() / 2.0, self.height() / 2.0
+        painter.drawLine(QPointF(cx - 3.2, cy - 1.5), QPointF(cx, cy + 1.8))
+        painter.drawLine(QPointF(cx, cy + 1.8), QPointF(cx + 3.2, cy - 1.5))
+        painter.end()
+
+
+class _SplitCopyButton(QFrame):
+    """Primary copy button joined to a dropdown for all copy formats."""
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setObjectName("wlCopySplit")
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        self.primary = QPushButton("Copy PDF")
+        self.primary.setObjectName("wlCopyPrimary")
+        self.primary.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.primary.setAutoDefault(False)
+        self.primary.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        self.caret = _SplitChevron(self)
+        row.addWidget(self.primary)
+        row.addWidget(self.caret)
+
+
+class _CopyFormatAction(QWidgetAction):
+    """A one-time copy action with a separate button for saving the default."""
+
+    def __init__(self, menu: QMenu, copy_format: str):
+        super().__init__(menu)
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        self.copy = QPushButton()
+        self.copy.setObjectName("wlCopyOnce")
+        self.copy.setAutoDefault(False)
+        self.copy.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy.clicked.connect(menu.close)
+        self.copy.clicked.connect(self.trigger)
+        self.star = QToolButton()
+        self.star.setObjectName("wlCopyDefault")
+        self.star.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.star.setFixedSize(30, 30)
+        self.star.setIconSize(QSize(16, 16))
+        layout.addWidget(self.copy, 1)
+        layout.addWidget(self.star)
+        self.setDefaultWidget(row)
+        self.changed.connect(lambda: self.copy.setText(self.text()))
+        set_copy_tip(self.copy, copy_format)
+        set_copy_tip(self, copy_format)
+
+    def set_preferred(self, preferred: bool, label: str) -> None:
+        icon = "star-filled-amber" if preferred else "star-gray"
+        self.star.setIcon(tabler_icon(f"{icon}{current_palette().css('icon-suffix')}.svg"))
+        self.star.setAccessibleName(
+            f"{label}, current default" if preferred else f"Set {label} as default")
+        self.star.setToolTip("Default for the Copy button and on finish" if preferred
+                             else "Set as default for the Copy button and on finish (Space)")
+
+
+class _CopyFormatMenu(QMenu):
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setToolTipsVisible(True)
+        self.setStyleSheet(CONTEXT_MENU_STYLESHEET + """
+            QPushButton#wlCopyOnce {
+                background: transparent;
+                color: @text;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 14px;
+                font-size: 13px;
+                text-align: left;
+            }
+            QPushButton#wlCopyOnce:hover, QPushButton#wlCopyOnce[menuActive="true"] {
+                background: @accent;
+                color: @on-accent;
+            }
+            QPushButton#wlCopyOnce:disabled { color: @text-secondary; }
+            QToolButton#wlCopyDefault {
+                background: transparent;
+                border: none;
+                border-radius: 6px;
+                padding: 0px;
+            }
+            QToolButton#wlCopyDefault:hover { background: @slate-raised; }
+        """)
+        self.hovered.connect(self._highlight)
+        self.aboutToHide.connect(lambda: self._highlight(None))
+
+    def _highlight(self, active) -> None:
+        for action in self.actions():
+            set_style_property(action.copy, "menuActive", action is active)
+
+    def keyPressEvent(self, event) -> None:
+        action = self.activeAction()
+        if event.key() == Qt.Key.Key_Space and action is not None and action.isEnabled():
+            action.star.click()
+            return
+        super().keyPressEvent(event)
+
+
+class _TitleBlock(QWidget):
+    """Title and metadata: reports single-line width so Reflow stacks before wrapping the title."""
+
+    def __init__(self, title: QLabel, meta_row: QWidget):
+        super().__init__()
+        self.setObjectName("wlHeaderBlock")
+        self._title = title
+        self._meta_row = meta_row
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(title)
+        layout.addWidget(meta_row)
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        title_w = self._title.fontMetrics().horizontalAdvance(self._title.text())
+        meta_w = self._meta_row.sizeHint().width()
+        return QSize(max(hint.width(), title_w, meta_w), hint.height())
+
+
+class _ActionGroup(QWidget):
+    """The header actions: one line while they fit, wrapping once they don't."""
+
+    _gap = 8
+
+    def __init__(self, copy_split: _SplitCopyButton, send_button: SendButton,
+                 open_button: QPushButton, more_button: QToolButton):
         super().__init__()
         self.setObjectName("wlActionGroup")
-        self._flow = FlowLayout(self, spacing=8)
-        for widget in widgets:
+        self._copy_split = copy_split
+        self._send_button = send_button
+        self._open_button = open_button
+        self._more_button = more_button
+        self._flow = FlowLayout(self, spacing=self._gap)
+        for widget in (copy_split, send_button, open_button, more_button):
             self._flow.addWidget(widget)
 
     def sizeHint(self) -> QSize:
-        # One line's worth, so Open drops below before the copy buttons wrap.
+        # One line's worth, so Reflow drops the group under the title before buttons wrap.
         width = self._flow.line_width()
         return QSize(width, self._flow.heightForWidth(width))
+
+    @staticmethod
+    def _button_width(button: QPushButton, text: str) -> int:
+        """Measure another label with the button's current font and style."""
+        button.ensurePolished()
+        option = QStyleOptionButton()
+        button.initStyleOption(option)
+        option.text = text
+        size = option.fontMetrics.size(Qt.TextFlag.TextShowMnemonic, text)
+        if not option.icon.isNull():
+            icon_width = option.iconSize.width() + 4
+            size.setWidth(size.width() + icon_width if text else icon_width)
+            size.setHeight(max(size.height(), option.iconSize.height()))
+        return button.style().sizeFromContents(
+            QStyle.ContentsType.CT_PushButton, option, size, button).width()
+
+    def _width_for(self, copy_labels, open_text: str, send: bool = False) -> int:
+        """The group's width, with or without ``Send to``."""
+        primary = self._copy_split.primary
+        width = (
+            max(self._button_width(primary, label) for label in copy_labels)
+            + self._copy_split.caret.sizeHint().width()
+            + self._button_width(self._open_button, open_text)
+            + self._more_button.sizeHint().width() + 2 * self._gap
+        )
+        if send:
+            width += self._send_button.sizeHint().width() + self._gap
+        return width
+
+    def fit_labels(self, beside_title: int, row_width: int, copy_format: str, dirty: bool) -> bool:
+        """Set the labels for the available space and return whether they need their own row."""
+        full = {fmt: f"Save and {label[0].lower()}{label[1:]}" if dirty else label
+                for fmt, label in _COPY_ACTIONS}
+        if self._copy_split.isHidden():
+            self._copy_split.primary.setText(full[copy_format])
+            return False
+
+        short = {fmt: f"Save && {label[0].lower()}{label[1:]}" if dirty else label
+                 for fmt, label in _COMPACT_COPY_LABELS.items()}
+        minimal = "Save && copy" if dirty else "Copy"
+        # Measure each mode against its longest label so choosing a new format
+        # never changes where the layout breaks.
+        full_width = self._width_for(full.values(), "Open PDF")
+        short_width = self._width_for(short.values(), "")
+        minimal_width = self._width_for((minimal,), "")
+        stacked = beside_title < minimal_width
+        room = row_width if stacked else beside_title
+        if room >= full_width:
+            copy_text, open_text = full[copy_format], "Open PDF"
+        elif room >= short_width:
+            copy_text, open_text = short[copy_format], ""
+        else:
+            copy_text, open_text = minimal, ""
+        # Send to takes room left once Copy has its words, ahead of Open PDF's
+        # words; without room for it, ⋯ → Send to still sends.
+        send = room >= self._width_for(full.values(), "Open PDF", True)
+        if not send and room >= self._width_for(full.values(), "", True):
+            send, open_text = True, ""
+        self._copy_split.primary.setText(copy_text)
+        self._send_button.setVisible(send)
+        self._open_button.setText(open_text)
+        return stacked
+
+
+class _ReviewHeader(Reflow):
+    """Try full labels, then compact controls, before moving actions below the title."""
+
+    def __init__(self, title: QWidget, actions: _ActionGroup):
+        self._copy_format = WalkthroughCopyFormat.PDF
+        self._dirty = False
+        super().__init__(title, actions, stacked_alignment=Qt.AlignmentFlag(0))
+
+    def set_copy_format(self, copy_format: str, *, dirty: bool) -> None:
+        self._copy_format = copy_format
+        self._dirty = dirty
+        self.refit()
+
+    def _reflow(self) -> None:
+        room = self.width() - self._natural_width(self._lead) - self._grid.horizontalSpacing()
+        self._place(self._actions.fit_labels(room, self.width(), self._copy_format, self._dirty))
+
+    def event(self, event):
+        if event.type() == QEvent.Type.LayoutRequest:
+            self.refit()
+        return super().event(event)
 
 
 class _SavedOnly:
@@ -777,6 +1123,8 @@ class WalkthroughReview(QWidget):
     busy_changed = pyqtSignal(bool)
     #: The user is done with this walkthrough here; it stays in the library.
     close_requested = pyqtSignal()
+    #: The default was saved through the star beside a copy format.
+    default_copy_format_changed = pyqtSignal(str)
 
     def __init__(self, parent=None, *, copy_files=None, recover=None,
                  acquire=None, release=None, submit=None, closable: bool = False):
@@ -803,8 +1151,13 @@ class WalkthroughReview(QWidget):
         self._cancel = threading.Event()
         self._after_save = None
         self._enabled: list[bool] = []
+        self._default_copy_format = resolve_walkthrough_copy_format(
+            settings_manager.load_all_settings())
         self.board: _Board | None = None
+        #: The send in flight, or 0: its answer is the one this review shows.
+        self._send_token = 0
         self._finished.connect(self._done)
+        relay().sent.connect(self._sent)
         # One button, moved into whichever draft's banner shows; parked on the
         # widget in between so a replaced body never takes it along.
         self.recover_button = self._button("Recover draft", "wlPrimary", self._recover_draft)
@@ -812,19 +1165,10 @@ class WalkthroughReview(QWidget):
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(6)
-        column.addLayout(self._header())
-        self.close_button.setVisible(closable)
-        column.addWidget(self._actions())
-        status = QHBoxLayout()
-        self.notice = QLabel(SPOKEN_HINT)
-        self.notice.setObjectName("wlNotice")
-        self.notice.setWordWrap(True)
-        status.addWidget(self.notice, 1)
-        self.cancel_button = self._button("Cancel", "wlQuiet", self.cancel)
-        self.cancel_button.hide()
-        status.addWidget(self.cancel_button)
-        column.addLayout(status)
-        column.addSpacing(6)
+        column.addLayout(self._header(closable))
+        column.addWidget(self._version_row())
+        column.addWidget(self._notice_row())
+        column.addSpacing(4)
         self.scroll = QScrollArea()
         self.scroll.setObjectName("wlScroll")
         self.scroll.setWidgetResizable(True)
@@ -833,15 +1177,18 @@ class WalkthroughReview(QWidget):
         column.addWidget(self.scroll, 1)
         column.addWidget(self._save_bar())
         self.actions = [self.save_button, self.save_redo_button, self.discard_button,
-                        self.pdf_button, self.markdown_button, self.copy_word_button,
+                        self.copy_button, self.copy_caret,
+                        self.copy_pdf_action, self.copy_agent_action, self.copy_both_action,
+                        self.copy_markdown_action, self.copy_word_action,
+                        self.send_button, self.send_menu_action,
                         self.open_button, self.open_word_button, self.folder_button,
-                        self.copy_agent_action,
                         self.retry_button, self.style_button, self.prompt_button,
                         self.delete_button, self.recover_button, self.close_button,
                         self.version_bar, self.version_picker]
         self.save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
         self.save_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.save_shortcut.activated.connect(self._save)
+        self._update_copy_controls()
         self.show_folder(None)
 
     def bind(self, *, copy_files=None, recover=None, acquire=None, release=None, submit=None):
@@ -854,22 +1201,61 @@ class WalkthroughReview(QWidget):
 
     # ---- building ----
 
-    def _header(self) -> QHBoxLayout:
+    def _header(self, closable: bool) -> QHBoxLayout:
+        """Single-row header: title and meta on the left, actions on the right."""
         head = QHBoxLayout()
-        head.setSpacing(10)
-        titles = QVBoxLayout()
-        titles.setSpacing(2)
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(6)
+        self.header_row = _ReviewHeader(self._title_block(), self._actions())
+        head.addWidget(self.header_row, 1)
+        self.close_button = self._icon_button("x-gray.svg", "Close walkthrough")
+        self.close_button.setToolTip("Close. It stays under Walkthroughs in the side panel.")
+        self.close_button.clicked.connect(self.close_requested)
+        # Parented before either is shown: showing a widget with no parent
+        # opens it as a window of its own, which flashed at startup.
+        self._close_wrap = QWidget(self)
+        self._close_wrap.setObjectName("wlCloseWrap")
+        wrap = QVBoxLayout(self._close_wrap)
+        wrap.setContentsMargins(0, 4, 0, 0)
+        wrap.setSpacing(0)
+        wrap.addWidget(self.close_button)
+        self.close_button.setVisible(closable)
+        self._close_wrap.setVisible(closable)
+        head.addWidget(self._close_wrap, 0, Qt.AlignmentFlag.AlignTop)
+        return head
+
+    def _title_block(self) -> QWidget:
         self.title = QLabel("")
         self.title.setObjectName("wlTitle")
         self.title.setWordWrap(True)
-        titles.addWidget(self.title)
-        meta = QHBoxLayout()
+        meta_row = QWidget()
+        meta_row.setObjectName("wlRowLine")
+        meta = QHBoxLayout(meta_row)
+        meta.setContentsMargins(0, 0, 0, 0)
         meta.setSpacing(8)
         self.meta = QLabel("")
         self.meta.setObjectName("wlMeta")
         meta.addWidget(self.meta)
-        self.kind = _pill("")
+        self.kind = _pill("", "warning")
         meta.addWidget(self.kind)
+        meta.addStretch(1)
+        return _TitleBlock(self.title, meta_row)
+
+    def _version_row(self) -> QWidget:
+        """The AI write-up / As spoken toggle and version picker, shown only when written up."""
+        self.version_row = QWidget()
+        self.version_row.setObjectName("wlVersionRow")
+        row = QHBoxLayout(self.version_row)
+        row.setContentsMargins(0, 2, 0, 0)
+        row.setSpacing(8)
+        self.version_bar = SegmentedBar([(title, "") for title, _tip in VERSIONS], compact=True)
+        for button, (_title, tip) in zip(self.version_bar.buttons, VERSIONS, strict=True):
+            button.setToolTip(tip)
+        self.version_bar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        self.version_bar.setFixedWidth(VERSION_BAR_WIDTH)
+        self.version_bar.setAccessibleName("Which version of the walkthrough shows")
+        self.version_bar.activated.connect(self._on_version_chosen)
+        row.addWidget(self.version_bar)
         # Once it has been written up more than once: which of them shows.
         self.version_picker = QToolButton()
         self.version_picker.setObjectName("wlVersionPicker")
@@ -880,51 +1266,64 @@ class WalkthroughReview(QWidget):
                                        "kept here")
         self.version_menu = context_menu(self)
         self.version_picker.setMenu(self.version_menu)
-        meta.addWidget(self.version_picker)
-        meta.addStretch(1)
-        titles.addLayout(meta)
-        head.addLayout(titles, 1)
-        self.version_bar = SegmentedBar([(title, "") for title, _tip in VERSIONS], compact=True)
-        for button, (_title, tip) in zip(self.version_bar.buttons, VERSIONS, strict=True):
-            button.setToolTip(tip)
-        # The bar asks for no width of its own beside the title; give it one row's worth.
-        self.version_bar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
-        self.version_bar.setFixedWidth(VERSION_BAR_WIDTH)
-        self.version_bar.setAccessibleName("Which version of the walkthrough shows")
-        self.version_bar.activated.connect(self._on_version_chosen)
-        head.addWidget(self.version_bar, 0, Qt.AlignmentFlag.AlignTop)
-        self.close_button = self._icon_button("x-gray.svg", "Close walkthrough")
-        self.close_button.setToolTip("Close. It stays under Walkthroughs in the side panel.")
-        self.close_button.clicked.connect(self.close_requested)
-        head.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignTop)
-        return head
+        row.addWidget(self.version_picker)
+        row.addStretch(1)
+        self.version_row.hide()
+        return self.version_row
 
-    def _actions(self) -> Reflow:
-        """Copy and the file on the left; Open and More beside them, or below once narrow."""
-        self.pdf_button = self._button(
-            "Copy PDF", "wlPrimary", lambda: self._copy(WalkthroughCopyFormat.PDF))
-        set_copy_tip(self.pdf_button, WalkthroughCopyFormat.PDF)
-        self.markdown_button = self._button(
-            "Copy Markdown", "wlSecondary", lambda: self._copy(WalkthroughCopyFormat.AGENT))
-        self.markdown_button.setIcon(design_icon("copy-gray.svg"))
-        set_copy_tip(self.markdown_button, WalkthroughCopyFormat.AGENT)
-        self.copy_word_button = self._button(
-            "Copy Word", "wlSecondary", lambda: self._copy(WalkthroughCopyFormat.WORD))
-        set_copy_tip(self.copy_word_button, WalkthroughCopyFormat.WORD)
-        self.chip = FileChip(self)
-        self.chip.clicked.connect(self._open)
+    def _notice_row(self) -> QWidget:
+        """Transient status feedback (copy, save, progress, errors); hidden when idle."""
+        self.notice_row = QWidget()
+        self.notice_row.setObjectName("wlNoticeRow")
+        status = QHBoxLayout(self.notice_row)
+        status.setContentsMargins(0, 0, 0, 0)
+        status.setSpacing(8)
+        self.notice = QLabel("")
+        self.notice.setObjectName("wlNotice")
+        self.notice.setWordWrap(True)
+        status.addWidget(self.notice, 1)
+        self.cancel_button = self._button("Cancel", "wlQuiet", self.cancel)
+        self.cancel_button.hide()
+        status.addWidget(self.cancel_button)
+        self.notice_row.hide()
+        return self.notice_row
+
+    def _actions(self) -> _ActionGroup:
+        """Split Copy button, Open PDF, and More."""
+        self.copy_split = _SplitCopyButton(self)
+        self.copy_button = self.copy_split.primary
+        self.copy_caret = self.copy_split.caret
+        self.copy_button.clicked.connect(self._copy_default)
+        self.copy_menu = _CopyFormatMenu(self)
+        self.copy_menu.aboutToShow.connect(self.sync_copy_format)
+        self.copy_pdf_action = self._copy_menu_action(WalkthroughCopyFormat.PDF)
+        self.copy_agent_action = self._copy_menu_action(WalkthroughCopyFormat.AGENT_TASK)
+        self.copy_both_action = self._copy_menu_action(WalkthroughCopyFormat.BOTH)
+        self.copy_markdown_action = self._copy_menu_action(WalkthroughCopyFormat.AGENT)
+        self.copy_word_action = self._copy_menu_action(WalkthroughCopyFormat.WORD)
+        self._copy_format_actions = (
+            (WalkthroughCopyFormat.PDF, self.copy_pdf_action),
+            (WalkthroughCopyFormat.AGENT_TASK, self.copy_agent_action),
+            (WalkthroughCopyFormat.BOTH, self.copy_both_action),
+            (WalkthroughCopyFormat.AGENT, self.copy_markdown_action),
+            (WalkthroughCopyFormat.WORD, self.copy_word_action),
+        )
+        self.copy_caret.setMenu(self.copy_menu)
+        self.send_button = SendButton(name="wlSendTo", chevron_color="text", chevron_inset=16)
+        self.send_button.send_requested.connect(self._send)
         self.open_button = self._button("Open PDF", "wlSecondary", self._open)
         self.open_button.setIcon(design_icon("external-link-gray.svg"))
+        self.open_button.setAccessibleName("Open PDF")
+        self.open_button.setToolTip("Open PDF")
         self.more_button = self._icon_button("dots-gray.svg", "More")
         self.more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.menu = context_menu(self)
         self.menu.setToolTipsVisible(True)
-        self.copy_agent_action = self._menu_action(
-            "Copy for agent", lambda: self._copy(WalkthroughCopyFormat.AGENT_TASK))
-        set_copy_tip(self.copy_agent_action, WalkthroughCopyFormat.AGENT_TASK)
-        self.menu.addSeparator()
         self.open_word_button = self._menu_action("Open Word document", self._open_word)
         self.folder_button = self._menu_action("Show in folder", self._reveal)
+        # The header's Send to menu, here too: the header drops it when narrow.
+        self.send_button.send_menu.setTitle("Send to")
+        self.send_menu_action = self.menu.addMenu(self.send_button.send_menu)
         self.menu.addSeparator()
         self.retry_button = self._menu_action("Redo AI write-up", self._retry)
         # Filled as it opens, so styles saved anywhere since show.
@@ -935,22 +1334,16 @@ class WalkthroughReview(QWidget):
         self.menu.addSeparator()
         self.delete_button = self._menu_action("Delete…", self._delete)
         self.more_button.setMenu(self.menu)
-        self.copy_group = _CopyGroup(
-            self.pdf_button, self.markdown_button, self.copy_word_button, self.chip)
-        self.action_row = Reflow(self.copy_group, self._group(self.open_button, self.more_button))
-        return self.action_row
+        self.action_group = _ActionGroup(self.copy_split, self.send_button, self.open_button,
+                                         self.more_button)
+        return self.action_group
 
-    @staticmethod
-    def _group(*widgets: QWidget) -> QWidget:
-        group = QWidget()
-        group.setObjectName("wlActionGroup")
-        row = QHBoxLayout(group)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-        for widget in widgets:
-            row.addWidget(widget)
-        row.addStretch(1)
-        return group
+    def _copy_menu_action(self, copy_format: str) -> _CopyFormatAction:
+        action = _CopyFormatAction(self.copy_menu, copy_format)
+        action.triggered.connect(lambda: self._copy(copy_format))
+        action.star.clicked.connect(lambda: self._choose_default_copy_format(copy_format))
+        self.copy_menu.addAction(action)
+        return action
 
     def _save_bar(self) -> QFrame:
         self.save_bar = QFrame()
@@ -972,10 +1365,58 @@ class WalkthroughReview(QWidget):
         return self.save_bar
 
     def minimumSizeHint(self) -> QSize:
-        # The row of actions ignores its own width so Open can drop below Copy
-        # and the copy buttons can wrap, but no one of them ever squashes.
+        # The header ignores its own width so actions drop below the title
+        # and wrap on narrow windows, without squashing any single button.
         return super().minimumSizeHint().expandedTo(
-            QSize(self.copy_group.minimumSizeHint().width(), 0))
+            QSize(self.action_group.minimumSizeHint().width(), 0))
+
+    def set_default_copy_format(self, copy_format: str) -> None:
+        """Keep the split Copy button aligned with ``On finish, copy``."""
+        self._default_copy_format = (
+            copy_format if copy_format in _COPY_LABELS else WalkthroughCopyFormat.PDF
+        )
+        self._update_copy_controls()
+
+    def sync_copy_format(self) -> None:
+        """Reload the default copy format from settings."""
+        self.set_default_copy_format(
+            resolve_walkthrough_copy_format(settings_manager.load_all_settings()))
+
+    def _choose_default_copy_format(self, copy_format: str) -> None:
+        if copy_format == self._default_copy_format:
+            return
+        try:
+            settings_manager.save_setting(SettingsKey.WALKTHROUGH_COPY_FORMAT, copy_format)
+        except (OSError, ValueError):
+            self.copy_menu.close()
+            self._set_notice("Couldn't save the default copy format.")
+            return
+        self.set_default_copy_format(copy_format)
+        self.default_copy_format_changed.emit(copy_format)
+
+    def _active_copy_format(self) -> str:
+        if (self._default_copy_format == WalkthroughCopyFormat.WORD
+                and not self.copy_word_action.isEnabled()):
+            return WalkthroughCopyFormat.PDF
+        return self._default_copy_format
+
+    def _update_copy_controls(self) -> None:
+        fmt = self._active_copy_format()
+        label = _COPY_LABELS[fmt]
+        self.copy_button.setAccessibleName(
+            f"Save and {label[0].lower()}{label[1:]}" if self._dirty else label)
+        set_copy_tip(self.copy_button, fmt)
+        for copy_format, action in self._copy_format_actions:
+            action_label = _COPY_LABELS[copy_format]
+            action.setText(
+                f"Save and {action_label[0].lower()}{action_label[1:]}"
+                if self._dirty else action_label)
+            action.set_preferred(copy_format == self._default_copy_format, action_label)
+        self.header_row.set_copy_format(fmt, dirty=self._dirty)
+
+    def _set_notice(self, text: str) -> None:
+        self.notice.setText(text)
+        self.notice_row.setVisible(bool(text) or self._busy)
 
     def _button(self, text: str, name: str, slot) -> QPushButton:
         button = QPushButton(text)
@@ -1082,6 +1523,7 @@ class WalkthroughReview(QWidget):
         if old is not None:
             old.deleteLater()
         self.scroll.setWidget(board)
+        self.sync_copy_format()
         self._show_header(walkthrough, draft)
         self._show_actions(ready, draft)
 
@@ -1129,13 +1571,11 @@ class WalkthroughReview(QWidget):
             self.meta.setText(f"{_shots(count)} · {clock(walkthrough.duration_s)}")
         else:
             self.meta.setText("Not finished yet" if draft else "")
-        # A written-up walkthrough says which version shows with its switch.
-        self.kind.setText("Interrupted" if draft else "As spoken")
-        self.kind.setProperty("tone", "warning" if draft else "plain")
-        self.kind.style().unpolish(self.kind)
-        self.kind.style().polish(self.kind)
-        self.kind.setVisible(has and (draft or not self._written))
-        self.version_bar.setVisible(self._written and walkthrough is not None)
+        self.kind.setText("Interrupted" if draft else "")
+        self.kind.setVisible(has and draft)
+        show_versions = self._written and walkthrough is not None
+        self.version_row.setVisible(show_versions)
+        self.version_bar.setVisible(show_versions)
         self.version_bar.setCurrentIndex(1 if self._spoken else 0)
         self._show_versions(walkthrough is not None)
         redo = "Redo" if self._written else "Write up"
@@ -1144,7 +1584,7 @@ class WalkthroughReview(QWidget):
         self.prompt_button.setText(f"{redo} with a new prompt…")
         self.title.setVisible(has)
         if not self._busy:
-            self.notice.setText(SPOKEN_HINT if self._spoken else WRITE_UP_HINT)
+            self._set_notice("")
 
     def _show_versions(self, loaded: bool) -> None:
         """The picker of write-ups, when there is more than one and one shows."""
@@ -1189,29 +1629,29 @@ class WalkthroughReview(QWidget):
         # back off only what this walkthrough can't use.
         for widget in self.actions:
             widget.setEnabled(True)
-        for button in (self.save_button, self.discard_button, self.pdf_button,
-                       self.markdown_button, self.copy_agent_action, self.retry_button, self.style_button,
-                       self.prompt_button, self.open_button):
+        for button in (self.save_button, self.discard_button, self.copy_button, self.copy_caret,
+                       self.copy_pdf_action, self.copy_agent_action, self.copy_both_action,
+                       self.copy_markdown_action, self.retry_button, self.style_button,
+                       self.prompt_button, self.open_button,
+                       self.send_button, self.send_menu_action):
             button.setEnabled(ready)
-        # A draft has no document yet: nothing to copy, open or edit.
-        for widget in (self.pdf_button, self.markdown_button, self.copy_word_button,
-                       self.chip, self.open_button):
+        # A draft has no document yet: nothing to copy, send, open or edit.
+        for widget in (self.copy_split, self.send_button, self.open_button):
             widget.setVisible(ready)
+        if ready:
+            self.send_button.look_ahead()
         if not ready and not self._busy:
-            # No editing hint, but the line stays to say what Recover and
-            # Delete are doing or why they can't.
-            self.notice.setText("")
+            self._set_notice("")
         # Walkthroughs from before Word documents have none until Review saves them.
         word = ready and self._result_docx().is_file()
-        self.copy_word_button.setEnabled(word)
+        self.copy_word_action.setEnabled(word)
         self.open_word_button.setEnabled(word)
-        if ready:
-            self.chip.set_path(self._result_pdf())
         self.recover_button.setEnabled(bool(draft and self._recover and folder
                                             and (folder / library.AUDIO_NAME).is_file()))
         self.folder_button.setEnabled(folder is not None)
         self.delete_button.setEnabled(folder is not None)
         self.more_button.setVisible(folder is not None)
+        self._update_copy_controls()
 
     def _result_pdf(self) -> Path:
         if self._spoken:
@@ -1286,11 +1726,10 @@ class WalkthroughReview(QWidget):
         redo = "Redo" if self._written else "Write up"
         self.style_menu.setTitle(f"Save and {redo.lower()} as" if dirty else f"{redo} as")
         for button, label in (
-            (self.pdf_button, "Copy PDF"), (self.markdown_button, "Copy Markdown"),
-            (self.copy_word_button, "Copy Word"), (self.copy_agent_action, "Copy for agent"),
             (self.retry_button, redo_label), (self.prompt_button, f"{redo} with a new prompt…"),
         ):
             button.setText(f"Save and {label[0].lower()}{label[1:]}" if dirty else label)
+        self._update_copy_controls()
 
     def _discard(self):
         self.show_folder(self._folder, spoken=self._spoken, version=self._version)
@@ -1348,7 +1787,7 @@ class WalkthroughReview(QWidget):
         self._then = (self._folder, *then) if then is not None and self._folder else None
         error = self._acquire()
         if error:
-            self.notice.setText(error)
+            self._set_notice(error)
             return
         self._after_save = after_save
         self._busy = True
@@ -1359,7 +1798,7 @@ class WalkthroughReview(QWidget):
         for button in self.actions:
             button.setEnabled(False)
         self.cancel_button.show()
-        self.notice.setText("Working… Your saved documents stay as they are if this fails.")
+        self._set_notice("Working… Your saved documents stay as they are if this fails.")
         def work():
             result, error = None, ""
             try:
@@ -1392,7 +1831,7 @@ class WalkthroughReview(QWidget):
             # Preserve unsaved editor contents after a failed regeneration.
             for button, enabled in zip(self.actions, self._enabled, strict=True):
                 button.setEnabled(enabled)
-            self.notice.setText(f"Couldn't finish: {error}")
+            self._set_notice(f"Couldn't finish: {error}")
             return
         done = self._done_text
         if isinstance(result, _SavedOnly):
@@ -1408,7 +1847,7 @@ class WalkthroughReview(QWidget):
         self._set_dirty(False)
         # The host shows what to see next: this folder, or another once it's gone.
         self.changed.emit(shown)
-        self.notice.setText(done)
+        self._set_notice(done)
         if after_save is not None:
             after_save(result)
 
@@ -1416,7 +1855,7 @@ class WalkthroughReview(QWidget):
         """Stop the work in progress as soon as it safely can."""
         if self._busy:
             self._cancel.set()
-            self.notice.setText("Stopping safely…")
+            self._set_notice("Stopping safely…")
 
     # ---- actions ----
 
@@ -1456,6 +1895,9 @@ class WalkthroughReview(QWidget):
         # Redone, the new write-up shows; otherwise the words just saved stay.
         self.run(save, then=None if redo else then, after_save=after_save)
 
+    def _copy_default(self) -> None:
+        self._copy(self._active_copy_format())
+
     def _copy(self, copy_format):
         if self._busy or not self._folder or not self._copy_files:
             return
@@ -1465,7 +1907,7 @@ class WalkthroughReview(QWidget):
         try:
             result = library.load_result(self._folder, spoken=self._spoken, version=self._version)
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            self.notice.setText(str(exc))
+            self._set_notice(str(exc))
             return
         self._copy_result(result, copy_format)
 
@@ -1474,11 +1916,34 @@ class WalkthroughReview(QWidget):
             files, text = result.clipboard(copy_format)
             ok = self._copy_files(files, text=text)
             if ok:
-                self.notice.setText(_COPIED[copy_format])
+                self._set_notice(_COPIED[copy_format])
             else:
-                self.notice.setText("Copying failed. Drag the file instead, or show it in its folder.")
+                self._set_notice("Copying failed. Show it in its folder to attach the file.")
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            self.notice.setText(str(exc))
+            self._set_notice(str(exc))
+
+    def _send(self, dest) -> None:
+        """Send the version shown to ``dest``, saving edits first as copying does."""
+        if self._busy or self._send_token or not self._folder:
+            return
+        if self._dirty:
+            self._save(after_save=lambda result: self._send_result(result, dest))
+            return
+        try:
+            result = library.load_result(self._folder, spoken=self._spoken, version=self._version)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self._set_notice(str(exc))
+            return
+        self._send_result(result, dest)
+
+    def _send_result(self, result, dest) -> None:
+        self._set_notice(f"Sending to {dest.name}…")
+        self._send_token = start_send(result, dest)
+
+    def _sent(self, token: int, _ok: bool, message: str) -> None:
+        if token == self._send_token:
+            self._send_token = 0
+            self._set_notice(message)
 
     def _copy_screenshot(self, path: Path) -> None:
         """Copy one screenshot as a fresh snap is copied: the picture, its file and its path.
@@ -1487,7 +1952,7 @@ class WalkthroughReview(QWidget):
         """
         image = QImage(str(path))
         if image.isNull():
-            self.notice.setText(f"Couldn't read {path.name}.")
+            self._set_notice(f"Couldn't read {path.name}.")
             return
         if self._copy_files is not None:
             ok = self._copy_files([path], text=str(path), image=image)
@@ -1498,7 +1963,7 @@ class WalkthroughReview(QWidget):
             data.setImageData(image)
             QApplication.clipboard().setMimeData(data)
             ok = True
-        self.notice.setText("Screenshot copied." if ok else "Couldn't copy the screenshot.")
+        self._set_notice("Screenshot copied." if ok else "Couldn't copy the screenshot.")
 
     def _retry(self):
         self._redo(None)
@@ -1539,7 +2004,7 @@ class WalkthroughReview(QWidget):
             self._recover(str(self._folder))
             # One click starts it; a second would only be refused.
             self.recover_button.setEnabled(False)
-            self.notice.setText("Recovering. It appears here once it's transcribed.")
+            self._set_notice("Recovering. It appears here once it's transcribed.")
 
     def _open(self):
         if self._folder:

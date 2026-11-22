@@ -67,12 +67,12 @@ class LocalModelPicker(QWidget):
         self.model_combo.currentIndexChanged.connect(self._on_combo_changed)
         row.addWidget(self.model_combo, stretch=1)
 
-        self.manage_button = QPushButton("Manage downloads")
+        self.manage_button = QPushButton("Manage models")
         self.manage_button.setObjectName("localModelPickerManage")
         self.manage_button.setFlat(True)
         self.manage_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.manage_button.setToolTip(
-            "Open Downloads to add or delete speech models"
+            "Open Models & engines to add or delete speech models"
         )
         self.manage_button.clicked.connect(self.manage_downloads_requested)
         row.addWidget(self.manage_button)

@@ -997,9 +997,9 @@ class TestMeetingDestinations(_DialogTestCase):
             dialog, _values = self._make_meeting_dialog()
         combo = dialog.meeting_agent_core_combo
         for needs_update, frozen, label in (
-            (True, True, "Pi (update from Downloads)"),
-            (True, False, "Pi (update from Downloads)"),
-            (False, True, "Pi (install from Downloads)"),
+            (True, True, "Pi (update from Models & engines)"),
+            (True, False, "Pi (update from Models & engines)"),
+            (False, True, "Pi (install from Models & engines)"),
             (False, False, "Pi (sidecar not built)"),
         ):
             with patch.object(dialog_module, "meeting_agent_payload_dir", return_value=None), \
@@ -1264,7 +1264,7 @@ class TestSharedRuntime(_DialogTestCase):
     def test_meeting_voice_names_the_shared_runtime_destination(self):
         dialog, _values = self._make_dialog(
             extra_settings={SettingsKey.MEETING_SPEECH_SEPARATE: True})
-        assert "Models & storage → Downloads" in dialog.meeting_runtime_label.text()
+        assert "Models & storage → Models & engines" in dialog.meeting_runtime_label.text()
         assert "Auto · auto" in dialog.meeting_runtime_label.text()
 
 

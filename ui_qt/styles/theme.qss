@@ -5497,6 +5497,16 @@ QToolButton#walkthroughReadyMore::menu-indicator {
     width: 0px;
 }
 
+/* Send to: a link-style button with room for its painted chevron. */
+QToolButton#walkthroughReadySend {
+    padding: 5px 22px 5px 10px;
+}
+
+QToolButton#walkthroughReadySend::menu-indicator {
+    image: none;
+    width: 0px;
+}
+
 QToolButton#walkthroughReadyClose:hover,
 QToolButton#walkthroughReadyMore:hover,
 QToolButton#walkthroughReadyMore:pressed {

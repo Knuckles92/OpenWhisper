@@ -109,11 +109,11 @@ To register `ow` and `openwhisper`, run `.\install.cmd` in PowerShell on Windows
 
 ## GPU acceleration
 
-For Local Whisper on Windows or Linux x86_64, install **GPU Acceleration** from **Settings → Models & storage → Downloads → Components**, or choose **Use this GPU** when prompted. Requires an NVIDIA driver providing CUDA 12 (525+); the CUDA Toolkit is not needed. macOS uses CPU.
+For Local Whisper on Windows or Linux x86_64, install **GPU Acceleration** from **Settings → Models & storage → Models & engines → Components**, or choose **Use this GPU** when prompted. Requires an NVIDIA driver providing CUDA 12 (525+); the CUDA Toolkit is not needed. macOS uses CPU.
 
-Source installs can also use `uv sync --locked --extra gpu` to install CUDA wheels on Windows or Linux x86_64. On Windows, launch with `uv run --locked --extra gpu python main.py`. On Linux, use `./scripts/openwhisper`. **Auto** selects a compatible compute type. **Downloads** shows GPU memory estimates.
+Source installs can also use `uv sync --locked --extra gpu` to install CUDA wheels on Windows or Linux x86_64. On Windows, launch with `uv run --locked --extra gpu python main.py`. On Linux, use `./scripts/openwhisper`. **Auto** selects a compatible compute type. **Models & engines** shows GPU memory estimates.
 
-On Windows x64 and Linux x86_64, Parakeet Unified and Qwen3-ASR share the bundled transcribe.cpp runtime, which uses Vulkan for GPU acceleration. Other speech runtimes are available in Downloads. On Apple Silicon Macs, **Auto** runs Parakeet MLX on the Apple GPU through MLX, Parakeet and Nemotron through the **NVIDIA Speech GPU (Metal)** runtime, and Qwen3-ASR through PyTorch MPS. The Pi and OpenCode SDK meeting agents are also separate components, available on Windows, Linux and macOS.
+On Windows x64 and Linux x86_64, Parakeet Unified and Qwen3-ASR share the bundled transcribe.cpp runtime, which uses Vulkan for GPU acceleration. Other speech runtimes are available in Models & engines. On Apple Silicon Macs, **Auto** runs Parakeet MLX on the Apple GPU through MLX, Parakeet and Nemotron through the **NVIDIA Speech GPU (Metal)** runtime, and Qwen3-ASR through PyTorch MPS. The Pi and OpenCode SDK meeting agents are also separate components, available on Windows, Linux and macOS.
 
 ## Updates
 
@@ -131,7 +131,7 @@ When a package upgrade or pull replaces the app while it runs, OpenWhisper offer
 ## Get started
 
 1. Open **Settings → Dictation → Voice model** and choose a speech backend. New Windows x64 and Linux x86_64 installs default to **Parakeet Unified** (English, with its `transcribe.cpp` CPU/Vulkan runtime bundled in the installer), and Apple Silicon Macs on macOS 14 or later default to **Parakeet MLX**; other platforms default to Local Whisper. Dictating in another language? Switch to **Parakeet TDT v3**, **Local Whisper**, or **Qwen3-ASR** from Guided Setup or **Voice model → Languages I dictate in**. Existing installs keep the engine they use.
-2. Download the model (and any optional runtime for other engines) through Guided Setup or **Settings → Models & storage → Downloads**, or add an OpenAI key in **Settings → App → API keys** for cloud transcription.
+2. Download the model (and any optional runtime for other engines) through Guided Setup or **Settings → Models & storage → Models & engines**, or add an OpenAI key in **Settings → App → API keys** for cloud transcription.
 3. Choose your microphone in **Settings → Dictation → Recording**. On macOS, grant the [required permissions](#macos-permissions).
 4. Use **Quick Record** or the recording hotkey. Stop recording to transcribe. Dictation follows your clipboard and auto-paste settings. If the remote engine goes offline before transcription, the recording overlay shows up to three reconnect attempts within 12 seconds. If transcription fails, open **History** to play the saved recording or choose **Retry transcription**. Recovered transcripts and **Upload File** results are ready to copy in the app.
 
@@ -177,7 +177,7 @@ Choose **Settings → App → Appearance → Theme → Omarchy desktop** to foll
 | API | OpenAI: GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027. Groq: Whisper Large v3 / Turbo. Your own server: whatever it serves | OpenAI or Groq in the cloud (API key required), or an OpenAI-compatible speech server you run: Speaches, LocalAI, vLLM, whisper.cpp, or custom | Dictation, uploads |
 | Remote computer | Whichever engine the paired computer has selected | Another computer running OpenWhisper on your network | Dictation with that engine's preview, uploads, meetings with a supported host model |
 
-- **Downloads:** Install both the model and its required runtime in **Settings → Models & storage → Downloads**. Each entry shows its size, publisher, license, and download checks.
+- **Models & engines:** Install both the model and its required runtime in **Settings → Models & storage → Models & engines**. Each entry shows its size, publisher, license, and download checks.
 - **Languages:** Choose a supported language or **Auto** for detection. Coverage varies by engine; Moonshine and Parakeet Unified are English-only. Language selection controls transcription, not translation.
 - **Apple Silicon:** Choose **Auto** to use the Apple GPU where supported. See [GPU acceleration](#gpu-acceleration) for engine-specific support.
 
@@ -185,7 +185,7 @@ See [speech model details](docs/speech-models.md) for language coverage, platfor
 
 ### Custom Whisper models
 
-Choose **Add custom models…** in **Settings → Models & storage → Downloads**, **Dictation → Voice model**, or **Meeting Mode → Voice & speakers**.
+Choose **Add custom models…** in **Settings → Models & storage → Models & engines**, **Dictation → Voice model**, or **Meeting Mode → Voice & speakers**.
 
 - **Local files:** Choose a model folder or a parent folder containing several models. OpenWhisper lists complete model folders for you to select.
 - **Hugging Face:** Enter an `owner/model` repository and, optionally, a subfolder such as `ct2_int8_float16`. **Find on Hugging Face** lists compatible model folders without downloading weights. You can also discover models already in the local Hugging Face cache.
@@ -214,7 +214,7 @@ Remote Quick Record reserves the host from the start of capture through saving, 
 If macOS Keychain refuses to save the connection key, click **Retry Keychain access** and choose **Allow** or **Always Allow** when macOS asks. If no prompt appears, use **Open Keychain Access**, unlock the **login** keychain and check the **OpenWhisper** item's **Access Control**, then retry. The approved connection stays in memory while OpenWhisper is running, so retrying does not need another pairing code or approval from the host. The connection key is only saved in the OS credential store.
 
 - **Meetings:** Select **Remote computer** in **Settings → Meeting Mode → Voice & speakers → Speech engine**. Audio goes to the host for transcription; capture, recordings, and transcripts stay on the computer running the meeting.
-- **Host models:** Use **Manage host models** to choose or download a model and install speech runtimes. The host must first enable **Allow paired computers to manage models**.
+- **Host models:** Use **Manage host models** (or switch to the paired host in **Settings → Models & storage → Models & engines**) to choose or download a model and install speech runtimes. The host must first enable **Allow paired computers to manage models**.
 - **Shared history:** Enable **Allow the paired host to query this computer's history** on the client so agents on the host can search it while the client is online. See [MCP setup](docs/mcp.md#query-paired-clients-directly) for queries and offline copies.
 - **Away from home:** Install [Tailscale](https://tailscale.com/download) on both computers. Hosts on your tailnet appear in the app; computers on the same Tailscale account can connect without a pairing code when the host allows it.
 
@@ -229,9 +229,9 @@ Use AI cleanup to polish dictation and meeting intelligence to generate notes an
 
 | Meeting engine | Setup |
 | --- | --- |
-| Pi (default) | Uses your selected text endpoint and API key. Install from **Models & storage → Downloads → Components** where available. |
+| Pi (default) | Uses your selected text endpoint and API key. Install from **Models & storage → Models & engines → Components** where available. |
 | Claude Code, Codex, or OpenCode | Select an installed agent's tile to use its sign-in, providers, and models. Install, update, and sign in to the agent yourself. |
-| OpenCode SDK | Install from **Models & storage → Downloads → Components** where available, then select it under **Agent core**. |
+| OpenCode SDK | Install from **Models & storage → Models & engines → Components** where available, then select it under **Agent core**. |
 
 Meeting passes count toward the installed agent's account or API usage. These agents refresh live insights less often. If an engine is unavailable, select another or continue recording without AI insights.
 
@@ -241,7 +241,7 @@ See [AI and meeting setup](docs/meeting-intelligence.md) for custom endpoints, e
 
 Downloaded speech models load from the local cache without network metadata checks. Install any required runtime before going offline.
 
-Choose whether to ask, allow, or block missing-model downloads in **Settings → Models & storage → Downloads → When a model is missing from this computer**. Set `HF_HUB_OFFLINE=1` before launch to block model downloads entirely. Cloud transcription and remote text providers still need a network connection; speech and text servers on this computer do not. See [Network and privacy](docs/network-and-privacy.md) for every connection the app can make. Only the update check (at launch and every 4 hours) is on by default, and there is no telemetry.
+Choose whether to ask, allow, or block missing-model downloads in **Settings → Models & storage → Models & engines → When a model is missing from this computer**. Set `HF_HUB_OFFLINE=1` before launch to block model downloads entirely. Cloud transcription and remote text providers still need a network connection; speech and text servers on this computer do not. See [Network and privacy](docs/network-and-privacy.md) for every connection the app can make. Only the update check (at launch and every 4 hours) is on by default, and there is no telemetry.
 
 <details>
 <summary>More screenshots</summary>
@@ -259,7 +259,7 @@ Choose whether to ask, allow, or block missing-model downloads in **Settings →
 </p>
 
 <p align="center">
-  <img width="880" alt="Settings → Models & storage → Downloads: speech model catalog" src="docs/screenshots/06-downloads.png" />
+  <img width="880" alt="Settings → Models & storage → Models & engines: speech model catalog" src="docs/screenshots/06-downloads.png" />
 </p>
 
 </details>

@@ -274,9 +274,10 @@ _SEARCH_ALIASES = {
         "shortcuts all shortcuts",
     ),
     DOWNLOADS: (
-        "Download models and components",
-        "Models & storage › Downloads",
-        "download manager library catalog hugging face",
+        "Download models, engines, and host models",
+        "Models & storage › Models & engines",
+        "downloads download manager model manager library catalog hugging face "
+        "host models remote host engines runtimes",
     ),
     MEETING_INTELLIGENCE: (
         "Cloud intelligence",
@@ -332,7 +333,7 @@ _CHAPTERS = (
         (MEETING_DASHBOARD, "Dashboard", "box-blue.svg"),
     )),
     ("Models & storage", "download-blue.svg", (
-        (DOWNLOADS, "Downloads", "download-blue.svg"),
+        (DOWNLOADS, "Models & engines", "download-blue.svg"),
         (BACKUP, "Backup & restore", "box-blue.svg"),
     )),
     ("App", "adjustments-slate.svg", (
@@ -961,7 +962,7 @@ class SettingsDialog(QDialog):
         )
         self._add_page(
             DOWNLOADS,
-            "Downloads",
+            "Models & engines",
             "Speech models, engine runtimes, and hardware preferences.",
             self._build_downloads_page,
             scroll=False,
@@ -1234,11 +1235,14 @@ class SettingsDialog(QDialog):
         layout.addStretch()
 
     def bind_remote_service(self, service) -> None:
-        """Give the MCP page the remote engine service, so it can reach a paired host."""
+        """Give Settings pages the remote engine service, so they can reach a paired host."""
         self._remote_service = service
         view = self.__dict__.get("mcp_view")
         if view is not None:
             view.bind(service)
+        downloads = self.__dict__.get("downloads")
+        if downloads is not None:
+            downloads.bind_remote_service(service)
 
     def _build_backup_page(self, layout: QVBoxLayout) -> None:
         self.backup_page = BackupSettingsPage(self._backup_coordinator)
@@ -1252,6 +1256,8 @@ class SettingsDialog(QDialog):
 
     def _build_downloads_page(self, layout: QVBoxLayout) -> None:
         self.downloads.ensure_ui()
+        if self._remote_service is not None:
+            self.downloads.bind_remote_service(self._remote_service)
         self.hf_policy_combo = ElidingComboBox()
         self.hf_policy_combo.setObjectName("hfPolicyCombo")
         self.hf_policy_combo.addItem(
@@ -2895,8 +2901,9 @@ class SettingsDialog(QDialog):
             self.rail.select(key)
 
     def focus_hf_policy(self) -> None:
-        """Open Downloads with the Hugging Face policy control focused."""
+        """Open Models & engines with the Hugging Face policy control focused."""
         self.select_destination(DOWNLOADS)
+        self.downloads.show_local()
         self.hf_policy_combo.setFocus()
 
     def focus_cleanup_model(self) -> None:
@@ -2905,12 +2912,25 @@ class SettingsDialog(QDialog):
         self._reveal(self.cleanup_model_tile)
 
     def show_downloads(self, backend: str = "", component_id: str = "") -> None:
-        """Open Downloads, filtered to one backend or focused on a component."""
+        """Open Models & engines, filtered to one backend or focused on a component."""
         self.select_destination(DOWNLOADS)
+        self.downloads.show_local()
         if backend:
             self.downloads.show_backend(backend)
         if component_id:
             self.downloads.focus_component(component_id)
+
+    def show_host_models(self) -> None:
+        """Open Models & engines switched to the paired host, or Remote engine if unpaired."""
+        service = self._remote_service or getattr(self.remote_section, "_service", None)
+        if service is not None:
+            self.downloads.bind_remote_service(service)
+        pairing = service.client_pairing() if service is not None else None
+        if pairing is None:
+            self.select_destination(REMOTE_ENGINE)
+            return
+        self.select_destination(DOWNLOADS)
+        self.downloads.show_host()
 
     def _on_destination_changed(self, key: str) -> None:
         if self._backup_busy and key != BACKUP:
@@ -2940,6 +2960,8 @@ class SettingsDialog(QDialog):
                 self._refresh_home()
             elif key == REMOTE_ENGINE:
                 self.remote_section.on_shown()
+            elif key == DOWNLOADS:
+                self.downloads.on_shown()
 
     # ---- search ----
 

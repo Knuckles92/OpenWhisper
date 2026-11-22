@@ -69,9 +69,13 @@ them all.
 The right side of the tab is a stage that shows one thing at a time:
 
 - the newest walkthrough as a **storyboard**: each screenshot beside the
-  words that led to it, with **Copy PDF**, **Copy Markdown**, **Copy Word**,
-  the PDF as a chip to drag into any app, and **Open PDF**. It is the same
-  editor as Saved Walkthroughs (see
+  words that led to it, with a split **Copy** button that follows **On
+  finish, copy** (and its **▾** menu for **Copy PDF**, **Copy for agent**,
+  **Copy PDF + Markdown**, **Copy Markdown**, and **Copy Word**), **Open
+  PDF**, and **⋯** for Word, folder, AI write-up and Delete. Click a star in
+  the **▾** menu to save that format for the main button and **On finish,
+  copy**. Click the format name to copy it once. It is the same editor as
+  Saved Walkthroughs (see
   [Review](#review-recovery-and-storage)). A walkthrough that finishes shows
   there unless you have unsaved edits to another. The **×** beside its title
   closes it until a newer walkthrough finishes;
@@ -88,7 +92,7 @@ switch to another tab; a window you've already made wider stays as it is. It
 keeps the same size whatever the stage shows and whatever you change in the
 column, and a height you drag it to stays. In a window too narrow for both,
 the column goes above the stage. Screenshots grow with the room each row has,
-and in a narrow window **Open PDF** moves below the copy buttons, so nothing
+and in a narrow window the header actions drop below the title, so nothing
 is cut off at the right edge.
 
 - **Walkthrough** starts recording. Talk as you would to a colleague looking
@@ -342,11 +346,11 @@ for it and uses the write-up PDF (or the as-spoken PDF if writing fails). The
 message is left unsent. With Auto-paste off, Agent mode copies only the
 instructions for manual pasting; attach the PDF separately or use the shortcut.
 
-**Copy for agent** in the ready card's or saved walkthrough's **⋯** menu is a
+**Copy for agent** in the ready card's **⋯** menu or review's **Copy** menu is a
 manual copy action, even with Auto-paste on. It copies only instructions asking
 the agent to read the PDF, carry out the work, verify it, and report the result.
 Paste those instructions and attach that walkthrough's PDF by dragging its chip
-or copying and pasting the PDF separately. The prompt includes the PDF's full
+from the ready card or copying and pasting the PDF separately. The prompt includes the PDF's full
 path for a local agent. Review copies the version currently shown; the ready
 card copies the latest version of its walkthrough. This action does not run an
 agent itself. Separate file and text pastes let chat apps receive both even
@@ -389,6 +393,37 @@ the Markdown with a file link to each screenshot. **Open Word document** opens i
 in Word, or whatever opens `.docx` files, to edit. These actions are also available later
 from the **Walkthroughs** side panel next to the **Walkthrough** tab, after
 the card disappears or the clipboard has been overwritten.
+
+## Send it to an agent
+
+**Send to** hands a finished walkthrough straight to a coding agent, with no
+copying or pasting. It is on the ready card, in Review's header when there is
+room, and in Review's **⋯** menu. It opens a menu of everywhere the
+walkthrough can go; choosing one sends it:
+
+- **T3 Code.** Your threads that aren't settled, from every T3 Code project,
+  newest first, each with its project and a dot for what it's doing (working,
+  needs you, done, failed). Choose one and the walkthrough becomes its next
+  message; a thread at work takes it when its turn ends. **New thread in** lists
+  your T3 Code projects and starts a thread in the one you choose, named from
+  the walkthrough, in the project's default model and permission mode; it
+  starts working right away.
+- **New session.** Claude Code, Codex or OpenCode, when installed, opens a new
+  session with the walkthrough, as an Agent action does, in the folder you
+  choose: a T3 Code project, one chosen before, or **Choose a folder…**.
+
+Every destination gets the same message: what to do (carry out the work you
+describe, verify it, report back), the PDF's location, then your words with
+each screenshot's full path, which the agent opens itself. Nothing is
+attached, so this works with any agent on this computer. Review sends the
+version it shows, saving your edits first.
+
+T3 Code is reached through its own `t3` command, so T3 Code must be open and
+the command installed (**Install** next to **t3 command** in T3 Code's
+**Settings → About**). The `t3` command lists one project's threads at a time
+and has no list of projects, so OpenWhisper reads T3 Code's project list from
+its database on this computer, read-only. T3 Code on another computer isn't
+reachable this way.
 
 ## Review, recovery, and storage
 

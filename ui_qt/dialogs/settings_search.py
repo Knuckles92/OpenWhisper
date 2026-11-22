@@ -231,15 +231,15 @@ def _catalog_entries(downloads) -> list[SearchEntry]:
             if name == "auto":
                 continue
             label = MODELS[name].label if name in MODELS else name
-            crumb = f"Downloads · {resolve_model_repo(name) or name}"
+            crumb = f"Models & engines · {resolve_model_repo(name) or name}"
             entries.append(SearchEntry(MODEL, label, crumb, "downloads", model_name=name,
-                                       keywords=f"{name} model", icon="download-blue.svg"))
+                                       keywords=f"{name} model downloads", icon="download-blue.svg"))
         from services.components import component_coordinator, available_component_ids
         for component_id in available_component_ids():
             info = component_coordinator.describe(component_id)
-            crumb = f"Downloads › Components · {info.summary}"
+            crumb = f"Models & engines › Components · {info.summary}"
             entries.append(SearchEntry(MODEL, info.display_name, crumb, "downloads", component_id=component_id,
-                                       keywords="component runtime add-on", icon="box-blue.svg"))
+                                       keywords="component runtime add-on downloads", icon="box-blue.svg"))
         return entries
     for name, row in downloads.rows.items():
         label = MODELS[name].label if name in MODELS else name
@@ -251,10 +251,10 @@ def _catalog_entries(downloads) -> list[SearchEntry]:
                 "Downloaded" if row.is_cached else "",
             ) if badge
         )
-        detail = " · ".join(part for part in ("Downloads", size, row.repo_label.text()) if part)
+        detail = " · ".join(part for part in ("Models & engines", size, row.repo_label.text()) if part)
         entries.append(SearchEntry(
             MODEL, label, detail, "downloads", model_name=name, badges=badges,
-            keywords=f"{name} {backend} model", icon="download-blue.svg",
+            keywords=f"{name} {backend} model downloads", icon="download-blue.svg",
         ))
     from services.components import component_coordinator
     for component_id, row in downloads._component_rows.items():
@@ -266,10 +266,10 @@ def _catalog_entries(downloads) -> list[SearchEntry]:
                          component_id, exc_info=True)
             title, summary, usable = row.name_label.text(), "", False
         entries.append(SearchEntry(
-            MODEL, title, f"Downloads › Components · {summary}".rstrip(" ·"),
+            MODEL, title, f"Models & engines › Components · {summary}".rstrip(" ·"),
             "downloads", component_id=component_id,
             badges=("Installed",) if usable else (),
-            keywords="component runtime add-on", icon="box-blue.svg",
+            keywords="component runtime add-on downloads", icon="box-blue.svg",
         ))
     return entries
 

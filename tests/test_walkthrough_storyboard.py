@@ -2,7 +2,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtTest import QSignalSpy, QTest
 from PyQt6.QtWidgets import QApplication, QLabel
 
@@ -96,6 +96,8 @@ def test_rows_show_each_screenshot_beside_its_words(review):
     assert [row.editor.toPlainText() for row in review.rows] == ["first", "second", "last"]
     assert [row.check.isChecked() for row in review.rows] == [True, True, False]
     assert not review.version_bar.isVisible()
+    assert not review.kind.isVisibleTo(review)
+    assert not review.notice_row.isVisibleTo(review)
 
 
 def test_held_notes_show_on_their_rows_and_stay_through_a_save(tmp_path):
@@ -140,13 +142,13 @@ def test_a_write_up_opens_on_itself_and_can_switch_to_the_words_as_spoken(review
     assert [row.editor.toPlainText() for row in review.rows][1] == "2. Invoices hang."
     assert review.rows[0].line == "   ![Billing](shot-1.png)"
     assert not review.rows[0].check.isVisibleTo(review)
-    assert review.chip.name.text() == "write-up.pdf"
+    assert review._result_pdf().name == "write-up.pdf"
     review._on_version_chosen(1)
     assert [row.editor.toPlainText() for row in review.rows] == ["first", "second", "last"]
-    assert review.chip.name.text() == "walkthrough.pdf"
+    assert review._result_pdf().name == "walkthrough.pdf"
 
 
-def test_the_version_switch_sits_inside_the_header_beside_the_title(review, capture):
+def test_the_version_switch_sits_inside_the_header_below_the_title(review, capture):
     _written(capture)
     review.resize(900, 600)
     review.show()
@@ -154,8 +156,8 @@ def test_the_version_switch_sits_inside_the_header_beside_the_title(review, capt
     QTest.qWait(20)
     bar = review.version_bar.geometry()
     assert bar.width() > 0
-    assert bar.right() < review.width()
-    assert review.title.geometry().right() < bar.left()
+    assert review.version_bar.mapTo(review, bar.topRight()).x() < review.width()
+    assert review.header_row.geometry().bottom() < review.version_row.geometry().top()
 
 
 def test_saving_edited_write_up_rows_rebuilds_the_write_up_in_their_order(review, capture):
@@ -220,7 +222,7 @@ def test_writing_it_up_from_the_menu_leaves_the_version_switch_working(
     assert review.version_bar.isVisibleTo(review)
     assert not review._spoken
     for widget in (review.version_bar, review.close_button, review.retry_button,
-                   review.pdf_button, review.save_redo_button):
+                   review.copy_button, review.copy_caret, review.save_redo_button):
         assert widget.isEnabled(), widget
     review._on_version_chosen(1)
     assert [row.editor.toPlainText() for row in review.rows] == ["first", "second", "last"]
@@ -246,9 +248,9 @@ def test_writing_it_up_again_keeps_the_one_before_under_a_version_picker(
     assert review.rows[0].editor.toPlainText() == "# Second"
     actions[1].trigger()
     assert review.rows[0].editor.toPlainText() == "# First"
-    assert review.chip.name.text() == "write-up-1.pdf"
+    assert review._result_pdf().name == "write-up-1.pdf"
     assert review.version_picker.text().startswith("Version 1 of 2")
-    review.pdf_button.click()
+    review.copy_pdf_action.trigger()
     args, _kwargs = review._copy_files.call_args
     assert args == ([capture.folder / "write-up-1.pdf"],)
     # Saving an earlier one keeps it in place, and keeps it showing.
@@ -265,11 +267,31 @@ def test_writing_it_up_again_keeps_the_one_before_under_a_version_picker(
 
 def test_copying_waits_for_saved_edits_and_copies_the_version_shown(review, capture):
     review.rows[0].editor.setPlainText("corrected")
-    review.pdf_button.click()
+    review.copy_pdf_action.trigger()
     _wait(review)
     assert "corrected" in library.load_result(capture.folder).clipboard_text
     args, _kwargs = review._copy_files.call_args
     assert args == ([capture.folder / "walkthrough.pdf"],)
+    assert review.notice_row.isVisibleTo(review)
+
+
+def test_split_copy_button_follows_default_copy_format(review, capture):
+    from services.settings import WalkthroughCopyFormat
+
+    review.set_default_copy_format(WalkthroughCopyFormat.AGENT_TASK)
+    assert review.copy_button.text() == "Copy for agent"
+    review.copy_button.click()
+    args, kwargs = review._copy_files.call_args
+    assert args == ([],)
+    assert "carry out the tasks and changes" in kwargs["text"]
+    assert review.notice_row.isVisibleTo(review)
+
+    review.set_default_copy_format(WalkthroughCopyFormat.PDF)
+    assert review.copy_button.text() == "Copy PDF"
+    review.copy_button.click()
+    args, kwargs = review._copy_files.call_args
+    assert args == ([capture.folder / "walkthrough.pdf"],)
+    assert kwargs == {"text": ""}
 
 
 # ---- the Walkthrough tab ----
@@ -292,6 +314,55 @@ def _recent_loaded(tab):
             return
         QTest.qWait(10)
     pytest.fail("The recent walkthroughs were never read")
+
+
+def test_copy_menu_stars_set_the_default_without_copying(tab, capture):
+    from services.settings import (
+        WalkthroughCopyFormat,
+        resolve_walkthrough_copy_format,
+        settings_manager,
+    )
+
+    review = tab.review
+    copy_files = Mock(return_value=True)
+    review.bind(copy_files=copy_files)
+    review.show_folder(capture.folder)
+    menu = review.copy_menu
+    menu.popup(QPoint(0, 0))
+    try:
+        outline = review.copy_markdown_action.star.icon().cacheKey()
+        filled = review.copy_pdf_action.star.icon().cacheKey()
+        assert outline != filled
+        QTest.mouseClick(review.copy_markdown_action.star, Qt.MouseButton.LeftButton)
+        copy_files.assert_not_called()
+        assert menu.isVisible()
+        assert review.copy_markdown_action.star.icon().cacheKey() == filled
+        assert review.copy_pdf_action.star.icon().cacheKey() == outline
+        assert review.copy_button.text() == "Copy Markdown"
+        assert resolve_walkthrough_copy_format(settings_manager.load_all_settings()) == (
+            WalkthroughCopyFormat.AGENT
+        )
+        markdown = next(a for a in tab.copy_field.build_menu().actions()
+                        if a.text() == "Markdown")
+        assert markdown.isChecked()
+
+        QTest.mouseClick(review.copy_pdf_action.copy, Qt.MouseButton.LeftButton)
+        assert not menu.isVisible()
+        copy_files.assert_called_once_with([capture.folder / "walkthrough.pdf"], text="")
+        assert review.copy_button.text() == "Copy Markdown"
+
+        review.show_folder(capture.folder)
+        assert review.copy_button.text() == "Copy Markdown"
+        menu.popup(QPoint(0, 0))
+        QTest.keyClick(menu, Qt.Key.Key_Down)
+        QTest.keyClick(menu, Qt.Key.Key_Space)
+        assert review.copy_button.text() == "Copy PDF"
+        copy_files.assert_called_once()
+        QTest.keyClick(menu, Qt.Key.Key_Return)
+        assert not menu.isVisible()
+        assert copy_files.call_count == 2
+    finally:
+        menu.close()
 
 
 def test_the_tab_opens_on_the_newest_walkthrough_beside_its_settings(tab, capture):
@@ -604,7 +675,7 @@ def test_closing_the_side_panel_gives_back_what_a_small_screen_took(window):
 
 
 def test_dragged_to_its_narrowest_the_storyboard_shows_whole(window):
-    """Nothing runs past the right edge: Open drops below Copy, screenshots shrink."""
+    """The header controls and screenshots stay inside the minimum window width."""
     from config import config
     from ui_qt.widgets.tabbed_content import TabbedContentWidget
 
@@ -618,9 +689,10 @@ def test_dragged_to_its_narrowest_the_storyboard_shows_whole(window):
     viewport = tab.scroll_area.viewport()
     assert tab.scroll_area.widget().width() == viewport.width()
     review = tab.review
-    assert review.action_row.stacked
     edge = review.mapTo(viewport, review.rect().topRight()).x()
     assert edge < viewport.width()
+    for button in (review.copy_split, review.open_button, review.more_button):
+        assert button.mapTo(viewport, button.rect().topRight()).x() <= edge
     for row in review.rows:
         assert row.width() <= review.board.width()
 
@@ -637,6 +709,7 @@ def test_rows_fit_the_stage_at_its_narrowest(tmp_path):
         widget.resize(width, 700)
         for _ in range(3):
             QApplication.processEvents()
+        assert widget.header_row.stacked == (width == STAGE_MIN.width())
         assert widget.board.width() == widget.scroll.viewport().width()
         for row in widget.rows:
             assert row.geometry().right() < widget.board.width()
@@ -644,13 +717,55 @@ def test_rows_fit_the_stage_at_its_narrowest(tmp_path):
                 edge = row.check.mapTo(row, row.check.rect().topRight()).x()
                 assert edge < row.width()
         stacked.append(widget.rows[0].top.stacked)
-        # The copy buttons wrap rather than squash into each other.
-        for button in (widget.pdf_button, widget.markdown_button, widget.copy_word_button,
-                       widget.chip):
+        # Header actions never squash or clip past the right edge.
+        for button in (widget.copy_split, widget.open_button, widget.more_button):
             assert button.width() >= button.sizeHint().width()
             assert button.mapTo(widget, button.rect().topRight()).x() < widget.width()
     assert stacked == [True, False]
+    assert not widget.header_row.stacked
     widget.close()
+
+
+def test_changing_the_copy_default_keeps_the_header_and_storyboard_in_place(
+    capture, isolated_app_theme,
+):
+    from ui_qt.utils.font_scale import apply_ui_font_scale
+    from ui_qt.utils.theme_manager import ThemeManager
+
+    apply_ui_font_scale(110, theme_manager=ThemeManager())
+    widget = WalkthroughReview(closable=True, copy_files=Mock(return_value=True))
+    widget.show_folder(capture.folder)
+    widget.title.setText("Saturday, November 21 · 6:24 PM")
+    widget.show()
+    try:
+        for width in (626, 706, 900):
+            widget.resize(width, 650)
+            widget.copy_pdf_action.star.click()
+            QTest.qWait(10)
+            board = widget.scroll.geometry()
+            assert not widget.header_row.stacked
+
+            widget.copy_both_action.star.click()
+            QTest.qWait(10)
+            assert not widget.header_row.stacked
+            assert widget.width() == width
+            assert widget.scroll.geometry() == board
+            assert widget.copy_button.accessibleName() == "Copy PDF + Markdown"
+            assert widget.copy_both_action.text() == "Copy PDF + Markdown"
+            if width == 900:
+                assert widget.copy_button.text() == "Copy PDF + Markdown"
+                assert widget.open_button.text() == "Open PDF"
+            else:
+                assert widget.copy_button.text() in ("Copy", "Copy PDF + MD")
+
+            if width == 626:
+                widget.copy_button.click()
+                args, kwargs = widget._copy_files.call_args
+                assert args == ([capture.folder / "walkthrough.pdf"],)
+                assert "first" in kwargs["text"]
+                widget._set_notice("")
+    finally:
+        widget.close()
 
 
 def test_a_screenshot_grows_with_its_row_and_keeps_its_shape(tmp_path):

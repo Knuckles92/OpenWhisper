@@ -785,6 +785,9 @@ class RemoteEngineSection(QObject):
                 service.add_listener(self._listener)
                 self._records.add_listener(self._records_listener)
         self.refresh()
+        host = self.parent()
+        if host is not None and hasattr(host, "bind_remote_service") and service is not None:
+            host.bind_remote_service(service)
         if self._built and self.client_container.isVisible():
             self.on_shown()
 
@@ -1504,12 +1507,9 @@ class RemoteEngineSection(QObject):
         pairing = self._service.client_pairing()
         if pairing is None:
             return
-        from ui_qt.dialogs.remote_models import RemoteModelsDialog
-
-        dialog = RemoteModelsDialog(self._service, pairing.host_name, self.client_tile.window())
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        dialog.show()
-        self._models_dialog = dialog
+        host = self.parent()
+        if host is not None and hasattr(host, "show_host_models"):
+            host.show_host_models()
 
     def _rename_host(self) -> None:
         pairing = self._service.client_pairing() if self._service is not None else None

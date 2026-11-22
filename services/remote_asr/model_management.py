@@ -93,7 +93,7 @@ class HostModelManager:
                 if decision not in (AccessDecision.LOAD_CACHED, AccessDecision.DOWNLOAD_ALLOWED):
                     raise RuntimeError(
                         "The host requires download consent. Choose ‘Always allow downloads’ in "
-                        "Settings → Downloads on the host, or download this model there first."
+                        "Settings → Models & engines on the host, or download this model there first."
                     )
                 self._job = {**choice, "state": "complete" if decision == AccessDecision.LOAD_CACHED
                              else "downloading", "done": 0, "total": 0, "error": ""}

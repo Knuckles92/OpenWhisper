@@ -850,6 +850,7 @@ class WalkthroughTab(QWidget):
         self.review = WalkthroughReview(closable=True)
         self.review.changed.connect(self._on_review_changed)
         self.review.close_requested.connect(self.close_walkthrough)
+        self.review.default_copy_format_changed.connect(self._set_copy_choice)
         self.stage.add(self.review)
         self.recording_pane = self.stage.add(self._recording_pane())
         self.empty_pane = self.stage.add(self._empty_pane())
@@ -1086,11 +1087,8 @@ class WalkthroughTab(QWidget):
             widget.update()
         self._show_preset()
         self._agent = resolve_walkthrough_write_up_agent(settings)
-        copy = resolve_walkthrough_copy_format(settings)
-        self._copy_index = next(
-            i for i, (value, _label) in enumerate(COPY_CHOICES) if value == copy)
         self._sync_write_up()
-        self._sync_copy()
+        self._set_copy_choice(resolve_walkthrough_copy_format(settings))
 
     def _on_write_up_toggled(self, on: bool) -> None:
         settings_manager.save_setting(SettingsKey.WALKTHROUGH_WRITE_UP, on)
@@ -1108,14 +1106,17 @@ class WalkthroughTab(QWidget):
         settings_manager.save_setting(SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY, on)
 
     def _on_copy_chosen(self, index: int) -> None:
-        self._copy_index = index
-        settings_manager.save_setting(SettingsKey.WALKTHROUGH_COPY_FORMAT, COPY_CHOICES[index][0])
-        self._sync_copy()
+        copy_format = COPY_CHOICES[index][0]
+        settings_manager.save_setting(SettingsKey.WALKTHROUGH_COPY_FORMAT, copy_format)
+        self._set_copy_choice(copy_format)
 
-    def _sync_copy(self) -> None:
-        value, text = COPY_CHOICES[self._copy_index]
+    def _set_copy_choice(self, copy_format: str) -> None:
+        self._copy_index = next(
+            i for i, (value, _label) in enumerate(COPY_CHOICES) if value == copy_format)
+        _, text = COPY_CHOICES[self._copy_index]
         self.copy_field.set_value(text)
-        set_copy_tip(self.copy_field, value, on_finish=True)
+        set_copy_tip(self.copy_field, copy_format, on_finish=True)
+        self.review.set_default_copy_format(copy_format)
 
     def _sync_write_up(self) -> None:
         on = self.write_up_switch.isChecked()

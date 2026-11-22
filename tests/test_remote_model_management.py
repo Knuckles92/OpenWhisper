@@ -288,69 +288,71 @@ def _pump_until(predicate):
     return _wait_for(lambda: (QApplication.processEvents() or True) and predicate(), 5)
 
 
-def test_management_dialog_runs_off_ui_thread_and_reflects_host_readiness(managed, downloads):
-    from ui_qt.dialogs.remote_models import RemoteModelsDialog
+def test_management_pane_runs_off_ui_thread_and_reflects_host_readiness(managed, downloads):
+    from ui_qt.dialogs.remote_models import RemoteModelsPane
 
     managed.service.set_model_management(True)
     downloads.cached.update(("tiny", "parakeet-v3"))
-    dialog = RemoteModelsDialog(managed.service, "devbox")
-    dialog.show()
-    assert _pump_until(lambda: not dialog._busy)
-    assert dialog._valid
-    dialog.select_model("parakeet:parakeet-v3")
-    assert not dialog.select_button.isEnabled()  # downloaded, runtime absent
-    assert "runtime" in dialog.runtime_detail.text()
-    dialog.select_model("local_whisper:tiny")
-    assert dialog.select_button.isEnabled()
-    assert not dialog.download_button.isEnabled()
-    dialog._request("model_catalog")
-    assert not dialog.select_button.isEnabled()  # request in flight
-    assert _pump_until(lambda: not dialog._busy)
-    assert dialog._choice()["model"] == "tiny"
-    managed.service.set_model_management(False)
-    dialog._request("model_catalog")
-    assert _pump_until(lambda: not dialog._busy)
-    assert "disabled" in dialog.status.text()
-    assert not dialog.select_button.isEnabled()
-    assert not dialog.download_button.isEnabled()
-    dialog.close()
-    assert not dialog._poll.isActive()
+    pane = RemoteModelsPane(managed.service, "devbox")
+    pane.show()
+    try:
+        assert _pump_until(lambda: not pane._busy)
+        assert pane._valid
+        pane.select_model("parakeet:parakeet-v3")
+        assert not pane.select_button.isEnabled()  # downloaded, runtime absent
+        assert "runtime" in pane.runtime_detail.text()
+        pane.select_model("local_whisper:tiny")
+        assert pane.select_button.isEnabled()
+        assert not pane.download_button.isEnabled()
+        pane._request("model_catalog")
+        assert not pane.select_button.isEnabled()  # request in flight
+        assert _pump_until(lambda: not pane._busy)
+        assert pane._choice()["model"] == "tiny"
+        managed.service.set_model_management(False)
+        pane._request("model_catalog")
+        assert _pump_until(lambda: not pane._busy)
+        assert "disabled" in pane.status.text()
+        assert not pane.select_button.isEnabled()
+        assert not pane.download_button.isEnabled()
+    finally:
+        pane.close()
+        assert not pane._poll.isActive()
 
 
-def test_dialog_confirms_download_and_polls_until_complete(managed, downloads, monkeypatch):
+def test_pane_confirms_download_and_polls_until_complete(managed, downloads, monkeypatch):
     from PyQt6.QtWidgets import QMessageBox
 
-    from ui_qt.dialogs.remote_models import RemoteModelsDialog
+    from ui_qt.dialogs.remote_models import RemoteModelsPane
 
     managed.service.set_model_management(True)
     downloads.release.clear()
-    dialog = RemoteModelsDialog(managed.service, "devbox")
-    dialog.show()
+    pane = RemoteModelsPane(managed.service, "devbox")
+    pane.show()
     try:
-        assert _pump_until(lambda: not dialog._busy)
-        dialog.select_model("local_whisper:tiny")
+        assert _pump_until(lambda: not pane._busy)
+        pane.select_model("local_whisper:tiny")
         monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.No)
-        dialog.download_button.click()
+        pane.download_button.click()
         assert downloads.calls == []
         monkeypatch.setattr(QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes)
-        dialog.download_button.click()
-        assert _pump_until(lambda: dialog._poll.isActive())
-        assert "25%" in dialog.status.text()
-        assert not dialog.download_button.isEnabled()
+        pane.download_button.click()
+        assert _pump_until(lambda: pane._poll.isActive())
+        assert "25%" in pane.status.text()
+        assert not pane.download_button.isEnabled()
         downloads.release.set()
         assert _wait_for(lambda: managed.service._model_manager.job().get("state") == "complete")
-        dialog._request("model_catalog")
-        assert _pump_until(lambda: not dialog._busy)
-        assert dialog.select_button.isEnabled()
-        assert not dialog._poll.isActive()
+        pane._request("model_catalog")
+        assert _pump_until(lambda: not pane._busy)
+        assert pane.select_button.isEnabled()
+        assert not pane._poll.isActive()
         assert managed.engine.model == "parakeet-v3"
     finally:
         downloads.release.set()
-        dialog.close()
+        pane.close()
 
 
-def test_a_dialog_closed_mid_request_is_not_held_by_the_worker():
-    # The worker used to capture the dialog: it kept a closed dialog alive,
+def test_a_pane_closed_mid_request_is_not_held_by_the_worker():
+    # The worker used to capture the widget: it kept a closed widget alive,
     # then dropped the last reference (deleting a QWidget) or emitted on it
     # from its own thread, which can crash the process.
     import gc
@@ -359,7 +361,7 @@ def test_a_dialog_closed_mid_request_is_not_held_by_the_worker():
     from PyQt6.QtCore import QEvent
     from PyQt6.QtWidgets import QApplication
 
-    from ui_qt.dialogs.remote_models import RemoteModelsDialog
+    from ui_qt.dialogs.remote_models import RemoteModelsPane
 
     gate = threading.Event()
 
@@ -367,16 +369,17 @@ def test_a_dialog_closed_mid_request_is_not_held_by_the_worker():
         gate.wait(5)
         return {"models": []}
 
-    service = SimpleNamespace(client_pairing=lambda: None, remote_model_request=request)
-    dialog = RemoteModelsDialog(service, "devbox")
-    dialog.show()
-    assert dialog._busy
+    pairing = SimpleNamespace(host_name="devbox")
+    service = SimpleNamespace(client_pairing=lambda: pairing, remote_model_request=request)
+    pane = RemoteModelsPane(service, "devbox")
+    pane.show()
+    assert pane._busy
     workers = [t for t in threading.enumerate() if t.name == "remote-model-request"]
-    ref = weakref.ref(dialog)
-    dialog.deleteLater()
-    del dialog
+    ref = weakref.ref(pane)
+    pane.deleteLater()
+    del pane
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
-    # PyQt frees the dialog's own lambda connections with a queued call and
+    # PyQt frees the widget's own lambda connections with a queued call and
     # then a deferred delete; flush both.
     QApplication.processEvents()
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
@@ -390,6 +393,7 @@ def test_a_dialog_closed_mid_request_is_not_held_by_the_worker():
 
 
 def test_settings_tile_is_off_by_default_and_only_changes_host_permission(managed):
+    from ui_qt.dialogs.settings_destinations import DOWNLOADS
     from ui_qt.dialogs.settings_dialog import SettingsDialog
 
     dialog = SettingsDialog(get_loaded_model=lambda: None, background_cache_scan=False)
@@ -401,6 +405,36 @@ def test_settings_tile_is_off_by_default_and_only_changes_host_permission(manage
         assert remote_settings.host_model_management()
         assert not remote_settings.host_enabled()  # permission alone never starts sharing
         assert section.manage_button.text() == "Manage host models"
+
+        # Clicking "Manage host models" switches to Settings → Models & engines on the host tab.
+        section.manage_button.click()
+        assert dialog.rail.current_key() == DOWNLOADS
+        assert dialog.downloads.showing_host()
+        assert not dialog.downloads.target_bar.isHidden()
+        assert dialog.downloads.target_bar.buttons[0]._title.text() == "This computer"
+        assert managed.pairing.host_name in dialog.downloads.target_bar.buttons[1]._title.text()
+        assert dialog.downloads.host_pane is not None
+        assert not dialog.downloads.host_pane.isHidden()
+        assert dialog.downloads.local_pane.isHidden()
+
+        # Switching back to "This computer" shows the local catalog again.
+        dialog.downloads.target_bar.setCurrentIndex(0)
+        assert not dialog.downloads.showing_host()
+        assert not dialog.downloads.local_pane.isHidden()
+        assert dialog.downloads.host_pane.isHidden()
+
+        # Renaming the host updates the switcher tab, and forgetting hides it.
+        managed.service.rename_host("studio-pc")
+        assert _pump_until(
+            lambda: "studio-pc" in dialog.downloads.target_bar.buttons[1]._title.text()
+        )
+        dialog.downloads.show_host()
+        assert dialog.downloads.showing_host()
+        managed.service.forget_host()
+        assert _pump_until(lambda: dialog.downloads.target_bar.isHidden())
+        assert not dialog.downloads.showing_host()
+        assert not dialog.downloads.local_pane.isHidden()
+
         section.management_tile.checkbox.setChecked(False)
         assert not remote_settings.host_model_management()
     finally:

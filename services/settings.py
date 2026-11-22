@@ -927,6 +927,9 @@ class SettingsKey:
     WALKTHROUGH_COPY_FORMAT: Final = ChoiceSetting(
         "walkthrough_copy_format", WalkthroughCopyFormat.PDF, WalkthroughCopyFormat.ALL,
     )
+    # Folders chosen for an installed agent in a walkthrough's Send to menu,
+    # newest first (services/walkthrough/send.py).
+    WALKTHROUGH_SEND_FOLDERS: Final = ListSetting("walkthrough_send_folders")
     # The "New" badge on Quick Record's walkthrough button gives way to a
     # "?" once a walkthrough has started.
     WALKTHROUGH_INTRO_SEEN: Final = BoolSetting("walkthrough_intro_seen", False)

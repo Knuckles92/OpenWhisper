@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+
+- **Send a walkthrough straight to a coding agent.** **Send to** on the walkthrough's ready card and in Review (also under **⋯**) opens a menu that adds the walkthrough to any of your open T3 Code threads across all projects (listed with what each is doing), starts a new T3 Code thread in a project, or opens a new Claude Code, Codex or OpenCode session in a project folder. The agent gets the instructions, your words and each screenshot's path, so nothing needs pasting or attaching. T3 Code is reached through its own `t3` command on this computer.
+
 ## [2.8.98] - 2026-11-21
 
 ### Changed

@@ -155,7 +155,7 @@ class HostRuntimeInstaller:
             if not option["installable"]:
                 raise RuntimeError(
                     option["reason"]
-                    or "Install this runtime in Settings → Downloads on the host."
+                    or "Install this runtime in Settings → Models & engines on the host."
                 )
             component = option["component"]
             cancel = component_coordinator.begin_install(component)

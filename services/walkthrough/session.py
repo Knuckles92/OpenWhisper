@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 
 #: How long the worker waits for the last screenshot to finish writing.
 SAVE_WAIT_S = 30.0
+#: What every agent handed a walkthrough is asked to do with it.
+_AGENT_DUTY = (
+    "Use the words and screenshots together to understand the intended result. Implement "
+    "the requested work rather than only summarizing the document. Ask for clarification "
+    "if a required detail is missing; otherwise proceed, verify the result, and report "
+    "what you changed and anything still unresolved."
+)
 
 
 class ScreenshotNotSaved(OSError):
@@ -178,11 +185,7 @@ class WalkthroughResult:
         if copy_format == WalkthroughCopyFormat.AGENT_TASK:
             prompt = (
                 "Read the attached walkthrough PDF, including its screenshots, and carry out "
-                "the tasks and changes I describe in it. Use the words and screenshots "
-                "together to understand the intended result. Implement the requested work "
-                "rather than only summarizing the document. Ask for clarification if a "
-                "required detail is missing; otherwise proceed, verify the result, and "
-                "report what you changed and anything still unresolved.\n\n"
+                f"the tasks and changes I describe in it. {_AGENT_DUTY}\n\n"
                 f"PDF file (if the attachment is unavailable): {self.pdf.resolve()}"
             )
             return [], prompt
@@ -194,6 +197,20 @@ class WalkthroughResult:
         }.get(copy_format, [])
         texts = (WalkthroughCopyFormat.BOTH, WalkthroughCopyFormat.AGENT)
         return files, self.clipboard_text if copy_format in texts else ""
+
+    def agent_message(self) -> str:
+        """What Send gives an agent: the task, then the walkthrough itself.
+
+        The words travel in the message and each screenshot by its full path,
+        which any agent on this computer can open, so nothing is attached.
+        """
+        return (
+            "Carry out the tasks and changes I describe in this walkthrough: what I said, "
+            "with a screenshot after each part. Open the screenshots at the paths given. "
+            f"{_AGENT_DUTY}\n\n"
+            f"The same walkthrough as a PDF: {self.pdf.resolve()}\n\n"
+            f"{self.clipboard_text}"
+        )
 
 
 def _default_folder(started_at: datetime) -> Path:

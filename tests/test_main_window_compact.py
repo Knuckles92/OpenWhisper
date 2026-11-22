@@ -173,7 +173,7 @@ class TestMainWindowCompactMode:
         downloads_action = next(
             action
             for action in file_menu.actions()
-            if action.text() == "Downloads..."
+            if action.text() == "Models & engines..."
         )
         downloads_action.trigger()
 

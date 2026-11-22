@@ -77,6 +77,10 @@ class Reflow(QWidget):
         needed = lead + self._grid.horizontalSpacing() + self._natural_width(self._actions)
         self._place(self.width() < needed)
 
+    def refit(self) -> None:
+        """Re-check stacking after a child's text or visibility changes."""
+        self._reflow()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._reflow()

@@ -970,7 +970,7 @@ class MainWindow(QMainWindow):
         settings_action.setMenuRole(QAction.MenuRole.NoRole)
         setup_action = file_menu.addAction("Guided setup…", self.guided_setup_requested.emit)
         setup_action.setMenuRole(QAction.MenuRole.NoRole)
-        downloads_action = file_menu.addAction("Downloads...", self.open_downloads)
+        downloads_action = file_menu.addAction("Models & engines...", self.open_downloads)
         downloads_action.setMenuRole(QAction.MenuRole.NoRole)
         file_menu.addAction("Hotkeys", self.open_hotkey_settings)
         file_menu.addSeparator()

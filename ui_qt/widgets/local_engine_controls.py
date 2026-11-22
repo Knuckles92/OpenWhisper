@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 _MODEL_HELP = (
     "The speech model turns audio into text. Larger models generally improve accuracy "
-    "but need more memory and processing time. Use Downloads to install models for this backend."
+    "but need more memory and processing time. Use Models & engines to install models for this backend."
 )
 _DEVICE_HELP = (
     "Choose the hardware used for transcription. Auto picks an available device; "
@@ -51,7 +51,7 @@ _LANGUAGE_HELP = (
     "Moonshine supports English only."
 )
 _VOICE_MODEL_LINK = ("Open Settings → Voice model", "ondemand")
-_DOWNLOADS_LINK = ("Open Settings → Downloads", "downloads")
+_DOWNLOADS_LINK = ("Open Settings → Models & engines", "downloads")
 
 
 def show_download_sizes(combo) -> None:

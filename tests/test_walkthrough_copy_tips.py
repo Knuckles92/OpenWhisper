@@ -55,11 +55,11 @@ def test_manual_copy_hints_match_in_review_and_ready_card(monkeypatch, desktop):
     review = tab.review
     try:
         assert card.testAttribute(Qt.WidgetAttribute.WA_AlwaysShowToolTips)
-        assert card.menu.toolTipsVisible() and review.menu.toolTipsVisible()
+        assert card.menu.toolTipsVisible() and review.copy_menu.toolTipsVisible()
         for action, control in (
-            (card.copy_pdf_action, review.pdf_button),
-            (card.copy_word_action, review.copy_word_button),
-            (card.copy_markdown_action, review.markdown_button),
+            (card.copy_pdf_action, review.copy_pdf_action),
+            (card.copy_word_action, review.copy_word_action),
+            (card.copy_markdown_action, review.copy_markdown_action),
             (card.copy_agent_action, review.copy_agent_action),
         ):
             assert action.toolTip() == control.toolTip()
@@ -70,6 +70,10 @@ def test_manual_copy_hints_match_in_review_and_ready_card(monkeypatch, desktop):
                             if a.text() == "Agent")
         finish_hint = _plain(agent_choice.toolTip())
         assert "Auto-paste off:" in finish_hint and "unsent" in finish_hint
+        # Picking Agent in On finish, copy updates the storyboard's primary split button.
+        agent_choice.trigger()
+        assert review.copy_button.text() == "Copy for agent"
+        assert review.copy_button.toolTip() == review.copy_agent_action.toolTip()
     finally:
         tab.close()
         card.close()

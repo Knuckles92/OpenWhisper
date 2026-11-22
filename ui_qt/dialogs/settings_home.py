@@ -703,7 +703,7 @@ class HomePage(QWidget):
         self.components_label.setObjectName("homeComponents")
         self.components_label.setTextFormat(Qt.TextFormat.RichText)
         group.addWidget(self.components_label)
-        self._link(group, "Downloads", DOWNLOADS)
+        self._link(group, "Models & engines", DOWNLOADS)
 
     def _build_where_strip(self) -> QWidget:
         strip = QFrame()

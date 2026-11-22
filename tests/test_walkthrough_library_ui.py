@@ -48,25 +48,29 @@ def test_review_loads_section_editors_and_screenshot_choices(dialog):
 
 
 def test_copy_buttons_send_explicit_clipboard_formats(dialog, capture):
-    dialog.review.markdown_button.click()
+    dialog.review.copy_markdown_action.trigger()
     args, kwargs = dialog.review._copy_files.call_args
     assert args == ([],)
     assert "first" in kwargs["text"]
-    dialog.review.pdf_button.click()
+    dialog.review.copy_pdf_action.trigger()
     args, kwargs = dialog.review._copy_files.call_args
     assert args == ([capture.result.pdf],)
     assert kwargs == {"text": ""}
+    dialog.review.copy_both_action.trigger()
+    args, kwargs = dialog.review._copy_files.call_args
+    assert args == ([capture.result.pdf],)
+    assert "first" in kwargs["text"]
     dialog.review.copy_agent_action.trigger()
     args, kwargs = dialog.review._copy_files.call_args
     assert args == ([],)
     assert "carry out the tasks and changes" in kwargs["text"]
     assert str(capture.result.pdf.resolve()) in kwargs["text"]
-    assert dialog.review.notice.text() == "Instructions copied. Paste them, then drag the PDF into your chat."
+    assert dialog.review.notice.text() == "Instructions copied. Paste them, then attach the PDF to your chat."
 
 
 def test_copy_saves_edits_before_sharing(dialog, capture):
     dialog.review._editors[0].setPlainText("corrected")
-    dialog.review.markdown_button.click()
+    dialog.review.copy_markdown_action.trigger()
     _wait(dialog)
     assert not dialog.review._dirty
     assert "corrected" in library.load_result(capture.folder).clipboard_text
@@ -79,7 +83,8 @@ def test_save_regenerates_and_releases_the_app_gate(dialog, capture):
     dialog.review._editors[0].setPlainText("corrected")
     dialog.review._checks[0].setChecked(False)
     dialog.review.save_button.click()
-    assert not dialog.review.markdown_button.isEnabled()
+    assert not dialog.review.copy_button.isEnabled()
+    assert not dialog.review.copy_markdown_action.isEnabled()
     _wait(dialog)
     dialog.review._acquire.assert_called_once()
     dialog.review._release.assert_called_once()

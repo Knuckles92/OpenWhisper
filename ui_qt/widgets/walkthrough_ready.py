@@ -58,6 +58,7 @@ from ui_qt.utils.file_reveal import reveal_in_file_manager
 from ui_qt.utils.icons import design_icon
 from ui_qt.widgets.context_menu import context_menu
 from ui_qt.widgets.walkthrough_copy_tips import set_copy_tip
+from ui_qt.widgets.walkthrough_send import SendButton, relay, start_send
 
 logger = logging.getLogger(__name__)
 
@@ -186,10 +187,13 @@ class WalkthroughReadyCard(QWidget):
             # Keep Open, Copy and the drag chip available in the destination app.
             self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self._result = None
+        #: The send in flight for this card's walkthrough, or 0.
+        self._send_token = 0
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
         self._build()
+        relay().sent.connect(self._sent)
 
     def _build(self) -> None:
         outer = QVBoxLayout(self)
@@ -245,9 +249,22 @@ class WalkthroughReadyCard(QWidget):
         self.review_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.review_button.clicked.connect(self._review)
         row.addWidget(self.review_button)
+        row.addWidget(self._send_button())
         row.addWidget(self._more_button())
         column.addLayout(row)
         return column
+
+    def _send_button(self) -> SendButton:
+        """``Send to ⌄``: hand the walkthrough to a coding agent from right here."""
+        button = SendButton(name="walkthroughReadySend", chevron_color="accent-soft", chevron_inset=12)
+        button.setProperty("walkthroughAction", True)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # The pointer leaves the card for the menu; don't let the card fade under it.
+        button.send_menu.aboutToShow.connect(self._timer.stop)
+        button.send_menu.aboutToHide.connect(self._linger)
+        button.send_requested.connect(self._send)
+        self.send_button = button
+        return button
 
     def _more_button(self) -> QToolButton:
         """``⋯``: what a moment after finishing rarely needs."""
@@ -294,6 +311,9 @@ class WalkthroughReadyCard(QWidget):
     def present(self, result, *, copied: bool) -> None:
         """Fill the card for ``result`` and show it in the corner of the pointer's screen."""
         self._result = result
+        # A send still going is the previous walkthrough's; its answer isn't this card's.
+        self._send_token = 0
+        self.send_button.look_ahead()
         settings = settings_manager.load_all_settings()
         copy_format = resolve_walkthrough_copy_format(settings)
         count = f"{result.shots} screenshot{'' if result.shots == 1 else 's'}"
@@ -370,7 +390,7 @@ class WalkthroughReadyCard(QWidget):
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
-        if not self.menu.isVisible():
+        if not self.menu.isVisible() and not self.send_button.send_menu.isVisible():
             self._linger()
         super().leaveEvent(event)
 
@@ -386,6 +406,29 @@ class WalkthroughReadyCard(QWidget):
     def _copy(self, copy_format: str) -> None:
         if self._result is not None:
             self.copy_requested.emit(self._result, copy_format)
+            self._timer.start(SHOW_MS)
+
+    def _send(self, dest) -> None:
+        if self._result is None or self._send_token:
+            return
+        self.subtitle.setText(f"Sending to {dest.name}…")
+        self.reason.setVisible(False)
+        self._send_token = start_send(self._result, dest)
+        self.adjustSize()
+        self._place()
+        self._timer.start(SHOW_MS)
+
+    def _sent(self, token: int, ok: bool, message: str) -> None:
+        if token != self._send_token:
+            return
+        self._send_token = 0
+        # A failure's reason wraps below; the subtitle line would cut it off.
+        self.subtitle.setText(message if ok else "Couldn't send it.")
+        self.reason.setText("" if ok else message)
+        self.reason.setVisible(not ok)
+        self.adjustSize()
+        self._place()
+        if self.isVisible():
             self._timer.start(SHOW_MS)
 
     def _open_chip(self) -> None:

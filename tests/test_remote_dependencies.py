@@ -363,68 +363,62 @@ def test_browser_installs_then_enables_selected_gpu_without_changing_local_setti
 ):
     from PyQt6.QtWidgets import QMessageBox
 
-    from ui_qt.dialogs.remote_models import RemoteModelsDialog
+    from ui_qt.dialogs.remote_models import RemoteModelsPane
 
     managed.service.set_model_management(True)
     downloads.cached.add("nemotron-3.5")
     before = settings_manager.load_all_settings()
     runtimes.release.clear()
-    dialog = RemoteModelsDialog(managed.service, "linux-host")
-    dialog.show()
+    pane = RemoteModelsPane(managed.service, "linux-host")
+    pane.show()
     try:
-        assert _pump_until(lambda: dialog._valid and not dialog._busy)
-        dialog.select_model("nemotron:nemotron-3.5")
-        dialog.device_combo.setCurrentIndex(dialog.device_combo.findData("cuda"))
+        assert _pump_until(lambda: pane._valid and not pane._busy)
+        pane.select_model("nemotron:nemotron-3.5")
+        pane.device_combo.setCurrentIndex(pane.device_combo.findData("cuda"))
         assert (
-            dialog.install_button.isEnabled() and not dialog.select_button.isEnabled()
+            pane.install_button.isEnabled() and not pane.select_button.isEnabled()
         )
-        assert "NVIDIA Speech GPU" in dialog.runtime_detail.text()
+        assert "NVIDIA Speech GPU" in pane.runtime_detail.text()
         monkeypatch.setattr(
             QMessageBox, "question", lambda *args: QMessageBox.StandardButton.No
         )
-        dialog.install_button.click()
+        pane.install_button.click()
         assert not runtimes.calls
         monkeypatch.setattr(
             QMessageBox, "question", lambda *args: QMessageBox.StandardButton.Yes
         )
-        dialog.install_button.click()
-        assert _pump_until(lambda: dialog._poll.isActive())
-        assert dialog.install_progress.value() == 25
-        assert not dialog.install_button.isEnabled()
+        pane.install_button.click()
+        assert _pump_until(lambda: pane._poll.isActive())
+        assert pane.install_progress.value() == 25
+        assert not pane.install_button.isEnabled()
         runtimes.release.set()
         assert _wait_for(
             lambda: managed.service._runtime_installer.job().get("state") == "complete"
         )
-        dialog._request("model_catalog")
-        assert _pump_until(lambda: not dialog._busy)
-        assert dialog.device_combo.currentData() == "cuda"
-        assert dialog.select_button.isEnabled()
-        assert not dialog._poll.isActive()
+        pane._request("model_catalog")
+        assert _pump_until(lambda: not pane._busy)
+        assert pane.device_combo.currentData() == "cuda"
+        assert pane.select_button.isEnabled()
+        assert not pane._poll.isActive()
         # TLS authentication legitimately updates the host's last-seen device
         # timestamp; installing must leave every engine/client setting alone.
         after = settings_manager.load_all_settings()
         assert {k: v for k, v in after.items() if k != "remote_host_devices"} == {
             k: v for k, v in before.items() if k != "remote_host_devices"
         }
-        dialog.search.setText("Nemotron")
-        assert (
-            sum(
-                not dialog.model_list.item(i).isHidden()
-                for i in range(dialog.model_list.count())
-            )
-            == 1
-        )
+        pane.search.setText("Nemotron")
+        assert sum(not row.isHidden() for row in pane._rows.values()) == 1
     finally:
         runtimes.release.set()
-        dialog.close()
+        pane.close()
 
 
 def test_browser_legacy_host_keeps_use_action_and_explains_setup():
-    from ui_qt.dialogs.remote_models import RemoteModelsDialog
+    from ui_qt.dialogs.remote_models import RemoteModelsPane
 
-    dialog = RemoteModelsDialog(None, "old-host")
-    dialog._on_finished(
-        dialog._request_token,
+    pane = RemoteModelsPane(None, "old-host")
+    pane._on_finished(
+        pane._request_token,
         "model_catalog",
         dict(
             models=[
@@ -440,10 +434,62 @@ def test_browser_legacy_host_keeps_use_action_and_explains_setup():
         ),
         "",
     )
-    assert dialog.select_button.isEnabled()
-    assert "Update OpenWhisper" in dialog.runtime_detail.text()
-    assert not dialog.install_button.isEnabled()
-    dialog.close()
+    assert pane.select_button.isEnabled()
+    assert "Update OpenWhisper" in pane.runtime_detail.text()
+    assert not pane.install_button.isEnabled()
+    pane.close()
+
+
+def test_browser_marks_vulkan_gpu_engine_active_and_allows_cpu_switch():
+    from ui_qt.dialogs.remote_models import RemoteModelsPane
+
+    pane = RemoteModelsPane(None, "jed")
+    pane._on_finished(
+        pane._request_token,
+        "model_catalog",
+        dict(
+            engine=dict(
+                available=True,
+                family="parakeet_unified",
+                model="parakeet-unified-en-0.6b",
+                label="Parakeet Unified EN 0.6B",
+                device="vulkan",
+            ),
+            models=[
+                dict(
+                    family="parakeet_unified",
+                    model="parakeet-unified-en-0.6b",
+                    label="Parakeet Unified EN 0.6B",
+                    cached=True,
+                    runtime_ready=True,
+                    selected_device="cuda",
+                    dependencies=[
+                        dict(device="cpu", label="transcribe.cpp", ready=True, installable=False),
+                        dict(device="cuda", label="transcribe.cpp", ready=True, installable=False),
+                    ],
+                )
+            ],
+            can_select=True,
+            can_install_runtime=True,
+        ),
+        "",
+    )
+    try:
+        row = pane._rows["parakeet_unified:parakeet-unified-en-0.6b"]
+        assert "Vulkan" in pane.engine_label.text()
+        assert row.is_active
+        assert row.badge_label.text() == "Active on host"
+        assert row.action_button.isHidden()
+        assert pane.select_button.text() == "Active on host"
+        assert not pane.select_button.isEnabled()
+
+        # Switching device to CPU allows switching the active model to CPU.
+        pane.device_combo.setCurrentIndex(pane.device_combo.findData("cpu"))
+        assert pane.select_button.text() == "Use on host"
+        assert pane.select_button.isEnabled()
+        assert not row.is_active
+    finally:
+        pane.close()
 
 
 def test_management_window_cannot_follow_a_changed_pairing(managed, runtimes):
@@ -459,7 +505,7 @@ def test_management_window_cannot_follow_a_changed_pairing(managed, runtimes):
     assert not runtimes.calls
 
 
-def test_host_setup_navigation_opens_remote_settings_when_unpaired():
+def test_host_setup_navigation_opens_remote_settings_when_unpaired_and_models_when_paired():
     from unittest.mock import Mock
 
     from ui_qt.ui_controller import UIController
@@ -473,3 +519,14 @@ def test_host_setup_navigation_opens_remote_settings_when_unpaired():
     controller.open_settings_destination.reset_mock()
     UIController.open_engine_help_destination(controller, "remote_engine")
     controller.open_settings_destination.assert_called_once_with("remote_engine")
+
+    fake_dialog = SimpleNamespace(refresh=Mock(), show_host_models=Mock())
+    paired_controller = SimpleNamespace(
+        remote_engine=SimpleNamespace(client_pairing=lambda: SimpleNamespace(host_name="jed")),
+        _prepare_settings_dialog=Mock(return_value=fake_dialog),
+        _raise_dialog=Mock(),
+    )
+    UIController.open_engine_help_destination(paired_controller, "remote_models")
+    fake_dialog.refresh.assert_called_once()
+    fake_dialog.show_host_models.assert_called_once()
+    paired_controller._raise_dialog.assert_called_once_with(fake_dialog)
