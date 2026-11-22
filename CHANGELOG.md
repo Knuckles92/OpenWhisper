@@ -7,6 +7,16 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.98] - 2026-11-21
+
+### Changed
+
+- **Downloads organizes speech models by engine and includes per-engine runtime settings.** **Settings → Downloads** now groups models under an engine rail with model counts, installed models, and optional components, showing runtime status and model details on demand. Device and Local Whisper quantization preferences previously under **Settings → Runtime** now live directly on each engine's Downloads view, with inline runtime installation and update progress.
+
+### Fixed
+
+- **Remote discovery shuts down cleanly.** Starting and stopping remote host discovery is now serialized against application shutdown to prevent race conditions on exit.
+
 ## [2.8.97] - 2026-11-20
 
 ### Changed
