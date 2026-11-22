@@ -403,7 +403,12 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                    ('meeting_source_combo', 'Runs on', ''),
                    ('meeting_language_combo', 'Spoken language', ''),
                    ('meeting_speaker_id_combo', 'Speaker identification', '')],
- 'runtime': [('device_combo', 'Device', ''), ('compute_combo', 'Quantization', '')],
+ 'downloads': [('engine_device_combo',
+                'Device',
+                'Choose Auto, GPU, or CPU per speech engine. Dictation and Meeting Mode inherit these.'),
+               ('engine_compute_combo',
+                'Quantization',
+                'Precision for Local Whisper (auto, float16, int8). Shared by Dictation and Meeting Mode.')],
  'backup': [('backup_create_tile', 'Back up local data',
              'Save local settings, transcription history, meeting data, and optionally recordings.'),
             ('backup_restore_tile', 'Inspect and restore',
@@ -414,9 +419,7 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
 PAGE_HELP_TEXT = {'voice_model': ['For dictation previews, Nemotron uses native streaming; Parakeet transcribes '
                  'short audio chunks with the loaded model; Local Whisper uses a separate tiny.en '
                  'model. The final transcript uses your selected model. Nemotron and Moonshine '
-                 'provide native live previews in Meeting Mode.'],
- 'runtime': ['Parakeet, Nemotron, Moonshine, and Qwen3-ASR set their device on Dictation → Voice '
-             'model. Downloaded models and optional components are managed in Downloads.']}
+                 'provide native live previews in Meeting Mode.']}
 
 
 def merge_page_module(key: str, module) -> None:

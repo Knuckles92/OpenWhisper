@@ -121,7 +121,6 @@ from ui_qt.dialogs.settings_destinations import (
     OVERVIEW,
     RECORDING,
     REMOTE_ENGINE,
-    RUNTIME,
     SNIPPETS,
     STYLES,
     VOICE_MODEL,
@@ -334,7 +333,6 @@ _CHAPTERS = (
     )),
     ("Models & storage", "download-blue.svg", (
         (DOWNLOADS, "Downloads", "download-blue.svg"),
-        (RUNTIME, "Runtime", "cpu-blue.svg"),
         (BACKUP, "Backup & restore", "box-blue.svg"),
     )),
     ("App", "adjustments-slate.svg", (
@@ -662,6 +660,7 @@ class SettingsDialog(QDialog):
         self.models.downloads_requested.connect(self.show_downloads)
         self.downloads.inventory_changed.connect(self._refresh_rail_values)
         self.downloads.progress_changed.connect(self._refresh_download_progress)
+        self.downloads.runtime_settings_changed.connect(self._on_downloads_runtime_changed)
 
         self.search_palette = SearchPalette(self, self._search_index)
         self.search_palette.activated.connect(self._on_search_activated)
@@ -963,16 +962,9 @@ class SettingsDialog(QDialog):
         self._add_page(
             DOWNLOADS,
             "Downloads",
-            "Speech models and optional components, downloaded on demand.",
+            "Speech models, engine runtimes, and hardware preferences.",
             self._build_downloads_page,
             scroll=False,
-        )
-        self._add_page(
-            RUNTIME,
-            "Runtime",
-            "How local Whisper models run. Dictation and Meeting Mode both "
-            "inherit these.",
-            self.models.build_runtime_page,
         )
         self._add_page(
             BACKUP,
@@ -3035,6 +3027,15 @@ class SettingsDialog(QDialog):
             target = target or getattr(self.remote_section, entry.target_name or "", None)
             if target is not None:
                 self.remote_section.reveal_target(target)
+        elif entry.destination == DOWNLOADS and entry.target_name in (
+            "engine_device_combo",
+            "engine_compute_combo",
+        ):
+            if entry.target_name == "engine_compute_combo":
+                self.downloads.show_backend("local_whisper")
+            elif self.downloads.current_rail_key() in ("all", "installed", "components"):
+                self.downloads.show_backend(self.downloads._default_rail_key())
+            target = getattr(self.downloads, entry.target_name, None)
         elif target is None and entry.target_name:
             name, _, field = entry.target_name.partition(".")
             target = getattr(self, name, None)
@@ -3265,6 +3266,15 @@ class SettingsDialog(QDialog):
     def _refresh_download_progress(self) -> None:
         # Once per percent: nothing but the Downloads caption changes.
         self.rail.set_value(DOWNLOADS, self.downloads.rail_value())
+
+    def _on_downloads_runtime_changed(self) -> None:
+        """Mirror Device / Quantization changes made in Downloads across Settings."""
+        if VOICE_MODEL in self._built_pages:
+            self.models.load_settings(self._settings_snapshot())
+        self.models._refresh_meeting_runtime_label()
+        if self.models.on_runtime_settings_changed:
+            self.models.on_runtime_settings_changed()
+        self._refresh_rail_values()
 
     def _on_agent_looked_up(self, _agent_id: str) -> None:
         # Home and Commands read the agent's readiness without waiting for it.

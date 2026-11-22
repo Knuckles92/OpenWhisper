@@ -13,6 +13,7 @@ catalog width clear when nothing is selected.
 """
 import itertools
 import logging
+import sys
 import threading
 import math
 from dataclasses import dataclass
@@ -29,10 +30,10 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QStyle,
     QVBoxLayout,
     QWidget,
 )
@@ -71,6 +72,7 @@ from ui_qt.widgets.model_row_widget import ModelRowWidget
 
 logger = logging.getLogger(__name__)
 from ui_qt.widgets.wrapped_label import WrappedLabel
+from ui_qt.widgets.engine_field import set_device_choices
 from ui_qt.widgets.speech_backend_picker import (
     backend_picker_label,
     backend_picker_tooltip,
@@ -371,13 +373,17 @@ class DownloadsPage(QWidget):
     """The catalog page Settings hosts under Models & storage."""
 
     #: Width of the left Engine Rail.
-    RAIL_WIDTH = 164
+    RAIL_WIDTH = 172
     #: Width the on-demand slide-over technical profile takes.
     INSPECTOR_WIDTH = 300
+    #: Local Whisper quantization options (shared with Dictation & Meeting Mode).
+    COMPUTE_CHOICES = ("auto", "float16", "int8_float16", "int8", "float32")
 
     component_install_requested = pyqtSignal(str)
     component_cancel_requested = pyqtSignal(str)
     component_remove_requested = pyqtSignal(str)
+    #: Emitted when the user changes an engine's Device or Whisper Quantization.
+    runtime_settings_changed = pyqtSignal()
     #: Cache totals or download progress changed (rail value, Overview).
     inventory_changed = pyqtSignal()
     #: Only :meth:`rail_value` changed: a running download's progress.
@@ -425,7 +431,8 @@ class DownloadsPage(QWidget):
         self._inspector_open = False
         self._active_rail_key = "all"
         self._banner_component_id: Optional[str] = None
-        self._banner_action_installs = False
+        self._banner_action_mode = "manage"  # "manage" | "install" | "cancel"
+        self._component_progress: Dict[str, Tuple[str, int, int]] = {}
 
         self._ui_built = False
         self._inventory = {}
@@ -450,6 +457,16 @@ class DownloadsPage(QWidget):
         'banner_device',
         'banner_runtime_badge',
         'banner_runtime_button',
+        'banner_runtime_box',
+        'banner_runtime_box_title',
+        'banner_runtime_box_note',
+        'banner_runtime_progress',
+        'banner_runtime_box_button',
+        'banner_controls_strip',
+        'engine_device_combo',
+        'engine_compute_label',
+        'engine_compute_combo',
+        'banner_controls_hint',
         'selection_bar',
         'show_all_engines_button',
         'inspector_engine',
@@ -667,7 +684,8 @@ class DownloadsPage(QWidget):
         scroll = QScrollArea()
         scroll.setObjectName("downloadsEngineRailScroll")
         scroll.setWidgetResizable(True)
-        scroll.setMinimumHeight(24)
+        scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        scroll.setMinimumHeight(1)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self.engine_rail_scroll = scroll
@@ -730,16 +748,20 @@ class DownloadsPage(QWidget):
         return rail
 
     def _build_context_banner(self) -> QFrame:
-        """Build the focused engine / runtime banner above the model list."""
+        """Build the focused engine banner with inline runtime install & hardware controls."""
         banner = QFrame()
         banner.setObjectName("downloadsContextBanner")
-        outer = QHBoxLayout(banner)
-        outer.setContentsMargins(12, 7, 12, 7)
-        outer.setSpacing(10)
+        outer = QVBoxLayout(banner)
+        outer.setContentsMargins(12, 6, 12, 6)
+        outer.setSpacing(4)
+
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(10)
 
         left = QVBoxLayout()
         left.setContentsMargins(0, 0, 0, 0)
-        left.setSpacing(2)
+        left.setSpacing(1)
 
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
@@ -765,7 +787,7 @@ class DownloadsPage(QWidget):
         self.banner_subtitle.setObjectName("downloadsBannerSubtitle")
         left.addWidget(self.banner_subtitle)
 
-        outer.addLayout(left, stretch=1)
+        header_row.addLayout(left, stretch=1)
 
         right = QHBoxLayout()
         right.setContentsMargins(0, 0, 0, 0)
@@ -783,7 +805,92 @@ class DownloadsPage(QWidget):
         self.banner_runtime_button.setVisible(False)
         right.addWidget(self.banner_runtime_button, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        outer.addLayout(right)
+        header_row.addLayout(right)
+        outer.addLayout(header_row)
+
+        # Inline runtime callout / progress box: shown only when a runtime is
+        # missing, updating, installing, or optional CUDA is offered.
+        self.banner_runtime_box = QFrame()
+        self.banner_runtime_box.setObjectName("downloadsRuntimeBox")
+        box_row = QHBoxLayout(self.banner_runtime_box)
+        box_row.setContentsMargins(10, 6, 10, 6)
+        box_row.setSpacing(10)
+
+        box_text = QVBoxLayout()
+        box_text.setContentsMargins(0, 0, 0, 0)
+        box_text.setSpacing(2)
+
+        self.banner_runtime_box_title = ElidingLabel("")
+        self.banner_runtime_box_title.setObjectName("downloadsRuntimeBoxTitle")
+        box_text.addWidget(self.banner_runtime_box_title)
+
+        self.banner_runtime_box_note = ElidingLabel("")
+        self.banner_runtime_box_note.setObjectName("downloadsRuntimeBoxNote")
+        box_text.addWidget(self.banner_runtime_box_note)
+
+        self.banner_runtime_progress = QProgressBar()
+        self.banner_runtime_progress.setObjectName("downloadsRuntimeProgress")
+        self.banner_runtime_progress.setTextVisible(False)
+        self.banner_runtime_progress.setFixedHeight(6)
+        self.banner_runtime_progress.setVisible(False)
+        box_text.addWidget(self.banner_runtime_progress)
+
+        box_row.addLayout(box_text, stretch=1)
+
+        self.banner_runtime_box_button = QPushButton("")
+        self.banner_runtime_box_button.setObjectName("downloadsBannerAction")
+        self.banner_runtime_box_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.banner_runtime_box_button.clicked.connect(self._on_banner_runtime_clicked)
+        box_row.addWidget(self.banner_runtime_box_button, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.banner_runtime_box.setVisible(False)
+        outer.addWidget(self.banner_runtime_box)
+
+        # Inline hardware controls strip (Device + Whisper Quantization).
+        self.banner_controls_strip = QFrame()
+        self.banner_controls_strip.setObjectName("downloadsControlsStrip")
+        ctrl_row = QHBoxLayout(self.banner_controls_strip)
+        ctrl_row.setContentsMargins(0, 4, 0, 0)
+        ctrl_row.setSpacing(8)
+
+        dev_lbl = QLabel("Device")
+        dev_lbl.setObjectName("downloadsControlLabel")
+        ctrl_row.addWidget(dev_lbl)
+
+        self.engine_device_combo = ElidingComboBox()
+        self.engine_device_combo.setObjectName("downloadsDeviceCombo")
+        self.engine_device_combo.setMinimumWidth(80)
+        self.engine_device_combo.setFixedHeight(26)
+        self.engine_device_combo.setToolTip(
+            "Hardware preference for this engine (shared with Dictation and Meeting Mode)"
+        )
+        self.engine_device_combo.currentIndexChanged.connect(self._on_engine_runtime_changed)
+        ctrl_row.addWidget(self.engine_device_combo)
+
+        self.engine_compute_label = QLabel("Quantization")
+        self.engine_compute_label.setObjectName("downloadsControlLabel")
+        ctrl_row.addWidget(self.engine_compute_label)
+
+        self.engine_compute_combo = ElidingComboBox()
+        self.engine_compute_combo.setObjectName("downloadsComputeCombo")
+        self.engine_compute_combo.addItems(self.COMPUTE_CHOICES)
+        self.engine_compute_combo.setMinimumWidth(84)
+        self.engine_compute_combo.setFixedHeight(26)
+        self.engine_compute_combo.setToolTip(
+            "Local Whisper compute precision (shared with Dictation and Meeting Mode)"
+        )
+        self.engine_compute_combo.currentTextChanged.connect(self._on_engine_runtime_changed)
+        ctrl_row.addWidget(self.engine_compute_combo)
+
+        self.banner_controls_hint = ElidingLabel("Shared with Dictation & Meetings")
+        self.banner_controls_hint.setObjectName("downloadsControlHint")
+        self.banner_controls_hint.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        ctrl_row.addWidget(self.banner_controls_hint, stretch=1)
+
+        self.banner_controls_strip.setVisible(False)
+        outer.addWidget(self.banner_controls_strip)
         return banner
 
     def add_policy_control(self, label: str, control: QWidget) -> None:
@@ -882,9 +989,13 @@ class DownloadsPage(QWidget):
         self.library_scroll_area = QScrollArea()
         self.library_scroll_area.setObjectName("modelManagerLibraryScroll")
         self.library_scroll_area.setWidgetResizable(True)
-        # Low floor: at Settings' smallest size the banner, filters, and rail
-        # fit comfortably while the list scrolls smoothly.
-        self.library_scroll_area.setMinimumHeight(24)
+        # 1 px minimum height keeps the page within Settings' 520 px floor
+        # even when a missing-runtime callout is shown, while Expanding keeps a
+        # generous default sizeHint when opened standalone.
+        self.library_scroll_area.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self.library_scroll_area.setMinimumHeight(1)
         self.library_scroll_area.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
@@ -1047,14 +1158,93 @@ class DownloadsPage(QWidget):
             return None
         return comp_id if component_is_published(comp_id) else None
 
+    def _sync_banner_hardware_controls(self, backend_id: str) -> None:
+        """Populate the inline Device / Quantization combos for ``backend_id``."""
+        from services.local_asr.catalog import WHISPER_BACKEND, selected_device
+
+        settings = self._settings_snapshot()
+        is_whisper = backend_id == WHISPER_BACKEND
+        if is_whisper:
+            choices = ["auto", "cpu"] if sys.platform == "darwin" else ["auto", "cuda", "cpu"]
+            current_device = str(SettingsKey.WHISPER_DEVICE.read(settings) or "auto")
+        elif backend_id == "moonshine":
+            choices = ["cpu"]
+            current_device = "cpu"
+        elif backend_id == "parakeet_mlx":
+            choices = ["auto", "cpu"]
+            current_device = selected_device(backend_id, settings)
+        else:
+            choices = ["auto", "cuda", "cpu"]
+            current_device = selected_device(backend_id, settings)
+
+        dev_blocker = self.engine_device_combo.blockSignals(True)
+        set_device_choices(self.engine_device_combo, choices)
+        idx = self.engine_device_combo.findData(current_device)
+        self.engine_device_combo.setCurrentIndex(max(0, idx))
+        self.engine_device_combo.setEnabled(len(choices) > 1)
+        self.engine_device_combo.setToolTip(
+            "Moonshine runs on CPU only"
+            if backend_id == "moonshine"
+            else "Hardware preference for this engine (shared with Dictation and Meeting Mode)"
+        )
+        self.engine_device_combo.blockSignals(dev_blocker)
+
+        self.engine_compute_label.setVisible(is_whisper)
+        self.engine_compute_combo.setVisible(is_whisper)
+        if is_whisper:
+            compute = str(SettingsKey.WHISPER_COMPUTE_TYPE.read(settings) or "auto")
+            comp_blocker = self.engine_compute_combo.blockSignals(True)
+            if self.engine_compute_combo.findText(compute) < 0:
+                self.engine_compute_combo.addItem(compute)
+            self.engine_compute_combo.setCurrentText(compute)
+            self.engine_compute_combo.blockSignals(comp_blocker)
+
+        self.banner_controls_strip.setVisible(True)
+
+    def _on_engine_runtime_changed(self, _value=None) -> None:
+        """Persist inline Device / Quantization edits and refresh runtime status."""
+        from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND
+
+        backend_id = self._active_rail_key
+        if backend_id == WHISPER_BACKEND:
+            device = self.engine_device_combo.currentData() or "auto"
+            compute = self.engine_compute_combo.currentText() or "auto"
+            try:
+                settings_manager.update_settings({
+                    SettingsKey.WHISPER_DEVICE: device,
+                    SettingsKey.WHISPER_COMPUTE_TYPE: compute,
+                })
+            except Exception as exc:
+                logger.error("Couldn't save Whisper runtime settings: %s", exc, exc_info=True)
+                self.message_label.setText(f"Couldn't save device or quantization: {exc}")
+                return
+        elif backend_id in BACKENDS:
+            device = self.engine_device_combo.currentData() or "auto"
+            try:
+                settings = self._settings_snapshot()
+                devices = dict(SettingsKey.LOCAL_ASR_DEVICES.read(settings))
+                devices[backend_id] = device
+                settings_manager.save_setting(SettingsKey.LOCAL_ASR_DEVICES, devices)
+            except Exception as exc:
+                logger.error("Couldn't save %s device preference: %s", backend_id, exc, exc_info=True)
+                self.message_label.setText(f"Couldn't save device preference: {exc}")
+                return
+        else:
+            return
+        self._update_context_banner()
+        self.runtime_settings_changed.emit()
+
     def _update_context_banner(self) -> None:
         from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND
 
         key = self._active_rail_key
         self._banner_component_id = None
-        self._banner_action_installs = False
+        self._banner_action_mode = "manage"
         self.banner_runtime_badge.setVisible(False)
         self.banner_runtime_button.setVisible(False)
+        self.banner_runtime_box.setVisible(False)
+        self.banner_runtime_progress.setVisible(False)
+        self.banner_controls_strip.setVisible(False)
         self.banner_device.setVisible(False)
         self.banner_dot.setVisible(False)
 
@@ -1099,9 +1289,8 @@ class DownloadsPage(QWidget):
         )
         self.banner_dot.setVisible(True)
         self.banner_title.setText(display_name)
-        self.banner_device.setText(meta.device)
-        self.banner_device.setVisible(True)
         self.banner_subtitle.setText(meta.tagline)
+        self._sync_banner_hardware_controls(key)
 
         comp_id = self._runtime_for_backend(key)
         if not comp_id or comp_id not in self._component_rows:
@@ -1112,44 +1301,106 @@ class DownloadsPage(QWidget):
             return
 
         info = component_coordinator.describe(comp_id)
+        installing = component_coordinator.is_installing(comp_id) or (
+            comp_id in self._component_progress
+        )
         self._banner_component_id = comp_id
         short_name = info.display_name.replace(" runtime", "")
+        size_hint = f" (~{format_size_bytes(info.download_bytes)})" if info.download_bytes else ""
+
+        if installing:
+            self._banner_action_mode = "cancel"
+            phase, done, total = self._component_progress.get(comp_id, ("Installing", 0, 0))
+            if total > 0:
+                pct = min(100, int(done * 100 / total))
+                self.banner_runtime_box_title.setText(
+                    f"{phase} {info.display_name}… {format_size_bytes(done)} of {format_size_bytes(total)} ({pct}%)"
+                )
+                self.banner_runtime_progress.setRange(0, 100)
+                self.banner_runtime_progress.setValue(pct)
+            else:
+                self.banner_runtime_box_title.setText(f"{phase} {info.display_name}…")
+                self.banner_runtime_progress.setRange(0, 0)
+            self.banner_runtime_box_note.setText(
+                "Verifying and extracting in the background. Recording stays available."
+            )
+            self.banner_runtime_progress.setVisible(True)
+            self.banner_runtime_box_button.setText("Cancel")
+            set_style_property(self.banner_runtime_box_button, "tone", "")
+            set_style_property(self.banner_runtime_box, "tone", "downloading")
+            self.banner_runtime_box.setVisible(True)
+            repolish(self.banner_runtime_box_button)
+            return
+
         if info.state == ComponentState.UPDATE_AVAILABLE:
-            self.banner_runtime_badge.setText(f"{short_name} · Update")
-            set_style_property(self.banner_runtime_badge, "tone", "update")
-            self.banner_runtime_button.setText("Update")
-            set_style_property(self.banner_runtime_button, "tone", "primary")
-            self._banner_action_installs = False
-        elif info.is_usable:
+            self._banner_action_mode = "install"
+            self.banner_runtime_box_title.setText(
+                f"Update available for {info.display_name}{size_hint}"
+            )
+            self.banner_runtime_box_note.setText(
+                "Your installed runtime keeps working until the verified update finishes."
+            )
+            self.banner_runtime_box_button.setText("Update runtime")
+            set_style_property(self.banner_runtime_box_button, "tone", "primary")
+            set_style_property(self.banner_runtime_box, "tone", "update")
+            self.banner_runtime_box.setVisible(True)
+            repolish(self.banner_runtime_box_button)
+            return
+
+        if info.is_usable:
+            self._banner_action_mode = "manage"
             self.banner_runtime_badge.setText(f"{short_name} · Ready")
             set_style_property(self.banner_runtime_badge, "tone", "ready")
             self.banner_runtime_button.setText("Manage")
             set_style_property(self.banner_runtime_button, "tone", "")
-            self._banner_action_installs = False
-        elif key == WHISPER_BACKEND:
-            self.banner_runtime_badge.setText("CPU ready · CUDA optional")
-            set_style_property(self.banner_runtime_badge, "tone", "neutral")
-            self.banner_runtime_button.setText("Install CUDA")
-            set_style_property(self.banner_runtime_button, "tone", "")
-            self._banner_action_installs = True
-        else:
-            self.banner_runtime_badge.setText(f"{short_name} · Required")
-            set_style_property(self.banner_runtime_badge, "tone", "missing")
-            self.banner_runtime_button.setText("Install runtime")
-            set_style_property(self.banner_runtime_button, "tone", "primary")
-            self._banner_action_installs = True
+            self.banner_runtime_badge.setVisible(True)
+            self.banner_runtime_button.setVisible(True)
+            repolish(self.banner_runtime_button)
+            return
 
-        self.banner_runtime_badge.setVisible(True)
-        self.banner_runtime_button.setVisible(True)
-        repolish(self.banner_runtime_button)
+        if key == WHISPER_BACKEND:
+            if self.engine_device_combo.currentData() == "cpu":
+                self.banner_runtime_badge.setText("Built-in · CPU")
+                set_style_property(self.banner_runtime_badge, "tone", "ready")
+                self.banner_runtime_badge.setVisible(True)
+                return
+            self._banner_action_mode = "install"
+            self.banner_runtime_box_title.setText(
+                f"Optional NVIDIA CUDA acceleration{size_hint}"
+            )
+            self.banner_runtime_box_note.setText(
+                "Whisper runs on CPU now. Install GPU Acceleration for 2–4× faster NVIDIA transcription."
+            )
+            self.banner_runtime_box_button.setText("Install CUDA")
+            set_style_property(self.banner_runtime_box_button, "tone", "")
+            set_style_property(self.banner_runtime_box, "tone", "optional")
+            self.banner_runtime_box.setVisible(True)
+            repolish(self.banner_runtime_box_button)
+            return
+
+        self._banner_action_mode = "install"
+        self.banner_runtime_box_title.setText(
+            f"{info.display_name} required{size_hint}"
+        )
+        self.banner_runtime_box_note.setText(
+            "Install this runtime so models in this engine can run on your selected device."
+        )
+        self.banner_runtime_box_button.setText("Install runtime")
+        set_style_property(self.banner_runtime_box_button, "tone", "primary")
+        set_style_property(self.banner_runtime_box, "tone", "missing")
+        self.banner_runtime_box.setVisible(True)
+        repolish(self.banner_runtime_box_button)
 
     def _on_banner_runtime_clicked(self) -> None:
         comp_id = self._banner_component_id
         if not comp_id:
             return
-        if self._banner_action_installs:
-            self.focus_component(comp_id)
+        if self._banner_action_mode == "install":
+            self._component_progress[comp_id] = ("Starting", 0, 0)
+            self._update_context_banner()
             self.component_install_requested.emit(comp_id)
+        elif self._banner_action_mode == "cancel":
+            self.component_cancel_requested.emit(comp_id)
         else:
             self.focus_component(comp_id)
 
@@ -2065,13 +2316,17 @@ class DownloadsPage(QWidget):
     def set_component_progress(
         self, component_id: str, phase: str, done: int, total: int
     ) -> None:
+        self._component_progress[component_id] = (phase, done, total)
         row = self._component_rows.get(component_id)
         if row is not None:
             row.set_progress(phase, done, total)
+        if self._ui_built and component_id == self._banner_component_id:
+            self._update_context_banner()
 
     def finish_component_install(
         self, component_id: str, success: bool, message: str
     ) -> None:
+        self._component_progress.pop(component_id, None)
         self.refresh_components()
         if message:
             self.message_label.setText(message)

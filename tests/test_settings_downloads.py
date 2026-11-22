@@ -1292,6 +1292,87 @@ class TestSectionRail(_DialogTestCase):
         assert dialog.models_section.isVisible()
 
 
+class TestInlineRuntimeControls(_DialogTestCase):
+    """Per-engine Device/Quantization controls and inline runtime install states."""
+
+    def test_whisper_device_and_quantization_persist_and_emit(self):
+        dialog, values = self._make_dialog()
+        dialog.select_rail("local_whisper")
+        changed = []
+        dialog.runtime_settings_changed.connect(lambda: changed.append(True))
+
+        assert dialog.banner_controls_strip.isVisibleTo(dialog)
+        assert dialog.engine_compute_combo.isVisibleTo(dialog)
+        dialog.engine_compute_combo.setCurrentText("int8")
+        assert values[SettingsKey.WHISPER_COMPUTE_TYPE] == "int8"
+
+        dialog.engine_device_combo.setCurrentIndex(dialog.engine_device_combo.findData("cpu"))
+        assert values[SettingsKey.WHISPER_DEVICE] == "cpu"
+        assert len(changed) == 2
+
+    def test_optional_engine_device_persists_and_moonshine_is_cpu_only(self):
+        dialog, values = self._make_dialog()
+        dialog.select_rail("parakeet")
+        assert dialog.banner_controls_strip.isVisibleTo(dialog)
+        assert not dialog.engine_compute_combo.isVisibleTo(dialog)
+
+        dialog.engine_device_combo.setCurrentIndex(dialog.engine_device_combo.findData("cpu"))
+        assert values[SettingsKey.LOCAL_ASR_DEVICES]["parakeet"] == "cpu"
+
+        dialog.select_rail("moonshine")
+        assert dialog.engine_device_combo.currentData() == "cpu"
+        assert not dialog.engine_device_combo.isEnabled()
+
+        dialog.select_rail("all")
+        assert not dialog.banner_controls_strip.isVisibleTo(dialog)
+
+    def test_missing_runtime_box_installs_tracks_progress_and_finishes(self):
+        dialog, _values = self._make_dialog()
+        if "asr-nvidia-cpu" not in dialog._component_rows:
+            pytest.skip("NVIDIA CPU runtime not published on this platform")
+        dialog.select_rail("parakeet")
+        dialog.engine_device_combo.setCurrentIndex(dialog.engine_device_combo.findData("cpu"))
+
+        missing = ComponentInfo(
+            "asr-nvidia-cpu", "NVIDIA Speech CPU", "CPU runtime",
+            ComponentState.NOT_INSTALLED, None, "1", 180_000_000, 300_000_000,
+        )
+        installed_calls = []
+        cancel_calls = []
+        dialog.component_install_requested.connect(installed_calls.append)
+        dialog.component_cancel_requested.connect(cancel_calls.append)
+
+        with patch.object(component_coordinator, "describe", return_value=missing), \
+                patch.object(component_coordinator, "is_installing", return_value=False):
+            dialog.refresh_components()
+            assert dialog.banner_runtime_box.isVisibleTo(dialog)
+            assert dialog.banner_runtime_box_button.text() == "Install runtime"
+            assert "required" in dialog.banner_runtime_box_title.text()
+
+            dialog.banner_runtime_box_button.click()
+            assert installed_calls == ["asr-nvidia-cpu"]
+            assert dialog.banner_runtime_progress.isVisibleTo(dialog)
+            assert dialog.banner_runtime_box_button.text() == "Cancel"
+
+            dialog.set_component_progress("asr-nvidia-cpu", "Downloading", 90_000_000, 180_000_000)
+            assert dialog.banner_runtime_progress.value() == 50
+            assert "50%" in dialog.banner_runtime_box_title.text()
+
+            dialog.banner_runtime_box_button.click()
+            assert cancel_calls == ["asr-nvidia-cpu"]
+
+        ready = ComponentInfo(
+            "asr-nvidia-cpu", "NVIDIA Speech CPU", "CPU runtime",
+            ComponentState.INSTALLED, "1", "1", 180_000_000, 300_000_000,
+        )
+        with patch.object(component_coordinator, "describe", return_value=ready), \
+                patch.object(component_coordinator, "is_installing", return_value=False):
+            dialog.finish_component_install("asr-nvidia-cpu", True, "Installed")
+            assert not dialog.banner_runtime_box.isVisibleTo(dialog)
+            assert dialog.banner_runtime_badge.isVisibleTo(dialog)
+            assert "Ready" in dialog.banner_runtime_badge.text()
+
+
 @pytest.mark.parametrize("parented", [False, True])
 def test_a_page_closed_mid_scan_is_not_held_by_the_worker(parented):
     # The worker used to emit on the page from its own thread, which raced

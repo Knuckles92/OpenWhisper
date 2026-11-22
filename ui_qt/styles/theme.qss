@@ -991,6 +991,80 @@ QPushButton#downloadsBannerAction[tone="primary"]:hover {
     border-color: @accent-hover;
 }
 
+QFrame#downloadsRuntimeBox {
+    background-color: @slate-field;
+    border: 1px solid @slate-border;
+    border-radius: 8px;
+}
+
+QFrame#downloadsRuntimeBox[tone="missing"],
+QFrame#downloadsRuntimeBox[tone="update"] {
+    background-color: @warning-tint;
+    border: 1px solid @warning-tint-border;
+}
+
+QFrame#downloadsRuntimeBox[tone="downloading"] {
+    background-color: @accent-tint;
+    border: 1px solid @accent-tint-border;
+}
+
+QLabel#downloadsRuntimeBoxTitle {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLabel#downloadsRuntimeBoxNote {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 10px;
+}
+
+QProgressBar#downloadsRuntimeProgress {
+    background-color: @slate-raised;
+    border: none;
+    border-radius: 3px;
+}
+
+QProgressBar#downloadsRuntimeProgress::chunk {
+    background-color: @accent;
+    border-radius: 3px;
+}
+
+QFrame#downloadsControlsStrip {
+    background-color: transparent;
+    border: none;
+    border-top: 1px solid @slate-border-subtle;
+}
+
+QLabel#downloadsControlLabel {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+QLabel#downloadsControlHint {
+    color: @slate-text-4;
+    background-color: transparent;
+    border: none;
+    font-size: 10px;
+}
+
+QComboBox#downloadsDeviceCombo,
+QComboBox#downloadsComputeCombo {
+    color: @slate-text;
+    background-color: @slate-field;
+    border: 1px solid @slate-border-strong;
+    border-radius: 6px;
+    font-size: 11px;
+    padding: 2px 24px 2px 8px;
+}
+
 QLabel#downloadsInspectorEngine {
     border-radius: 6px;
     padding: 2px 8px;

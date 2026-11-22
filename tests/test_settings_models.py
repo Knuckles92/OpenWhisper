@@ -1264,7 +1264,7 @@ class TestSharedRuntime(_DialogTestCase):
     def test_meeting_voice_names_the_shared_runtime_destination(self):
         dialog, _values = self._make_dialog(
             extra_settings={SettingsKey.MEETING_SPEECH_SEPARATE: True})
-        assert "Models & storage → Runtime" in dialog.meeting_runtime_label.text()
+        assert "Models & storage → Downloads" in dialog.meeting_runtime_label.text()
         assert "Auto · auto" in dialog.meeting_runtime_label.text()
 
 

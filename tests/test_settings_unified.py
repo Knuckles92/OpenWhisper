@@ -53,7 +53,6 @@ from ui_qt.dialogs.settings_destinations import (
     OVERVIEW,
     RECORDING,
     REMOTE_ENGINE,
-    RUNTIME,
     VOICE_MODEL,
     resolve_destination,
 )
@@ -342,7 +341,7 @@ class TestRouting:
         ("ondemand", VOICE_MODEL),
         ("text", CLEANUP),
         ("meeting", MEETING_VOICE),
-        ("runtime", RUNTIME),
+        ("runtime", DOWNLOADS),
         ("downloads", DOWNLOADS),
         ("library", DOWNLOADS),
         ("voice", DOWNLOADS),
@@ -612,8 +611,8 @@ class TestChapters:
             assert checked == ["Hooks"]
             headings = [action for action in menu.actions() if action.text() in dialog.rail.chapters()]
             assert headings and not any(action.isEnabled() for action in headings)
-            next(action for action in menu.actions() if action.text() == "Runtime").trigger()
-            assert dialog.rail.current_key() == RUNTIME
+            next(action for action in menu.actions() if action.text() == "Downloads").trigger()
+            assert dialog.rail.current_key() == DOWNLOADS
         finally:
             menu.close()
 
