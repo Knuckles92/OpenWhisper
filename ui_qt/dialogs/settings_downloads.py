@@ -19,7 +19,7 @@ import math
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import QObject, QPoint, QRect, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import QObject, QPoint, QRect, QSize, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QDialog,
@@ -253,6 +253,19 @@ class _RowContext:
     slot_busy: bool
     selection_locked: bool
     queued_names: Set[str]
+
+
+class _CompactScrollArea(QScrollArea):
+    """Scroll area whose minimumSizeHint yields to short host windows.
+
+    QScrollArea.minimumSizeHint() defaults to 70x70 regardless of
+    setMinimumHeight(1), which pushes DownloadsPage past Settings' 520 px
+    minimum height when an engine's runtime callout and hardware strip are
+    both visible.
+    """
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, 1)
 
 
 class BatchDownloadDialog(QDialog):
@@ -681,7 +694,7 @@ class DownloadsPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        scroll = QScrollArea()
+        scroll = _CompactScrollArea()
         scroll.setObjectName("downloadsEngineRailScroll")
         scroll.setWidgetResizable(True)
         scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -902,15 +915,12 @@ class DownloadsPage(QWidget):
         self.policy_row.addStretch()
 
     def _build_catalog_column(self) -> QWidget:
-        """Stack the context banner, compact filters, batch bar, and rows."""
+        """Stack the compact filters, batch bar, and scrollable banner + rows."""
         column = QWidget()
         column.setObjectName("downloadsCatalogColumn")
         column_layout = QVBoxLayout(column)
         column_layout.setContentsMargins(0, 0, 0, 0)
         column_layout.setSpacing(5)
-
-        self.context_banner = self._build_context_banner()
-        column_layout.addWidget(self.context_banner)
 
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
@@ -986,7 +996,7 @@ class DownloadsPage(QWidget):
         return bar
 
     def _build_list(self) -> QWidget:
-        self.library_scroll_area = QScrollArea()
+        self.library_scroll_area = _CompactScrollArea()
         self.library_scroll_area.setObjectName("modelManagerLibraryScroll")
         self.library_scroll_area.setWidgetResizable(True)
         # 1 px minimum height keeps the page within Settings' 520 px floor
@@ -1006,6 +1016,9 @@ class DownloadsPage(QWidget):
         self.list_layout = QVBoxLayout(list_container)
         self.list_layout.setContentsMargins(0, 0, 0, 0)
         self.list_layout.setSpacing(6)
+
+        self.context_banner = self._build_context_banner()
+        self.list_layout.addWidget(self.context_banner)
 
         self.rows: Dict[str, ModelRowWidget] = {}
         from services.local_asr.catalog import MODELS
@@ -1111,6 +1124,7 @@ class DownloadsPage(QWidget):
             self._update_context_banner()
             self._apply_filter()
             self._update_selection_bar()
+            self.library_scroll_area.verticalScrollBar().setValue(0)
 
     def _refresh_rail_counts(self) -> None:
         if not self._ui_built:
@@ -1588,7 +1602,7 @@ class DownloadsPage(QWidget):
 
     def _build_components_section(self) -> QScrollArea:
         """The optional components, on their own rail view with room to breathe."""
-        scroll = QScrollArea()
+        scroll = _CompactScrollArea()
         scroll.setObjectName("downloadsComponentsScroll")
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
