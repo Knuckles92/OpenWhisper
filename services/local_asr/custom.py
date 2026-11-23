@@ -123,6 +123,100 @@ def size_bytes(model: SpeechModel) -> int:
     return sum(item.stat().st_size for item in path.iterdir() if item.is_file())
 
 
+@dataclass(frozen=True)
+class RuntimeFormatOption:
+    """One user-facing runtime/file format in the Add Custom Model dialog."""
+
+    id: str
+    label: str
+    hint: str
+    default_backend: str
+    gguf: bool
+    alt_backend: str = ""
+    toggle_label: str = ""
+    toggle_hint: str = ""
+    toggle_default: bool = False
+    #: True when the dialog's checkbox enables ``default_backend`` (otherwise ``alt_backend``).
+    toggle_selects_default: bool = False
+
+
+def runtime_format_options() -> list[RuntimeFormatOption]:
+    """Deduplicated runtime formats available on this computer for custom models."""
+    available = set(addable_backends())
+    options: list[RuntimeFormatOption] = []
+    if "parakeet_unified" in available or ("qwen_asr" in available and model_format("qwen_asr").gguf):
+        has_both = "qwen_asr" in available and "parakeet_unified" in available
+        options.append(RuntimeFormatOption(
+            id="transcribe_gguf",
+            label="transcribe.cpp GGUF",
+            hint="Parakeet Unified, Qwen3-ASR, Fourier 2B (.gguf)",
+            default_backend="qwen_asr" if "qwen_asr" in available else "parakeet_unified",
+            alt_backend="parakeet_unified" if has_both else "",
+            gguf=True,
+            toggle_label="Speech-gated decoding (Silero VAD)" if has_both else "",
+            toggle_hint=(
+                "Recommended for Qwen3-ASR and Fourier GGUFs to prevent hallucinations during silence."
+                if has_both else ""
+            ),
+            toggle_default=True,
+            toggle_selects_default=True,
+        ))
+    if "parakeet_mlx" in available:
+        options.append(RuntimeFormatOption(
+            id="mlx_safetensors",
+            label="Parakeet MLX (Safetensors)",
+            hint="MLX Safetensors model folder for Apple GPU",
+            default_backend="parakeet_mlx",
+            gguf=False,
+        ))
+    if "parakeet" in available or "nemotron" in available:
+        has_both = "parakeet" in available and "nemotron" in available
+        options.append(RuntimeFormatOption(
+            id="nemo_gguf",
+            label="NeMo-Speech GGUF",
+            hint="Parakeet v3, Orukeet, Nemotron (.gguf)",
+            default_backend="parakeet" if "parakeet" in available else "nemotron",
+            alt_backend="nemotron" if has_both else "",
+            gguf=True,
+            toggle_label="Cache-aware live streaming (Nemotron)" if has_both else "",
+            toggle_hint=(
+                "Enable for streaming Nemotron GGUFs; leave off for offline Parakeet / Orukeet models."
+                if has_both else ""
+            ),
+            toggle_default=False,
+            toggle_selects_default=False,
+        ))
+    if "qwen_asr" in available and not model_format("qwen_asr").gguf:
+        options.append(RuntimeFormatOption(
+            id="qwen_safetensors",
+            label="Qwen3-ASR (Safetensors)",
+            hint="PyTorch Safetensors folder (Apple GPU / CPU)",
+            default_backend="qwen_asr",
+            gguf=False,
+        ))
+    if "moonshine" in available:
+        options.append(RuntimeFormatOption(
+            id="moonshine_ort",
+            label="Moonshine ORT",
+            hint="Quantized .ort model folder (Small or Medium)",
+            default_backend="moonshine",
+            gguf=False,
+        ))
+    return options
+
+
+def runtime_format_for_backend(backend: str) -> tuple[RuntimeFormatOption | None, bool]:
+    """Return ``(option, toggle_checked)`` matching ``backend`` on this computer."""
+    for option in runtime_format_options():
+        if option.default_backend == backend:
+            checked = option.toggle_selects_default if option.toggle_label else False
+            return option, checked
+        if option.alt_backend == backend:
+            checked = (not option.toggle_selects_default) if option.toggle_label else False
+            return option, checked
+    return None, False
+
+
 def _model(entry) -> SpeechModel:
     key, backend, path = entry["key"], entry["backend"], entry["path"]
     if not (isinstance(key, str) and key.startswith(CUSTOM_PREFIX) and backend in BACKENDS
@@ -133,10 +227,12 @@ def _model(entry) -> SpeechModel:
         raise ValueError("A Moonshine model needs its size")
     label = entry.get("label")
     base = BUILTIN_MODELS[DEFAULT_MODELS[backend]]
+    vad_gate = entry["vad_gate"] if isinstance(entry.get("vad_gate"), bool) else base.vad_gate
     return replace(
         base, key=key, label=label if isinstance(label, str) and label.strip() else Path(path).stem,
         purpose="A model you added", license="See the model's card", arch=arch,
-        languages="Languages depend on the model",
+        languages="Languages depend on the model", language_codes=(),
+        platforms=(), vad_gate=vad_gate,
         custom=True, path=path,
     )
 
@@ -183,7 +279,14 @@ def _new_key(label: str, taken) -> str:
     return key
 
 
-def register(backend: str, path: str | Path, label: str = "", arch: str = "") -> str:
+def register(
+    backend: str,
+    path: str | Path,
+    label: str = "",
+    arch: str = "",
+    *,
+    vad_gate: bool | None = None,
+) -> str:
     """Add a model for ``backend`` from ``path`` and return its key.
 
     The same file or folder added again for the same engine keeps its key,
@@ -206,6 +309,8 @@ def register(backend: str, path: str | Path, label: str = "", arch: str = "") ->
         entry = {"key": key, "backend": backend, "label": label, "path": source}
         if backend == "moonshine":
             entry["arch"] = arch
+        if vad_gate is not None:
+            entry["vad_gate"] = bool(vad_gate)
         values[SettingsKey.CUSTOM_SPEECH_MODELS] = (
             [entry if item is existing else item for item in entries] if existing
             else [*entries, entry])

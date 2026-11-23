@@ -318,11 +318,13 @@ class StreamingRuntime(QObject):
 
     @staticmethod
     def _shares_preview_decoder(backend) -> bool:
+        from services.local_asr.catalog import model_supports
         from transcriber.optional_backend import LocalSpeechBackend
 
         return (
             isinstance(backend, LocalSpeechBackend)
             and backend.backend_id in config.STREAMING_PREVIEW_BACKENDS
+            and model_supports(getattr(backend, "model_name", None), backend.backend_id, "preview")
         )
 
     @staticmethod
@@ -334,7 +336,7 @@ class StreamingRuntime(QObject):
         model = MODELS.get(getattr(backend, "model_name", None))  # type: ignore[arg-type]
         return (
             backend.backend_id in config.STREAMING_NATIVE_PREVIEW_BACKENDS
-            and bool(model and model.streaming)
+            and bool(model and model.streaming and model.native_stream_preview)
         )
 
     def _load_dedicated_preview_backend(self):

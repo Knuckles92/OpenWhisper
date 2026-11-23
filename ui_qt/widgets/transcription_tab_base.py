@@ -41,10 +41,12 @@ from ui_qt.widgets.local_engine_controls import LocalEngineControls
 from ui_qt.widgets.remote_link import RemoteLinkGlyph
 from ui_qt.widgets.remote_engine_controls import RemoteEngineControls
 from ui_qt.widgets.remote_model_notice import RemoteModelNotice
+from ui_qt.widgets.segmented_bar import SegmentedBar
 from ui_qt.widgets.speech_server_controls import SpeechServerControls
 from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.speech_backend_picker import (
     backend_display_name,
+    ensure_backend_item,
     populate_backend_combo,
 )
 
@@ -156,6 +158,11 @@ class TranscriptionTabBase(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_model = config.MODEL_CHOICES[0]
+        self._last_local_backend = (
+            config.DEFAULT_BACKEND
+            if config.DEFAULT_BACKEND not in ("api", "remote")
+            else "local_whisper"
+        )
         self._fixed_text = ""
         self._raw_text: Optional[str] = None
         self._showing_raw = False
@@ -235,24 +242,36 @@ class TranscriptionTabBase(QWidget):
         self.scroll_area.setWidget(scroll_host)
         main_layout.addWidget(self.scroll_area)
 
-        # Engine card: four labeled fields across the full width, then a footer
-        # line carrying the resolved engine and the two controls that apply to
-        # every backend. A QFrame rather than Card because a plain QWidget will
-        # not paint a QSS surface.
+        # Engine card: 3-way source selector (Local / Cloud API / Remote computer),
+        # one clean row of fields for the active source, then a footer carrying
+        # status, runtime badge, AI cleanup and Live preview.
         self.engine_card = QFrame()
         self.engine_card.setObjectName("engineCard")
         engine_layout = QVBoxLayout(self.engine_card)
         engine_layout.setContentsMargins(14, 12, 14, 12)
         engine_layout.setSpacing(10)
 
+        self.source_bar = SegmentedBar(
+            (("Local", ""), ("Cloud API", ""), ("Remote computer", "")),
+            compact=True,
+        )
+        self.source_bar.setAccessibleName("Where transcription runs")
+        engine_layout.addWidget(self.source_bar)
+
+        # Kept hidden and synced so controller/test helpers targeting model_combo
+        # keep working while users interact with source_bar + unified local model picker.
         self.model_combo = engine_combo((), primary=True)
-        populate_backend_combo(self.model_combo)
+        populate_backend_combo(self.model_combo, include_unsupported=True)
         self.model_combo.setCurrentIndex(
             self.model_combo.findData(config.MODEL_VALUE_MAP[self.current_model])
         )
-        self._apply_backend_status(EngineStatus.UNKNOWN)
+        self.model_combo.setParent(self.engine_card)
+        self.model_combo.hide()
 
-        self.local_engine = LocalEngineControls(dictation=self.DICTATION_LANGUAGES)
+        self.local_engine = LocalEngineControls(
+            dictation=self.DICTATION_LANGUAGES, unified=True,
+        )
+        self._apply_backend_status(EngineStatus.UNKNOWN)
         # The API backend's server and its model.
         self.api_server = SpeechServerControls()
         self.api_server.hide()
@@ -274,15 +293,10 @@ class TranscriptionTabBase(QWidget):
         self._field_row = QHBoxLayout()
         self._field_row.setContentsMargins(0, 0, 0, 0)
         self._field_row.setSpacing(10)
-        self._field_row.addWidget(engine_field(
-            "Backend", self.model_combo,
-            _BACKEND_HELP,
-            [("Open Settings → Voice model", "ondemand")], self.help_requested.emit,
-        ), stretch=2)
-        self._field_row.addWidget(self.local_engine, stretch=4)
-        self._field_row.addWidget(self.api_server, stretch=4)
-        self._field_row.addWidget(self.remote_model_field, stretch=2)
-        self._field_row.addWidget(self.remote_engine, stretch=2)
+        self._field_row.addWidget(self.local_engine, stretch=6)
+        self._field_row.addWidget(self.api_server, stretch=6)
+        self._field_row.addWidget(self.remote_model_field, stretch=3)
+        self._field_row.addWidget(self.remote_engine, stretch=3)
         engine_layout.addLayout(self._field_row)
 
         self.remote_runtime_label = WrappedLabel("")
@@ -310,6 +324,10 @@ class TranscriptionTabBase(QWidget):
         self.resolved_label.setObjectName("engineResolvedLabel")
         self.resolved_label.downloads_requested.connect(self.engine_downloads_requested)
 
+        self.runtime_badge = QLabel("")
+        self.runtime_badge.setObjectName("engineRuntimeBadge")
+        self.runtime_badge.hide()
+
         self.cleanup_check = QCheckBox("AI cleanup")
         self.cleanup_check.setObjectName("engineCleanupCheck")
         self.cleanup_check.setToolTip(
@@ -331,6 +349,7 @@ class TranscriptionTabBase(QWidget):
         footer_row.addWidget(self.status_dot)
         footer_row.addWidget(self.link_glyph)
         footer_row.addWidget(self.resolved_label, stretch=1)
+        footer_row.addWidget(self.runtime_badge)
         footer_row.addWidget(self.remote_manage_button)
         footer_row.addSpacing(6)
         footer_row.addWidget(self.cleanup_check)
@@ -435,13 +454,15 @@ class TranscriptionTabBase(QWidget):
 
     def _connect_signals(self):
         engine_selection_relay().changed.connect(self.sync_engine_selection)
+        self.source_bar.activated.connect(self._on_source_activated)
         self.model_combo.currentTextChanged.connect(self._on_backend_changed)
         self.api_server.changed.connect(self._on_api_server_changed)
         self.api_server.help_requested.connect(self.help_requested)
         # activated, not currentIndexChanged: only a person's choice switches
         # the paired computer, never the field following what it reports.
         self.remote_model_combo.activated.connect(self._on_remote_model_activated)
-        self.local_engine.engine_settings_changed.connect(self.engine_settings_changed)
+        self.local_engine.backend_changed.connect(self._on_local_backend_changed)
+        self.local_engine.engine_settings_changed.connect(self._on_local_engine_settings_changed)
         self.local_engine.help_requested.connect(self.help_requested)
         self.cleanup_check.toggled.connect(self._on_cleanup_toggled)
         self.live_preview_check.toggled.connect(self._on_live_preview_toggled)
@@ -563,11 +584,58 @@ class TranscriptionTabBase(QWidget):
         """Whether the backend runs here, so its model, device and quant apply."""
         return config.MODEL_VALUE_MAP.get(display_name) not in ("api", "remote")
 
+    def _source_index_for(self, backend_id: str) -> int:
+        if backend_id == "api":
+            return 1
+        if backend_id == "remote":
+            return 2
+        return 0
+
+    def _sync_source_bar(self, backend_id: str) -> None:
+        if backend_id not in ("api", "remote"):
+            self._last_local_backend = backend_id
+        blocker = self.source_bar.blockSignals(True)
+        self.source_bar.setCurrentIndex(self._source_index_for(backend_id))
+        self.source_bar.blockSignals(blocker)
+        self._update_runtime_badge(backend_id)
+
+    def _update_runtime_badge(self, backend_id: str) -> None:
+        if backend_id in ("api", "remote"):
+            self.runtime_badge.hide()
+            return
+        from services.local_asr.catalog import model_runtime_label
+
+        model_key = self.local_engine.model_combo.currentData() or self.local_engine.model_combo.currentText()
+        label = model_runtime_label(model_key, backend=backend_id)
+        self.runtime_badge.setText(label)
+        self.runtime_badge.setToolTip(f"Running locally via {label}")
+        self.runtime_badge.setVisible(bool(label))
+
+    def _on_source_activated(self, index: int) -> None:
+        if index == 1:
+            self.choose_backend("API")
+        elif index == 2:
+            self.choose_backend("Remote computer")
+        else:
+            self.choose_backend(backend_display_name(self._last_local_backend))
+
+    def _on_local_backend_changed(self, backend_id: str) -> None:
+        self._last_local_backend = backend_id
+        self.choose_backend(backend_display_name(backend_id))
+
+    def _on_local_engine_settings_changed(self) -> None:
+        backend_id = config.MODEL_VALUE_MAP.get(self.current_model, "local_whisper")
+        self._update_runtime_badge(backend_id)
+        self.engine_settings_changed.emit()
+
     def _on_backend_changed(self, _label: str):
-        display_name = backend_display_name(self.model_combo.currentData())
+        backend_id = self.model_combo.currentData() or "local_whisper"
+        display_name = backend_display_name(backend_id)
         self.current_model = display_name
         self.refresh_api_model()
-        self.local_engine.set_backend(config.MODEL_VALUE_MAP.get(display_name, "local_whisper"))
+        if self._has_local_fields(display_name):
+            self.local_engine.set_backend(backend_id)
+        self._sync_source_bar(backend_id)
         self.set_local_engine_visible(self._has_local_fields(display_name))
         self.model_changed.emit(display_name)
 
@@ -578,7 +646,8 @@ class TranscriptionTabBase(QWidget):
                 self.refresh_api_model()
                 self.model_changed.emit(display_name)
             return
-        index = self.model_combo.findData(config.MODEL_VALUE_MAP.get(display_name))
+        backend_id = config.MODEL_VALUE_MAP.get(display_name)
+        index = ensure_backend_item(self.model_combo, backend_id) if backend_id else -1
         if index >= 0:
             self.model_combo.setCurrentIndex(index)
 
@@ -588,7 +657,8 @@ class TranscriptionTabBase(QWidget):
 
     def set_backend(self, display_name: str):
         """Show a backend as selected without emitting ``model_changed``."""
-        index = self.model_combo.findData(config.MODEL_VALUE_MAP.get(display_name))
+        backend_id = config.MODEL_VALUE_MAP.get(display_name)
+        index = ensure_backend_item(self.model_combo, backend_id) if backend_id else -1
         if index < 0:
             return
         self.model_combo.blockSignals(True)
@@ -596,7 +666,9 @@ class TranscriptionTabBase(QWidget):
         self.model_combo.blockSignals(False)
         self.current_model = display_name
         self.refresh_api_model()
-        self.local_engine.set_backend(config.MODEL_VALUE_MAP.get(display_name, "local_whisper"))
+        if self._has_local_fields(display_name):
+            self.local_engine.set_backend(backend_id)
+        self._sync_source_bar(backend_id)
         self.set_local_engine_visible(self._has_local_fields(display_name))
 
     def sync_engine_selection(self) -> None:
@@ -609,7 +681,9 @@ class TranscriptionTabBase(QWidget):
 
     def set_backend_enabled(self, enabled: bool):
         """Lock the backend choice, e.g. while recording."""
+        self.source_bar.setEnabled(enabled)
         self.model_combo.setEnabled(enabled)
+        self.local_engine.set_busy((not enabled) or self._engine_busy)
         self.api_server.setEnabled(enabled)
         self._backend_enabled = enabled
         self._sync_remote_model_enabled()
@@ -654,7 +728,7 @@ class TranscriptionTabBase(QWidget):
         self._refresh_engine_status()
 
     def set_engine_busy(self, busy: bool) -> None:
-        self.local_engine.set_busy(busy)
+        self.local_engine.set_busy(busy or not self._backend_enabled)
         self._engine_busy = busy
         if self.remote_model_combo.itemData(self.remote_model_combo.currentIndex()) is None:
             # "Connecting..." and "Not connected" follow the reload.
@@ -858,6 +932,8 @@ class TranscriptionTabBase(QWidget):
 
     def _apply_backend_status(self, status: EngineStatus):
         self.model_combo.set_status(status)
+        if hasattr(self.local_engine.model_combo, "set_status"):
+            self.local_engine.model_combo.set_status(status)
 
     def set_local_engine_visible(self, visible: bool):
         """Switch between the local runtime fields and a single Model field.
@@ -879,6 +955,8 @@ class TranscriptionTabBase(QWidget):
         self._engine_dot_visible = visible or remote
         self._refresh_engine_status()
         self.model_combo.set_status_visible(self._engine_dot_visible)
+        if hasattr(self.local_engine.model_combo, "set_status_visible"):
+            self.local_engine.model_combo.set_status_visible(visible)
         self._sync_live_preview()
 
     def set_remote_models(self, choices) -> None:

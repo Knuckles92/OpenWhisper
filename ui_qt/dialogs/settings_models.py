@@ -111,6 +111,7 @@ from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.speech_backend_picker import (
     backend_display_name,
     backend_picker_tooltip,
+    ensure_backend_item,
     populate_backend_combo,
 )
 
@@ -937,7 +938,8 @@ class ModelAssignments(QObject):
             return
         if VOICE_MODEL in self._built:
             blocker = self.engine_combo.blockSignals(True)
-            self.engine_combo.setCurrentIndex(max(0, self.engine_combo.findData(backend)))
+            index = ensure_backend_item(self.engine_combo, backend)
+            self.engine_combo.setCurrentIndex(max(0, index))
             self.engine_combo.blockSignals(blocker)
             self._update_engine_caption()
             self._update_ondemand_whisper_enabled()
@@ -1741,9 +1743,9 @@ class ModelAssignments(QObject):
                                exc_info=True)
                 model_value = config.DEFAULT_BACKEND
             blocker = self.engine_combo.blockSignals(True)
-            index = self.engine_combo.findData(model_value)
+            index = ensure_backend_item(self.engine_combo, model_value)
             if index < 0:
-                index = self.engine_combo.findData(config.DEFAULT_BACKEND)
+                index = ensure_backend_item(self.engine_combo, config.DEFAULT_BACKEND)
             self.engine_combo.setCurrentIndex(max(0, index))
             self.engine_combo.blockSignals(blocker)
             self._update_engine_caption()

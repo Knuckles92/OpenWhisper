@@ -10,18 +10,34 @@ from services.settings import SettingsKey, SettingsManager
 from ui_qt.widgets import speech_backend_picker as picker
 
 
-@pytest.mark.parametrize("supported", [True, False])
-def test_engine_picker_orders_names_and_recommends_only_supported_macs(monkeypatch, supported):
+@pytest.mark.parametrize("supported,platform_tag", [
+    (True, "darwin_arm64"),
+    (False, "win_amd64"),
+])
+def test_engine_picker_orders_names_and_recommends_only_supported_macs(monkeypatch, supported, platform_tag):
+    from services.local_asr.catalog import backend_supported_here
+
     monkeypatch.setattr(picker, "parakeet_mlx_supported", lambda: supported)
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: platform_tag)
     combo = QComboBox()
     picker.populate_backend_combo(combo)
-    expected = [config.MODEL_VALUE_MAP[name] for name in sorted(config.MODEL_CHOICES, key=str.casefold)]
+    expected = [
+        config.MODEL_VALUE_MAP[name]
+        for name in sorted(config.MODEL_CHOICES, key=str.casefold)
+        if backend_supported_here(config.MODEL_VALUE_MAP[name], platform_tag)
+    ]
     assert [combo.itemData(i) for i in range(combo.count())] == expected
-    mlx = combo.findData("parakeet_mlx")
     cpu = combo.findData("parakeet")
-    assert combo.itemText(mlx) == ("Parakeet MLX (recommended)" if supported else "Parakeet MLX")
     assert combo.itemText(cpu) == ("Parakeet (CPU)" if supported else "Parakeet")
-    assert ("Apple GPU" in combo.itemData(mlx, Qt.ItemDataRole.ToolTipRole)) == supported
+    mlx = combo.findData("parakeet_mlx")
+    if supported:
+        assert mlx >= 0
+        assert combo.itemText(mlx) == "Parakeet MLX (recommended)"
+        assert "Apple GPU" in combo.itemData(mlx, Qt.ItemDataRole.ToolTipRole)
+        assert combo.findData("parakeet_unified") == -1
+    else:
+        assert mlx == -1
+        assert combo.findData("parakeet_unified") >= 0
 
 
 @pytest.mark.parametrize("tab_name", ["quick_record_tab", "upload_file_tab"])
