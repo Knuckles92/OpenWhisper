@@ -14,6 +14,7 @@ from ui_qt.snap.annotations import (
     Ellipse,
     Label,
     Redaction,
+    RedactStyle,
     Step,
     Stroke,
     Tool,
@@ -99,10 +100,17 @@ class TestDrafts:
     def test_redactions_start_as_a_drag_and_ignore_colour_and_infill(self):
         cover = new_draft(Tool.REDACT, QPointF(10, 20), CORAL, box_infill=False)
         assert isinstance(cover, Redaction)
+        assert cover.style is RedactStyle.BLACKOUT
         assert not cover.meaningful()
         cover.extend(QPointF(50, 40))
         assert cover.meaningful()
         assert cover.rect() == QRectF(10, 20, 40, 20)
+
+    @pytest.mark.parametrize("style", list(RedactStyle))
+    def test_redactions_record_chosen_style(self, style):
+        cover = new_draft(Tool.REDACT, QPointF(10, 20), CORAL, redact_style=style)
+        assert isinstance(cover, Redaction)
+        assert cover.style is style
 
     @pytest.mark.parametrize(
         ("tool", "kind"),
@@ -282,6 +290,8 @@ def _painted_rect(image: QImage) -> QRect:
         Box(QPointF(30, 30), QPointF(120, 90), CORAL, infill=True),
         Ellipse(QPointF(30, 30), QPointF(120, 90), CORAL, infill=True),
         Redaction(QPointF(30, 30), QPointF(120, 90)),
+        Redaction(QPointF(30, 30), QPointF(120, 90), style=RedactStyle.BLUR),
+        Redaction(QPointF(30, 30), QPointF(120, 90), style=RedactStyle.PIXELATE),
         Stroke(
             [QPointF(30, 100), QPointF(60, 40), QPointF(90, 120), QPointF(140, 50)],
             CORAL,
@@ -290,7 +300,20 @@ def _painted_rect(image: QImage) -> QRect:
         Step(QPointF(100, 100), 7, CORAL),
         Label(QPointF(20, 20), "Click here first", CORAL),
     ],
-    ids=["arrow", "arrow-back", "box", "box-filled", "ellipse", "redact", "pen", "highlighter", "step", "label"],
+    ids=[
+        "arrow",
+        "arrow-back",
+        "box",
+        "box-filled",
+        "ellipse",
+        "redact-blackout",
+        "redact-blur",
+        "redact-pixelate",
+        "pen",
+        "highlighter",
+        "step",
+        "label",
+    ],
 )
 def test_marks_paint_inside_their_bounds(item):
     # The overlay repaints only bounds() while drawing; ink outside it smears.

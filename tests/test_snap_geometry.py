@@ -11,6 +11,7 @@ from ui_qt.snap.annotations import (
     Box,
     Ellipse,
     Redaction,
+    RedactStyle,
     Stroke,
 )
 from ui_qt.snap.geometry import (
@@ -228,3 +229,32 @@ def test_redaction_replaces_all_covered_pixels_in_kept_crops(dpr):
     assert image.pixelColor(0, 0) == WHITE
     # Rendering doesn't modify the original capture held by the open overlay.
     assert frozen.pixelColor(round(40 * dpr), round(30 * dpr)) == WHITE
+
+
+@pytest.mark.parametrize("dpr", [1.0, 1.5, 2.0])
+@pytest.mark.parametrize("style", [RedactStyle.BLUR, RedactStyle.PIXELATE])
+def test_blur_and_pixelate_redactions_obscure_covered_pixels(dpr, style):
+    from PyQt6.QtGui import QPainter
+
+    frozen = _frozen(dpr, (200, 120))
+    # Draw crisp alternating 2-logical-pixel black/white vertical stripes.
+    painter = QPainter(frozen)
+    for x in range(0, 200, 4):
+        painter.fillRect(x, 0, 2, 120, QColor("#000000"))
+    painter.end()
+    original_center = frozen.pixelColor(round(60 * dpr), round(40 * dpr))
+
+    selection = QRect(20, 10, 100, 60)
+    cover = Redaction(QPointF(40, 20), QPointF(90, 55), style=style)
+    image = export.render(frozen, selection, [cover])
+
+    # Inside the redaction, sharp black/white stripes have blended into mid-tones
+    # rather than staying pure black/white or turning into solid blackout.
+    mid = image.pixelColor(round(45 * dpr), round(28 * dpr))
+    assert 30 < mid.red() < 225
+    assert mid != QColor(REDACTION_COLOR)
+    # Outside the redaction, the crisp stripe pattern is untouched (x=20 is black, x=22 is white).
+    assert image.pixelColor(0, 0) == QColor("#000000")
+    assert image.pixelColor(round(2 * dpr), 0) == WHITE
+    # Frozen source image is never mutated.
+    assert frozen.pixelColor(round(60 * dpr), round(40 * dpr)) == original_center

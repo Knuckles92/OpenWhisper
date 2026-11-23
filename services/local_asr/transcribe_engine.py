@@ -58,10 +58,19 @@ class TranscribeRecognizer:
     silently starting over without the speech before them.
     """
 
-    def __init__(self, runtime: str, model_path: str, device: str, *, family="parakeet_unified"):
+    def __init__(
+        self,
+        runtime: str,
+        model_path: str,
+        device: str,
+        *,
+        family="parakeet_unified",
+        english_only: bool | None = None,
+    ):
         from services.local_asr.catalog import BACKENDS
 
         self._family = family
+        self._english_only = (family == "parakeet_unified") if english_only is None else bool(english_only)
         label = BACKENDS[family]
         # The binding loads this library instead of searching for a provider
         # package, and its ggml backend modules from the same folder.
@@ -96,7 +105,7 @@ class TranscribeRecognizer:
         self._interrupted = set()
 
     def transcribe(self, samples, language=None):
-        if self._family == "parakeet_unified":
+        if self._english_only:
             language = english(language)
         self._end_stream(interrupted=True)
         if not samples:
@@ -119,7 +128,8 @@ class TranscribeRecognizer:
         stream's committed words plus its tentative tail. The first push for
         a key opens its stream; ``finish`` flushes the lookahead and closes it.
         """
-        language = english(language)
+        if self._english_only:
+            language = english(language)
         if key in self._interrupted:
             raise RuntimeError("The live preview stopped for a transcription.")
         if self._stream_key != key:

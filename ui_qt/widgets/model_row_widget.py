@@ -305,6 +305,7 @@ class ModelRowWidget(DownloadRow):
         """
         cached = info is not None
         bundled = bool(info is not None and info.bundled)
+        linked = bool(info is not None and getattr(info, "linked", False))
         self.is_cached = cached
         self.is_active = is_active
         self._set_active_style(is_active and cached)
@@ -334,6 +335,8 @@ class ModelRowWidget(DownloadRow):
                 self._set_badge("Active", "active")
             elif bundled:
                 self._set_badge("Included", "downloaded")
+            elif linked:
+                self._set_badge("Linked", "downloaded")
             elif cached:
                 self._set_badge("Downloaded", "downloaded")
             else:
@@ -360,10 +363,13 @@ class ModelRowWidget(DownloadRow):
         self.set_active_button.setVisible(cached and not is_active)
         self.set_active_button.setEnabled(not downloading)
 
+        self.delete_button.setText("Unlink" if linked else "Delete")
         self.delete_button.setVisible(cached and not bundled)
         self.delete_button.setEnabled(not is_loaded and not downloading)
         self.delete_button.setToolTip(
-            "In use — switch models first" if is_loaded else ""
+            "In use — switch models first" if is_loaded
+            else "Unlink from OpenWhisper; keeps the original file on disk" if linked
+            else ""
         )
 
     def _show_progress(self) -> None:

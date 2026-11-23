@@ -132,7 +132,8 @@ def load_transcribe(state, request):
     from services.local_asr.transcribe_engine import GpuUnavailable, TranscribeRecognizer
     try:
         state.engine = TranscribeRecognizer(
-            request["runtime"], request["model_path"], state.device, family=state.family,
+            request["runtime"], request["model_path"], state.device,
+            family=state.family, english_only=request.get("english_only"),
         )
     except GpuUnavailable as exc:
         # Auto retries on the CPU, as for a GPU Qwen's PyTorch can't run.

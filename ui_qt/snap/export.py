@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from PyQt6.QtCore import QPoint, QRect, QRectF
 from PyQt6.QtGui import QImage, QPainter
 
-from ui_qt.snap.annotations import Annotation
+from ui_qt.snap.annotations import Annotation, paint_annotation
 from ui_qt.snap.geometry import device_rect
 
 
@@ -32,13 +32,14 @@ def render(
     image = frozen.copy(crop)
     image.setDevicePixelRatio(1.0)
     if items:
-        _paint_items(image, crop, selection, dpr, items)
+        _paint_items(image, frozen, crop, selection, dpr, items)
     image.setDevicePixelRatio(dpr)
     return image
 
 
 def _paint_items(
     image: QImage,
+    frozen: QImage,
     crop: QRect,
     selection: QRect,
     dpr: float,
@@ -54,6 +55,6 @@ def _paint_items(
         painter.scale(dpr, dpr)
         painter.setClipRect(QRectF(selection))
         for item in items:
-            item.paint(painter)
+            paint_annotation(item, painter, frozen)
     finally:
         painter.end()

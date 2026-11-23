@@ -18,6 +18,7 @@ from ui_qt.snap.annotations import (
     Ellipse,
     Label,
     Redaction,
+    RedactStyle,
     Step,
     Tool,
 )
@@ -308,6 +309,36 @@ class TestToolbar:
         _drag(reopened, (80, 60), (180, 120))
         assert reopened.toolbar._box_infill is infill
         assert reopened.annotations.items[-1].infill is infill
+
+    @pytest.mark.parametrize("style", [RedactStyle.BLUR, RedactStyle.PIXELATE, RedactStyle.BLACKOUT])
+    def test_redact_style_is_saved_and_restored_for_new_overlays(self, make_overlay, style):
+        from services.settings import SettingsKey, SettingsManager, settings_manager
+
+        other = RedactStyle.BLACKOUT if style is not RedactStyle.BLACKOUT else RedactStyle.BLUR
+        settings_manager.save_setting(SettingsKey.SNAP_REDACT_STYLE, other.value)
+        overlay = make_overlay()
+        overlay.start_drawing()
+        toolbar = overlay.toolbar
+        # Redact style buttons are disabled until Redact is selected.
+        _click(toolbar, *_center(toolbar.button_rect("redact_style", style.value)))
+        assert toolbar._redact_style is other
+
+        overlay.set_tool(Tool.REDACT)
+        _click(toolbar, *_center(toolbar.button_rect("redact_style", style.value)))
+        assert toolbar._redact_style is style
+        _drag(overlay, (80, 60), (180, 120))
+        mark = overlay.annotations.items[-1]
+        assert isinstance(mark, Redaction)
+        assert mark.style is style
+        saved = SettingsManager(settings_manager.settings_file).load_all_settings()
+        assert saved[SettingsKey.SNAP_REDACT_STYLE] == style.value
+
+        reopened = make_overlay()
+        reopened.start_drawing()
+        reopened.set_tool(Tool.REDACT)
+        _drag(reopened, (80, 60), (180, 120))
+        assert reopened.toolbar._redact_style is style
+        assert reopened.annotations.items[-1].style is style
 
     def _panel(self, overlay):
         return overlay.toolbar.geometry()

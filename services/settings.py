@@ -202,6 +202,20 @@ class WalkthroughPageSize:
     }
 
 
+class SnapRedactStyle:
+    """Values for ``SettingsKey.SNAP_REDACT_STYLE``: how the Redact tool covers pixels."""
+    BLACKOUT: Final[str] = "blackout"
+    BLUR: Final[str] = "blur"
+    PIXELATE: Final[str] = "pixelate"
+
+    ALL: Final[Tuple[str, ...]] = (BLACKOUT, BLUR, PIXELATE)
+    LABELS: Final[Dict[str, str]] = {
+        BLACKOUT: "Blackout",
+        BLUR: "Blur",
+        PIXELATE: "Pixelate",
+    }
+
+
 class RecordingOverlayLook:
     """Values for ``SettingsKey.RECORDING_OVERLAY_LOOK``; see ui_qt/overlays/recording_looks.py."""
     RIBBON: Final[str] = "ribbon"
@@ -606,6 +620,9 @@ class SettingsKey:
     # Models added for the other local engines: one object per model with
     # its key, backend, label and file or folder (services/local_asr/custom.py).
     CUSTOM_SPEECH_MODELS: Final = ListSetting("custom_speech_models")
+    # Discovery IDs the user skipped or dismissed from the first-time local
+    # model import banner so the banner does not nag about the same files again.
+    DISMISSED_IMPORT_MODELS: Final = ListSetting("dismissed_import_models", in_table=False)
     WHISPER_DEVICE: Final = StrSetting("whisper_device", config.FASTER_WHISPER_DEVICE)
     WHISPER_COMPUTE_TYPE: Final = StrSetting(
         "whisper_compute_type", config.FASTER_WHISPER_COMPUTE_TYPE,
@@ -972,6 +989,9 @@ class SettingsKey:
     WALKTHROUGH_KEEP_MARKS: Final = BoolSetting("walkthrough_keep_marks", False)
     SNAP_TO_EDGES: Final = BoolSetting("snap_to_edges", True)
     SNAP_BOX_INFILL: Final = BoolSetting("snap_box_infill", False)
+    SNAP_REDACT_STYLE: Final = ChoiceSetting(
+        "snap_redact_style", SnapRedactStyle.BLACKOUT, SnapRedactStyle.ALL,
+    )
     # The capture folder name of the walkthrough last closed on the Walkthrough
     # tab: while it is still the newest, the tab opens without one.
     WALKTHROUGH_CLOSED: Final = StrSetting("walkthrough_closed", "")
@@ -1631,6 +1651,7 @@ resolve_walkthrough_auto_mode = SettingsKey.WALKTHROUGH_AUTO_MODE.read
 resolve_walkthrough_keep_marks = SettingsKey.WALKTHROUGH_KEEP_MARKS.read
 resolve_snap_to_edges = SettingsKey.SNAP_TO_EDGES.read
 resolve_snap_box_infill = SettingsKey.SNAP_BOX_INFILL.read
+resolve_snap_redact_style = SettingsKey.SNAP_REDACT_STYLE.read
 # Seconds of quiet after an automatic click or drawing; zero keeps instant capture.
 resolve_walkthrough_capture_delay = SettingsKey.WALKTHROUGH_CAPTURE_DELAY.read
 # The walkthrough documents' heading, trimmed; "" leaves it out.

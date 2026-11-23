@@ -27,6 +27,15 @@ class SpeechModel:
     custom: bool = False
     #: A custom model's file or folder on this computer.
     path: str = ""
+    #: Optional language-scope override for custom models (None uses backend/languages default).
+    multilingual: bool | None = None
+
+
+def is_english_only_model(model: SpeechModel) -> bool:
+    """Whether ``model`` only accepts English audio."""
+    if model.multilingual is not None:
+        return not model.multilingual
+    return model.languages == "English"
 
 
 BUILTIN_MODELS = {

@@ -9,7 +9,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QToolTip, QWidget
 
 from ui_qt.snap import live
-from ui_qt.snap.annotations import Label, Redaction, Stroke, Tool
+from ui_qt.snap.annotations import Label, Redaction, RedactStyle, Stroke, Tool
 
 
 @pytest.fixture
@@ -47,6 +47,43 @@ def test_rectangle_infill_persists_for_live_drawing(no_focus_moves, infill, tool
         assert reopened._toolbar._box_infill is infill
     finally:
         reopened.close()
+
+
+@pytest.mark.parametrize("style", [RedactStyle.BLUR, RedactStyle.PIXELATE, RedactStyle.BLACKOUT])
+def test_redact_style_persists_and_syncs_for_live_drawing(no_focus_moves, style):
+    from services.settings import SettingsKey, settings_manager
+
+    other = RedactStyle.BLACKOUT if style is not RedactStyle.BLACKOUT else RedactStyle.BLUR
+    settings_manager.save_setting(SettingsKey.SNAP_REDACT_STYLE, other.value)
+    owner = QObject()
+    drawing = live.LiveAnnotations(owner)
+    try:
+        toolbar = drawing._toolbar
+        # Disabled when another tool is armed.
+        drawing.arm(Tool.PEN)
+        QTest.mouseClick(toolbar, Qt.MouseButton.LeftButton,
+                         pos=toolbar.button_rect("redact_style", style.value).center())
+        assert drawing.redact_style is other
+
+        drawing.arm(Tool.REDACT)
+        QTest.mouseClick(toolbar, Qt.MouseButton.LeftButton,
+                         pos=toolbar.button_rect("redact_style", style.value).center())
+        assert live.resolve_snap_redact_style() == style.value
+        assert drawing.redact_style is style
+        canvas = drawing._canvases[live.capture.screen_under_cursor()]
+        QTest.mousePress(canvas, Qt.MouseButton.LeftButton, pos=QPoint(80, 60))
+        QTest.mouseRelease(canvas, Qt.MouseButton.LeftButton, pos=QPoint(180, 120))
+        mark = canvas.items()[-1]
+        assert isinstance(mark, Redaction)
+        assert mark.style is style
+
+        # Resuming live drawing picks up changes saved from screenshots.
+        drawing.set_enabled(False)
+        settings_manager.save_setting(SettingsKey.SNAP_REDACT_STYLE, other.value)
+        drawing.set_enabled(True)
+        assert drawing.redact_style is other and drawing._toolbar._redact_style is other
+    finally:
+        drawing.close()
 
 
 @pytest.mark.parametrize("tool", [Tool.BOX, Tool.ELLIPSE, Tool.ARROW])

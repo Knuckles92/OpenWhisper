@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import QApplication, QWidget
 from services.settings import (
     SettingsKey,
     resolve_snap_box_infill,
+    resolve_snap_redact_style,
     resolve_snap_to_edges,
     resolve_walkthrough_keep_marks,
     settings_manager,
@@ -30,6 +31,7 @@ from ui_qt.snap import affinity, capture, macos, pointed
 from ui_qt.snap.annotations import (
     SWATCHES,
     Annotation,
+    RedactStyle,
     Step,
     Tool,
     extend_draft,
@@ -103,6 +105,7 @@ class LiveAnnotations(QObject):
         self._last_drawn_screen: QScreen | None = None
         self.color = 0
         self.box_infill = resolve_snap_box_infill()
+        self.redact_style = RedactStyle(resolve_snap_redact_style())
         self.snap_enabled: bool
         self._keep_marks = resolve_walkthrough_keep_marks()
         self._previous_focus = None
@@ -131,6 +134,8 @@ class LiveAnnotations(QObject):
         self._toolbar.snap_clicked.connect(self.toggle_snap)
         self._toolbar.infill_clicked.connect(self.toggle_box_infill)
         self._toolbar.set_box_infill(self.box_infill)
+        self._toolbar.redact_style_chosen.connect(self.set_redact_style)
+        self._toolbar.set_redact_style(self.redact_style)
         self._toolbar.keep_marks_clicked.connect(self.toggle_keep_marks)
         self._toolbar.drop_clicked.connect(self.cancel_capture)
         self._toolbar.keep_clicked.connect(lambda: self.request_snap(None))
@@ -375,6 +380,12 @@ class LiveAnnotations(QObject):
         settings_manager.save_setting(SettingsKey.SNAP_BOX_INFILL, self.box_infill)
         self._toolbar.set_box_infill(self.box_infill)
 
+    def set_redact_style(self, style: RedactStyle | str) -> None:
+        resolved = RedactStyle(style)
+        self.redact_style = resolved
+        settings_manager.save_setting(SettingsKey.SNAP_REDACT_STYLE, resolved.value)
+        self._toolbar.set_redact_style(resolved)
+
     def toggle_keep_marks(self) -> None:
         keep_marks = not self._keep_marks
         settings_manager.save_setting(SettingsKey.WALKTHROUGH_KEEP_MARKS, keep_marks)
@@ -401,6 +412,8 @@ class LiveAnnotations(QObject):
     def _sync_toolbar(self) -> None:
         self.box_infill = resolve_snap_box_infill()
         self._toolbar.set_box_infill(self.box_infill)
+        self.redact_style = RedactStyle(resolve_snap_redact_style())
+        self._toolbar.set_redact_style(self.redact_style)
         has_editor = any(c.label_editor is not None for c in self._canvases.values())
         can_undo = (bool(self._undo_stack) or has_editor) if not self.auto_mode else False
         can_redo = bool(self._redo_stack) and not has_editor if not self.auto_mode else False
@@ -789,7 +802,13 @@ class _Canvas(QWidget):
         elif tool is Tool.STEP:
             self._draft = Step(point, self._next_step, color)
         else:
-            self._draft = new_draft(tool, point, color, box_infill=self.live.box_infill)
+            self._draft = new_draft(
+                tool,
+                point,
+                color,
+                box_infill=self.live.box_infill,
+                redact_style=self.live.redact_style,
+            )
         if self.live.interacting:
             self.live.interaction_changed.emit(True)
         self.update()

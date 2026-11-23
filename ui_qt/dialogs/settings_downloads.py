@@ -55,8 +55,14 @@ from services.hf_access import (
 )
 from services.model_catalog import ModelDetails, custom_model_details, get_model_details
 from services.whisper_sources import custom_model_label, custom_models, is_custom_model, parse_source
+from services.local_asr.discovery import (
+    discover_existing_models,
+    dismiss_discoveries,
+    unseen_discoveries,
+)
 from ui_qt.dialogs.custom_whisper_dialog import add_custom_models
 from ui_qt.dialogs.custom_speech_dialog import add_custom_speech_model
+from ui_qt.dialogs.import_models_dialog import ImportModelsDialog
 from services.settings import (
     SettingsKey,
     is_hf_hub_offline_env_set,
@@ -350,11 +356,26 @@ class BatchDownloadDialog(QDialog):
         destination_caption = QLabel("DESTINATION")
         destination_caption.setObjectName("downloadsEyebrow")
         layout.addWidget(destination_caption)
-        # Eliding keeps a long cache path from stretching the window; the
-        # full path stays on the tooltip.
-        destination_path = ElidingLabel(get_hf_cache_dir())
+        # Show the real cache folder(s) these models land in: HF hub cache for
+        # Whisper models, local_app_dir()/speech-models for optional engines.
+        from config import local_app_dir
+        from services.local_asr.catalog import MODELS as SPEECH_MODELS
+        has_speech = any(name in SPEECH_MODELS for name in model_names)
+        has_whisper = any(name not in SPEECH_MODELS for name in model_names)
+        speech_dir = str(Path(local_app_dir()) / "speech-models")
+        hf_dir = get_hf_cache_dir()
+        if has_speech and has_whisper:
+            dest_text = f"{hf_dir} · {speech_dir}"
+            dest_tip = f"Whisper models: {hf_dir}\nSpeech engine models: {speech_dir}"
+        elif has_speech:
+            dest_text = speech_dir
+            dest_tip = speech_dir
+        else:
+            dest_text = hf_dir
+            dest_tip = hf_dir
+        destination_path = ElidingLabel(dest_text)
         destination_path.setObjectName("batchDestPath")
-        destination_path.setToolTip(get_hf_cache_dir())
+        destination_path.setToolTip(dest_tip)
         destination_path.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -394,6 +415,7 @@ class _ScanRelay(QObject):
     """
 
     finished = pyqtSignal(int, object)
+    discovery_finished = pyqtSignal(int, object)
 
 
 class _RemoteServiceRelay(QObject):
@@ -455,6 +477,7 @@ class DownloadsPage(QWidget):
         parent=None,
         background_cache_scan: bool = True,
         defer_build: bool = False,
+        auto_discover: Optional[bool] = None,
     ):
         """Show the catalog with the in-use model protected from deletion.
 
@@ -464,11 +487,21 @@ class DownloadsPage(QWidget):
                 Delete stays disabled for it.
             background_cache_scan: Scan the cache on a worker thread. Tests
                 pass False to scan synchronously through a patched scanner.
+            auto_discover: Scan default model caches once for existing reusable
+                models to surface the first-time import alert. Defaults to
+                ``background_cache_scan`` so unit tests stay isolated from
+                developer caches unless opted in.
         """
         super().__init__(parent)
         self.setObjectName("downloadsPage")
         self._get_loaded_model = get_loaded_model
         self._background_cache_scan = bool(background_cache_scan)
+        self._auto_discover = (
+            bool(background_cache_scan) if auto_discover is None else bool(auto_discover)
+        )
+        self._discovery_started = False
+        self._discovery_generation = 0
+        self._discovered_models: list = []
         self._cache_scan_generation = 0
         self._cache_inventory_loading = False
         self._downloading_model: Optional[str] = None
@@ -501,6 +534,7 @@ class DownloadsPage(QWidget):
         self._ui_built = False
         self._inventory = {}
         _scan_relay().finished.connect(self._on_cache_scan_finished)
+        _scan_relay().discovery_finished.connect(self._on_discovery_finished)
         if not defer_build:
             self.ensure_ui()
 
@@ -580,6 +614,11 @@ class DownloadsPage(QWidget):
         'inspector_links',
         '_details',
         'env_banner',
+        'import_banner',
+        'import_banner_title',
+        'import_banner_note',
+        'import_review_button',
+        'import_dismiss_button',
         '_split',
         'message_label',
         'sort_combo',
@@ -679,6 +718,10 @@ class DownloadsPage(QWidget):
         self.env_banner.setWordWrap(True)
         self.env_banner.setVisible(False)
         layout.addWidget(self.env_banner)
+
+        self.import_banner = self._build_import_banner()
+        self.import_banner.setVisible(False)
+        layout.addWidget(self.import_banner)
 
         # Build components first so the rail knows whether Extras should show.
         self.components_section = self._build_components_section()
@@ -940,6 +983,44 @@ class DownloadsPage(QWidget):
         scroll.setWidget(content)
         outer.addWidget(scroll, stretch=1)
         return rail
+
+    def _build_import_banner(self) -> QFrame:
+        """Compact first-time alert when reusable speech models are found on disk."""
+        banner = QFrame()
+        banner.setObjectName("downloadsImportBanner")
+        row = QHBoxLayout(banner)
+        row.setContentsMargins(10, 6, 10, 6)
+        row.setSpacing(10)
+
+        text_col = QVBoxLayout()
+        text_col.setContentsMargins(0, 0, 0, 0)
+        text_col.setSpacing(1)
+
+        self.import_banner_title = ElidingLabel("")
+        self.import_banner_title.setObjectName("downloadsImportBannerTitle")
+        text_col.addWidget(self.import_banner_title)
+
+        self.import_banner_note = ElidingLabel(
+            "Reuse them in place without downloading again."
+        )
+        self.import_banner_note.setObjectName("downloadsImportBannerNote")
+        text_col.addWidget(self.import_banner_note)
+        row.addLayout(text_col, stretch=1)
+
+        self.import_review_button = QPushButton("Review & import…")
+        self.import_review_button.setObjectName("downloadsBannerAction")
+        set_style_property(self.import_review_button, "tone", "primary")
+        self.import_review_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.import_review_button.clicked.connect(self._open_import_dialog_from_banner)
+        row.addWidget(self.import_review_button, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.import_dismiss_button = QPushButton("Dismiss")
+        self.import_dismiss_button.setObjectName("downloadsBannerAction")
+        self.import_dismiss_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.import_dismiss_button.setToolTip("Hide this alert for these models")
+        self.import_dismiss_button.clicked.connect(self._dismiss_import_banner)
+        row.addWidget(self.import_dismiss_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        return banner
 
     def _build_context_banner(self) -> QFrame:
         """Build the focused engine banner with inline runtime install & hardware controls."""
@@ -2019,13 +2100,16 @@ class DownloadsPage(QWidget):
 
     def _on_open_cache_folder(self) -> None:
         from services.local_asr.catalog import MODELS
-        from services.local_asr.cache import model_dir
+        from services.local_asr.cache import active_model_dir, is_linked, model_dir
         speech = _custom_speech(self._selected_model)
         if speech is not None:
             source = Path(speech.path)
             path = str(source if source.is_dir() else source.parent)
         elif self._selected_model in MODELS:
-            path = str(model_dir(self._selected_model).parent)
+            if is_linked(self._selected_model):
+                path = str(active_model_dir(self._selected_model))
+            else:
+                path = str(model_dir(self._selected_model).parent)
         else:
             path = get_hf_cache_dir()
         if self._selected_model and is_custom_model(self._selected_model):
@@ -2037,12 +2121,19 @@ class DownloadsPage(QWidget):
     # ---- catalog actions ----
 
     def _show_add_custom_menu(self) -> None:
-        """Whisper first, then each engine with a runtime for this computer."""
+        """Import / auto-detect GGUF first, then Whisper and each local engine."""
         from PyQt6.QtWidgets import QMenu
         from services.local_asr.catalog import BACKENDS
-        from services.local_asr.custom import addable_backends
+        from services.local_asr.custom import addable_backends, addable_gguf_backends
 
         menu = QMenu(self)
+        menu.addAction("Import existing models…", self._open_import_dialog)
+        if addable_gguf_backends():
+            menu.addAction(
+                "Add GGUF model (auto-detect)…",
+                lambda: self._add_custom_speech_model("auto"),
+            )
+        menu.addSeparator()
         menu.addAction("Whisper model…", self._add_custom_models)
         menu.addSeparator()
         for backend in addable_backends():
@@ -2062,15 +2153,140 @@ class DownloadsPage(QWidget):
             )
 
     def _add_custom_speech_model(self, backend: str) -> None:
-        from services.local_asr.catalog import BACKENDS, MODELS
+        from services.local_asr.catalog import BACKENDS, BUILTIN_MODELS, MODELS
         key = add_custom_speech_model(self, backend)
         if key:
             invalidate_cached_models_snapshot()
             self.refresh()
-            self.message_label.setText(
-                f"Added {MODELS[key].label}. Choose it for {BACKENDS[backend]} in Voice model "
-                "or Voice & speakers to load it."
+            model = MODELS[key]
+            engine_name = BACKENDS[model.backend]
+            if key in BUILTIN_MODELS:
+                self.message_label.setText(
+                    f"Linked {model.label} for {engine_name} in place (no duplicate download)."
+                )
+            else:
+                self.message_label.setText(
+                    f"Added {model.label}. Choose it for {engine_name} in Voice model "
+                    "or Voice & speakers to load it."
+                )
+
+    def _open_import_dialog(self) -> None:
+        """Open the import screen scanning default model folders."""
+        dialog = ImportModelsDialog(discovered=None, parent=self, run_async=self._background_cache_scan)
+        try:
+            self._run_import_dialog(dialog)
+        finally:
+            dialog.deleteLater()
+
+    def _open_import_dialog_from_banner(self) -> None:
+        """Open the import screen pre-populated with the banner's discovered models."""
+        dialog = ImportModelsDialog(
+            discovered=list(self._discovered_models),
+            parent=self,
+            run_async=self._background_cache_scan,
+        )
+        try:
+            self._run_import_dialog(dialog)
+        finally:
+            dialog.deleteLater()
+
+    def _run_import_dialog(self, dialog: ImportModelsDialog) -> None:
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        result = dialog.import_result
+        if accepted and result is not None and result.imported:
+            imported_ids = {item.id for item in result.imported}
+            skipped_ids = [item.id for item in dialog.discovered_items if item.id not in imported_ids]
+            if skipped_ids:
+                dismiss_discoveries(skipped_ids)
+            self._discovered_models = [
+                item for item in self._discovered_models
+                if item.id not in imported_ids and item.id not in skipped_ids
+            ]
+            self._update_import_banner()
+            invalidate_cached_models_snapshot()
+            self.refresh()
+            count = len(result.imported)
+            noun = "model" if count == 1 else "models"
+            reused = (
+                f" ({format_size_bytes(result.reused_bytes)} reused without downloading)"
+                if result.reused_bytes else ""
             )
+            if result.failed:
+                self.message_label.setText(
+                    f"Imported {count} {noun}{reused}; {len(result.failed)} failed."
+                )
+            else:
+                self.message_label.setText(f"Imported {count} {noun}{reused}.")
+        elif not accepted and dialog.discovered_items:
+            # User clicked "Skip for now": remember these discoveries so the
+            # first-time alert does not nag on every visit.
+            dismiss_discoveries([item.id for item in dialog.discovered_items])
+            self._discovered_models = []
+            self._update_import_banner()
+
+    def _dismiss_import_banner(self) -> None:
+        if self._discovered_models:
+            dismiss_discoveries([item.id for item in self._discovered_models])
+        self._discovered_models = []
+        self._update_import_banner()
+
+    def _update_import_banner(self) -> None:
+        if not self._ui_built:
+            return
+        items = self._discovered_models
+        if not items:
+            self.import_banner.setVisible(False)
+            return
+        count = len(items)
+        noun = "model" if count == 1 else "models"
+        total_bytes = sum(item.size_bytes for item in items)
+        size_part = f" ({format_size_bytes(total_bytes)})" if total_bytes else ""
+        self.import_banner_title.setText(
+            f"Found {count} existing speech {noun} on this computer{size_part}"
+        )
+        sources = sorted({item.source_label.split(" (", 1)[0] for item in items})
+        if sources:
+            src_text = ", ".join(sources[:2]) + (" and more" if len(sources) > 2 else "")
+            self.import_banner_note.setText(
+                f"From {src_text} · Reuse in place without downloading again."
+            )
+        else:
+            self.import_banner_note.setText("Reuse them in place without downloading again.")
+        self.import_banner.setVisible(True)
+
+    def run_import_discovery(self, *, force: bool = False) -> None:
+        """Check default folders for reusable speech models to populate the alert banner."""
+        if self._discovery_started and not force:
+            return
+        self._discovery_started = True
+        generation = self._discovery_generation = next(_tokens)
+        if not self._background_cache_scan:
+            try:
+                found = discover_existing_models()
+            except Exception:
+                logger.debug("Local model discovery failed", exc_info=True)
+                found = []
+            self._on_discovery_finished(generation, found)
+            return
+
+        finished = _scan_relay().discovery_finished
+        discover = discover_existing_models
+
+        def scan() -> None:
+            try:
+                found = discover()
+            except Exception:
+                logger.debug("Local model discovery failed", exc_info=True)
+                found = []
+            finished.emit(generation, found)
+
+        threading.Thread(target=scan, name="downloads-import-discovery", daemon=True).start()
+
+    def _on_discovery_finished(self, generation: int, discovered) -> None:
+        if generation != self._discovery_generation:
+            return
+        self._discovered_models = unseen_discoveries(discovered or (), self._settings_snapshot())
+        self._update_import_banner()
 
     def _sync_custom_rows(self, settings: dict) -> None:
         from services.local_asr.custom import registered
@@ -2124,6 +2340,19 @@ class DownloadsPage(QWidget):
             settings_manager.mutate_settings(remove)
             self.refresh()
             self.message_label.setText("Removed the custom model from the list. Its files are retained.")
+            return
+        from services.local_asr.cache import is_linked
+        if is_linked(model_name):
+            reply = QMessageBox.question(
+                self,
+                "Unlink Model",
+                f'Unlink "{model_name}" from OpenWhisper?\n\n'
+                "Your original model files on disk will be kept.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes and self.on_delete_requested:
+                self.on_delete_requested(model_name)
             return
         reply = QMessageBox.question(
             self,
@@ -2292,6 +2521,8 @@ class DownloadsPage(QWidget):
             self._refresh_cached_model_state(
                 scan_cached_models(max_age_seconds=30.0)
             )
+            if scan and self._auto_discover:
+                self.run_import_discovery()
             return
 
         cached = peek_cached_models()
@@ -2299,6 +2530,8 @@ class DownloadsPage(QWidget):
         self._refresh_cached_model_state(cached or {})
         if not scan:
             return
+        if self._auto_discover:
+            self.run_import_discovery()
         generation = self._cache_scan_generation = next(_tokens)
         # Bound here: the worker must not reach back into the page.
         scan_cache = scan_cached_models

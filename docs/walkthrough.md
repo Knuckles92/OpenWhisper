@@ -164,8 +164,10 @@ undo Ctrl+Z, redo Ctrl+Shift+Z or Ctrl+Y in the frozen screenshot overlay.
 Boxes and ellipses start as outlines. With either tool selected, toggle
 **Infill** for a light tint inside; the choice is saved for future
 screenshots and walkthroughs. Hold **Shift** while dragging for a square,
-circle, or arrow aligned to a 45° angle. **Redact** draws an opaque cover
-over private details, baked into the kept screenshot. In Auto Mode a
+circle, or arrow aligned to a 45° angle. **Redact** covers private details
+baked into the kept screenshot, with a toolbar toggle to choose **Blackout**
+(solid opaque fill), **Blur**, or **Pixelate** — remembered for future
+screenshots and walkthroughs. In Auto Mode a
 redaction leaves the desktop with its screenshot, like any other mark; pin
 it or turn on **Keep marks** to cover the same spot in later screenshots.
 The toolbar wraps into rows on smaller screens.

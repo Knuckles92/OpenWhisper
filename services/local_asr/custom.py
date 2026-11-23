@@ -68,6 +68,30 @@ def addable_backends() -> list[str]:
             if catalog_entry_for_platform(runtime_id(backend, "cpu")) is not None]
 
 
+def addable_gguf_backends() -> list[str]:
+    """Addable engines on this computer that load ``.gguf`` files."""
+    return [backend for backend in addable_backends() if model_format(backend).gguf]
+
+
+@dataclass(frozen=True)
+class SourceInspection:
+    """Result of inspecting a candidate local speech file or folder."""
+
+    resolved: Path
+    gguf_info: object | None = None
+    builtin_match: str = ""
+    builtin_already_cached: bool = False
+    already_registered_key: str = ""
+    already_registered_backend: str = ""
+    suggested_backend: str = ""
+    suggested_label: str = ""
+    suggested_streaming: bool | None = None
+    suggested_meeting: bool | None = None
+    suggested_multilingual: bool | None = None
+    error: str = ""
+    warning: str = ""
+
+
 def _problem(backend: str, path: Path, *, read_header: bool) -> str:
     """Why ``path`` can't be ``backend``'s model, or "" when it can."""
     fmt = model_format(backend)
@@ -78,9 +102,11 @@ def _problem(backend: str, path: Path, *, read_header: bool) -> str:
         if path.suffix.lower() != ".gguf":
             return f"{engine} loads {fmt.describe()}. Choose a file ending in .gguf."
         if read_header:
-            with path.open("rb") as stream:
-                if stream.read(4) != b"GGUF":
-                    return f"{path.name} is not a GGUF model file."
+            from services.local_asr.gguf_meta import inspect_gguf
+            info = inspect_gguf(path)
+            rejection = info.rejection_reason(backend, path.name)
+            if rejection:
+                return rejection
         return ""
     if not path.is_dir():
         return f"{engine} loads {fmt.describe()}. {path} is not a folder."
@@ -92,12 +118,143 @@ def _problem(backend: str, path: Path, *, read_header: bool) -> str:
     return ""
 
 
+def inspect_source(path: str | Path, backend: str = "", *, verify_builtin_hash: bool = False) -> SourceInspection:
+    """Inspect ``path`` for GGUF metadata, built-in matches, duplicates, and capabilities.
+
+    Never raises for invalid files; reports problems in ``error`` so dialogs can
+    give live feedback before the user clicks Add.
+    """
+    from services.local_asr import cache
+    from services.local_asr.gguf_meta import (
+        inspect_gguf,
+        match_builtin_gguf,
+        match_builtin_gguf_by_size,
+    )
+
+    resolved = Path(path).expanduser().resolve()
+    available_gguf = addable_gguf_backends()
+
+    # Check if this exact path is already registered in custom speech models.
+    existing = next((m for m in registered().values() if Path(m.path).resolve() == resolved), None)
+    existing_key = existing.key if existing else ""
+    existing_backend = existing.backend if existing else ""
+
+    if backend and backend in BACKENDS and not model_format(backend).gguf:
+        problem = _problem(backend, resolved, read_header=True)
+        base = BUILTIN_MODELS[DEFAULT_MODELS[backend]]
+        return SourceInspection(
+            resolved=resolved,
+            already_registered_key=existing_key,
+            already_registered_backend=existing_backend,
+            suggested_backend=backend,
+            suggested_label=resolved.name,
+            suggested_streaming=base.streaming,
+            suggested_meeting=base.meeting,
+            suggested_multilingual=base.languages != "English",
+            error=problem,
+        )
+
+    if not resolved.is_file():
+        return SourceInspection(
+            resolved=resolved,
+            error=f"{resolved} is not a file.",
+        )
+    if resolved.suffix.lower() != ".gguf":
+        return SourceInspection(
+            resolved=resolved,
+            error="Choose a file ending in .gguf.",
+        )
+
+    info = inspect_gguf(resolved)
+    if not info.valid_magic:
+        return SourceInspection(
+            resolved=resolved,
+            gguf_info=info,
+            error=f"{resolved.name} is not a GGUF model file.",
+        )
+
+    # Check if this file matches a built-in GGUF model.
+    builtin_match = ""
+    if match_builtin_gguf_by_size(resolved):
+        matched = match_builtin_gguf(resolved, verify_hash=verify_builtin_hash)
+        if matched and BUILTIN_MODELS[matched].backend in available_gguf:
+            builtin_match = matched
+
+    suggested_backend = ""
+    if builtin_match:
+        suggested_backend = BUILTIN_MODELS[builtin_match].backend
+    elif info.suggested_backend in available_gguf:
+        suggested_backend = info.suggested_backend
+    elif backend in available_gguf:
+        suggested_backend = backend
+    elif available_gguf:
+        suggested_backend = available_gguf[0]
+
+    target_backend = backend if backend in BACKENDS else suggested_backend
+    error = info.rejection_reason(target_backend, resolved.name) if target_backend else ""
+    if not error and info.kind == "non_speech":
+        error = info.rejection_reason("", resolved.name)
+
+    builtin_cached = bool(builtin_match and cache.is_cached(builtin_match))
+    warning = ""
+    if builtin_match:
+        label = BUILTIN_MODELS[builtin_match].label
+        if builtin_cached:
+            warning = (
+                f"Matches built-in {label}, which is already installed — no need to add a duplicate."
+            )
+        else:
+            warning = (
+                f"Matches built-in {label}. Link it to reuse this file without downloading it again."
+            )
+    elif existing is not None:
+        warning = (
+            f"Already added as “{existing.label}” under {BACKENDS[existing.backend]}."
+        )
+
+    base = BUILTIN_MODELS[DEFAULT_MODELS[target_backend]] if target_backend in DEFAULT_MODELS else None
+    if builtin_match:
+        bm = BUILTIN_MODELS[builtin_match]
+        sug_streaming: bool | None = bm.streaming
+        sug_meeting: bool | None = bm.meeting
+        sug_multilingual: bool | None = bm.languages != "English"
+        sug_label = bm.label
+    else:
+        sug_streaming = info.streaming if info.streaming is not None else (base.streaming if base else False)
+        if target_backend == "parakeet_unified" and sug_streaming is False:
+            sug_meeting = True
+        else:
+            sug_meeting = base.meeting if base else False
+        sug_multilingual = (
+            info.multilingual
+            if info.multilingual is not None
+            else (base.languages != "English" if base else False)
+        )
+        sug_label = info.name or resolved.stem
+
+    return SourceInspection(
+        resolved=resolved,
+        gguf_info=info,
+        builtin_match=builtin_match,
+        builtin_already_cached=builtin_cached,
+        already_registered_key=existing_key,
+        already_registered_backend=existing_backend,
+        suggested_backend=suggested_backend,
+        suggested_label=sug_label,
+        suggested_streaming=sug_streaming,
+        suggested_meeting=sug_meeting,
+        suggested_multilingual=sug_multilingual,
+        error=error,
+        warning=warning,
+    )
+
+
 def check_source(backend: str, path: str | Path) -> Path:
     """The model file or folder at ``path``, made absolute, if ``backend`` can load it.
 
-    Raises ValueError saying what is wrong. Only the format is checked: a
-    file of the right kind for another model of the same format still
-    fails when the engine loads it, with the engine's own message.
+    Raises ValueError saying what is wrong. For GGUF files, inspects the GGUF
+    header metadata to reject non-speech LLM files and cross-runtime mismatches
+    (e.g. NeMo-Speech.cpp vs transcribe.cpp).
     """
     if backend not in BACKENDS:
         raise ValueError("Choose a speech engine for this model.")
@@ -133,10 +290,26 @@ def _model(entry) -> SpeechModel:
         raise ValueError("A Moonshine model needs its size")
     label = entry.get("label")
     base = BUILTIN_MODELS[DEFAULT_MODELS[backend]]
+    streaming = entry["streaming"] if isinstance(entry.get("streaming"), bool) else base.streaming
+    if isinstance(entry.get("meeting"), bool):
+        meeting = entry["meeting"]
+    elif backend == "parakeet_unified" and not streaming:
+        meeting = True
+    else:
+        meeting = base.meeting
+    stream_final = base.stream_final and streaming
+    multilingual = entry["multilingual"] if isinstance(entry.get("multilingual"), bool) else None
+    if multilingual is True:
+        languages = "Multilingual (custom model)"
+    elif multilingual is False:
+        languages = "English"
+    else:
+        languages = "Languages depend on the model"
     return replace(
         base, key=key, label=label if isinstance(label, str) and label.strip() else Path(path).stem,
         purpose="A model you added", license="See the model's card", arch=arch,
-        languages="Languages depend on the model",
+        languages=languages, streaming=streaming, meeting=meeting,
+        stream_final=stream_final, multilingual=multilingual,
         custom=True, path=path,
     )
 
@@ -183,11 +356,20 @@ def _new_key(label: str, taken) -> str:
     return key
 
 
-def register(backend: str, path: str | Path, label: str = "", arch: str = "") -> str:
+def register(
+    backend: str,
+    path: str | Path,
+    label: str = "",
+    arch: str = "",
+    *,
+    streaming: bool | None = None,
+    meeting: bool | None = None,
+    multilingual: bool | None = None,
+) -> str:
     """Add a model for ``backend`` from ``path`` and return its key.
 
     The same file or folder added again for the same engine keeps its key,
-    taking the new label and size.
+    taking the new label, size, and capability settings.
     """
     from services.settings import SettingsKey, settings_manager
 
@@ -206,6 +388,12 @@ def register(backend: str, path: str | Path, label: str = "", arch: str = "") ->
         entry = {"key": key, "backend": backend, "label": label, "path": source}
         if backend == "moonshine":
             entry["arch"] = arch
+        if isinstance(streaming, bool):
+            entry["streaming"] = streaming
+        if isinstance(meeting, bool):
+            entry["meeting"] = meeting
+        if isinstance(multilingual, bool):
+            entry["multilingual"] = multilingual
         values[SettingsKey.CUSTOM_SPEECH_MODELS] = (
             [entry if item is existing else item for item in entries] if existing
             else [*entries, entry])

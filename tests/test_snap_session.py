@@ -498,6 +498,30 @@ class TestEveryScreen:
                          pos=second.toolbar.button_rect("infill").center())
         assert not first.toolbar._box_infill
 
+    def test_redact_style_follows_the_user_to_another_screen(self, two_screens):
+        from ui_qt.snap.annotations import RedactStyle
+
+        snap = start_snap()
+        first, second = snap._overlays
+        first.start_drawing()
+        first.set_tool(Tool.REDACT)
+        QTest.mouseClick(
+            first.toolbar,
+            Qt.MouseButton.LeftButton,
+            pos=first.toolbar.button_rect("redact_style", RedactStyle.BLUR.value).center(),
+        )
+        assert second.toolbar._redact_style is RedactStyle.BLUR
+        second.start_drawing()
+        second.set_tool(Tool.REDACT)
+        _drag_on(second, QPoint(80, 60), QPoint(180, 120))
+        assert second.annotations.items[-1].style is RedactStyle.BLUR
+        QTest.mouseClick(
+            second.toolbar,
+            Qt.MouseButton.LeftButton,
+            pos=second.toolbar.button_rect("redact_style", RedactStyle.PIXELATE.value).center(),
+        )
+        assert first.toolbar._redact_style is RedactStyle.PIXELATE
+
     def test_selecting_on_another_screen_moves_the_selection_there(self, two_screens):
         snap = start_snap()
         kept = Spy(snap.kept)
