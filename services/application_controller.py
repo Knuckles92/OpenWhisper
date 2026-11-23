@@ -1443,6 +1443,12 @@ def _release_unselected_engines(controller, selected) -> None:
             other.cleanup()
 
 
+def _model_supports_capability(selected, capability: str) -> bool:
+    from services.local_asr.catalog import model_supports
+
+    return model_supports(getattr(selected, "model_name", None), selected.backend_id, capability)
+
+
 def _reload_speech_engine(controller, selected) -> Optional[TranscriptionBackend]:
     """Reload an optional speech engine; return it when it still has to be warmed."""
     warm = None
@@ -1455,7 +1461,10 @@ def _reload_speech_engine(controller, selected) -> Optional[TranscriptionBackend
         _preload_recording_reader(selected)
         if selected.is_model_missing:
             controller.ensure_local_model_available()
-        elif selected.is_available() and selected.backend_id in config.SPEECH_WARMUP_BACKENDS:
+        elif selected.is_available() and (
+            selected.backend_id in config.SPEECH_WARMUP_BACKENDS
+            and _model_supports_capability(selected, "warmup")
+        ):
             warm = selected
     except Exception as exc:
         logger.error("Engine load failed: %s", exc, exc_info=True)

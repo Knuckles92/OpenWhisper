@@ -450,11 +450,19 @@ class TestFilter(_DialogTestCase):
 
     def test_engine_rail_shows_one_family_and_hides_row_engine_badge(self):
         dialog, _values = self._make_dialog()
+        dialog.select_rail("qwen")
+        assert dialog.rows["qwen-0.6b"].isVisibleTo(dialog)
+        assert not dialog.rows["qwen-0.6b"].engine_badge.isVisibleTo(dialog)
+        assert not dialog.rows["parakeet-v3"].isVisibleTo(dialog)
+        assert not dialog.rows["base"].isVisibleTo(dialog)
+
+        # Multi-runtime families (Parakeet on Win/Linux) show per-row runtime badges.
         dialog.select_rail("parakeet")
         assert dialog.rows["parakeet-v3"].isVisibleTo(dialog)
-        assert not dialog.rows["parakeet-v3"].engine_badge.isVisibleTo(dialog)
-        assert not dialog.rows["qwen-0.6b"].isVisibleTo(dialog)
-        assert not dialog.rows["base"].isVisibleTo(dialog)
+        assert dialog.rows["parakeet-unified-en"].isVisibleTo(dialog)
+        assert dialog.rows["parakeet-v3"].engine_badge.isVisibleTo(dialog)
+        assert dialog.rows["parakeet-v3"].engine_badge.text() == "NeMo-Speech"
+        assert dialog.rows["parakeet-unified-en"].engine_badge.text() == "transcribe.cpp"
 
     def test_engine_rail_whisper_covers_distilled_checkpoints(self):
         dialog, _values = self._make_dialog()
@@ -467,16 +475,15 @@ class TestFilter(_DialogTestCase):
         assert not any(name.startswith(("parakeet", "qwen", "nemotron", "moonshine")) for name in whisper_rows)
 
     def test_engine_rail_lists_every_backend_once(self):
-        from services.local_asr.catalog import BACKENDS
+        from services.local_asr.catalog import supported_families
         dialog, _values = self._make_dialog()
-        engine_keys = [
+        family_keys = [
             key for key in dialog._rail_items if key not in ("all", "installed", "components")
         ]
-        expected = {"local_whisper", *BACKENDS}
-        assert set(engine_keys) == expected
-        assert len(engine_keys) == len(expected)
-        # Active engine from _make_dialog is local_whisper.
-        assert dialog.current_rail_key() == "local_whisper"
+        expected = list(supported_families())
+        assert family_keys == expected
+        # Active engine from _make_dialog is local_whisper -> "whisper" family.
+        assert dialog.current_rail_key() == "whisper"
 
     def test_engine_rail_combines_with_status_and_search(self):
         dialog, _values = self._make_dialog(
@@ -529,9 +536,13 @@ class TestSorting(_DialogTestCase):
         dialog, _values = self._make_dialog(active_model="medium")
         assert self._row_order(dialog)[0] == ("parakeet-v3-mlx" if parakeet_mlx_supported() else "tiny")
 
-    @pytest.mark.parametrize("supported,first", [(True, "parakeet-v3-mlx"), (False, "tiny")])
-    def test_recommended_sort_prefers_mlx_only_on_supported_macs(self, monkeypatch, supported, first):
+    @pytest.mark.parametrize("supported,platform_tag,first", [
+        (True, "darwin_arm64", "parakeet-v3-mlx"),
+        (False, "win_amd64", "tiny"),
+    ])
+    def test_recommended_sort_prefers_mlx_only_on_supported_macs(self, monkeypatch, supported, platform_tag, first):
         monkeypatch.setattr(dialog_module, "parakeet_mlx_supported", lambda: supported)
+        monkeypatch.setattr("services.components.current_platform_tag", lambda: platform_tag)
         dialog, _values = self._make_dialog()
         assert self._row_order(dialog)[0] == first
 
@@ -1224,7 +1235,7 @@ class TestSectionRail(_DialogTestCase):
 
     def test_opens_on_active_engine_and_rail_switches_to_components(self):
         dialog = self._components_dialog()
-        assert dialog.current_rail_key() == "local_whisper"
+        assert dialog.current_rail_key() == "whisper"
         assert dialog.models_section.isVisible() and not dialog.components_section.isVisible()
         dialog._rail_items["components"].click()
         assert dialog.current_rail_key() == "components"
@@ -1279,7 +1290,7 @@ class TestSectionRail(_DialogTestCase):
         assert dialog.current_rail_key() == "parakeet" and dialog.models_section.isVisible()
         dialog.focus_component(component_id)
         dialog.reveal_model("base")
-        assert dialog.current_rail_key() == "local_whisper"
+        assert dialog.current_rail_key() == "whisper"
         assert dialog.models_section.isVisible()
 
     def test_a_platform_with_no_components_hides_extras_in_rail(self):
@@ -1315,6 +1326,11 @@ class TestInlineRuntimeControls(_DialogTestCase):
         dialog.select_rail("parakeet")
         assert dialog.banner_controls_strip.isVisibleTo(dialog)
         assert not dialog.engine_compute_combo.isVisibleTo(dialog)
+        # Multi-runtime family offers the Runtime switcher (transcribe.cpp vs NeMo-Speech).
+        if dialog.engine_runtime_combo.isVisibleTo(dialog):
+            dialog.engine_runtime_combo.setCurrentIndex(
+                dialog.engine_runtime_combo.findData("parakeet")
+            )
 
         dialog.engine_device_combo.setCurrentIndex(dialog.engine_device_combo.findData("cpu"))
         assert values[SettingsKey.LOCAL_ASR_DEVICES]["parakeet"] == "cpu"
@@ -1331,6 +1347,10 @@ class TestInlineRuntimeControls(_DialogTestCase):
         if "asr-nvidia-cpu" not in dialog._component_rows:
             pytest.skip("NVIDIA CPU runtime not published on this platform")
         dialog.select_rail("parakeet")
+        if dialog.engine_runtime_combo.isVisibleTo(dialog):
+            dialog.engine_runtime_combo.setCurrentIndex(
+                dialog.engine_runtime_combo.findData("parakeet")
+            )
         dialog.engine_device_combo.setCurrentIndex(dialog.engine_device_combo.findData("cpu"))
 
         missing = ComponentInfo(
