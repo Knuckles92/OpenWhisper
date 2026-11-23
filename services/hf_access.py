@@ -382,8 +382,8 @@ def scan_cached_models(
             _cache_scan_in_progress = False
             if scan_epoch == _cache_scan_epoch:
                 from services.local_asr.cache import inventory
-                from services.local_asr.catalog import MODELS, artifacts
-                for key in MODELS:
+                from services.local_asr.catalog import BUILTIN_MODELS, artifacts
+                for key in BUILTIN_MODELS:
                     cached.pop(artifacts(key)["repo"], None)
                 cached.update(inventory())
                 _cached_model_snapshot = dict(cached)

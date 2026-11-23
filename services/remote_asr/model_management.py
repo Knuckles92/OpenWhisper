@@ -16,11 +16,12 @@ logger = logging.getLogger(__name__)
 
 def model_choices() -> list[dict]:
     from config import config
-    from services.local_asr.catalog import MODELS, WHISPER_BACKEND
+    from services.local_asr.catalog import BUILTIN_MODELS, WHISPER_BACKEND
 
+    # Only the published catalog: never the host's custom models.
     return [
         {"family": model.backend, "model": key, "label": model.label}
-        for key, model in MODELS.items()
+        for key, model in BUILTIN_MODELS.items()
     ] + [
         {"family": WHISPER_BACKEND, "model": name, "label": f"Whisper {name}"}
         for name in config.WHISPER_MODEL_CHOICES if name != "auto"

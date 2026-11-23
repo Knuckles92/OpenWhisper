@@ -9,6 +9,8 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ### Added
 
+- **Use your own model with any local speech engine.** **Add custom…** in **Settings → Models & storage → Models & engines** now offers each engine with a runtime for this computer, alongside Whisper: choose a model file (a `.gguf` for Parakeet, Nemotron, Parakeet Unified, and Qwen3-ASR on Windows and Linux) or folder (Qwen3-ASR on a Mac, Moonshine, Parakeet MLX), give it a name, and pick it for that engine in **Voice model** or **Voice & speakers**. It loads from where it is, takes its engine's live-text and meeting support, and stays on this computer: a host never offers it to paired computers. Moonshine models now say their size instead of being told apart by name.
+
 - **Send a walkthrough straight to a coding agent.** **Send to** on the walkthrough's ready card and in Review (also under **⋯**) opens a menu that adds the walkthrough to any of your open T3 Code threads across all projects (listed with what each is doing), starts a new T3 Code thread in a project, or opens a new Claude Code, Codex or OpenCode session in a project folder. The agent gets the instructions, your words and each screenshot's path, so nothing needs pasting or attaching. T3 Code is reached through its own `t3` command on this computer.
 
 ## [2.8.98] - 2026-11-21

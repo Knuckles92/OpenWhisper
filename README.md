@@ -195,6 +195,14 @@ Click **Add selected**, then choose a model in **Voice model** or **Voice & spea
 - **Format:** CTranslate2 Whisper folders with `model.bin`, a valid `config.json`, and `tokenizer.json`. Convert original PyTorch weights before use.
 - **Storage:** Downloads follow your Hugging Face policy; cached models load offline. Removing a custom entry keeps its source files.
 
+### Custom models for other engines
+
+Choose **Add custom… → _Engine_ model…** in **Settings → Models & storage → Models & engines** to use your own model file with Parakeet, Nemotron Streaming, Parakeet Unified, Qwen3-ASR, Moonshine or Parakeet MLX. The menu lists the engines with a runtime for this computer. Then choose the model for that engine in **Voice model** or **Voice & speakers**.
+
+- **Format:** the same kind of file the engine's own models use. Parakeet, Nemotron and Parakeet Unified load a `.gguf` file, as does Qwen3-ASR on Windows and Linux. Qwen3-ASR on a Mac loads a Safetensors model folder, Moonshine a folder of `.ort` files (choose Small or Medium), and Parakeet MLX a folder with `config.json` and Safetensors weights. OpenWhisper checks the format when you add it. A model the engine can't run fails when it loads, with the engine's message.
+- **Storage:** the model is used from where it is, without copying, and nothing is downloaded. Removing it keeps its files. If you move the file, add it again.
+- **Paired computers:** a host never offers its custom models to paired computers, and a paired computer can't switch the host to one.
+
 ### Remote engine
 
 Use another computer's OpenWhisper engine for dictation, uploads, or meetings:

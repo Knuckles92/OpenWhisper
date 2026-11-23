@@ -249,13 +249,13 @@ _REPORTED_PACKAGES = (
 def collect_report(*, root: Path | None = None) -> dict:
     from _version import __version__
     from config import SETTINGS_FILENAME, config, data_root
-    from services.local_asr.catalog import MODELS
+    from services.local_asr.catalog import BUILTIN_MODELS
 
     root = Path(root) if root is not None else Path(data_root())
     settings = _read_json(root / SETTINGS_FILENAME)
     settings = settings if isinstance(settings, dict) else {}
     allowed = {
-        "selected_model": {"local_whisper", "api", "remote", *[model.backend for model in MODELS.values()]},
+        "selected_model": {"local_whisper", "api", "remote", *[model.backend for model in BUILTIN_MODELS.values()]},
         "whisper_model": set(config.WHISPER_MODEL_CHOICES),
         "whisper_device": {"auto", "cpu", "cuda"},
         "whisper_compute_type": _WHISPER_COMPUTE_TYPES,
@@ -268,7 +268,7 @@ def collect_report(*, root: Path | None = None) -> dict:
     models = settings.get("local_asr_models", {})
     if isinstance(models, dict):
         engine["local_models"] = sorted({value for value in models.values()
-                                         if isinstance(value, str) and value in MODELS})
+                                         if isinstance(value, str) and value in BUILTIN_MODELS})
     packages = {}
     for name in _REPORTED_PACKAGES:
         try:

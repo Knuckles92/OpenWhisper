@@ -505,13 +505,14 @@ def _save_engine_device(controller, name: str, family: str, model: str, target_d
 
 def _save_engine_model(family: str, model: str) -> Optional[str]:
     """Persist ``model`` as ``family``'s model; returns its label, or None if it can't run it."""
-    from services.local_asr.catalog import BACKENDS, MODELS, WHISPER_BACKEND
+    from services.local_asr.catalog import BACKENDS, BUILTIN_MODELS, WHISPER_BACKEND
 
-    if family in BACKENDS and model in MODELS and MODELS[model].backend == family:
+    # A paired computer may switch this one to a published model only.
+    if family in BACKENDS and model in BUILTIN_MODELS and BUILTIN_MODELS[model].backend == family:
         models = dict(SettingsKey.LOCAL_ASR_MODELS.read(settings_manager.load_all_settings()))
         models[family] = model
         settings_manager.save_setting(SettingsKey.LOCAL_ASR_MODELS, models)
-        return MODELS[model].label
+        return BUILTIN_MODELS[model].label
     if family == WHISPER_BACKEND and model in config.WHISPER_MODEL_CHOICES and model != "auto":
         settings_manager.save_setting(SettingsKey.WHISPER_MODEL, model)
         return f"Whisper {model}"

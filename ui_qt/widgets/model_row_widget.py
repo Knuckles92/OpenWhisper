@@ -259,6 +259,8 @@ class ModelRowWidget(DownloadRow):
         from services.local_asr.catalog import MODELS
         if self.model_name in MODELS:
             model = MODELS[self.model_name]
+            if model.custom:
+                return f"Your own model / {model.languages}"
             return model.languages + (" / Live meetings" if model.streaming else "")
         language = "English only" if self.model_name.endswith(".en") else "Multilingual"
         family = "Distilled" if self.model_name.startswith("distil-") else ""

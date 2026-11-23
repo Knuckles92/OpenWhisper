@@ -77,7 +77,9 @@ class LocalSpeechBackend(TranscriptionBackend):
 
     @property
     def is_model_missing(self):
-        return not cache.is_cached(self.model_name)
+        """Whether the model needs downloading; a custom model never does."""
+        model = MODELS.get(self.model_name)
+        return not (model is not None and model.custom) and not cache.is_cached(self.model_name)
 
     @property
     def last_loaded_model(self):
@@ -122,6 +124,11 @@ class LocalSpeechBackend(TranscriptionBackend):
         self.runtime_component = component
         if not is_installed(component):
             self._explain_missing_runtime(component, device)
+            return
+        model = MODELS[self.model_name]
+        if model.custom and not cache.is_cached(self.model_name):
+            self.last_error = (f"{model.label}'s files are no longer at {model.path}. "
+                               "Add it again in Models & engines.")
             return
         if self.is_model_missing:
             label = MODELS[self.model_name].label
@@ -187,6 +194,7 @@ class LocalSpeechBackend(TranscriptionBackend):
                 self._process = process
             try:
                 result = process.request("load", backend=self.backend_id, model=self.model_name,
+                                         arch=MODELS[self.model_name].arch,
                                          model_path=cache.load_path(self.model_name),
                                          runtime=runtime_dir, device=device, timeout=300,
                                          cancel=cancel_event)

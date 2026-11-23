@@ -3,10 +3,13 @@ from __future__ import annotations
 
 
 class MoonshineRecognizer:
-    def __init__(self, model_path, model):
+    def __init__(self, model_path, arch):
+        """``arch`` is the model's size, "small" or "medium" (``SpeechModel.arch``)."""
         from moonshine_voice import Transcriber, ModelArch
-        arch = ModelArch.SMALL_STREAMING if model == "moonshine-small" else ModelArch.MEDIUM_STREAMING
-        self.engine = Transcriber(model_path, arch)
+        sizes = {"small": ModelArch.SMALL_STREAMING, "medium": ModelArch.MEDIUM_STREAMING}
+        if arch not in sizes:
+            raise ValueError("A Moonshine model must be Small or Medium.")
+        self.engine = Transcriber(model_path, sizes[arch])
         self.streams = {}
 
     def stream(self, key, samples, language=None, finish=False):

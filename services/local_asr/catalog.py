@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import json
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,9 +21,15 @@ class SpeechModel:
     #: saved recording, so a long dictation may paste it instead of waiting
     #: for the file decode (config.STREAM_FINAL_MIN_SEC).
     stream_final: bool = False
+    #: Moonshine's model size, "small" or "medium"; "" for other engines.
+    arch: str = ""
+    #: True for a model the person added (services/local_asr/custom.py).
+    custom: bool = False
+    #: A custom model's file or folder on this computer.
+    path: str = ""
 
 
-MODELS = {
+BUILTIN_MODELS = {
     m.key: m for m in (
         SpeechModel(
             "parakeet-v3", "parakeet", "Parakeet TDT 0.6B v3", "Fast dictation and files",
@@ -47,11 +54,12 @@ MODELS = {
         ),
         SpeechModel(
             "moonshine-small", "moonshine", "Moonshine Streaming Small", "Fast CPU transcription",
-            "MIT", "English", streaming=True, meeting=True,
+            "MIT", "English", streaming=True, meeting=True, arch="small",
         ),
         SpeechModel(
             "moonshine-medium", "moonshine", "Moonshine Streaming Medium",
             "CPU transcription with a larger model", "MIT", "English", streaming=True, meeting=True,
+            arch="medium",
         ),
         SpeechModel(
             "parakeet-v3-mlx", "parakeet_mlx", "Parakeet TDT 0.6B v3 (MLX)",
@@ -69,6 +77,44 @@ MODELS = {
         ),
     )
 }
+
+
+class _SpeechModels(Mapping):
+    """Every speech model on this computer: the built-in ones, then the person's own.
+
+    The custom part follows the saved settings, so a model added or removed
+    in Settings is seen everywhere without a restart. Code that must offer
+    only the published catalog, such as what a host tells paired computers,
+    uses ``BUILTIN_MODELS``.
+    """
+
+    def __getitem__(self, key: str) -> SpeechModel:
+        model = BUILTIN_MODELS.get(key)
+        if model is not None:
+            return model
+        from services.local_asr.custom import CUSTOM_PREFIX, registered
+        if not (isinstance(key, str) and key.startswith(CUSTOM_PREFIX)):
+            raise KeyError(key)
+        return registered()[key]
+
+    def __contains__(self, key: object) -> bool:
+        try:
+            self[key]
+        except KeyError:
+            return False
+        return True
+
+    def __iter__(self) -> Iterator[str]:
+        from services.local_asr.custom import registered
+        yield from BUILTIN_MODELS
+        yield from registered()
+
+    def __len__(self) -> int:
+        from services.local_asr.custom import registered
+        return len(BUILTIN_MODELS) + len(registered())
+
+
+MODELS: Mapping[str, SpeechModel] = _SpeechModels()
 BACKENDS = {
     "parakeet": "Parakeet",
     "qwen_asr": "Qwen3-ASR",
@@ -79,7 +125,7 @@ BACKENDS = {
 }
 #: Backend id of the built-in faster-whisper family, which is not in MODELS.
 WHISPER_BACKEND = "local_whisper"
-DEFAULT_MODELS = {key: next(m.key for m in MODELS.values() if m.backend == key) for key in BACKENDS}
+DEFAULT_MODELS = {key: next(m.key for m in BUILTIN_MODELS.values() if m.backend == key) for key in BACKENDS}
 #: Compact model bundled in the all-in-one installer so dictation works offline
 #: out of the box without any model download.
 ALL_IN_ONE_MODEL = "parakeet-110m-en"
@@ -111,7 +157,8 @@ def _artifacts(filename: str) -> dict:
 
 
 def artifacts(key: str) -> dict:
-    if MODELS[key].backend == "qwen_asr" and uses_transcribe_cpp("qwen_asr"):
+    """A built-in model's pinned download: repository, revision and checked files."""
+    if BUILTIN_MODELS[key].backend == "qwen_asr" and uses_transcribe_cpp("qwen_asr"):
         return _artifacts("qwen_gguf_models.json")[key]
     return _artifacts("models.json")[key]
 
@@ -125,7 +172,7 @@ def selected_model(backend: str, settings: dict) -> str:
         return key
     # An all-in-one install bundles a ready-to-use model inside the app tree;
     # prefer it when the user has not chosen a specific model yet.
-    for model in MODELS.values():
+    for model in BUILTIN_MODELS.values():
         if model.backend == backend and is_bundled(model.key):
             return model.key
     return DEFAULT_MODELS[backend]

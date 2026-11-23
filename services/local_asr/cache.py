@@ -7,24 +7,39 @@ import threading
 from pathlib import Path
 
 from config import bundle_root, local_app_dir
-from services.local_asr.catalog import MODELS, artifacts, uses_transcribe_cpp
+from services.local_asr.catalog import BUILTIN_MODELS, MODELS, artifacts, uses_transcribe_cpp
 
 BUNDLED_MODELS_DIRNAME = "bundled_models"
+#: A custom model's files are the person's own, wherever they keep them.
+_CUSTOM_FILES_KEPT = "Remove this custom model from the list instead; its files are kept."
 
-_locks = {key: threading.Lock() for key in MODELS}
+_locks_guard = threading.Lock()
+_locks: dict[str, threading.Lock] = {}
+
+
+def _lock(key: str) -> threading.Lock:
+    with _locks_guard:
+        return _locks.setdefault(key, threading.Lock())
 
 
 def model_dir(key: str) -> Path:
-    if key not in MODELS:
+    """Where a built-in model downloads to."""
+    if key not in BUILTIN_MODELS:
         raise ValueError("Unknown speech model")
     return Path(local_app_dir()) / "speech-models" / key
 
 
 def bundled_model_dir(key: str) -> Path:
     """Return the read-only path of a model packaged inside the app bundle."""
-    if key not in MODELS:
+    if key not in BUILTIN_MODELS:
         raise ValueError("Unknown speech model")
     return Path(bundle_root()) / BUNDLED_MODELS_DIRNAME / key
+
+
+def _custom(key: str):
+    """The custom model ``key`` names, or None for a built-in one."""
+    model = MODELS.get(key)
+    return model if model is not None and model.custom else None
 
 
 def _dir_is_valid(directory: Path, spec: dict) -> bool:
@@ -38,7 +53,7 @@ def _dir_is_valid(directory: Path, spec: dict) -> bool:
 
 def is_bundled(key: str) -> bool:
     """True when ``key`` is shipped intact inside the application bundle."""
-    if key not in MODELS:
+    if key not in BUILTIN_MODELS:
         return False
     return _dir_is_valid(bundled_model_dir(key), artifacts(key))
 
@@ -56,12 +71,16 @@ def active_model_dir(key: str) -> Path:
 
 
 def is_cached(key: str) -> bool:
+    custom = _custom(key)
+    if custom is not None:
+        from services.local_asr.custom import is_present
+        return is_present(custom)
     spec = artifacts(key)
     return _dir_is_valid(model_dir(key), spec) or _dir_is_valid(bundled_model_dir(key), spec)
 
 
 def needs_qwen_redownload(key: str) -> bool:
-    model = MODELS.get(key)
+    model = BUILTIN_MODELS.get(key)
     if model is None or model.backend != "qwen_asr" or not uses_transcribe_cpp(model.backend):
         return False
     # The old model lived here as one or more Safetensors files. The cache
@@ -70,6 +89,11 @@ def needs_qwen_redownload(key: str) -> bool:
 
 
 def load_path(key: str) -> str:
+    custom = _custom(key)
+    if custom is not None:
+        if not is_cached(key):
+            raise RuntimeError(f"{custom.label}'s files are no longer at {custom.path}.")
+        return custom.path
     if not is_cached(key):
         raise RuntimeError(f"{MODELS[key].label} is not downloaded. Open Downloads.")
     directory = active_model_dir(key)
@@ -86,6 +110,12 @@ def download(key: str, progress_callback=None, cancel: threading.Event | None = 
     from services.components import _download_verified, ComponentCanceled
     if is_hf_hub_offline_env_set():
         raise RuntimeError("Model downloads are disabled by HF_HUB_OFFLINE.")
+    custom = _custom(key)
+    if custom is not None:
+        if is_cached(key):
+            return custom.path
+        raise RuntimeError(f"{custom.label} isn't downloaded: it is your own file, and it is "
+                           f"no longer at {custom.path}. Add it again from where it is now.")
     cancel = cancel or threading.Event()
     spec = artifacts(key)
     target = model_dir(key)
@@ -94,7 +124,7 @@ def download(key: str, progress_callback=None, cancel: threading.Event | None = 
     total = sum(f["size_bytes"] for f in spec["files"])
     # Downloads run in killable workers. Protect the staging/backup swap
     # across processes as well as concurrent requests in this interpreter.
-    with _locks[key], FileLock(str(target) + ".lock"):
+    with _lock(key), FileLock(str(target) + ".lock"):
         backup = target.with_name(target.name + ".previous")
         if not target.exists() and backup.exists():
             os.replace(backup, target)
@@ -139,6 +169,8 @@ def _swap_into_place(staging: Path, target: Path) -> None:
 
 def delete(key: str) -> None:
     from filelock import FileLock
+    if _custom(key) is not None:
+        raise ValueError(_CUSTOM_FILES_KEPT)
     target = model_dir(key)
     user_dirs = (
         target,
@@ -149,7 +181,7 @@ def delete(key: str) -> None:
     if not any(d.exists() for d in user_dirs) and is_bundled(key):
         raise ValueError(f"{MODELS[key].label} is included with OpenWhisper and cannot be deleted.")
     target.parent.mkdir(parents=True, exist_ok=True)
-    with _locks[key], FileLock(str(target) + ".lock"):
+    with _lock(key), FileLock(str(target) + ".lock"):
         for directory in user_dirs:
             if directory.exists():
                 shutil.rmtree(directory)
@@ -158,7 +190,7 @@ def delete(key: str) -> None:
 def inventory() -> dict:
     from services.hf_access import CachedModelInfo
     result = {}
-    for key in MODELS:
+    for key in BUILTIN_MODELS:
         spec = artifacts(key)
         user_valid = _dir_is_valid(model_dir(key), spec)
         bundled_valid = _dir_is_valid(bundled_model_dir(key), spec)
@@ -172,4 +204,23 @@ def inventory() -> dict:
             (spec["revision"],),
             bundled=not user_valid and bundled_valid,
         )
+    result.update(_custom_inventory())
+    return result
+
+
+def _custom_inventory() -> dict:
+    """Custom models whose files are in place, keyed by model key.
+
+    ``hf_access.resolve_model_repo`` gives a key it has no repository for
+    back unchanged, so Downloads finds these entries by the key.
+    """
+    from services.hf_access import CachedModelInfo
+    from services.local_asr.custom import is_present, registered, size_bytes
+    result = {}
+    for key, model in registered().items():
+        try:
+            if is_present(model):
+                result[key] = CachedModelInfo(key, size_bytes(model), model.path, ())
+        except OSError:
+            continue
     return result

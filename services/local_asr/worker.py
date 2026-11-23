@@ -113,7 +113,7 @@ def load_engine(state, request):
     elif family == "moonshine":
         use_runtime_packages(request.get("runtime"))
         from services.local_asr.moonshine import MoonshineRecognizer
-        state.engine = MoonshineRecognizer(request["model_path"], request["model"])
+        state.engine = MoonshineRecognizer(request["model_path"], request["arch"])
         state.device = "cpu"
     elif family == "qwen_asr":
         load_qwen(state, request)

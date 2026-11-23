@@ -534,7 +534,7 @@ def _speech_model_details(key: str, model) -> ModelDetails:
     )
 
 
-for _key, _model in speech_catalog.MODELS.items():
+for _key, _model in speech_catalog.BUILTIN_MODELS.items():
     _CATALOG[_key] = _speech_model_details(_key, _model)
 _CATALOG["parakeet-unified-en"] = replace(
     _CATALOG["parakeet-unified-en"],
@@ -584,8 +584,42 @@ MODEL_DOWNLOAD_SIZE_MB: Final[Mapping[str, int]] = MappingProxyType({
 
 
 def get_model_details(model_name: str) -> ModelDetails:
-    """Return bundled metadata, raising KeyError for unmanaged models."""
-    return MODEL_CATALOG[model_name]
+    """Return bundled metadata, or a custom speech model's; KeyError for unmanaged models."""
+    details = MODEL_CATALOG.get(model_name)
+    if details is not None:
+        return details
+    model = speech_catalog.MODELS[model_name]
+    return custom_speech_model_details(model)
+
+
+def custom_speech_model_details(model) -> ModelDetails:
+    """Describe a speech model the person added from their own files."""
+    from pathlib import Path
+    from services.local_asr.custom import model_format
+
+    # The folder, not the file: opening a .gguf would hand it to whatever
+    # program the system pairs with that extension.
+    source = Path(model.path)
+    url = (source if source.is_dir() else source.parent).as_uri()
+    engine = speech_catalog.BACKENDS[model.backend]
+    fmt = model_format(model.backend)
+    return ModelDetails(
+        model_name=model.key, description=f"A {engine} model you added from this computer.",
+        origin_name=model.path, origin_url=url, repository_id=model.path, repository_url=url,
+        maintainer="See the model's card", family=model.backend,
+        language_support=model.languages, task_support="Speech transcription",
+        parameter_count="Unknown", relative_performance="Unknown",
+        memory_guidance="Depends on the model and the device it runs on",
+        download_size_mb=0, runtime_format="GGUF" if fmt.gguf else "Model folder",
+        license=model.license, best_for="Using your own or community weights with this engine",
+        limitations=(
+            f"Loads with {engine}'s runtime, so it must be a model that engine supports.",
+            "Stays on this computer: a host never offers it to paired computers.",
+            CUSTOM_MODEL_NOTICE,
+        ),
+        source_urls=(url,), license_url=url, download_hosts=(),
+        verification="Your own files on this computer; nothing is downloaded",
+    )
 
 
 def custom_model_details(model_name: str) -> ModelDetails:

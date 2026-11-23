@@ -17,6 +17,7 @@ import sys
 import threading
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from PyQt6.QtCore import QObject, QPoint, QRect, QSize, Qt, QUrl, pyqtSignal
@@ -47,6 +48,7 @@ from services.hf_access import (
     format_download_size,
     format_size_bytes,
     get_hf_cache_dir,
+    invalidate_cached_models_snapshot,
     peek_cached_models,
     resolve_model_repo,
     scan_cached_models,
@@ -54,6 +56,7 @@ from services.hf_access import (
 from services.model_catalog import ModelDetails, custom_model_details, get_model_details
 from services.whisper_sources import custom_model_label, custom_models, is_custom_model, parse_source
 from ui_qt.dialogs.custom_whisper_dialog import add_custom_models
+from ui_qt.dialogs.custom_speech_dialog import add_custom_speech_model
 from services.settings import (
     SettingsKey,
     is_hf_hub_offline_env_set,
@@ -231,6 +234,28 @@ class _EngineRailItem(QPushButton):
     def set_count(self, text: str, *, attention: bool = False) -> None:
         self.count_label.setText(text)
         set_style_property(self.count_label, "attention", attention)
+
+
+def _custom_speech(name: Optional[str]):
+    """The custom speech model ``name`` is, or None (built-in, Whisper, or nothing)."""
+    from services.local_asr.catalog import MODELS
+    model = MODELS.get(name) if name else None
+    return model if model is not None and model.custom else None
+
+
+def _user_added(name: str) -> bool:
+    """Whether the person added this model: a custom Whisper source or speech model.
+
+    Read from the name, so a row stays recognizable after its model is removed.
+    """
+    from services.local_asr.custom import CUSTOM_PREFIX
+    return name.startswith(CUSTOM_PREFIX) or is_custom_model(name)
+
+
+def _from_local_files(name: str) -> bool:
+    """A model added from files on this computer, which has nothing to download."""
+    return _custom_speech(name) is not None or (
+        is_custom_model(name) and bool(parse_source(name).local_path))
 
 
 def _current_cache_info(
@@ -621,10 +646,10 @@ class DownloadsPage(QWidget):
         self.custom_models_button = Button("Add custom…")
         self.custom_models_button.setObjectName("downloadsToolButton")
         self.custom_models_button.setToolTip(
-            "Add custom Whisper / CTranslate2 models"
+            "Add a model of your own for Whisper or another speech engine"
         )
         fit_compact_button(self.custom_models_button, 0)
-        self.custom_models_button.clicked.connect(self._add_custom_models)
+        self.custom_models_button.clicked.connect(self._show_add_custom_menu)
         header_row.addWidget(self.custom_models_button)
 
         self.download_all_button = Button("Download all…")
@@ -1995,7 +2020,11 @@ class DownloadsPage(QWidget):
     def _on_open_cache_folder(self) -> None:
         from services.local_asr.catalog import MODELS
         from services.local_asr.cache import model_dir
-        if self._selected_model in MODELS:
+        speech = _custom_speech(self._selected_model)
+        if speech is not None:
+            source = Path(speech.path)
+            path = str(source if source.is_dir() else source.parent)
+        elif self._selected_model in MODELS:
             path = str(model_dir(self._selected_model).parent)
         else:
             path = get_hf_cache_dir()
@@ -2007,6 +2036,22 @@ class DownloadsPage(QWidget):
 
     # ---- catalog actions ----
 
+    def _show_add_custom_menu(self) -> None:
+        """Whisper first, then each engine with a runtime for this computer."""
+        from PyQt6.QtWidgets import QMenu
+        from services.local_asr.catalog import BACKENDS
+        from services.local_asr.custom import addable_backends
+
+        menu = QMenu(self)
+        menu.addAction("Whisper model…", self._add_custom_models)
+        menu.addSeparator()
+        for backend in addable_backends():
+            menu.addAction(f"{BACKENDS[backend]} model…",
+                           lambda backend=backend: self._add_custom_speech_model(backend))
+        button = self.custom_models_button
+        menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
+        menu.deleteLater()
+
     def _add_custom_models(self) -> None:
         cached = peek_cached_models() or {}
         added = add_custom_models(self, settings_manager, cached)
@@ -2016,10 +2061,22 @@ class DownloadsPage(QWidget):
                 f"Added {len(added)} custom models. Choose one in Voice model or Voice & speakers to load it."
             )
 
+    def _add_custom_speech_model(self, backend: str) -> None:
+        from services.local_asr.catalog import BACKENDS, MODELS
+        key = add_custom_speech_model(self, backend)
+        if key:
+            invalidate_cached_models_snapshot()
+            self.refresh()
+            self.message_label.setText(
+                f"Added {MODELS[key].label}. Choose it for {BACKENDS[backend]} in Voice model "
+                "or Voice & speakers to load it."
+            )
+
     def _sync_custom_rows(self, settings: dict) -> None:
-        names = custom_models(settings)
+        from services.local_asr.custom import registered
+        names = [*custom_models(settings), *registered()]
         for name in list(self.rows):
-            if is_custom_model(name) and name not in names:
+            if _user_added(name) and name not in names:
                 row = self.rows.pop(name)
                 self.list_layout.removeWidget(row)
                 row.deleteLater()
@@ -2044,6 +2101,17 @@ class DownloadsPage(QWidget):
             self.on_download_requested(model_name)
 
     def _on_delete_clicked(self, model_name: str) -> None:
+        if _custom_speech(model_name) is not None:
+            from services.local_asr.custom import unregister
+            try:
+                unregister(model_name)
+            except ValueError as exc:
+                self.message_label.setText(str(exc))
+                return
+            invalidate_cached_models_snapshot()
+            self.refresh()
+            self.message_label.setText("Removed the custom model from the list. Its files are kept.")
+            return
         if is_custom_model(model_name):
             settings = self._settings_snapshot()
             if model_name in (SettingsKey.WHISPER_MODEL.read(settings),
@@ -2095,7 +2163,7 @@ class DownloadsPage(QWidget):
     def _missing_names(self) -> List[str]:
         """Every catalog model without local files, in catalog order."""
         return [name for name, row in self.rows.items() if not row.is_cached
-                and not (is_custom_model(name) and parse_source(name).local_path)]
+                and not _from_local_files(name)]
 
     def _scoped_missing_names(self) -> List[str]:
         """Missing models belonging to the active Engine Rail scope."""
@@ -2373,13 +2441,13 @@ class DownloadsPage(QWidget):
         )
         # Assignment lives on each feature's page; this one only downloads.
         row.set_active_button.setVisible(False)
-        if is_custom_model(model_name):
+        if _user_added(model_name):
             self._show_custom_row_actions(model_name, row, info, context)
         usage = self._usage_for(model_name, context.dictation_model, context.meeting_model)
         if info is None and needs_qwen_redownload(model_name):
             usage = "New GGUF download required" + (f" · {usage}" if usage else "")
         row.set_usage(usage)
-        if info is not None or (is_custom_model(model_name) and parse_source(model_name).local_path):
+        if info is not None or _from_local_files(model_name):
             # A model that gained files elsewhere must not stay checked.
             row.select_checkbox.setChecked(False)
             self._selected_models.discard(model_name)
@@ -2391,7 +2459,7 @@ class DownloadsPage(QWidget):
         info: Optional[CachedModelInfo],
         context: _RowContext,
     ) -> None:
-        local = bool(parse_source(model_name).local_path)
+        local = _from_local_files(model_name)
         row.delete_button.setText("Remove")
         row.delete_button.setVisible(True)
         row.delete_button.setToolTip("Remove from the model list; keep source files")
@@ -2401,7 +2469,9 @@ class DownloadsPage(QWidget):
             row.download_button.setVisible(False)
             row.select_checkbox.setVisible(False)
             if info is None:
-                row._set_badge("Folder unavailable", "idle")
+                speech = _custom_speech(model_name)
+                gone = "File" if speech is not None and Path(speech.path).suffix else "Folder"
+                row._set_badge(f"{gone} unavailable", "idle")
 
     def _show_cache_totals(self, seen_repos: Dict[str, CachedModelInfo]) -> None:
         total_bytes = sum(info.size_bytes for info in seen_repos.values())

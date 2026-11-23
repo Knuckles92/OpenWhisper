@@ -553,7 +553,8 @@ QDialog#textEndpointDialog {
     background-color: @slate-bg;
 }
 
-QLabel#textEndpointError {
+QLabel#textEndpointError,
+QLabel#customSpeechError {
     color: @danger-text-soft;
     font-size: 12px;
     background-color: transparent;

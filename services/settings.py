@@ -603,6 +603,9 @@ class SettingsKey:
     MEETING_SPEECH_SEPARATE: Final = BoolSetting("meeting_speech_separate", False)
     WHISPER_MODEL: Final = StrSetting("whisper_model", config.DEFAULT_WHISPER_MODEL)
     CUSTOM_WHISPER_MODELS: Final = ListSetting("custom_whisper_models")
+    # Models added for the other local engines: one object per model with
+    # its key, backend, label and file or folder (services/local_asr/custom.py).
+    CUSTOM_SPEECH_MODELS: Final = ListSetting("custom_speech_models")
     WHISPER_DEVICE: Final = StrSetting("whisper_device", config.FASTER_WHISPER_DEVICE)
     WHISPER_COMPUTE_TYPE: Final = StrSetting(
         "whisper_compute_type", config.FASTER_WHISPER_COMPUTE_TYPE,
