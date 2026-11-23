@@ -572,8 +572,7 @@ _CATALOG["fourier-2b"] = replace(
     relative_performance="Publisher reports 4.95% mean WER on the Open ASR Leaderboard English splits.",
     limitations=("Runs on transcribe.cpp on Windows x64 and Linux x86_64 only.",
                  *_CATALOG["fourier-2b"].limitations[1:],
-                 "English only. Community model; evaluate quality on your recordings.",
-                 "For this computer only: Host Mode doesn't offer it to paired computers."),
+                 "English only. Community model; evaluate quality on your recordings."),
     notice=("Noncommercial use only. Fourier 2B is by Oruk (oruk.ai) under CC BY-NC 4.0. "
             "Commercial use, commercial integration, or hosted serving needs a separate "
             "license from Oruk. Its model card, with the full notice, downloads with it."),

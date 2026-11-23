@@ -45,9 +45,6 @@ class SpeechModel:
     custom: bool = False
     #: A custom model's file or folder on this computer.
     path: str = ""
-    #: Licensed for use on this computer only (noncommercial terms that
-    #: exclude serving it): never offered to or run for a paired computer.
-    local_only: bool = False
 
 
 _EUROPEAN_LANGUAGES = ("en", "ru", "es", "fr", "pt", "auto")
@@ -82,7 +79,7 @@ BUILTIN_MODELS = {
             "fourier-2b", "qwen_asr", "Fourier 2B (English, noncommercial)",
             "Oruk's English fine-tune of Qwen3-ASR 1.7B", "CC-BY-NC-4.0", "English",
             family="qwen", platforms=("win_amd64", "linux_x86_64"), language_codes=("en",),
-            vad_gate=True, local_only=True,
+            vad_gate=True,
         ),
         SpeechModel(
             "nemotron-3.5", "nemotron", "Nemotron 3.5 ASR 0.6B", "Live speech recognition",
