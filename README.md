@@ -41,6 +41,8 @@ The app also includes microphone selection, a system tray where available, and d
 
 Download the package for your platform from [Releases](https://github.com/Knuckles92/OpenWhisper/releases/latest). Native packages include Python, the app dependencies, and (on Windows x64 and Linux x86_64) the `transcribe.cpp` speech runtime. Choose the **All-in-One** (`OpenWhisper-AllInOne-*`) installer on Windows or Linux to also bundle the compact English **Parakeet TDT-CTC 110M** model (~135 MB) so offline dictation, live preview, and meetings work right out of the box with no extra download.
 
+See the [code signing policy](#code-signing-policy) for how releases are built and signed.
+
 | Platform | Install |
 | --- | --- |
 | Windows | Run `OpenWhisper-Setup-<version>.exe` (slim; downloads your speech model on first use) or `OpenWhisper-AllInOne-Setup-<version>.exe` (ready offline out of the box). Both install per-user without admin rights and upgrade in place. |
@@ -271,6 +273,15 @@ Choose whether to ask, allow, or block missing-model downloads in **Settings →
 </p>
 
 </details>
+
+## Code signing policy
+
+Windows installers are not signed yet. We are applying for free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+- **Builds:** Every release is built from this repository's source by the [Build installers](.github/workflows/build-installers.yml) GitHub Actions workflow. Only those builds are signed.
+- **Committers and reviewers:** [Knuckles92](https://github.com/Knuckles92). Changes from other contributors arrive as pull requests and are reviewed before merging.
+- **Approvers:** [Knuckles92](https://github.com/Knuckles92) approves each release for signing.
+- **Privacy policy:** OpenWhisper has no telemetry. The only connection it makes without being asked is the update check, which you can turn off. [Network and privacy](docs/network-and-privacy.md) lists every connection the app can make.
 
 ## Contributing and license
 
