@@ -137,6 +137,11 @@ def test_fourier_is_the_publishers_pinned_gguf_with_its_model_card(platform, mon
     assert card["name"] == "README.md"
     assert all(spec["revision"] in f["url"] for f in spec["files"])
     assert MODELS["fourier-2b"].local_only
+    from services.local_asr.catalog import model_supported_here
+    from services.local_asr.languages import model_language_choices
+
+    assert model_supported_here("fourier-2b", platform) == (platform != "darwin_arm64")
+    assert model_language_choices("fourier-2b") == ("en",)
 
 
 def test_qwen_download_replaces_legacy_weights_only_after_success(isolated_models, monkeypatch):

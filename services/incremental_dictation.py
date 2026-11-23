@@ -107,7 +107,12 @@ class DictationSession:
         recorder = getattr(controller, "recorder", None)
         if not isinstance(backend, LocalSpeechBackend):
             return None
-        if backend.backend_id not in config.INCREMENTAL_DICTATION_BACKENDS:
+        from services.local_asr.catalog import model_supports
+
+        if (
+            backend.backend_id not in config.INCREMENTAL_DICTATION_BACKENDS
+            or not model_supports(getattr(backend, "model_name", None), backend.backend_id, "incremental")
+        ):
             return None
         if not backend.is_available() or backend.should_cancel:
             return None

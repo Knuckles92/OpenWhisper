@@ -505,7 +505,7 @@ def _speech_model_details(key: str, model) -> ModelDetails:
         source = "https://huggingface.co/" + spec["repo"]
     if key == "orukeet-v0.1":
         license_url = "https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md"
-    elif key in speech_catalog.GGUF_ONLY_MODELS:
+    elif key == "fourier-2b":
         license_url = f"{source}/blob/{spec['revision']}/README.md#license"
     elif native_qwen:
         license_url = f"{source}/blob/{spec['revision']}/LICENSE"

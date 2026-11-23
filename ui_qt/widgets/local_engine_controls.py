@@ -18,11 +18,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from PyQt6.QtCore import QPoint, QRect, QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QFont
 
 from config import config
 from services import dictation_language
 from services.settings import SettingsKey, settings_manager
-from services.local_asr.languages import LANGUAGE_LABELS, language_choices, selected_language
+from services.local_asr.languages import (
+    LANGUAGE_LABELS,
+    model_language_choices,
+    selected_language,
+)
 from ui_qt.utils.icons import design_icon
 from ui_qt.widgets.buttons import Button, neutral_button
 from ui_qt.widgets.engine_field import engine_combo, engine_field, set_device_choices
@@ -30,15 +35,19 @@ from ui_qt.widgets.wrapped_label import WrappedLabel
 
 logger = logging.getLogger(__name__)
 
+_BACKEND_ROLE = Qt.ItemDataRole.UserRole + 1
+_HEADER_ROLE = Qt.ItemDataRole.UserRole + 2
+
 _MODEL_HELP = (
-    "The speech model turns audio into text. Larger models generally improve accuracy "
-    "but need more memory and processing time. Use Models & engines to install models for this backend."
+    "The speech model turns audio into text. Models are grouped by family and "
+    "filtered to what can run on this computer. Larger models generally improve "
+    "accuracy but need more memory and processing time."
 )
 _DEVICE_HELP = (
-    "Choose the hardware used for transcription. Auto picks an available device; "
-    "Parakeet MLX uses the Apple GPU. GPU uses your graphics card: an NVIDIA card for "
-    "Local Whisper, Qwen3-ASR, Parakeet and Nemotron, a card from any vendor for Parakeet "
-    "Unified. CPU uses your main processor. Moonshine uses CPU only."
+    "Choose the hardware used for transcription. Auto picks an available GPU "
+    "and falls back to CPU. GPU uses your graphics card (Vulkan for transcribe.cpp, "
+    "CUDA/Metal for NeMo-Speech and Whisper). CPU uses your main processor. "
+    "Moonshine runs on CPU only."
 )
 _QUANT_HELP = (
     "Controls how Whisper stores and calculates model numbers. Start with Auto. "
@@ -47,8 +56,7 @@ _QUANT_HELP = (
 )
 _LANGUAGE_HELP = (
     "Choose a language supported by this model, or Auto for language detection. "
-    "Coverage and accuracy vary by model; this transcribes rather than translates. "
-    "Moonshine supports English only."
+    "Coverage and accuracy vary by model; this transcribes rather than translates."
 )
 _VOICE_MODEL_LINK = ("Open Settings → Voice model", "ondemand")
 _DOWNLOADS_LINK = ("Open Settings → Models & engines", "downloads")
@@ -60,10 +68,14 @@ def show_download_sizes(combo) -> None:
     Only the tooltip: the item text is the model id that settings store and
     ``set_values`` finds again.
     """
+    from services.local_asr.catalog import MODELS, model_runtime_label
     from services.model_catalog import MODEL_DOWNLOAD_SIZE_MB, format_download_mb
 
     for index in range(combo.count()):
-        size_mb = MODEL_DOWNLOAD_SIZE_MB.get(combo.itemData(index) or combo.itemText(index))
+        if combo.itemData(index, _HEADER_ROLE):
+            continue
+        key = combo.itemData(index) or combo.itemText(index)
+        size_mb = MODEL_DOWNLOAD_SIZE_MB.get(key)
         combo.setItemData(
             index,
             f"About {format_download_mb(size_mb).lstrip('~')} download" if size_mb else None,
@@ -71,15 +83,32 @@ def show_download_sizes(combo) -> None:
         )
 
 
+def _add_group_header(combo, title: str) -> None:
+    """Insert a non-selectable family header row into ``combo``."""
+    combo.addItem(title, None)
+    idx = combo.count() - 1
+    combo.setItemData(idx, True, _HEADER_ROLE)
+    model = combo.model()
+    item = model.item(idx) if hasattr(model, "item") else None
+    if item is not None:
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        font = QFont(item.font())
+        font.setBold(True)
+        font.setPointSize(max(8, font.pointSize() - 1))
+        item.setFont(font)
+
+
 class LocalEngineControls(QWidget):
-    """The Model / Device / Quant columns of the engine card's field row.
+    """The Model / Device / Quant / Language columns of the engine card's field row.
 
     Persists changes to settings and emits ``engine_settings_changed`` so the
     controller can reload the backend. Instantiate one per tab and keep them in
     sync via :meth:`set_values`, which blocks signals during the update.
 
-    Optional speech families show their own models and devices; quantization
-    belongs to their pinned runtime and is not an editable Whisper setting.
+    When ``unified=True`` (used in the main window's engine card), ``model_combo``
+    lists every local model supported on this computer grouped by model family
+    (Parakeet, Whisper, Qwen3-ASR, Nemotron, Moonshine), and switching to a
+    model owned by another backend emits ``backend_changed(backend_id)``.
 
     With ``dictation`` (Voice model, Quick Record), the Language field steps
     aside while "Languages I dictate in" sets the dictation language, so the
@@ -89,13 +118,17 @@ class LocalEngineControls(QWidget):
 
     #: Emitted after a *user-initiated* change has been persisted to settings.
     engine_settings_changed = pyqtSignal()
+    #: Emitted in unified mode when the user picks a model from a different backend.
+    backend_changed = pyqtSignal(str)
     help_requested = pyqtSignal(str)
 
     COMPUTE_CHOICES = ["auto", "float16", "float32", "int8"]
 
-    def __init__(self, parent=None, *, dictation: bool = False):
+    def __init__(self, parent=None, *, dictation: bool = False, unified: bool = False):
         super().__init__(parent)
         self._dictation = dictation
+        self._unified = unified
+        self._backend = "local_whisper"
         self._setup_ui()
         self.load_from_settings()
         self._connect_signals()
@@ -105,8 +138,12 @@ class LocalEngineControls(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
-        self.model_combo = engine_combo(config.WHISPER_MODEL_CHOICES)
-        show_download_sizes(self.model_combo)
+        self.model_combo = engine_combo(
+            () if self._unified else config.WHISPER_MODEL_CHOICES,
+            primary=self._unified,
+        )
+        if not self._unified:
+            show_download_sizes(self.model_combo)
         # CUDA is unavailable on macOS (no Metal backend in faster-whisper).
         device_choices = (
             ["auto", "cpu"] if sys.platform == "darwin" else ["auto", "cuda", "cpu"]
@@ -116,11 +153,11 @@ class LocalEngineControls(QWidget):
         self.compute_combo = engine_combo(self.COMPUTE_CHOICES)
         self.language_combo = engine_combo(())
 
-        # Matches the Backend field's share, so Model reads as its peer and the
-        # two runtime knobs stay visibly secondary.
         on_help = self.help_requested.emit
+        model_stretch = 3 if self._unified else 2
         layout.addWidget(engine_field("Model", self.model_combo, _MODEL_HELP,
-                                      [_VOICE_MODEL_LINK, _DOWNLOADS_LINK], on_help), stretch=2)
+                                      [_VOICE_MODEL_LINK, _DOWNLOADS_LINK], on_help),
+                         stretch=model_stretch)
         layout.addWidget(engine_field("Device", self.device_combo, _DEVICE_HELP,
                                       [_VOICE_MODEL_LINK], on_help), stretch=1)
         layout.addWidget(engine_field("Quant", self.compute_combo, _QUANT_HELP,
@@ -131,54 +168,136 @@ class LocalEngineControls(QWidget):
         self.language_field.hide()
 
     def _connect_signals(self):
-        self.model_combo.currentTextChanged.connect(self._on_changed)
+        self.model_combo.currentIndexChanged.connect(self._on_model_index_changed)
         self.device_combo.currentTextChanged.connect(self._on_changed)
         self.compute_combo.currentTextChanged.connect(self._on_changed)
         self.language_combo.currentTextChanged.connect(self._on_changed)
 
+    def _populate_unified_models(self, active_backend: str, active_model: str, settings: dict) -> None:
+        """Fill ``model_combo`` with every local model supported here, grouped by family."""
+        from services.local_asr.catalog import (
+            MODEL_FAMILIES,
+            MODELS,
+            WHISPER_BACKEND,
+            WHISPER_FAMILY,
+            backends_in_family,
+            family_of,
+            model_supported_here,
+            supported_families,
+        )
+        from services.whisper_sources import custom_models
+        from ui_qt.widgets.speech_backend_picker import speech_model_picker_label
+
+        self.model_combo.clear()
+        families = list(supported_families())
+        active_family = family_of(active_backend)
+        if active_family not in families and active_family in MODEL_FAMILIES:
+            families.append(active_family)
+
+        whisper_choices = [*config.WHISPER_MODEL_CHOICES, *custom_models(settings)]
+        if active_backend == WHISPER_BACKEND and active_model and active_model not in whisper_choices:
+            whisper_choices.append(active_model)
+
+        for fam in families:
+            entries: list[tuple[str, str, str]] = []
+            if fam == WHISPER_FAMILY:
+                for name in whisper_choices:
+                    entries.append((name, name, WHISPER_BACKEND))
+            else:
+                for backend_id in backends_in_family(fam):
+                    for key, model in MODELS.items():
+                        if model.backend != backend_id:
+                            continue
+                        if not model_supported_here(key) and not (
+                            backend_id == active_backend and key == active_model
+                        ):
+                            continue
+                        entries.append((speech_model_picker_label(key), key, backend_id))
+            if not entries:
+                continue
+            _add_group_header(self.model_combo, MODEL_FAMILIES[fam])
+            for label, key, backend_id in entries:
+                self.model_combo.addItem(label, key)
+                idx = self.model_combo.count() - 1
+                self.model_combo.setItemData(idx, backend_id, _BACKEND_ROLE)
+
+        show_download_sizes(self.model_combo)
+        target_index = self._find_model_index(active_backend, active_model)
+        if target_index >= 0:
+            self.model_combo.setCurrentIndex(target_index)
+
+    def _find_model_index(self, backend: str, model_key: str) -> int:
+        for index in range(self.model_combo.count()):
+            if self.model_combo.itemData(index, _HEADER_ROLE):
+                continue
+            if (self.model_combo.itemData(index, _BACKEND_ROLE) == backend
+                    and self.model_combo.itemData(index) == model_key):
+                return index
+        return self.model_combo.findData(model_key)
+
+    def _refresh_language_combo(self, backend: str, model_key: str | None, settings: dict) -> None:
+        self.language_combo.blockSignals(True)
+        stored_lang = SettingsKey.LOCAL_ASR_LANGUAGE.read(settings)
+        self.language_combo.clear()
+        for code in model_language_choices(model_key, backend):
+            self.language_combo.addItem(LANGUAGE_LABELS[code], code)
+        language = selected_language(backend, stored_lang, model_name=model_key)
+        self.language_combo.setCurrentIndex(max(0, self.language_combo.findData(language)))
+        self.language_combo.blockSignals(False)
+        self.language_combo.setEnabled(self.language_combo.count() > 1)
+
     def set_backend(self, backend: str):
         from services.local_asr.catalog import MODELS, BACKENDS, selected_model, selected_device
         self._backend = backend
+        settings = settings_manager.load_all_settings()
         self.device_combo.blockSignals(True)
         # No CUDA on a Mac, nor for the Apple-only Parakeet MLX.
-        if backend == "parakeet_mlx" or sys.platform == "darwin":
+        if backend == "moonshine":
+            set_device_choices(self.device_combo, ["cpu"])
+        elif backend == "parakeet_mlx" or sys.platform == "darwin":
             set_device_choices(self.device_combo, ["auto", "cpu"])
         else:
             set_device_choices(self.device_combo, ["auto", "cuda", "cpu"])
         self.device_combo.blockSignals(False)
+
+        active_model = (
+            selected_model(backend, settings)
+            if backend in BACKENDS
+            else (SettingsKey.WHISPER_MODEL.read(settings) or config.DEFAULT_WHISPER_MODEL)
+        )
         self.model_combo.blockSignals(True)
-        self.model_combo.clear()
+        if self._unified:
+            self._populate_unified_models(backend, active_model, settings)
+        else:
+            self.model_combo.clear()
+            if backend in BACKENDS:
+                for key, model in MODELS.items():
+                    if model.backend == backend:
+                        self.model_combo.addItem(model.label, key)
+                self.model_combo.setCurrentIndex(self.model_combo.findData(active_model))
+            else:
+                from services.whisper_sources import custom_models
+                self.model_combo.addItems([*config.WHISPER_MODEL_CHOICES,
+                                          *custom_models(settings)])
+            show_download_sizes(self.model_combo)
+        self.model_combo.blockSignals(False)
+
         if backend in BACKENDS:
-            for key, model in MODELS.items():
-                if model.backend == backend:
-                    self.model_combo.addItem(model.label, key)
-            settings = settings_manager.load_all_settings()
-            self.model_combo.setCurrentIndex(self.model_combo.findData(selected_model(backend, settings)))
             self.device_combo.blockSignals(True)
             # A saved device this computer doesn't offer (CUDA on a Mac) shows Auto.
             self.device_combo.setCurrentIndex(
                 max(0, self.device_combo.findData(selected_device(backend, settings))))
             self.device_combo.blockSignals(False)
-        else:
-            from services.whisper_sources import custom_models
-            self.model_combo.addItems([*config.WHISPER_MODEL_CHOICES,
-                                      *custom_models(settings_manager.load_all_settings())])
-        show_download_sizes(self.model_combo)
-        self.model_combo.blockSignals(False)
         self.compute_combo.parentWidget().setVisible(backend not in BACKENDS)
         self.sync_language_field()
-        self.language_combo.blockSignals(True)
-        stored_lang = SettingsKey.LOCAL_ASR_LANGUAGE.read(settings_manager.load_all_settings())
-        self.language_combo.clear()
-        for code in language_choices(backend):
-            self.language_combo.addItem(LANGUAGE_LABELS[code], code)
-        language = selected_language(backend, stored_lang)
-        self.language_combo.setCurrentIndex(self.language_combo.findData(language))
-        self.language_combo.blockSignals(False)
-        self.language_combo.setEnabled(self.language_combo.count() > 1)
+        self._refresh_language_combo(backend, active_model if backend in BACKENDS else None, settings)
         self.device_combo.setEnabled(backend != "moonshine")
         if backend not in BACKENDS:
-            self.load_from_settings()
+            self.set_values(
+                active_model,
+                SettingsKey.WHISPER_DEVICE.read(settings),
+                SettingsKey.WHISPER_COMPUTE_TYPE.read(settings),
+            )
 
     def sync_language_field(self) -> None:
         """Show the Language field unless the dictation languages decide instead."""
@@ -194,6 +313,27 @@ class LocalEngineControls(QWidget):
                      or bool(dictation_language.single_language_reason(settings)))
         self.language_field.setVisible(shown)
 
+    def _on_model_index_changed(self, index: int):
+        if index < 0 or self.model_combo.itemData(index, _HEADER_ROLE):
+            return
+        if self._unified:
+            from services.local_asr.catalog import BACKENDS
+
+            chosen_backend = self.model_combo.itemData(index, _BACKEND_ROLE)
+            chosen_model = self.model_combo.itemData(index) or self.model_combo.currentText()
+            if chosen_backend and chosen_backend != self._backend:
+                if chosen_backend in BACKENDS:
+                    settings = settings_manager.load_all_settings()
+                    models = dict(SettingsKey.LOCAL_ASR_MODELS.read(settings))
+                    models[chosen_backend] = chosen_model
+                    settings_manager.save_setting(SettingsKey.LOCAL_ASR_MODELS, models)
+                else:
+                    settings_manager.save_setting(SettingsKey.WHISPER_MODEL, chosen_model)
+                self.set_backend(chosen_backend)
+                self.backend_changed.emit(chosen_backend)
+                return
+        self._on_changed(self.model_combo.currentText())
+
     def _on_changed(self, _value: str):
         from services.local_asr.catalog import BACKENDS
         backend = getattr(self, "_backend", "local_whisper")
@@ -201,9 +341,16 @@ class LocalEngineControls(QWidget):
             settings = settings_manager.load_all_settings()
             models = dict(SettingsKey.LOCAL_ASR_MODELS.read(settings))
             devices = dict(SettingsKey.LOCAL_ASR_DEVICES.read(settings))
-            models[backend] = self.model_combo.currentData()
+            model_key = self.model_combo.currentData()
+            models[backend] = model_key
             devices[backend] = self.device_combo.currentData()
-            lang_code = selected_language(backend, self.language_combo.currentData())
+            self._refresh_language_combo(backend, model_key, {
+                **settings,
+                SettingsKey.LOCAL_ASR_LANGUAGE: self.language_combo.currentData(),
+            })
+            lang_code = selected_language(
+                backend, self.language_combo.currentData(), model_name=model_key
+            )
             settings_manager.update_settings({
                 SettingsKey.LOCAL_ASR_MODELS: models,
                 SettingsKey.LOCAL_ASR_DEVICES: devices,
@@ -211,8 +358,10 @@ class LocalEngineControls(QWidget):
             })
             self.engine_settings_changed.emit()
             return
+        model_name = self.model_combo.currentData() if self._unified else self.model_combo.currentText()
+        model_name = model_name or self.model_combo.currentText()
         settings = settings_manager.update_settings({
-            SettingsKey.WHISPER_MODEL: self.model_combo.currentText(),
+            SettingsKey.WHISPER_MODEL: model_name,
             SettingsKey.WHISPER_DEVICE: self.device_combo.currentData(),
             SettingsKey.WHISPER_COMPUTE_TYPE: self.compute_combo.currentText(),
         })
@@ -227,7 +376,7 @@ class LocalEngineControls(QWidget):
     def load_from_settings(self):
         """Populate the fields from persisted settings (no signal emitted)."""
         from services.local_asr.catalog import BACKENDS
-        if getattr(self, "_backend", "local_whisper") in BACKENDS:
+        if self._unified or getattr(self, "_backend", "local_whisper") in BACKENDS:
             self.set_backend(self._backend)
             return
         settings = settings_manager.load_all_settings()
@@ -239,7 +388,7 @@ class LocalEngineControls(QWidget):
 
     def set_values(self, model: str, device: str, compute: str):
         """Reflect values without emitting signals."""
-        from services.local_asr.catalog import BACKENDS
+        from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND
         if getattr(self, "_backend", "local_whisper") in BACKENDS:
             self.set_backend(self._backend)
             return
@@ -248,20 +397,31 @@ class LocalEngineControls(QWidget):
             blocked = self.device_combo.blockSignals(True)
             self.device_combo.setCurrentIndex(index)
             self.device_combo.blockSignals(blocked)
-        for combo, value in (
-            (self.model_combo, model or config.DEFAULT_WHISPER_MODEL),
-            (self.compute_combo, compute or "auto"),
-        ):
-            combo.blockSignals(True)
-            if combo is self.model_combo and combo.findText(value) < 0:
-                combo.addItem(value)
-                show_download_sizes(combo)
-            # A paired client can select any precision supported by this
-            # host, including mixed types beyond the short default menu.
-            if combo is self.compute_combo and combo.findText(value) < 0:
-                combo.addItem(value)
-            combo.setCurrentText(value)
-            combo.blockSignals(False)
+        target_model = model or config.DEFAULT_WHISPER_MODEL
+        self.model_combo.blockSignals(True)
+        if self._unified:
+            idx = self._find_model_index(WHISPER_BACKEND, target_model)
+            if idx < 0:
+                self.model_combo.addItem(target_model, target_model)
+                idx = self.model_combo.count() - 1
+                self.model_combo.setItemData(idx, WHISPER_BACKEND, _BACKEND_ROLE)
+                show_download_sizes(self.model_combo)
+            self.model_combo.setCurrentIndex(idx)
+        else:
+            if self.model_combo.findText(target_model) < 0:
+                self.model_combo.addItem(target_model)
+                show_download_sizes(self.model_combo)
+            self.model_combo.setCurrentText(target_model)
+        self.model_combo.blockSignals(False)
+
+        target_compute = compute or "auto"
+        self.compute_combo.blockSignals(True)
+        # A paired client can select any precision supported by this
+        # host, including mixed types beyond the short default menu.
+        if self.compute_combo.findText(target_compute) < 0:
+            self.compute_combo.addItem(target_compute)
+        self.compute_combo.setCurrentText(target_compute)
+        self.compute_combo.blockSignals(False)
 
     def set_busy(self, busy: bool):
         """Disable the fields while a reload is in flight or during recording."""
@@ -269,6 +429,8 @@ class LocalEngineControls(QWidget):
             combo.setEnabled(not busy)
         if getattr(self, "_backend", "") == "moonshine":
             self.device_combo.setEnabled(False)
+            self.language_combo.setEnabled(False)
+        elif not busy and self.language_combo.count() <= 1:
             self.language_combo.setEnabled(False)
 
 

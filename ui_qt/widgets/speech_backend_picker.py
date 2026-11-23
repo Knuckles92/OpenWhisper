@@ -50,11 +50,30 @@ def speech_model_picker_label(model_name: str) -> str:
     return label
 
 
-def populate_backend_combo(combo: QComboBox) -> None:
-    """List engines alphabetically, keeping runtime IDs as item data."""
+def populate_backend_combo(combo: QComboBox, *, include_unsupported: bool = False) -> None:
+    """List engines supported on this computer, keeping runtime IDs as item data."""
+    from services.local_asr.catalog import backend_supported_here
+
     for display_name in sorted(config.MODEL_CHOICES, key=str.casefold):
-        combo.addItem(backend_picker_label(display_name), config.MODEL_VALUE_MAP[display_name])
+        backend = config.MODEL_VALUE_MAP[display_name]
+        if not include_unsupported and not backend_supported_here(backend):
+            continue
+        combo.addItem(backend_picker_label(display_name), backend)
         combo.setItemData(
             combo.count() - 1, backend_picker_tooltip(display_name),
             Qt.ItemDataRole.ToolTipRole,
         )
+
+
+def ensure_backend_item(combo: QComboBox, backend: str) -> int:
+    """Ensure ``backend`` is present in ``combo`` (e.g. a saved cross-OS selection)."""
+    index = combo.findData(backend)
+    if index >= 0:
+        return index
+    display_name = backend_display_name(backend)
+    if config.MODEL_VALUE_MAP.get(display_name) != backend:
+        return -1
+    combo.addItem(backend_picker_label(display_name), backend)
+    index = combo.count() - 1
+    combo.setItemData(index, backend_picker_tooltip(display_name), Qt.ItemDataRole.ToolTipRole)
+    return index
