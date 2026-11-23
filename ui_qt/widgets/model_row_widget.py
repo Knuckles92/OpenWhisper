@@ -99,6 +99,12 @@ _ROW_STYLE = row_style(
         background-color: @slate-raised;
         border: 1px solid @slate-border-hover;
     }
+    QProgressBar#modelRowProgress,
+    QProgressBar#modelRowProgress::chunk {
+        border-radius: 1px;
+        min-height: 3px;
+        max-height: 3px;
+    }
     QPushButton#modelDeleteButton:disabled {
         color: @slate-text-disabled;
         border: 1px solid @slate-border-subtle;
@@ -371,11 +377,13 @@ class ModelRowWidget(DownloadRow):
     def _place_progress(self) -> None:
         if not self.progress.isVisible():
             return
+        # A hairline inside the bottom padding, below the summary text rather
+        # than over it; the side inset keeps it clear of the rounded corners.
         margins = self.layout().contentsMargins()
-        height = 6
+        height = 3
         self.progress.setGeometry(
             margins.left(),
-            self.height() - margins.bottom() - height,
+            self.height() - (margins.bottom() + height) // 2 - 1,
             max(0, self.width() - margins.left() - margins.right()),
             height,
         )
