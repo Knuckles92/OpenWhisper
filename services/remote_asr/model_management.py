@@ -21,7 +21,7 @@ def model_choices() -> list[dict]:
     # Only the published catalog: never the host's custom models.
     return [
         {"family": model.backend, "model": key, "label": model.label}
-        for key, model in BUILTIN_MODELS.items()
+        for key, model in BUILTIN_MODELS.items() if not model.local_only
     ] + [
         {"family": WHISPER_BACKEND, "model": name, "label": f"Whisper {name}"}
         for name in config.WHISPER_MODEL_CHOICES if name != "auto"

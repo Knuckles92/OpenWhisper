@@ -36,7 +36,7 @@ def isolated_models(tmp_path, monkeypatch):
 
 
 def test_every_optional_artifact_is_pinned_and_has_integrity_metadata():
-    assert len(BACKENDS) == 6 and len(MODELS) == 10
+    assert len(BACKENDS) == 6 and len(MODELS) == 11
     assert "orukeet-v0.1" in MODELS
     assert "parakeet-110m-en" in MODELS
     for key in MODELS:
@@ -124,6 +124,19 @@ def test_qwen_runtime_and_weights_match_on_each_platform(platform, monkeypatch):
         else:
             assert files[0]["name"].endswith("-Q8_0.gguf")
             assert {file["name"] for file in files[1:]} == {"LICENSE", "NOTICE"}
+
+
+@pytest.mark.parametrize("platform", ["win_amd64", "linux_x86_64", "darwin_arm64"])
+def test_fourier_is_the_publishers_pinned_gguf_with_its_model_card(platform, monkeypatch):
+    monkeypatch.setattr("services.components.current_platform_tag", lambda: platform)
+    spec = artifacts("fourier-2b")
+    assert spec["repo"] == "oruk/oruk-fourier-2b"
+    gguf, card = spec["files"]
+    assert (gguf["name"], gguf["size_bytes"]) == ("Fourier-2B-Q8_0.gguf", 2_185_030_848)
+    assert gguf["sha256"] == "6a7c419bd571f7b0e21da2d5ab1e3a1a3938a83470d622be57427af98f322981"
+    assert card["name"] == "README.md"
+    assert all(spec["revision"] in f["url"] for f in spec["files"])
+    assert MODELS["fourier-2b"].local_only
 
 
 def test_qwen_download_replaces_legacy_weights_only_after_success(isolated_models, monkeypatch):

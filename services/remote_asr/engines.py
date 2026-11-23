@@ -205,6 +205,8 @@ def host_models() -> list:
     models = []
     # A custom model is the host's own file, never offered to another computer.
     for key, model in BUILTIN_MODELS.items():
+        if model.local_only:
+            continue
         if model.backend not in runtime_ready:
             component, _device = resolve_runtime(
                 model.backend, selected_device(model.backend, settings)
@@ -238,6 +240,14 @@ def host_engine_for(backend) -> HostEngine:
     from transcriber.optional_backend import LocalSpeechBackend
 
     if isinstance(backend, LocalSpeechBackend):
+        from services.local_asr.catalog import MODELS
+
+        model = MODELS.get(backend.model_name)
+        if model is not None and model.local_only:
+            return UnavailableEngine(
+                f"{model.label} is licensed for use on the host computer only. "
+                "Select another model there to share it."
+            )
         return SpeechWorkerEngine(backend)
     from transcriber.local_backend import LocalWhisperBackend
 

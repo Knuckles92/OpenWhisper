@@ -508,7 +508,8 @@ def _save_engine_model(family: str, model: str) -> Optional[str]:
     from services.local_asr.catalog import BACKENDS, BUILTIN_MODELS, WHISPER_BACKEND
 
     # A paired computer may switch this one to a published model only.
-    if family in BACKENDS and model in BUILTIN_MODELS and BUILTIN_MODELS[model].backend == family:
+    if (family in BACKENDS and model in BUILTIN_MODELS and BUILTIN_MODELS[model].backend == family
+            and not BUILTIN_MODELS[model].local_only):
         models = dict(SettingsKey.LOCAL_ASR_MODELS.read(settings_manager.load_all_settings()))
         models[family] = model
         settings_manager.save_setting(SettingsKey.LOCAL_ASR_MODELS, models)

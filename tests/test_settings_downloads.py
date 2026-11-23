@@ -628,6 +628,15 @@ class TestInspector(_DialogTestCase):
         assert dialog.fact_labels["Local format"].text()
         assert dialog.inspector_tradeoffs.text().startswith("•")
 
+    def test_a_noncommercial_model_warns_before_download(self):
+        dialog, _values = self._make_dialog()
+        dialog.select_model("fourier-2b")
+        assert dialog.inspector_notice.isVisibleTo(dialog)
+        assert "Noncommercial use only" in dialog.inspector_notice.text()
+        assert "license from Oruk" in dialog.inspector_notice.text()
+        dialog.select_model("parakeet-v3")
+        assert not dialog.inspector_notice.isVisibleTo(dialog)
+
     def test_tag_pill_shows_its_full_text_under_the_theme(self):
         """The themed pill pads the label; that padding must not clip the text."""
         previous_stylesheet = self.app.styleSheet()
@@ -914,6 +923,12 @@ class TestBatchSelection(_DialogTestCase):
         assert "base  \u00b7  ~145 MB" in box.model_list_label.text()
         assert box.total_label.text() == "Estimated total: ~221 MB"
         assert box.destination_path_label.text() == get_hf_cache_dir()
+        assert box.notice_label.isHidden()
+
+    def test_confirmation_repeats_a_models_license_notice(self):
+        box = BatchDownloadDialog(["tiny", "fourier-2b"])
+        assert not box.notice_label.isHidden()
+        assert "Noncommercial use only" in box.notice_label.text()
 
 
 class TestBatchLifecycle(_DialogTestCase):

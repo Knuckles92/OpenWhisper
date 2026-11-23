@@ -288,6 +288,24 @@ def test_host_refuses_to_share_remote_or_cloud_engines():
     assert not UnavailableEngine("x").describe()["available"]
 
 
+def test_host_never_offers_switches_to_or_serves_a_local_only_model(monkeypatch):
+    from services.remote_asr import engines
+    from services.remote_asr.model_management import model_choices
+    from services.runtime.remote import _save_engine_model
+    from transcriber.optional_backend import LocalSpeechBackend
+
+    assert "fourier-2b" not in {choice["model"] for choice in model_choices()}
+    assert _save_engine_model("qwen_asr", "fourier-2b") is None
+    monkeypatch.setattr("services.components.is_installed", lambda _component: True)
+    monkeypatch.setattr("services.local_asr.cache.is_cached", lambda _key: True)
+    monkeypatch.setattr("services.hf_access.scan_cached_models", lambda **_: {})
+    assert "fourier-2b" not in {m["model"] for m in engines.host_models()}
+    backend = LocalSpeechBackend("qwen_asr", model_name="fourier-2b", device="cpu")
+    engine = host_engine_for(backend)
+    assert isinstance(engine, UnavailableEngine)
+    assert "host computer only" in engine.describe()["status"]
+
+
 def test_whisper_engine_decodes_windows_into_segments():
     segments = [SimpleNamespace(text=" Hello", start=0.0, end=0.5),
                 SimpleNamespace(text=" world.", start=0.5, end=1.0)]

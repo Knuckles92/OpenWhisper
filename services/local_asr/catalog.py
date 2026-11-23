@@ -27,6 +27,9 @@ class SpeechModel:
     custom: bool = False
     #: A custom model's file or folder on this computer.
     path: str = ""
+    #: Licensed for use on this computer only (noncommercial terms that
+    #: exclude serving it): never offered to or run for a paired computer.
+    local_only: bool = False
 
 
 BUILTIN_MODELS = {
@@ -47,6 +50,11 @@ BUILTIN_MODELS = {
         SpeechModel(
             "qwen-1.7b", "qwen_asr", "Qwen3-ASR 1.7B", "Accuracy-focused transcription",
             "Apache-2.0", "30 languages and 22 Chinese dialects",
+        ),
+        SpeechModel(
+            "fourier-2b", "qwen_asr", "Fourier 2B (English, noncommercial)",
+            "Oruk's English fine-tune of Qwen3-ASR 1.7B", "CC-BY-NC-4.0", "English",
+            local_only=True,
         ),
         SpeechModel(
             "nemotron-3.5", "nemotron", "Nemotron 3.5 ASR 0.6B", "Live speech recognition",
@@ -149,6 +157,11 @@ def backend_of(model_name: str) -> str:
     return MODELS[model_name].backend if model_name in MODELS else WHISPER_BACKEND
 
 
+#: Qwen3-ASR models published only as GGUF, for transcribe.cpp on Windows x64
+#: and Linux x86_64; the PyTorch runtime on a Mac can't load them.
+GGUF_ONLY_MODELS = frozenset({"fourier-2b"})
+
+
 @functools.cache
 def _artifacts(filename: str) -> dict:
     # Shipped with the app, so it is read once; callers only read the specs.
@@ -158,7 +171,8 @@ def _artifacts(filename: str) -> dict:
 
 def artifacts(key: str) -> dict:
     """A built-in model's pinned download: repository, revision and checked files."""
-    if BUILTIN_MODELS[key].backend == "qwen_asr" and uses_transcribe_cpp("qwen_asr"):
+    if BUILTIN_MODELS[key].backend == "qwen_asr" and (
+            uses_transcribe_cpp("qwen_asr") or key in GGUF_ONLY_MODELS):
         return _artifacts("qwen_gguf_models.json")[key]
     return _artifacts("models.json")[key]
 

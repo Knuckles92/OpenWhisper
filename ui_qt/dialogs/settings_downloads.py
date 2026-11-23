@@ -258,6 +258,14 @@ def _from_local_files(name: str) -> bool:
         is_custom_model(name) and bool(parse_source(name).local_path))
 
 
+def _catalog_details(name: str) -> Optional[ModelDetails]:
+    """A catalog model's details, or None for a model the catalog doesn't describe."""
+    try:
+        return get_model_details(name)
+    except KeyError:
+        return None
+
+
 def _current_cache_info(
     info: Optional[CachedModelInfo], revision: Optional[str]
 ) -> Optional[CachedModelInfo]:
@@ -337,6 +345,13 @@ class BatchDownloadDialog(QDialog):
         )
         layout.addWidget(list_label)
         self.model_list_label = list_label
+
+        notices = [details.notice for details in map(_catalog_details, model_names)
+                   if details is not None and details.notice]
+        self.notice_label = WrappedLabel("\n\n".join(notices))
+        self.notice_label.setObjectName("downloadsLicenseNotice")
+        self.notice_label.setVisible(bool(notices))
+        layout.addWidget(self.notice_label)
 
         total_label = QLabel(
             f"Estimated total: ~{format_size_bytes(total_bytes)}"
@@ -1704,6 +1719,11 @@ class DownloadsPage(QWidget):
         detail.setContentsMargins(0, 0, 6, 0)
         detail.setSpacing(12)
 
+        self.inspector_notice = WrappedLabel("")
+        self.inspector_notice.setObjectName("downloadsLicenseNotice")
+        self.inspector_notice.setVisible(False)
+        detail.addWidget(self.inspector_notice)
+
         self.inspector_description = WrappedLabel("")
         self.inspector_description.setObjectName("downloadsInspectorBody")
         detail.addWidget(self.inspector_description)
@@ -1921,6 +1941,8 @@ class DownloadsPage(QWidget):
         self.inspector_name.setToolTip(details.model_name)
         self.inspector_tags.setText(details.compact_tags)
         self.inspector_tags.setVisible(bool(details.compact_tags))
+        self.inspector_notice.setText(details.notice)
+        self.inspector_notice.setVisible(bool(details.notice))
         self.inspector_description.setText(details.description)
         self.inspector_best_for.setText(details.best_for)
         self.inspector_tradeoffs.setText(

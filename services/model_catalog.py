@@ -73,6 +73,8 @@ class ModelDetails:
     revision: str = ""
     download_hosts: Tuple[str, ...] = ()
     verification: str = "Publisher-managed files; no OpenWhisper checksum manifest"
+    #: Terms a person must see before downloading, such as noncommercial use.
+    notice: str = ""
 
     @property
     def download_size(self) -> str:
@@ -441,6 +443,7 @@ _SPEECH_PARAMETER_COUNTS: Final[Mapping[str, str]] = MappingProxyType({
     "moonshine-small": "123 million",
     "moonshine-medium": "245 million",
     "qwen-1.7b": "1.7 billion",
+    "fourier-2b": "2.04 billion",
     "parakeet-unified-en": "618 million",
     "parakeet-110m-en": "114 million",
 })
@@ -502,6 +505,8 @@ def _speech_model_details(key: str, model) -> ModelDetails:
         source = "https://huggingface.co/" + spec["repo"]
     if key == "orukeet-v0.1":
         license_url = "https://huggingface.co/oruk/orukeet/blob/main/NOTICE.md"
+    elif key in speech_catalog.GGUF_ONLY_MODELS:
+        license_url = f"{source}/blob/{spec['revision']}/README.md#license"
     elif native_qwen:
         license_url = f"{source}/blob/{spec['revision']}/LICENSE"
     else:
@@ -560,6 +565,18 @@ _CATALOG["orukeet-v0.1"] = replace(
                  "Validated on Windows/Linux CPU and CUDA; Orukeet on Apple Silicon has not been tested.",
                  "One reported benchmark split was also used for training and checkpoint selection.",
                  "CC BY-SA 4.0 weights retain attribution and applicable ShareAlike terms."),
+)
+_CATALOG["fourier-2b"] = replace(
+    _CATALOG["fourier-2b"], maintainer="Oruk AI (fine-tune); Qwen (base model)",
+    origin_name="Oruk Fourier 2B, based on Qwen3-ASR 1.7B",
+    relative_performance="Publisher reports 4.95% mean WER on the Open ASR Leaderboard English splits.",
+    limitations=("Runs on transcribe.cpp on Windows x64 and Linux x86_64 only.",
+                 *_CATALOG["fourier-2b"].limitations[1:],
+                 "English only. Community model; evaluate quality on your recordings.",
+                 "For this computer only: Host Mode doesn't offer it to paired computers."),
+    notice=("Noncommercial use only. Fourier 2B is by Oruk (oruk.ai) under CC BY-NC 4.0. "
+            "Commercial use, commercial integration, or hosted serving needs a separate "
+            "license from Oruk. Its model card, with the full notice, downloads with it."),
 )
 MODEL_CATALOG: Final[Mapping[str, ModelDetails]] = MappingProxyType(_CATALOG)
 
