@@ -7,11 +7,26 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.8.99] - 2026-11-23
+
 ### Added
 
 - **Use your own model with any local speech engine.** **Add custom…** in **Settings → Models & storage → Models & engines** now offers each engine with a runtime for this computer, alongside Whisper: choose a model file (a `.gguf` for Parakeet, Nemotron, Parakeet Unified, and Qwen3-ASR on Windows and Linux) or folder (Qwen3-ASR on a Mac, Moonshine, Parakeet MLX), give it a name, and pick it for that engine in **Voice model** or **Voice & speakers**. It loads from where it is, takes its engine's live-text and meeting support, and stays on this computer: a host never offers it to paired computers. Moonshine models now say their size instead of being told apart by name.
 
 - **Send a walkthrough straight to a coding agent.** **Send to** on the walkthrough's ready card and in Review (also under **⋯**) opens a menu that adds the walkthrough to any of your open T3 Code threads across all projects (listed with what each is doing), starts a new T3 Code thread in a project, or opens a new Claude Code, Codex or OpenCode session in a project folder. The agent gets the instructions, your words and each screenshot's path, so nothing needs pasting or attaching. T3 Code is reached through its own `t3` command on this computer.
+
+- **Import speech models already on your computer.** **Import existing models…** finds compatible models in common caches or a folder you choose and adds them to **Models & engines** without downloading another copy.
+- **Choose how to redact walkthrough screenshots.** Cover sensitive areas with **Blackout**, **Blur**, or **Pixelate**, and preview the result while drawing.
+
+### Changed
+
+- **Speech models are grouped by family.** **Settings → Models & storage → Models & engines** shows models by family, with runtime choices and status alongside them. Switch to a paired host from the same view when the host allows model management.
+- **Walkthrough Review uses one Copy menu.** Choose a format for a single copy, or star it to make it the default for the main button and the end of a recording.
+- **macOS auto-paste setup can copy a troubleshooting prompt.** Share the prompt with a coding agent if Accessibility access still needs attention.
+
+### Fixed
+
+- **Recording saves tolerate slower disks.** OpenWhisper gives the recording journal more time to finish writing when disk activity delays it.
 
 ## [2.8.98] - 2026-11-21
 
