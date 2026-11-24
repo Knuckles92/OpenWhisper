@@ -448,7 +448,9 @@ class TestFilter(_DialogTestCase):
         assert not dialog.rows["base"].isVisibleTo(dialog)
         assert not dialog.rows["tiny.en"].isVisibleTo(dialog)
 
-    def test_engine_rail_shows_one_family_and_hides_row_engine_badge(self):
+    # Parakeet has two runtimes only on Windows and Linux (MLX alone on a Mac).
+    @patch("services.components.current_platform_tag", return_value="win_amd64")
+    def test_engine_rail_shows_one_family_and_hides_row_engine_badge(self, _platform):
         dialog, _values = self._make_dialog()
         dialog.select_rail("qwen")
         assert dialog.rows["qwen-0.6b"].isVisibleTo(dialog)

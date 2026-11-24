@@ -2,7 +2,6 @@
 from pathlib import Path
 from unittest.mock import patch
 
-
 from services import dictation_language
 from services.local_asr import catalog, custom, languages
 from services.settings import SettingsKey, settings_manager
@@ -32,9 +31,13 @@ class TestPerModelCapabilitiesAndPlatforms:
     def test_per_model_vad_gate_and_languages_work_independently_of_backend(self, tmp_path):
         from transcriber.optional_backend import LocalSpeechBackend
 
-        # Custom transcribe.cpp GGUF with speech-gated VAD turned off vs on.
-        key_gated = custom.register("qwen_asr", _gguf(tmp_path / "fourier.gguf"), "Fourier 2B", vad_gate=True)
-        key_ungated = custom.register("qwen_asr", _gguf(tmp_path / "plain.gguf"), "Plain", vad_gate=False)
+        # Custom transcribe.cpp GGUF with speech-gated VAD turned off vs on. Qwen3-ASR
+        # loads a GGUF only on Windows and Linux (a Safetensors folder on a Mac).
+        with patch("services.components.current_platform_tag", return_value="win_amd64"):
+            key_gated = custom.register(
+                "qwen_asr", _gguf(tmp_path / "fourier.gguf"), "Fourier 2B", vad_gate=True)
+            key_ungated = custom.register(
+                "qwen_asr", _gguf(tmp_path / "plain.gguf"), "Plain", vad_gate=False)
         assert LocalSpeechBackend("qwen_asr", key_gated)._uses_vad_gate() is True
         assert LocalSpeechBackend("qwen_asr", key_ungated)._uses_vad_gate() is False
 
