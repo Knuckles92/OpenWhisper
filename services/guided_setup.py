@@ -118,4 +118,4 @@ def speech_model_bundled(settings: dict) -> bool:
     from services.local_asr.catalog import MODELS
 
     model = speech_model_name(settings)
-    return bool(model in MODELS and is_bundled(model))
+    return model is not None and model in MODELS and is_bundled(model)

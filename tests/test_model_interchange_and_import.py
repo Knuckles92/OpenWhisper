@@ -6,6 +6,7 @@ import json
 import os
 import struct
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -15,6 +16,14 @@ from services.local_asr import cache, custom, discovery, gguf_meta
 from services.local_asr.catalog import MODELS, is_english_only_model
 from services.settings import SettingsKey, settings_manager
 from tests.fakes.settings import InMemorySettings
+
+
+@pytest.fixture(autouse=True)
+def _gguf_platform():
+    """GGUF routing as on Windows and Linux: on a Mac, Qwen3-ASR loads a
+    Safetensors folder and Parakeet Unified isn't offered."""
+    with patch("services.components.current_platform_tag", return_value="win_amd64"):
+        yield
 
 
 def _write_gguf(path: Path, kv: dict[str, object], *, extra_tail: bytes = b"") -> Path:
