@@ -303,7 +303,7 @@ def _shown_review(capture, scale):
 def test_review_has_send_to_at_the_walkthrough_tabs_width(app, capture, isolated_app_theme, scale):
     review = _shown_review(capture, scale)
     try:
-        review.resize(900, 650)
+        review.resize(round(900 * scale / 100), 650)
         QTest.qWait(20)
         assert not review.header_row.stacked
         assert review.send_button.isVisible()
@@ -316,7 +316,9 @@ def test_review_has_send_to_at_the_walkthrough_tabs_width(app, capture, isolated
 def test_review_gives_send_to_only_room_copy_leaves(app, capture, isolated_app_theme):
     review = _shown_review(capture, 110)
     try:
-        review.resize(626, 650)
+        title_w = review.title.fontMetrics().horizontalAdvance(review.title.text())
+        # Enough room beside the title for Copy on one row, not enough for Send to.
+        review.resize(title_w + 280, 650)
         QTest.qWait(20)
         assert not review.header_row.stacked
         assert not review.send_button.isVisible()
