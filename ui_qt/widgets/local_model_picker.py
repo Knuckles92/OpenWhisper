@@ -121,12 +121,13 @@ class LocalModelPicker(QWidget):
             selected: Persisted speech-model ID, including ``auto``.
             resolved: Concrete model ``auto`` currently maps to, if known.
         """
-        from services.local_asr.catalog import MODELS
+        from services.local_asr.catalog import MODELS, model_supported_here
         choices = [*config.WHISPER_MODEL_CHOICES]
         choices.extend(custom or [])
         if self.include_speech_models:
             choices.extend(sorted(
-                (key for key, model in MODELS.items() if model.meeting),
+                (key for key, model in MODELS.items()
+                 if model.meeting and (model_supported_here(key) or key == selected)),
                 key=lambda key: MODELS[key].label.casefold(),
             ))
         if selected not in choices:

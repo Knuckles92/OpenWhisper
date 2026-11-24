@@ -83,10 +83,6 @@ from ui_qt.widgets.segmented_bar import SegmentedBar
 logger = logging.getLogger(__name__)
 from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.engine_field import set_device_choices
-from ui_qt.widgets.speech_backend_picker import (
-    backend_picker_label,
-    backend_picker_tooltip,
-)
 
 
 @dataclass(frozen=True)
@@ -100,11 +96,23 @@ class _EngineMeta:
 
 
 _ENGINE_META: Dict[str, _EngineMeta] = {
+    "parakeet": _EngineMeta(
+        short="Parakeet",
+        rgb="56, 189, 248",
+        tagline="Fast dictation, live streaming & 25-language models",
+        device="GPU / CPU",
+    ),
     "parakeet_unified": _EngineMeta(
         short="Parakeet Unified",
         rgb="56, 189, 248",
         tagline="English dictation with live streaming",
         device="GPU (Vulkan) / CPU",
+    ),
+    "whisper": _EngineMeta(
+        short="Whisper",
+        rgb="167, 139, 250",
+        tagline="99 languages & translation (CTranslate2)",
+        device="NVIDIA CUDA / CPU",
     ),
     "local_whisper": _EngineMeta(
         short="Whisper",
@@ -112,16 +120,16 @@ _ENGINE_META: Dict[str, _EngineMeta] = {
         tagline="99 languages & translation (CTranslate2)",
         device="NVIDIA CUDA / CPU",
     ),
-    "parakeet": _EngineMeta(
-        short="Parakeet",
-        rgb="52, 211, 153",
-        tagline="Fast 25-language dictation & meetings (NeMo)",
+    "qwen": _EngineMeta(
+        short="Qwen3-ASR",
+        rgb="251, 191, 36",
+        tagline="30 languages, 22 Chinese dialects & compatible GGUFs",
         device="GPU / CPU",
     ),
     "qwen_asr": _EngineMeta(
         short="Qwen3-ASR",
         rgb="251, 191, 36",
-        tagline="30 languages & 22 Chinese dialects",
+        tagline="30 languages, 22 Chinese dialects & compatible GGUFs",
         device="GPU / CPU",
     ),
     "nemotron": _EngineMeta(
@@ -152,38 +160,36 @@ _FALLBACK_ENGINE_META = _EngineMeta(
 )
 
 
-def _engine_meta(backend_id: str) -> _EngineMeta:
-    return _ENGINE_META.get(backend_id, _FALLBACK_ENGINE_META)
+def _engine_meta(backend_or_family: str) -> _EngineMeta:
+    return _ENGINE_META.get(backend_or_family, _FALLBACK_ENGINE_META)
+
+
+def _family_order() -> Tuple[str, ...]:
+    """Stable rail ordering of model families supported on this computer."""
+    from services.local_asr.catalog import supported_families
+
+    return supported_families()
 
 
 def _engine_order() -> Tuple[str, ...]:
-    """Stable rail ordering: platform default first, then remaining engines."""
-    from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND
+    """Stable ordering of supported backends, aligned with the family rail."""
+    from services.local_asr.catalog import backend_supported_here, backends_in_family
 
-    if parakeet_mlx_supported():
-        preferred = (
-            "parakeet_mlx",
-            "parakeet_unified",
-            WHISPER_BACKEND,
-            "parakeet",
-            "qwen_asr",
-            "nemotron",
-            "moonshine",
-        )
-    else:
-        preferred = (
-            "parakeet_unified",
-            WHISPER_BACKEND,
-            "parakeet",
-            "qwen_asr",
-            "nemotron",
-            "moonshine",
-            "parakeet_mlx",
-        )
-    known = {WHISPER_BACKEND, *BACKENDS}
-    ordered = [key for key in preferred if key in known]
-    extras = sorted(known - set(ordered))
-    return tuple([*ordered, *extras])
+    ordered = []
+    for family in _family_order():
+        for backend in backends_in_family(family):
+            if backend_supported_here(backend):
+                ordered.append(backend)
+    return tuple(ordered)
+
+
+def _rail_key_for(key: str) -> str:
+    """Map a rail key or backend ID onto the family rail key."""
+    if key in ("all", "installed", "components"):
+        return key
+    from services.local_asr.catalog import family_of
+
+    return family_of(key)
 
 
 class _EngineRailItem(QPushButton):
@@ -516,6 +522,8 @@ class DownloadsPage(QWidget):
         self._cached_sizes: Dict[str, int] = {}
         self._inspector_open = False
         self._active_rail_key = "all"
+        #: Which backend inside a multi-runtime family (e.g. Parakeet) the banner targets.
+        self._family_backend: Dict[str, str] = {}
         self._banner_component_id: Optional[str] = None
         self._banner_action_mode = "manage"  # "manage" | "install" | "cancel"
         self._component_progress: Dict[str, Tuple[str, int, int]] = {}
@@ -564,6 +572,8 @@ class DownloadsPage(QWidget):
         'banner_runtime_progress',
         'banner_runtime_box_button',
         'banner_controls_strip',
+        'engine_runtime_label',
+        'engine_runtime_combo',
         'engine_device_combo',
         'engine_compute_label',
         'engine_compute_combo',
@@ -900,16 +910,19 @@ class DownloadsPage(QWidget):
             self.host_pane.refresh_host()
 
     def _default_rail_key(self) -> str:
-        """Open focused on the active local speech engine when one is selected."""
+        """Open focused on the active local speech family when one is selected."""
         settings = self._settings_snapshot()
         selected_backend = SettingsKey.SELECTED_MODEL.read(settings)
-        if selected_backend in self._rail_items:
-            return selected_backend
+        family = _rail_key_for(selected_backend)
+        if family in self._rail_items:
+            if selected_backend not in ("all", "installed", "components"):
+                self._family_backend[family] = selected_backend
+            return family
         return "all"
 
     def _build_engine_rail(self) -> QFrame:
-        """Build the left Engine Rail that separates engines from models."""
-        from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND
+        """Build the left rail grouping local models by model family."""
+        from services.local_asr.catalog import MODEL_FAMILIES
 
         rail = QFrame()
         rail.setObjectName("downloadsEngineRail")
@@ -953,21 +966,17 @@ class DownloadsPage(QWidget):
             return item
 
         add_section("OVERVIEW")
-        add_item("all", "All models", tooltip="Show models from every speech engine")
+        add_item("all", "All models", tooltip="Show models from every speech family")
         add_item("installed", "Installed", tooltip="Show models already downloaded on this computer")
 
-        add_section("SPEECH ENGINES")
-        backend_names = {WHISPER_BACKEND: "Whisper", **BACKENDS}
-        for backend_id in _engine_order():
-            meta = _engine_meta(backend_id)
-            display = backend_names.get(backend_id, meta.short)
-            rail_name = meta.short
-            if parakeet_mlx_supported() and backend_id == "parakeet_mlx":
-                rail_name = "Parakeet MLX ★"
-            tip = backend_picker_tooltip(display)
-            if meta.tagline and meta.tagline not in tip:
-                tip = f"{tip} — {meta.tagline}" if tip else meta.tagline
-            add_item(backend_id, rail_name, dot_rgb=meta.rgb, tooltip=tip)
+        add_section("MODEL FAMILIES")
+        for family_id in _family_order():
+            meta = _engine_meta(family_id)
+            rail_name = MODEL_FAMILIES.get(family_id, meta.short)
+            if parakeet_mlx_supported() and family_id == "parakeet":
+                rail_name = "Parakeet ★"
+            tip = f"{rail_name} — {meta.tagline}" if meta.tagline else rail_name
+            add_item(family_id, rail_name, dot_rgb=meta.rgb, tooltip=tip)
 
         self._rail_extras_label = add_section("EXTRAS")
         comp_item = add_item(
@@ -1121,12 +1130,28 @@ class DownloadsPage(QWidget):
         self.banner_runtime_box.setVisible(False)
         outer.addWidget(self.banner_runtime_box)
 
-        # Inline hardware controls strip (Device + Whisper Quantization).
+        # Inline hardware controls strip (optional Runtime switcher + Device + Whisper Quantization).
         self.banner_controls_strip = QFrame()
         self.banner_controls_strip.setObjectName("downloadsControlsStrip")
         ctrl_row = QHBoxLayout(self.banner_controls_strip)
         ctrl_row.setContentsMargins(0, 4, 0, 0)
         ctrl_row.setSpacing(8)
+
+        self.engine_runtime_label = QLabel("Runtime")
+        self.engine_runtime_label.setObjectName("downloadsControlLabel")
+        self.engine_runtime_label.setVisible(False)
+        ctrl_row.addWidget(self.engine_runtime_label)
+
+        self.engine_runtime_combo = ElidingComboBox()
+        self.engine_runtime_combo.setObjectName("downloadsRuntimeCombo")
+        self.engine_runtime_combo.setMinimumWidth(124)
+        self.engine_runtime_combo.setFixedHeight(26)
+        self.engine_runtime_combo.setToolTip(
+            "Choose which runtime inside this family to configure"
+        )
+        self.engine_runtime_combo.currentIndexChanged.connect(self._on_banner_runtime_backend_changed)
+        self.engine_runtime_combo.setVisible(False)
+        ctrl_row.addWidget(self.engine_runtime_combo)
 
         dev_lbl = QLabel("Device")
         dev_lbl.setObjectName("downloadsControlLabel")
@@ -1283,9 +1308,11 @@ class DownloadsPage(QWidget):
         self.list_layout.addWidget(self.context_banner)
 
         self.rows: Dict[str, ModelRowWidget] = {}
-        from services.local_asr.catalog import MODELS
+        from services.local_asr.catalog import MODELS, model_supported_here
         for model_name in [*config.WHISPER_MODEL_CHOICES, *MODELS]:
             if model_name == "auto":
+                continue
+            if model_name in MODELS and not model_supported_here(model_name):
                 continue
             row = ModelRowWidget(model_name)
             row.download_clicked.connect(self._on_download_clicked)
@@ -1365,11 +1392,15 @@ class DownloadsPage(QWidget):
         return self._active_rail_key
 
     def select_rail(self, key: str) -> None:
-        """Switch the Engine Rail selection and refresh the focused pane."""
+        """Switch the left rail selection and refresh the focused pane."""
+        raw = key
+        key = _rail_key_for(key)
         if key not in self._rail_items:
             key = "all"
         if key == "components" and not self._component_rows:
             key = "all"
+        if raw != key and raw not in ("all", "installed", "components") and key in self._rail_items:
+            self._family_backend[key] = raw
         self._active_rail_key = key
         self.close_inspector()
         self._apply_rail_selection(key)
@@ -1388,9 +1419,40 @@ class DownloadsPage(QWidget):
             self._update_selection_bar()
             self.library_scroll_area.verticalScrollBar().setValue(0)
 
+    def _supported_family_backends(self, family: str) -> list[str]:
+        from services.local_asr.catalog import backend_supported_here, backends_in_family
+
+        return [b for b in backends_in_family(family) if backend_supported_here(b)]
+
+    def _banner_backend_for(self, family: str) -> str:
+        from services.local_asr.catalog import WHISPER_BACKEND, WHISPER_FAMILY
+
+        if family == WHISPER_FAMILY:
+            return WHISPER_BACKEND
+        backends = self._supported_family_backends(family)
+        if not backends:
+            return family
+        chosen = self._family_backend.get(family)
+        if chosen in backends:
+            return chosen
+        settings = self._settings_snapshot()
+        active = SettingsKey.SELECTED_MODEL.read(settings)
+        if active in backends:
+            return active
+        return backends[0]
+
+    def _on_banner_runtime_backend_changed(self, _index: int) -> None:
+        backend_id = self.engine_runtime_combo.currentData()
+        if not backend_id or self._active_rail_key in ("all", "installed", "components"):
+            return
+        self._family_backend[self._active_rail_key] = backend_id
+        self._update_context_banner()
+
     def _refresh_rail_counts(self) -> None:
         if not self._ui_built:
             return
+        from services.local_asr.catalog import family_of
+
         total_models = len(self.rows)
         installed_models = sum(1 for row in self.rows.values() if row.is_cached)
         if self._cache_inventory_loading:
@@ -1400,16 +1462,16 @@ class DownloadsPage(QWidget):
             self._rail_items["all"].set_count(f"{installed_models}/{total_models}")
             self._rail_items["installed"].set_count(str(installed_models))
 
-        for backend_id in _engine_order():
-            item = self._rail_items.get(backend_id)
+        for family_id in _family_order():
+            item = self._rail_items.get(family_id)
             if item is None:
                 continue
-            backend_rows = [row for row in self.rows.values() if row.backend == backend_id]
+            family_rows = [row for row in self.rows.values() if family_of(row.backend) == family_id]
             if self._cache_inventory_loading:
                 item.set_count("…")
             else:
-                dl = sum(1 for row in backend_rows if row.is_cached)
-                item.set_count(f"{dl}/{len(backend_rows)}")
+                dl = sum(1 for row in family_rows if row.is_cached)
+                item.set_count(f"{dl}/{len(family_rows)}")
 
     def _runtime_for_backend(self, backend_id: str) -> Optional[str]:
         """Return the primary component ID associated with a speech backend."""
@@ -1434,9 +1496,26 @@ class DownloadsPage(QWidget):
             return None
         return comp_id if component_is_published(comp_id) else None
 
-    def _sync_banner_hardware_controls(self, backend_id: str) -> None:
-        """Populate the inline Device / Quantization combos for ``backend_id``."""
-        from services.local_asr.catalog import WHISPER_BACKEND, selected_device
+    def _sync_banner_hardware_controls(self, family_id: str, backend_id: str) -> None:
+        """Populate the inline Runtime / Device / Quantization combos."""
+        from services.local_asr.catalog import (
+            WHISPER_BACKEND,
+            model_runtime_label,
+            selected_device,
+        )
+
+        backends = self._supported_family_backends(family_id)
+        show_runtime_switcher = len(backends) > 1
+        self.engine_runtime_label.setVisible(show_runtime_switcher)
+        self.engine_runtime_combo.setVisible(show_runtime_switcher)
+        if show_runtime_switcher:
+            rt_blocker = self.engine_runtime_combo.blockSignals(True)
+            self.engine_runtime_combo.clear()
+            for bid in backends:
+                self.engine_runtime_combo.addItem(model_runtime_label("", backend=bid), bid)
+            rt_idx = self.engine_runtime_combo.findData(backend_id)
+            self.engine_runtime_combo.setCurrentIndex(max(0, rt_idx))
+            self.engine_runtime_combo.blockSignals(rt_blocker)
 
         settings = self._settings_snapshot()
         is_whisper = backend_id == WHISPER_BACKEND
@@ -1461,7 +1540,7 @@ class DownloadsPage(QWidget):
         self.engine_device_combo.setToolTip(
             "Moonshine runs on CPU only"
             if backend_id == "moonshine"
-            else "Hardware preference for this engine (shared with Dictation and Meeting Mode)"
+            else "Hardware preference for this runtime (shared with Dictation and Meeting Mode)"
         )
         self.engine_device_combo.blockSignals(dev_blocker)
 
@@ -1481,7 +1560,10 @@ class DownloadsPage(QWidget):
         """Persist inline Device / Quantization edits and refresh runtime status."""
         from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND
 
-        backend_id = self._active_rail_key
+        family_id = self._active_rail_key
+        if family_id in ("all", "installed", "components"):
+            return
+        backend_id = self._banner_backend_for(family_id)
         if backend_id == WHISPER_BACKEND:
             device = self.engine_device_combo.currentData() or "auto"
             compute = self.engine_compute_combo.currentText() or "auto"
@@ -1511,7 +1593,7 @@ class DownloadsPage(QWidget):
         self.runtime_settings_changed.emit()
 
     def _update_context_banner(self) -> None:
-        from services.local_asr.catalog import BACKENDS, WHISPER_BACKEND
+        from services.local_asr.catalog import MODEL_FAMILIES, WHISPER_BACKEND, family_of
 
         key = self._active_rail_key
         self._banner_component_id = None
@@ -1534,43 +1616,43 @@ class DownloadsPage(QWidget):
             else:
                 self.banner_subtitle.setText(
                     f"{downloaded} of {total} downloaded · {format_size_bytes(total_bytes)} used · "
-                    "Pick an engine on the left to focus."
+                    "Pick a model family on the left to focus."
                 )
             return
 
         if key == "installed":
             installed_rows = [row for row in self.rows.values() if row.is_cached]
-            engines_used = len({row.backend for row in installed_rows})
+            families_used = len({family_of(row.backend) for row in installed_rows})
             total_bytes = sum(self._cached_sizes.values())
             self.banner_title.setText("Installed on this computer")
             if self._cache_inventory_loading:
                 self.banner_subtitle.setText("Checking downloaded models…")
             elif installed_rows:
                 noun = "model" if len(installed_rows) == 1 else "models"
-                eng_noun = "engine" if engines_used == 1 else "engines"
+                fam_noun = "family" if families_used == 1 else "families"
                 self.banner_subtitle.setText(
-                    f"{len(installed_rows)} {noun} · {format_size_bytes(total_bytes)} across {engines_used} {eng_noun}"
+                    f"{len(installed_rows)} {noun} · {format_size_bytes(total_bytes)} across {families_used} {fam_noun}"
                 )
             else:
                 self.banner_subtitle.setText(
-                    "No speech models are downloaded yet. Pick an engine on the left to download one."
+                    "No speech models are downloaded yet. Pick a family on the left to download one."
                 )
             return
 
         meta = _engine_meta(key)
-        names = {WHISPER_BACKEND: "Whisper", **BACKENDS}
-        display_name = backend_picker_label(names.get(key, meta.short))
+        backend_id = self._banner_backend_for(key)
+        display_name = MODEL_FAMILIES.get(key, meta.short)
         self.banner_dot.setStyleSheet(
             f"background-color: rgb({meta.rgb}); border: none; border-radius: 4px;"
         )
         self.banner_dot.setVisible(True)
         self.banner_title.setText(display_name)
         self.banner_subtitle.setText(meta.tagline)
-        self._sync_banner_hardware_controls(key)
+        self._sync_banner_hardware_controls(key, backend_id)
 
-        comp_id = self._runtime_for_backend(key)
+        comp_id = self._runtime_for_backend(backend_id)
         if not comp_id or comp_id not in self._component_rows:
-            if key == WHISPER_BACKEND:
+            if backend_id == WHISPER_BACKEND:
                 self.banner_runtime_badge.setText("Built-in engine")
                 set_style_property(self.banner_runtime_badge, "tone", "ready")
                 self.banner_runtime_badge.setVisible(True)
@@ -1634,7 +1716,7 @@ class DownloadsPage(QWidget):
             repolish(self.banner_runtime_button)
             return
 
-        if key == WHISPER_BACKEND:
+        if backend_id == WHISPER_BACKEND:
             if self.engine_device_combo.currentData() == "cpu":
                 self.banner_runtime_badge.setText("Built-in · CPU")
                 set_style_property(self.banner_runtime_badge, "tone", "ready")
@@ -1934,6 +2016,13 @@ class DownloadsPage(QWidget):
         """Show one catalog model's bundled profile in the slide-over inspector."""
         if model_name == "auto" or model_name not in self.rows:
             return
+        from services.local_asr.catalog import family_of
+
+        row_backend = self.rows[model_name].backend
+        row_family = family_of(row_backend)
+        if self._active_rail_key == row_family and self._family_backend.get(row_family) != row_backend:
+            self._family_backend[row_family] = row_backend
+            self._update_context_banner()
         self._selected_model = model_name
         self._details = (custom_model_details(model_name) if is_custom_model(model_name)
                          else get_model_details(model_name))
@@ -1951,12 +2040,13 @@ class DownloadsPage(QWidget):
         self._position_inspector()
 
     def reveal_model(self, model_name: str) -> None:
-        """Switch to the model's engine, clear blocking filters, select it, and scroll to it."""
+        """Switch to the model's family, clear blocking filters, select it, and scroll to it."""
         self.show_local()
         row = self.rows.get(model_name)
         if row is None:
             return
-        if self._active_rail_key not in ("all", row.backend):
+        family = _rail_key_for(row.backend)
+        if self._active_rail_key not in ("all", family):
             self.select_rail(row.backend)
         if row.isHidden():
             self.filter_edit.clear()
@@ -2121,24 +2211,19 @@ class DownloadsPage(QWidget):
     # ---- catalog actions ----
 
     def _show_add_custom_menu(self) -> None:
-        """Import / auto-detect GGUF first, then Whisper and each local engine."""
+        """Import found models first, then Whisper (CTranslate2) or a local speech model."""
         from PyQt6.QtWidgets import QMenu
-        from services.local_asr.catalog import BACKENDS
-        from services.local_asr.custom import addable_backends, addable_gguf_backends
+        from services.local_asr.custom import runtime_format_options
 
         menu = QMenu(self)
         menu.addAction("Import existing models…", self._open_import_dialog)
-        if addable_gguf_backends():
+        menu.addSeparator()
+        menu.addAction("Whisper model (CTranslate2)…", self._add_custom_models)
+        if runtime_format_options():
             menu.addAction(
-                "Add GGUF model (auto-detect)…",
-                lambda: self._add_custom_speech_model("auto"),
+                "Local speech model (GGUF / ORT / Safetensors)…",
+                lambda: self._add_custom_speech_model(None),
             )
-        menu.addSeparator()
-        menu.addAction("Whisper model…", self._add_custom_models)
-        menu.addSeparator()
-        for backend in addable_backends():
-            menu.addAction(f"{BACKENDS[backend]} model…",
-                           lambda backend=backend: self._add_custom_speech_model(backend))
         button = self.custom_models_button
         menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
         menu.deleteLater()
@@ -2152,22 +2237,21 @@ class DownloadsPage(QWidget):
                 f"Added {len(added)} custom models. Choose one in Voice model or Voice & speakers to load it."
             )
 
-    def _add_custom_speech_model(self, backend: str) -> None:
+    def _add_custom_speech_model(self, backend: Optional[str] = None) -> None:
         from services.local_asr.catalog import BACKENDS, BUILTIN_MODELS, MODELS
         key = add_custom_speech_model(self, backend)
         if key:
             invalidate_cached_models_snapshot()
             self.refresh()
             model = MODELS[key]
-            engine_name = BACKENDS[model.backend]
+            owner = BACKENDS.get(model.backend, "Local")
             if key in BUILTIN_MODELS:
                 self.message_label.setText(
-                    f"Linked {model.label} for {engine_name} in place (no duplicate download)."
+                    f"Linked {model.label} for {owner} in place (no duplicate download)."
                 )
             else:
                 self.message_label.setText(
-                    f"Added {model.label}. Choose it for {engine_name} in Voice model "
-                    "or Voice & speakers to load it."
+                    f"Added {model.label}. Choose it under {owner} or the Local model picker to load it."
                 )
 
     def _open_import_dialog(self) -> None:
@@ -2395,14 +2479,16 @@ class DownloadsPage(QWidget):
                 and not _from_local_files(name)]
 
     def _scoped_missing_names(self) -> List[str]:
-        """Missing models belonging to the active Engine Rail scope."""
+        """Missing models belonging to the active rail scope."""
+        from services.local_asr.catalog import family_of
+
         key = self._active_rail_key
         missing = self._missing_names()
         if key in ("all", "components"):
             return missing
         if key == "installed":
             return []
-        return [name for name in missing if self.rows[name].backend == key]
+        return [name for name in missing if family_of(self.rows[name].backend) == key]
 
     def _download_slot_busy(self) -> bool:
         return self._downloading_model is not None or bool(self._batch_queue)
@@ -2619,10 +2705,12 @@ class DownloadsPage(QWidget):
         self, cached: Dict[str, CachedModelInfo], settings: dict
     ) -> None:
         """Size every downloaded model without building the catalog rows."""
-        from services.local_asr.catalog import MODELS
+        from services.local_asr.catalog import MODELS, model_supported_here
         self._cached_sizes = {}
         for name in [*config.WHISPER_MODEL_CHOICES, *MODELS, *custom_models(settings)]:
             if name == "auto":
+                continue
+            if name in MODELS and not model_supported_here(name):
                 continue
             info = custom_model_cache_info(name) if is_custom_model(name) else cached.get(resolve_model_repo(name))
             if info is not None:
@@ -2739,8 +2827,10 @@ class DownloadsPage(QWidget):
         if self._ui_built:
             total = len(self.rows)
         else:
+            from services.local_asr.catalog import model_supported_here
             whisper_models = [name for name in config.WHISPER_MODEL_CHOICES if name != "auto"]
-            total = len(whisper_models) + len(MODELS) + len(custom_models(self._settings_snapshot()))
+            speech_models = [key for key in MODELS if model_supported_here(key)]
+            total = len(whisper_models) + len(speech_models) + len(custom_models(self._settings_snapshot()))
         return {
             "downloaded": len(self._cached_sizes),
             "total": total,
@@ -2894,21 +2984,33 @@ class DownloadsPage(QWidget):
     # ---- filtering ----
 
     def _apply_filter(self, _value=None) -> None:
+        from services.local_asr.catalog import family_of, model_runtime_label
+
         needle = self.filter_edit.text().strip().lower()
         key = self._active_rail_key
         if key == "components":
             return
         status = "downloaded" if key == "installed" else self.status_filter_combo.currentData()
-        show_engine_badges = key in ("all", "installed")
+        show_family_badges = key in ("all", "installed")
+        multi_runtime_family = (
+            not show_family_badges and len(self._supported_family_backends(key)) > 1
+        )
         any_visible = False
         rows = sorted(self.rows.values(), key=self._sort_key)
         for index, row in enumerate(rows):
-            self.list_layout.insertWidget(index, row)
-            meta = _engine_meta(row.backend)
-            row.set_engine_badge(meta.short, meta.rgb, visible=show_engine_badges)
+            self.list_layout.insertWidget(index + 1, row)
+            row_family = family_of(row.backend)
+            meta = _engine_meta(row_family)
+            if show_family_badges:
+                row.set_engine_badge(meta.short, meta.rgb, visible=True)
+            elif multi_runtime_family and row_family == key:
+                runtime_label = model_runtime_label(row.model_name, backend=row.backend)
+                row.set_engine_badge(runtime_label, meta.rgb, visible=True)
+            else:
+                row.set_engine_badge(meta.short, meta.rgb, visible=False)
             visible = row.matches_filter(needle) if needle else True
-            if key not in ("all", "installed"):
-                visible = visible and row.backend == key
+            if not show_family_badges:
+                visible = visible and row_family == key
             if status == "downloaded":
                 visible = visible and row.is_cached
             elif status == "not_downloaded":

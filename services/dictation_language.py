@@ -73,14 +73,6 @@ def _whisper_is_english_only(model: str) -> bool:
     return details is not None and details.language_support == "English only"
 
 
-def _parakeet_unified_is_multilingual(settings: Mapping) -> bool:
-    from services.local_asr.catalog import MODELS, selected_model
-
-    key = selected_model("parakeet_unified", dict(settings))
-    model = MODELS.get(key)
-    return bool(model is not None and model.multilingual is True)
-
-
 def accepted_languages(settings: Mapping) -> tuple[str, ...]:
     """Every concrete language the current engine accepts, in display order."""
     backend = engine(settings)
@@ -95,9 +87,11 @@ def accepted_languages(settings: Mapping) -> tuple[str, ...]:
         if family and family != "local_whisper" and codes is not None:
             return tuple(code for code in codes if code != AUTO)
         return _WHISPER_CODES
-    if backend == "parakeet_unified" and _parakeet_unified_is_multilingual(settings):
-        return tuple(code for code in local_languages.LANGUAGE_LABELS if code != AUTO)
-    return tuple(code for code in local_languages.language_choices(backend) if code != AUTO)
+    from services.local_asr.catalog import BACKENDS, selected_model
+
+    model_name = selected_model(backend, settings) if backend in BACKENDS else None
+    choices = local_languages.model_language_choices(model_name, backend)
+    return tuple(code for code in choices if code != AUTO)
 
 
 def single_language_reason(settings: Mapping) -> str:
@@ -115,15 +109,21 @@ def single_language_reason(settings: Mapping) -> str:
         return "This Whisper model understands English only. Pick one without “.en” to dictate in other languages."
     if backend == _REMOTE:
         return "The other computer's engine uses one language."
+    from services.local_asr.catalog import BACKENDS, MODELS, selected_model
+
+    if backend in BACKENDS:
+        model = MODELS.get(selected_model(backend, settings))
+        if model is not None and accepted_languages(settings) == ("en",):
+            return f"{model.label} understands English only."
     return "This engine uses one language."
 
 
 def is_english_only_engine(settings: Mapping) -> bool:
     """True when the selected speech engine only supports English."""
     backend = engine(settings)
-    if backend == "parakeet_unified":
-        return not _parakeet_unified_is_multilingual(settings)
-    return backend == "moonshine"
+    if backend in ("local_whisper", "api", _REMOTE):
+        return False
+    return accepted_languages(settings) == ("en",)
 
 
 def multilingual_engine_options() -> tuple[tuple[str, str, str], ...]:
@@ -188,8 +188,11 @@ def engine_language(settings: Mapping) -> str:
     if backend in ("local_whisper", "api"):
         accepted = accepted_languages(settings)
         return accepted[0] if len(accepted) == 1 else AUTO
+    from services.local_asr.catalog import BACKENDS, selected_model
+
+    model_name = selected_model(backend, settings) if backend in BACKENDS else None
     return local_languages.selected_language(
-        backend, SettingsKey.LOCAL_ASR_LANGUAGE.read(settings))
+        backend, SettingsKey.LOCAL_ASR_LANGUAGE.read(settings), model_name=model_name)
 
 
 def current_language(settings: Mapping) -> str:

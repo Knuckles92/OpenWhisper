@@ -328,7 +328,18 @@ class LocalSpeechBackend(TranscriptionBackend):
         from services.local_asr.languages import selected_language
         from services.settings import SettingsKey
 
-        return selected_language(self.backend_id, SettingsKey.LOCAL_ASR_LANGUAGE.read(self._settings()))
+        return selected_language(
+            self.backend_id,
+            SettingsKey.LOCAL_ASR_LANGUAGE.read(self._settings()),
+            model_name=self.model_name,
+        )
+
+    def _uses_vad_gate(self) -> bool:
+        """Whether silent windows are filtered with Silero VAD before decoding."""
+        model = MODELS.get(self.model_name)
+        if model is not None:
+            return model.vad_gate
+        return self.backend_id == "qwen_asr"
 
     def _phrases_reach_model(self) -> bool:
         from services.recognition_context import SUPPORT_MODEL, engine_support
@@ -352,11 +363,11 @@ class LocalSpeechBackend(TranscriptionBackend):
         if not code:
             language = self.request_language()
         else:
-            from services.local_asr.languages import language_choices, selected_language
+            from services.local_asr.languages import model_language_choices, selected_language
 
             language = (
-                selected_language(self.backend_id, code)
-                if language_choices(self.backend_id) else code
+                selected_language(self.backend_id, code, model_name=self.model_name)
+                if model_language_choices(self.model_name, self.backend_id) else code
             )
         phrases = tuple(recognition.phrases) if recognition and self._phrases_reach_model() else ()
         return language, phrases
@@ -368,7 +379,7 @@ class LocalSpeechBackend(TranscriptionBackend):
             process = self._process
         if process is None:
             raise RuntimeError(self.last_error or "Speech engine is not loaded")
-        if self.backend_id == "qwen_asr" and op == "transcribe" and not self._qwen_has_speech(audio):
+        if self._uses_vad_gate() and op == "transcribe" and not self._qwen_has_speech(audio):
             return dict(text="", segments=[])
         with tempfile.TemporaryDirectory(prefix="openwhisper-asr-") as directory:
             path = os.path.join(directory, "audio.f32")

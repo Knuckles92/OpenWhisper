@@ -6,14 +6,13 @@ import json
 import os
 import struct
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from services.local_asr import cache, custom, discovery, gguf_meta
-from services.local_asr.catalog import BUILTIN_MODELS, MODELS, is_english_only_model
+from services.local_asr.catalog import MODELS, is_english_only_model
 from services.settings import SettingsKey, settings_manager
 from tests.fakes.settings import InMemorySettings
 
@@ -271,7 +270,7 @@ def test_discovery_finds_builtin_and_custom_models_and_skips_llms(tmp_path, monk
     (hf_root / "models--nvidia--parakeet-tdt-0.6b-v3" / "refs" / "main").write_text("rev-p3")
     p3_spec = _fake_builtin_spec("parakeet-v3", p3_file.name, p3_file.read_bytes())
 
-    # 2. Non-speech LLM GGUF in HF Hub cache — must be ignored!
+    # 2. Non-speech LLM GGUF in HF Hub cache â€” must be ignored!
     snap_llm = hf_root / "models--meta--llama-3" / "snapshots" / "rev-llm"
     _write_gguf(snap_llm / "llama-3.gguf", {
         "general.architecture": "llama",
@@ -288,7 +287,7 @@ def test_discovery_finds_builtin_and_custom_models_and_skips_llms(tmp_path, monk
     (hf_root / "models--community--whisper-custom-ct2" / "refs" / "main").write_text("rev-wh")
 
     # 4. Community speech GGUF in Handy folder.
-    handy_gguf = _write_gguf(handy_root / "custom-qwen-asr.gguf", {
+    _write_gguf(handy_root / "custom-qwen-asr.gguf", {
         "general.architecture": "qwen3_asr",
         "general.name": "Community Qwen3 ASR",
     }, extra_tail=b"qwen-bytes")
@@ -367,10 +366,12 @@ def test_custom_speech_dialog_auto_detects_engine_and_capabilities(tmp_path, qap
         "general.name": "My Parakeet 110M",
     })
 
-    dialog = CustomSpeechModelDialog("auto")
+    dialog = CustomSpeechModelDialog()
+    assert dialog.backend == "qwen_asr"
     dialog.path_edit.setText(str(source))
-    assert dialog.engine_combo is not None
-    assert dialog.engine_combo.currentData() == "parakeet_unified"
+    assert dialog.format_combo.currentData().id == "transcribe_gguf"
+    assert dialog.backend == "parakeet_unified"
+    assert dialog.mode_checkbox.isChecked() is False
     assert dialog.label_edit.text() == "My Parakeet 110M"
     assert not dialog.detected_label.isHidden()
     assert dialog.meeting_checkbox.isChecked()

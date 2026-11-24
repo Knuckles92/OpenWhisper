@@ -1123,6 +1123,7 @@ QLabel#downloadsControlHint {
     font-size: 10px;
 }
 
+QComboBox#downloadsRuntimeCombo,
 QComboBox#downloadsDeviceCombo,
 QComboBox#downloadsComputeCombo {
     color: @slate-text;
@@ -2569,6 +2570,16 @@ QLabel#engineResolvedLabel {
     color: @text-secondary;
     font-size: 11px;
     background-color: transparent;
+}
+
+QLabel#engineRuntimeBadge {
+    color: @text-secondary;
+    background-color: @bg;
+    border: 1px solid @border;
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 600;
 }
 
 /* Manage host models: a footer link, like the model manager links, with its

@@ -22,8 +22,21 @@ def language_choices(backend: str) -> tuple[str, ...]:
     return _BACKEND_LANGUAGES.get(backend, ())
 
 
-def selected_language(backend: str, stored: str | None) -> str:
-    choices = language_choices(backend)
+def model_language_choices(model_name: str | None, backend: str = "") -> tuple[str, ...]:
+    """Language codes supported by a specific model, falling back to its backend."""
+    if model_name:
+        from services.local_asr.catalog import MODELS
+
+        model = MODELS.get(model_name)
+        if model is not None:
+            if model.language_codes:
+                return model.language_codes
+            backend = backend or model.backend
+    return language_choices(backend)
+
+
+def selected_language(backend: str, stored: str | None, *, model_name: str | None = None) -> str:
+    choices = model_language_choices(model_name, backend) if model_name else language_choices(backend)
     return stored if stored in choices else "en" if choices == ("en",) else "auto"
 
 

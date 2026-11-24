@@ -4,7 +4,7 @@ import logging
 
 from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import QDialog, QHBoxLayout, QVBoxLayout
+from PyQt6.QtWidgets import QApplication, QDialog, QHBoxLayout, QToolTip, QVBoxLayout
 
 from services import accessibility_grant
 from services._hotkey_pynput import accessibility_app_bundle
@@ -70,8 +70,11 @@ class AccessibilityDialog(QDialog):
         # Empty off macOS, where there is no Accessibility pane to describe.
         paragraph(instructions).setVisible(bool(instructions))
         if self.bundle:
-            path_label = paragraph(f"App to allow: {self.bundle}", "infoLabel")
+            path_label = WrappedLabel(f"App to allow: {self.bundle}", break_long_words=True)
+            path_label.setObjectName("infoLabel")
+            path_label.setTextFormat(Qt.TextFormat.PlainText)
             path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(path_label)
 
         # Secondary helpers sit with the steps; the footer holds the choice.
         helpers = QHBoxLayout()
@@ -87,9 +90,9 @@ class AccessibilityDialog(QDialog):
         helpers.addStretch()
         layout.addLayout(helpers)
         self.recovery = paragraph(
-            "Use + to add the app "
-            f"shown above. If an older {name} entry is enabled but access still "
-            "fails, remove that entry with −, add this copy, and enable it. "
+            ("Use + to add the app shown above. " if self.bundle else "Use + to add the app. ")
+            + f"If an older {name} entry is enabled but access still fails, remove that entry "
+            "with −, add this copy, and enable it. "
             "If access still isn’t detected, quit and reopen OpenWhisper."
         )
         self.recovery.setVisible(False)
@@ -102,7 +105,17 @@ class AccessibilityDialog(QDialog):
         self.repair_button.clicked.connect(self._repair_access)
         # Never reset Python.app's grant for a development launch.
         self.repair_button.setVisible(bool(accessibility_grant._frozen_bundle_id()))
-        layout.addWidget(self.repair_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        recovery_actions = QHBoxLayout()
+        recovery_actions.setSpacing(8)
+        recovery_actions.addWidget(self.repair_button)
+        if self.bundle:
+            self.copy_fix_prompt_button = neutral_button(Button("Copy Fix Prompt for Agent"))
+            self.copy_fix_prompt_button.setAutoDefault(False)
+            self.copy_fix_prompt_button.setToolTip("Copy troubleshooting instructions to paste into your agent.")
+            self.copy_fix_prompt_button.clicked.connect(self._copy_fix_prompt)
+            recovery_actions.addWidget(self.copy_fix_prompt_button)
+        recovery_actions.addStretch()
+        layout.addLayout(recovery_actions)
         self.status = paragraph("")
         paragraph(
             "We won’t ask again at launch. Set up auto-paste anytime in Settings → General.",
@@ -184,6 +197,21 @@ class AccessibilityDialog(QDialog):
             )
         self._open_settings()
         self.refresh_status()
+
+    def _copy_fix_prompt(self):
+        QApplication.clipboard().setText(
+            "Help me get OpenWhisper auto-paste working on this Mac.\n\n"
+            f"Running app bundle\n{self.bundle}\n\n"
+            f"OpenWhisper currently says “{self.status.text()}”\n\n"
+            "Check System Settings → Privacy & Security → Accessibility and help me enable "
+            "the app at the path above. If it’s missing, use + to add that copy. If an older "
+            "entry is enabled but OpenWhisper still reports missing access, help me remove "
+            "the stale entry and add the current copy. Pause for me to handle any macOS "
+            "authentication prompt. Then check whether OpenWhisper detects access and help "
+            "me verify auto-paste in a scratch document."
+        )
+        button = self.copy_fix_prompt_button
+        QToolTip.showText(button.mapToGlobal(button.rect().bottomLeft()), "Fix prompt copied", button)
 
     def _reveal_app(self):
         # Reveal the bundle itself so it can be dragged into the permissions list.

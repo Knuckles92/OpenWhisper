@@ -92,6 +92,7 @@ def test_setup_reopens_and_updates_live_without_requesting_permission(app, setti
     ) as request, patch.object(setup, "accessibility_app_bundle", return_value=None):
         dialog = setup.show_accessibility_setup(parent)
         assert setup.show_accessibility_setup(parent) is dialog
+        assert not hasattr(dialog, "copy_fix_prompt_button")
         assert "not detected" in dialog.status.text()
         request.assert_not_called()
         trust.return_value = True
@@ -139,6 +140,22 @@ def test_launcher_executable_resolves_to_selectable_app(tmp_path):
         assert str(executable) not in instructions
 
 
+def test_copy_fix_prompt_includes_running_bundle_and_current_status(app, settings):
+    bundle = Path("/Applications/Custom Builds/OpenWhisper.app")
+    with patch.object(setup, "is_accessibility_trusted", return_value=False), patch.object(
+        setup, "accessibility_app_bundle", return_value=bundle
+    ), patch.object(QApplication, "clipboard") as clipboard:
+        dialog = setup.AccessibilityDialog(lost=True)
+        dialog.copy_fix_prompt_button.click()
+        clipboard.return_value.setText.assert_called_once()
+        prompt = clipboard.return_value.setText.call_args.args[0]
+        assert str(bundle) in prompt.splitlines()
+        assert dialog.status.text() in prompt
+        assert "Privacy & Security → Accessibility" in prompt
+        assert dialog.open_button.isDefault()
+        dialog.close()
+
+
 @pytest.mark.parametrize("ui_mode", ["classic", "omarchy"])
 def test_instructions_fit_with_recovery_expanded(app, settings, monkeypatch, ui_mode):
     monkeypatch.setenv("OPENWHISPER_UI", ui_mode)
@@ -147,7 +164,7 @@ def test_instructions_fit_with_recovery_expanded(app, settings, monkeypatch, ui_
             "/opt/homebrew/Cellar/python@3.12/3.12.13_4/Frameworks/"
             "Python.framework/Versions/3.12/Resources/Python.app"
         )
-    ):
+    ), patch.object(grant, "_frozen_bundle_id", return_value="tech.fiorilabs.openwhisper"):
         dialog = setup.AccessibilityDialog()
         dialog.setStyleSheet(ThemeManager().stylesheet)
         dialog.show()
