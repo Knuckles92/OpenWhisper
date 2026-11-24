@@ -8,7 +8,7 @@ that apply in the current state (Download / Set Active / Delete).
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -87,6 +87,7 @@ _ROW_STYLE = row_style(
     QLabel#modelRowEngine {
         border-radius: 5px;
         padding: 1px 6px;
+        margin-left: 6px;
         font-size: 10px;
         font-weight: 600;
     }
@@ -111,6 +112,19 @@ _ROW_STYLE = row_style(
     }
 """,
 )
+
+
+class _RuntimePill(ElidingLabel):
+    """The row's runtime pill: shown in full or not at all, and never part of
+    the row's minimum width, so it can't push the row past the list column or
+    squeeze the model name at the narrowest Settings width."""
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, super().minimumSizeHint().height())
+
+    def paintEvent(self, event) -> None:
+        if self.width() >= self.sizeHint().width():
+            super().paintEvent(event)
 
 
 class ModelRowWidget(DownloadRow):
@@ -175,7 +189,7 @@ class ModelRowWidget(DownloadRow):
 
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
-        title_row.setSpacing(6)
+        title_row.setSpacing(0)  # the pill carries its own gap (margin-left)
 
         name_label = ElidingLabel(label)
         name_label.setToolTip(self.model_name)
@@ -183,11 +197,13 @@ class ModelRowWidget(DownloadRow):
         name_font = QFont("Segoe UI", 10)
         name_font.setBold(True)
         name_label.setFont(name_font)
+        # A fixed floor: an ElidingLabel's minimum follows the text it shows,
+        # so once squeezed to "…" the name would stay starved by the pill.
+        name_label.setMinimumWidth(min(name_label.sizeHint().width(),
+                                       name_label.minimumSizeHint().width()))
         title_row.addWidget(name_label, stretch=1)
 
-        # Elides like the summary below, so the runtime pill can't push the
-        # row (and the window's minimum width) past the list column.
-        self.engine_badge = ElidingLabel("")
+        self.engine_badge = _RuntimePill("")
         self.engine_badge.setObjectName("modelRowEngine")
         self.engine_badge.setSizePolicy(
             QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
@@ -436,7 +452,7 @@ class ModelRowWidget(DownloadRow):
                 f" background-color: rgba({rgb}, 0.14);"
                 f" color: rgb({rgb});"
                 f" border: 1px solid rgba({rgb}, 0.30);"
-                f" border-radius: 5px; padding: 1px 6px;"
+                f" border-radius: 5px; padding: 1px 6px; margin-left: 6px;"
                 f" font-size: 10px; font-weight: 600;"
                 f"}}"
             )
