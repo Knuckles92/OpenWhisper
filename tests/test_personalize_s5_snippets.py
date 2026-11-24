@@ -3,6 +3,12 @@
 import pytest
 
 from config import config
+from services.dictation_pipeline import (
+    DictationJob,
+    FinishedText,
+    finish_text,
+    prepare_text,
+)
 from services.settings import SettingsKey
 from services.snippets import (
     Snippet,
@@ -190,9 +196,13 @@ def test_placeholders_round_trip_through_a_cleanup():
 
 
 def test_placeholders_a_model_respaced_or_lowercased_still_expand():
-    plan = plan_expansion("mail my email please", ALL)
+    plan = plan_expansion("mail my email and my calendar link please", ALL)
 
-    assert expand("Mail [[ s1 ]], please.", plan) == ("Mail dana@example.com, please.", "", True)
+    assert expand("Mail [[ s1 ]] and [[ S 2 ]], please.", plan) == (
+        "Mail dana@example.com and https://cal.example.com/dana?ref=email#slots, please.",
+        "",
+        True,
+    )
 
 
 @pytest.mark.parametrize("cleaned", [
@@ -204,6 +214,47 @@ def test_a_lost_duplicated_or_invented_placeholder_is_not_ok(cleaned):
     plan = plan_expansion("mail my email please", ALL)
 
     assert expand(cleaned, plan) == (cleaned, "", False)
+
+
+@pytest.mark.parametrize("cleaned", [
+    "Send [[S2]] and [[S1]].",
+    "Send [[ s2 ]] and [[ s1 ]].",
+])
+def test_reordered_placeholders_are_not_ok(cleaned):
+    plan = plan_expansion("send my email and my calendar link", ALL)
+
+    assert expand(cleaned, plan) == (cleaned, "", False)
+
+
+def test_pipeline_falls_back_to_raw_expansion_when_cleanup_reorders_placeholders():
+    settings = _stored(EMAIL, SIGN_OFF)
+    prepared = prepare_text("mail my email then my sign off", DictationJob(), settings)
+
+    assert prepared.cleanup_input == "mail [[S1]] then [[S2]]"
+    expected_raw_plain = (
+        "mail dana@example.com then Dana Lee\nProduct designer\ndana.design (https://dana.design)"
+    )
+    expected_raw_html = (
+        "mail dana@example.com then "
+        '<b>Dana Lee</b><br>Product designer<br><a href="https://dana.design">dana.design</a>'
+    )
+
+    kept = finish_text("Mail [[ s1 ]], then [[ S 2 ]].", prepared)
+    assert kept == FinishedText(
+        "Mail dana@example.com, then Dana Lee\nProduct designer\ndana.design (https://dana.design).",
+        "Mail dana@example.com, then "
+        '<b>Dana Lee</b><br>Product designer<br><a href="https://dana.design">dana.design</a>.',
+        True,
+        expected_raw_plain,
+    )
+
+    reordered = finish_text("Mail [[S2]], then [[S1]].", prepared)
+    assert reordered == FinishedText(
+        expected_raw_plain,
+        expected_raw_html,
+        False,
+        expected_raw_plain,
+    )
 
 
 def test_a_whole_snippet_expands_to_its_text():
