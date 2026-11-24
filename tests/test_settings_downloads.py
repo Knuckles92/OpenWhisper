@@ -643,7 +643,9 @@ class TestInspector(_DialogTestCase):
         assert dialog.fact_labels["Local format"].text()
         assert dialog.inspector_tradeoffs.text().startswith("•")
 
-    def test_a_noncommercial_model_warns_before_download(self):
+    # Fourier 2B is offered on Windows x64 and Linux x86-64 only.
+    @patch("services.components.current_platform_tag", return_value="win_amd64")
+    def test_a_noncommercial_model_warns_before_download(self, _platform):
         dialog, _values = self._make_dialog()
         dialog.select_model("fourier-2b")
         assert dialog.inspector_notice.isVisibleTo(dialog)
