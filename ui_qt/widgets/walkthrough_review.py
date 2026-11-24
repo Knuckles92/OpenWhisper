@@ -1046,7 +1046,9 @@ class _ActionGroup(QWidget):
         """Set the labels for the available space and return whether they need their own row."""
         full = {fmt: f"Save and {label[0].lower()}{label[1:]}" if dirty else label
                 for fmt, label in _COPY_ACTIONS}
-        if self._copy_split.isHidden():
+        # Until the header is actually shown and laid out, keep the full label
+        # rather than shrinking against Qt's unshown default width.
+        if not self._copy_split.isVisible():
             self._copy_split.primary.setText(full[copy_format])
             return False
 
@@ -1093,6 +1095,10 @@ class _ReviewHeader(Reflow):
     def _reflow(self) -> None:
         room = self.width() - self._natural_width(self._lead) - self._grid.horizontalSpacing()
         self._place(self._actions.fit_labels(room, self.width(), self._copy_format, self._dirty))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refit()
 
     def event(self, event):
         if event.type() == QEvent.Type.LayoutRequest:

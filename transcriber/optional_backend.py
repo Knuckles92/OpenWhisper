@@ -193,11 +193,14 @@ class LocalSpeechBackend(TranscriptionBackend):
                 process = SpeechProcess(python)
                 self._process = process
             try:
+                from services.local_asr.catalog import is_english_only_model
+                model_obj = MODELS[self.model_name]
+                extra = {"english_only": is_english_only_model(model_obj)} if self.backend_id == "parakeet_unified" else {}
                 result = process.request("load", backend=self.backend_id, model=self.model_name,
-                                         arch=MODELS[self.model_name].arch,
+                                         arch=model_obj.arch,
                                          model_path=cache.load_path(self.model_name),
                                          runtime=runtime_dir, device=device, timeout=300,
-                                         cancel=cancel_event)
+                                         cancel=cancel_event, **extra)
             except Exception as exc:
                 process.close()
                 if (getattr(exc, "code", None) == "unsupported_gpu" and requested == "auto"

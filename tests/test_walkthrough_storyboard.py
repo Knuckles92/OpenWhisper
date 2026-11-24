@@ -738,7 +738,10 @@ def test_changing_the_copy_default_keeps_the_header_and_storyboard_in_place(
     widget.title.setText("Saturday, November 21 · 6:24 PM")
     widget.show()
     try:
-        for width in (626, 706, 900):
+        title_w = widget.title.fontMetrics().horizontalAdvance(widget.title.text())
+        # One width in each unstacked header tier (minimal, compact, full) for the active font.
+        minimal_w, compact_w, full_w = title_w + 280, title_w + 370, max(900, title_w + 640)
+        for width in (minimal_w, compact_w, full_w):
             widget.resize(width, 650)
             widget.copy_pdf_action.star.click()
             QTest.qWait(10)
@@ -752,13 +755,13 @@ def test_changing_the_copy_default_keeps_the_header_and_storyboard_in_place(
             assert widget.scroll.geometry() == board
             assert widget.copy_button.accessibleName() == "Copy PDF + Markdown"
             assert widget.copy_both_action.text() == "Copy PDF + Markdown"
-            if width == 900:
+            if width == full_w:
                 assert widget.copy_button.text() == "Copy PDF + Markdown"
                 assert widget.open_button.text() == "Open PDF"
             else:
                 assert widget.copy_button.text() in ("Copy", "Copy PDF + MD")
 
-            if width == 626:
+            if width == minimal_w:
                 widget.copy_button.click()
                 args, kwargs = widget._copy_files.call_args
                 assert args == ([capture.folder / "walkthrough.pdf"],)

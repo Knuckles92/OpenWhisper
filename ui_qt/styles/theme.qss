@@ -1018,6 +1018,73 @@ QFrame#downloadsRuntimeBox[tone="downloading"] {
     border: 1px solid @accent-tint-border;
 }
 
+QFrame#downloadsImportBanner {
+    background-color: @accent-tint;
+    border: 1px solid @accent-tint-border;
+    border-radius: 8px;
+}
+
+QLabel#downloadsImportBannerTitle {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#downloadsImportBannerNote {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+QFrame#importModelRow {
+    background-color: @slate-surface;
+    border: 1px solid @slate-border;
+    border-radius: 8px;
+}
+
+QFrame#importModelRow:hover {
+    background-color: @slate-raised;
+    border-color: @slate-border-strong;
+}
+
+QLabel#importModelRowName {
+    color: @slate-text;
+    background-color: transparent;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#importModelRowSubtitle,
+QLabel#importModelRowSize {
+    color: @slate-text-3;
+    background-color: transparent;
+    border: none;
+    font-size: 11px;
+}
+
+QLabel#importModelKindBadge {
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+QLabel#importModelKindBadge[kind="builtin"] {
+    background-color: rgba(@success-rgb, 0.12);
+    color: @success-text-strong;
+    border: 1px solid rgba(@success-rgb, 0.28);
+}
+
+QLabel#importModelKindBadge[kind="custom"] {
+    background-color: @slate-field;
+    color: @slate-text-3;
+    border: 1px solid @slate-border;
+}
+
 QLabel#downloadsRuntimeBoxTitle {
     color: @slate-text;
     background-color: transparent;

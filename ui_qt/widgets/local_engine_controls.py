@@ -68,7 +68,6 @@ def show_download_sizes(combo) -> None:
     Only the tooltip: the item text is the model id that settings store and
     ``set_values`` finds again.
     """
-    from services.local_asr.catalog import MODELS, model_runtime_label
     from services.model_catalog import MODEL_DOWNLOAD_SIZE_MB, format_download_mb
 
     for index in range(combo.count()):

@@ -21,16 +21,82 @@ PASTED = "Let's meet with Sonia about the launch."
 REVERTED = "Let's meet with Ksenia about the launch."
 
 
-@pytest.mark.parametrize("before_cleanup, replaced, restored, expected", [
-    (SPOKEN, "Sonia", "Ksenia", True),
-    ("lets meet with ksenia about the launch", "Sonia", "KSENIA", True),
-    (SPOKEN, "Ksenia", "Sonia", False),  # the user changed a spoken word
-    ("lets meet with Sonia about the launch", "Sonia", "Ksenia", False),  # cleanup kept it
-    (None, "Sonia", "Ksenia", False),  # cleanup changed nothing
-    ("", "Sonia", "Ksenia", False),
+@pytest.mark.parametrize("before_cleanup, pasted, field, expected", [
+    (SPOKEN, PASTED, REVERTED, True),
+    ("lets meet with ksenia, about the launch", PASTED, "Let's meet with KSENIA! about the launch.", True),
+    (
+        "lets meet with o'brien about the launch",
+        "Let's meet with Brian about the launch.",
+        "Let’s meet with O’Brien about the launch.",
+        True,
+    ),
+    (SPOKEN, PASTED, "Dear team, Let's meet with Ksenia about the launch. See you then", True),
+    (
+        "Invite Sarah and ask Ksenia to sign",
+        "Invite Sarah and ask Sarah to sign",
+        "Invite Sarah and ask Ksenia to sign",
+        True,  # valid reversal even though replaced word also appears elsewhere
+    ),
+    (
+        "Invite Sarah and ask Ksenia to sign",
+        "Invite Sarah and ask Sarah to sign.",
+        "Hi Sarah, Invite Sarah and ask Ksenia to sign. Thanks!",
+        True,  # valid reversal with context outside pasted span and replaced word elsewhere
+    ),
+    (
+        "Invite Mira and ask Sonia to sign",
+        "Invite Mira and ask Sarah to sign",
+        "Invite Mira and ask Mira to sign",
+        False,  # restored word appeared elsewhere, not at the corrected position
+    ),
+    (
+        SPOKEN,
+        "Let's meet with Ksenia about the launch.",
+        "Let's meet with Sonia about the launch.",
+        False,  # the user changed a spoken word
+    ),
+    ("lets meet with Sonia about the launch", PASTED, REVERTED, False),  # cleanup kept it
+    (
+        "Invite Mira to sign",
+        "Invite Mira and ask Sarah to sign",
+        "Invite Mira and ask Mira to sign",
+        False,  # cleanup inserted the edited word
+    ),
+    (
+        "Mira asked Sonia to sign the form",
+        "Ask Sarah to sign the form",
+        "Ask Mira to sign the form",
+        False,  # ambiguous multi-word cleanup rewrite covering the edited position
+    ),
+    (
+        "Ask Mira Sonia to sign",
+        "Ask Sarah to sign",
+        "Ask Mira to sign",
+        False,  # ambiguous two-to-one collapse
+    ),
+    (
+        "Ask Mira Sonia to sign",
+        "Ask Elena Sarah to sign",
+        "Ask Elena Mira to sign",
+        False,  # ambiguous two-to-two replacement
+    ),
+    (
+        "Ask Mira to sign and ask Sonia to sign",
+        "Ask Sarah to sign",
+        "Ask Mira to sign",
+        False,  # ambiguous alignment between repeated clauses
+    ),
+    (
+        "Ksenia and something completely different",
+        "Sonia and totally unrelated text",
+        "Ksenia and totally unrelated text",
+        False,  # too few anchors between pre-cleanup and pasted text
+    ),
+    (None, PASTED, REVERTED, False),  # cleanup changed nothing
+    ("", PASTED, REVERTED, False),
 ])
-def test_reverted_cleanup(before_cleanup, replaced, restored, expected):
-    assert dictionary.reverted_cleanup(before_cleanup, replaced, restored) is expected
+def test_reverted_cleanup(before_cleanup, pasted, field, expected):
+    assert dictionary.reverted_cleanup(before_cleanup, pasted, field) is expected
 
 
 class TestLearning:
@@ -77,6 +143,49 @@ class TestLearning:
         dictionary.schedule_learning(job(), PASTED, SPOKEN)
 
         assert learned == [] and saved_terms() == []
+
+    def test_word_elsewhere_in_transcript_does_not_immediately_protect(self, learning):  # noqa: F811
+        learned, _later = learning
+        before = "Invite Mira and ask Sonia to sign"
+        pasted = "Invite Mira and ask Sarah to sign"
+        field = "Invite Mira and ask Mira to sign"
+        focus_context.set_service(FakeService(field))
+
+        dictionary.schedule_learning(job(), pasted, before)
+        assert saved_terms() == [] and learned == []
+
+        dictionary.schedule_learning(job(), pasted, before)
+        (term,) = saved_terms()
+        assert (term.term, term.learned, term.new, term.protected) == ("Mira", True, True, False)
+        assert learned == ["Mira"]
+
+    def test_valid_reversal_with_replaced_word_elsewhere_protects_at_once(self, learning):  # noqa: F811
+        learned, _later = learning
+        before = "Invite Sarah and ask Ksenia to sign"
+        pasted = "Invite Sarah and ask Sarah to sign."
+        field = "Dear team, Invite Sarah and ask Ksenia to sign. Thanks!"
+        focus_context.set_service(FakeService(field))
+
+        dictionary.schedule_learning(job(), pasted, before)
+
+        (term,) = saved_terms()
+        assert (term.term, term.learned, term.new, term.protected) == ("Ksenia", True, True, True)
+        assert learned == ["Ksenia"]
+
+    def test_ambiguous_cleanup_rewrite_falls_back_to_ordinary_learning(self, learning):  # noqa: F811
+        learned, _later = learning
+        before = "Mira asked Sonia to sign the form"
+        pasted = "Ask Sarah to sign the form"
+        field = "Ask Mira to sign the form"
+        focus_context.set_service(FakeService(field))
+
+        dictionary.schedule_learning(job(), pasted, before)
+        assert saved_terms() == [] and learned == []
+
+        dictionary.schedule_learning(job(), pasted, before)
+        (term,) = saved_terms()
+        assert term.term == "Mira" and term.learned and not term.protected
+        assert learned == ["Mira"]
 
 
 def test_protected_words_round_trip_and_reach_the_cleanup_prompt():

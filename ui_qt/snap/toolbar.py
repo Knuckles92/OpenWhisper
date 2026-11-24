@@ -18,7 +18,7 @@ from PyQt6.QtGui import QColor, QFontMetrics, QPainter, QPen
 from PyQt6.QtWidgets import QToolTip, QWidget
 
 from ui_qt.snap import pointed
-from ui_qt.snap.annotations import SWATCHES, Tool
+from ui_qt.snap.annotations import SWATCHES, RedactStyle, Tool
 from ui_qt.snap.chrome import chrome_font, paint_panel
 from ui_qt.snap.icons import paint_icon
 from ui_qt.utils.palette import Palette
@@ -41,8 +41,27 @@ _TOOLS = (
     (Tool.HIGHLIGHTER, "Highlighter (H)"),
     (Tool.TEXT, "Text (T)"),
     (Tool.STEP, "Step number (N)"),
-    (Tool.REDACT, "Redact (R) · Drag an opaque cover over private details"),
+    (Tool.REDACT, "Redact (R) · Drag to cover private details (Blackout, Blur, or Pixelate)"),
 )
+
+_REDACT_STYLES = (
+    (
+        RedactStyle.BLACKOUT,
+        "Blackout",
+        "Blackout · Solid opaque cover over private details. Remembered for future screenshots.",
+    ),
+    (
+        RedactStyle.BLUR,
+        "Blur",
+        "Blur · Soft blur over private details. Remembered for future screenshots.",
+    ),
+    (
+        RedactStyle.PIXELATE,
+        "Pixelate",
+        "Pixelate · Mosaic blocks over private details. Remembered for future screenshots.",
+    ),
+)
+_SEGMENT_PAD = 7
 
 
 @dataclass(frozen=True)
@@ -94,6 +113,12 @@ def _layout(
         add("color", str(index), f"{swatch.name} ({index + 1})", SWATCH)
     separate()
     add("infill", "infill", "Fill new boxes and ellipses with a light tint; off leaves only the outline. Remembered for future screenshots.", label="Infill")
+    x += 4
+    for style, label, tip in _REDACT_STYLES:
+        seg_width = label_metrics.horizontalAdvance(label) + 2 * _SEGMENT_PAD
+        buttons.append(_Button("redact_style", style.value, QRect(x, top, seg_width, BUTTON), tip, label))
+        x += seg_width
+    x += 4
     add("snap", "snap", "Snap to corners and window edges (S)")
     if live:
         separate()
@@ -130,6 +155,7 @@ def _layout(
             )
             add("keep", "keep", snap_tip)
     else:
+        separate()
         add("drop", "drop", "Cancel (Esc)")
         add("keep", "keep", "Keep (Enter)")
     return buttons, separators
@@ -171,6 +197,7 @@ class SnapToolbar(QWidget):
     keep_clicked = pyqtSignal()
     snap_clicked = pyqtSignal()
     infill_clicked = pyqtSignal()
+    redact_style_chosen = pyqtSignal(str)
     keep_marks_clicked = pyqtSignal()
     clear_clicked = pyqtSignal()
     region_clicked = pyqtSignal()
@@ -221,6 +248,7 @@ class SnapToolbar(QWidget):
         self._can_redo = False
         self._snap_enabled = False
         self._box_infill = False
+        self._redact_style = RedactStyle.BLACKOUT
         self._keep_marks = False
         self._region_active = False
         self._window_active = False
@@ -274,6 +302,12 @@ class SnapToolbar(QWidget):
         self._box_infill = enabled
         self.update()
 
+    def set_redact_style(self, style: RedactStyle | str) -> None:
+        resolved = RedactStyle(style)
+        if resolved != self._redact_style:
+            self._redact_style = resolved
+            self.update()
+
     def set_keep_marks(self, enabled: bool) -> None:
         self._keep_marks = enabled
         self.update()
@@ -305,6 +339,7 @@ class SnapToolbar(QWidget):
     def _enabled(self, button: _Button) -> bool:
         return {"undo": self._can_undo, "redo": self._can_redo,
                 "infill": self._tool in (Tool.BOX, Tool.ELLIPSE),
+                "redact_style": self._tool is Tool.REDACT,
                 "color": self._tool is not Tool.REDACT,
                 "drop": self._drop_enabled}.get(button.kind, True)
 
@@ -356,6 +391,8 @@ class SnapToolbar(QWidget):
             self.tool_chosen.emit(button.value)
         elif button.kind == "color":
             self.color_chosen.emit(int(button.value))
+        elif button.kind == "redact_style":
+            self.redact_style_chosen.emit(button.value)
         else:
             self._signals[button.kind].emit()
 
@@ -366,7 +403,9 @@ class SnapToolbar(QWidget):
                 QToolTip.hideText()
             else:
                 if button.kind == "color" and self._tool is Tool.REDACT:
-                    tip = "Redactions always use an opaque cover."
+                    tip = "Redactions use Blackout, Blur, or Pixelate instead of a colour."
+                elif button.kind == "redact_style" and self._tool is not Tool.REDACT:
+                    tip = f"{button.label} · Select Redact (R) to switch redaction style."
                 elif button.kind == "drop" and not self._drop_enabled:
                     tip = ("No tool is selected, so there is nothing to put down. "
                            "Cancel or Done on the walkthrough column ends the walkthrough.")
@@ -383,9 +422,28 @@ class SnapToolbar(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         paint_panel(painter, QRectF(self.rect()), RADIUS, self._palette, shadow=0)
         self._paint_separators(painter)
+        self._paint_redact_track(painter)
         for button in self._buttons:
             self._paint_button(painter, button)
         painter.end()
+
+    def _paint_redact_track(self, painter: QPainter) -> None:
+        segments = [b for b in self._buttons if b.kind == "redact_style"]
+        if not segments:
+            return
+        track = QRectF(
+            segments[0].rect.left(),
+            segments[0].rect.top(),
+            segments[-1].rect.right() - segments[0].rect.left() + 1,
+            segments[0].rect.height(),
+        ).adjusted(0.5, 2.5, -0.5, -2.5)
+        painter.save()
+        if self._tool is not Tool.REDACT:
+            painter.setOpacity(0.32)
+        painter.setPen(QPen(self._palette.color("overlay-border"), 1.0))
+        painter.setBrush(self._palette.color("overlay-rgb", 14))
+        painter.drawRoundedRect(track, 8, 8)
+        painter.restore()
 
     def _paint_separators(self, painter: QPainter) -> None:
         painter.setPen(QPen(self._palette.color("overlay-border"), 1))
@@ -401,6 +459,9 @@ class SnapToolbar(QWidget):
                 painter.setOpacity(0.32)
             self._paint_swatch(painter, button)
             painter.restore()
+            return
+        if button.kind == "redact_style":
+            self._paint_redact_segment(painter, button)
             return
         rect = QRectF(button.rect).adjusted(2, 2, -2, -2)
         background, icon = self._button_colors(button)
@@ -421,6 +482,33 @@ class SnapToolbar(QWidget):
             rect.adjusted(inset, inset, -inset, -inset),
             icon,
         )
+
+    def _paint_redact_segment(self, painter: QPainter, button: _Button) -> None:
+        enabled = self._enabled(button)
+        selected = button.value == self._redact_style.value
+        hovered = enabled and button is self._hover
+        rect = QRectF(button.rect).adjusted(2.5, 4.5, -2.5, -4.5)
+        painter.save()
+        if not enabled:
+            painter.setOpacity(0.32)
+        if selected:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self._palette.color("overlay-rgb", 36))
+            painter.drawRoundedRect(rect, 6, 6)
+        elif hovered:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self._palette.color("overlay-rgb", 20))
+            painter.drawRoundedRect(rect, 6, 6)
+        painter.setFont(self._label_font)
+        if selected and enabled:
+            ink = self._palette.color("accent")
+        else:
+            ink = QColor(self._palette.color("overlay-text"))
+            if not selected and not hovered:
+                ink.setAlphaF(0.78)
+        painter.setPen(ink)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, button.label)
+        painter.restore()
 
     def _paint_labeled_button(self, painter: QPainter, button: _Button, rect: QRectF,
                               icon: QColor) -> None:

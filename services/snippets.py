@@ -2,7 +2,8 @@
 
 A whole-utterance trigger skips cleanup. Triggers inside a sentence become
 protected placeholders before cleanup and are expanded after it; if cleanup
-loses a placeholder, the uncleaned text with expansions is used instead.
+loses or reorders a placeholder, the uncleaned text with expansions is used
+instead.
 Live dictation only.
 
 Snippet text is the user's own content: never log it, or a trigger.
@@ -297,8 +298,8 @@ def expand(text: str, plan: SnippetPlan) -> tuple[str, str, bool]:
     """``(plain, html, ok)``: ``text`` with ``plan``'s placeholders expanded.
 
     ``html`` is "" unless a formatted snippet was used; ``ok`` is False when
-    a placeholder is missing from ``text``, appears twice, or ``text`` holds
-    one the plan never made.
+    a placeholder is missing from ``text``, appears twice, moves out of
+    order, or ``text`` holds one the plan never made.
     """
     if plan.whole is not None:
         snippet = plan.whole
@@ -311,7 +312,7 @@ def expand(text: str, plan: SnippetPlan) -> tuple[str, str, bool]:
         if match is not None:
             by_number[int(match.group(1))] = snippet
     found = [int(match.group(1)) for match in _PLACEHOLDER.finditer(text)]
-    if sorted(found) != sorted(by_number) or len(by_number) != len(plan.placeholders):
+    if found != list(by_number) or len(by_number) != len(plan.placeholders):
         return text, "", False
 
     rich = any(snippet.formatted for _token, snippet in plan.placeholders)

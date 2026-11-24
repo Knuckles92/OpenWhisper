@@ -121,8 +121,6 @@ def single_language_reason(settings: Mapping) -> str:
 def is_english_only_engine(settings: Mapping) -> bool:
     """True when the selected speech engine only supports English."""
     backend = engine(settings)
-    if backend in ("parakeet_unified", "moonshine"):
-        return True
     if backend in ("local_whisper", "api", _REMOTE):
         return False
     return accepted_languages(settings) == ("en",)

@@ -20,7 +20,9 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 QUEUE_BLOCKS = 512
 CHECKPOINT_SECONDS = 1.0
-FINISH_TIMEOUT = 3.0
+# Final drain + fsync deadline; Windows FlushFileBuffers can stall for several
+# seconds under busy disk I/O or antivirus scanning.
+FINISH_TIMEOUT = 10.0
 COPY_BYTES = 1024 * 1024
 # How long the writer waits for a block before it looks for a discard.
 POLL_SECONDS = 0.05
@@ -167,7 +169,7 @@ class RecordingJournal:
         except Exception:
             logger.exception('Could not report recording failure')
 
-    def finish(self, timeout=FINISH_TIMEOUT) -> bool:
+    def finish(self, timeout: float | None = None) -> bool:
         self._stop.set()
         if not self._done.is_set():
             try:
@@ -176,7 +178,7 @@ class RecordingJournal:
                 # A full queue has the writer writing, not waiting; it sees
                 # the stop as soon as it has drained.
                 pass
-        return self._done.wait(timeout)
+        return self._done.wait(FINISH_TIMEOUT if timeout is None else timeout)
 
     def read_from(self, offset: int):
         size = self.written_bytes

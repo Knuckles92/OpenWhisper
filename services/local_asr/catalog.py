@@ -45,6 +45,15 @@ class SpeechModel:
     custom: bool = False
     #: A custom model's file or folder on this computer.
     path: str = ""
+    #: Optional language-scope override for custom models (None uses backend/languages default).
+    multilingual: bool | None = None
+
+
+def is_english_only_model(model: SpeechModel) -> bool:
+    """Whether ``model`` only accepts English audio."""
+    if model.multilingual is not None:
+        return not model.multilingual
+    return model.languages == "English"
 
 
 _EUROPEAN_LANGUAGES = ("en", "ru", "es", "fr", "pt", "auto")
@@ -141,6 +150,8 @@ class _SpeechModels(Mapping):
         return registered()[key]
 
     def __contains__(self, key: object) -> bool:
+        if not isinstance(key, str):
+            return False
         try:
             self[key]
         except KeyError:
@@ -244,6 +255,8 @@ def backend_supported_here(backend: str, platform_tag: str | None = None) -> boo
     from services.components import current_platform_tag
 
     tag = platform_tag or current_platform_tag()
+    if tag is None:  # a platform no runtime is published for
+        return False
     component = _runtime_id_for_platform(backend, tag)
     platforms = runtime_catalog().get(component, {}).get("platforms", {})
     return tag in platforms
@@ -336,12 +349,12 @@ def artifacts(key: str) -> dict:
     return _artifacts("models.json")[key]
 
 
-def selected_model(backend: str, settings: dict) -> str:
+def selected_model(backend: str, settings: Mapping) -> str:
     from services.local_asr.cache import is_bundled
     from services.settings import SettingsKey
 
     key = SettingsKey.LOCAL_ASR_MODELS.read(settings).get(backend)
-    if key in MODELS and MODELS[key].backend == backend:
+    if isinstance(key, str) and key in MODELS and MODELS[key].backend == backend:
         return key
     # An all-in-one install bundles a ready-to-use model inside the app tree;
     # prefer it when the user has not chosen a specific model yet.

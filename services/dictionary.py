@@ -394,34 +394,56 @@ def find_term(settings: Mapping, text: str) -> Optional[DictionaryTerm]:
 
 # ---- spelling rules taught on the Learned rules page -----------------------
 
-_QUOTED = re.compile(r"[\"“”]([^\"“”]{1,%d})[\"“”]" % MAX_TERM_CHARS)
-_SPELL = re.compile(r"\bspell(?:s|ed|ing)?\b", re.IGNORECASE)
-# A condition makes the rule more than a spelling; it stays a rule.
-_CONDITIONAL = re.compile(r"\b(?:except|unless|when|whenever|if|only|but)\b", re.IGNORECASE)
+_QUOTED = rf'["“]([^"“”]{{1,{MAX_TERM_CHARS}}})["”]'
+_SPELLING_TARGET = (
+    r"(?:it|(?:my|the(?:\s+(?:user|speaker)['’]s)?)\s+"
+    r"(?:(?:first|last|full|company|product|brand)\s+)?(?:name|word|term))"
+)
+_SPELLING_AS_RULE = re.compile(
+    rf"(?:always\s+)?spell\s+(?:the\s+(?:word|name|term)\s+)?{_QUOTED}\s+as\s+{_QUOTED}\s*\.?",
+    re.IGNORECASE,
+)
+_SPELLING_NOT_RULE = re.compile(
+    rf"(?:always\s+)?spell\s+(?:{_SPELLING_TARGET}(?:\s+as)?\s+)?{_QUOTED}(?:\s*,\s*|\s+)not\s+{_QUOTED}\s*\.?",
+    re.IGNORECASE,
+)
+_SPELLING_EXACT_RULE = re.compile(
+    rf"(?:always\s+)?spell\s+(?:{_SPELLING_TARGET}(?:\s+as)?\s+)?{_QUOTED}"
+    r"(?:\s+(?:exactly(?:\s+as\s+written)?|as\s+written))?\s*\.?",
+    re.IGNORECASE,
+)
 _SPELLING_RULE_MAX_CHARS = 120
 
 
 def spelling_rule(rule: str) -> Optional[tuple[str, tuple[str, ...]]]:
     """The ``(term, heard)`` a plain spelling rule teaches, or None.
 
-    Matches short, unconditional rules such as ``Always spell my name "Alex
-    Rivera"``, ``Spell "jon" as "John"`` and ``Spell it "Ksenia", not
-    "Sonia"``.
+    Matches short, clearly affirmative, unconditional rules such as
+    ``Always spell my name "Alex Rivera"``, ``Spell "jon" as "John"`` and
+    ``Spell it "Ksenia", not "Sonia"``.
     """
     if not isinstance(rule, str) or len(rule) > _SPELLING_RULE_MAX_CHARS:
         return None
-    if not _SPELL.search(rule) or _CONDITIONAL.search(rule):
+    text = rule.strip()
+    if not text or "\n" in text or "\r" in text:
         return None
-    quoted = [_clean(text) for text in _QUOTED.findall(rule)]
-    if any(not text for text in quoted):
+    match = _SPELLING_AS_RULE.fullmatch(text)
+    if match:
+        heard, term = _clean(match.group(1)), _clean(match.group(2))
+    elif match := _SPELLING_NOT_RULE.fullmatch(text):
+        term, heard = _clean(match.group(1)), _clean(match.group(2))
+    elif match := _SPELLING_EXACT_RULE.fullmatch(text):
+        term = _clean(match.group(1))
+        return (term, ()) if term else None
+    else:
         return None
-    if len(quoted) == 1:
-        return quoted[0], ()
-    if len(quoted) == 2 and re.search(r"\bas\b", rule, re.IGNORECASE):
-        return quoted[1], (quoted[0],)
-    if len(quoted) == 2 and re.search(r"\bnot\b", rule, re.IGNORECASE):
-        return quoted[0], (quoted[1],)
-    return None
+    if not term or not heard:
+        return None
+    # Dictionary aliases ignore case and discard the term's own spelling.
+    # Keep an explicit recasing instruction where cleanup can still apply it.
+    if heard != term and heard.casefold() == term.casefold():
+        return None
+    return term, _variants((heard,), term)
 
 
 def spelling_rules(settings: Mapping) -> list[str]:
@@ -430,10 +452,24 @@ def spelling_rules(settings: Mapping) -> list[str]:
             if spelling_rule(rule) is not None]
 
 
+def _teaching_represented(terms: Sequence[DictionaryTerm], term: str, heard: Sequence[str]) -> bool:
+    text = _clean(term)
+    index = _index_of_text(terms, text)
+    if index < 0:
+        return False
+    existing = terms[index]
+    if existing.term != text or existing.learned:
+        return False
+    saved_heard = {variant.casefold() for variant in existing.heard}
+    return all(variant.casefold() in saved_heard for variant in _variants(heard, text))
+
+
 def move_spelling_rules(settings: dict) -> int:
     """Turn plain spelling rules into dictionary words; returns how many moved.
 
-    A rule whose word cannot be added (the dictionary is full) stays a rule.
+    A rule whose teaching cannot be saved (for example, the dictionary is full
+    or the word already has five "sounds like" spellings) stays a rule unless
+    the dictionary already represents it.
     """
     rules = resolve_transcript_cleanup_rules(settings)
     kept: list[str] = []
@@ -447,7 +483,7 @@ def move_spelling_rules(settings: dict) -> int:
         try:
             add_term(settings, term, heard=heard)
         except DictionaryError:
-            if _index_of_text(load_dictionary(settings), _clean(term)) < 0:
+            if not _teaching_represented(load_dictionary(settings), term, heard):
                 kept.append(rule)
                 continue
         moved += 1
@@ -479,7 +515,7 @@ may june july august september october november december
 _WORD = re.compile(r"[^\W_]+(?:['’-][^\W_]+)*")
 # Punctuation a word may carry in running text; anything else (an
 # underscore, a slash, an @) keeps the token whole so it is never learned.
-_EDGE = ".,!?;:\"“”'‘’()[]{}<>«»…"
+_EDGE = ".,!?;:\"“”'‘’()[]{}<>«»…–—"
 _learned_callback: Optional[Callable[[str], None]] = None
 _sightings: dict[str, int] = {}
 _sightings_lock = threading.Lock()
@@ -493,6 +529,10 @@ def set_learned_callback(callback: Optional[Callable[[str], None]]) -> None:
 
 def _tokens(text: str) -> list[str]:
     return [token for token in (raw.strip(_EDGE) for raw in (text or "").split()) if token]
+
+
+def _norm_word(word: str) -> str:
+    return word.replace("’", "'").casefold()
 
 
 def _bare(word: str) -> str:
@@ -517,27 +557,66 @@ def learned_correction(pasted: str, field: str) -> Optional[str]:
     it. Text typed before or after the pasted span is ignored.
     """
     found = _correction(pasted, field)
-    return found[1] if found else None
+    return found[2] if found else None
 
 
-def reverted_cleanup(before_cleanup: Optional[str], replaced: str, restored: str) -> bool:
+def _aligned_before_index(
+    before_norm: list[str], pasted_norm: list[str], index: int
+) -> int | None:
+    """The single ``before_norm`` index replaced by ``pasted_norm[index]``, or None."""
+    matcher = SequenceMatcher(None, before_norm, pasted_norm, autojunk=False)
+    anchors = 0
+    matched: int | None = None
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            anchors += sum(1 for k in range(i1, i2) if before_norm[k])
+        elif tag == "replace" and i2 - i1 == 1 and j2 - j1 == 1 and j1 == index:
+            matched = i1
+    if matched is None or anchors < 2:
+        return None
+    return matched
+
+
+def reverted_cleanup(before_cleanup: str | None, pasted: str, field: str) -> bool:
     """Whether a correction put back a word AI cleanup had changed.
 
-    The restored word was in the text before cleanup and the word the user
-    replaced was not, so cleanup brought it in.
+    Aligns the corrected word in ``pasted`` back to ``before_cleanup`` and
+    returns True only when the restored word unambiguously occupied that
+    position before cleanup.
     """
-    spoken = {word.casefold() for word in _tokens(before_cleanup or "")}
-    return restored.casefold() in spoken and replaced.casefold() not in spoken
+    if not before_cleanup:
+        return False
+    found = _correction(pasted, field)
+    if found is None:
+        return False
+    return _at_cleanup_edit(before_cleanup, *found)
 
 
-def _correction(pasted: str, field: str) -> Optional[tuple[str, str]]:
-    """``(pasted word, the user's word)``; see ``learned_correction``."""
+def _at_cleanup_edit(before_cleanup: str, pasted_tokens: list[str], index: int, restored: str) -> bool:
+    """Whether the word at this pasted index restores its spelling before cleanup."""
+    before_tokens = _tokens(before_cleanup)
+    if len(before_tokens) < 3:
+        return False
+    before_norm = [_bare(word) for word in before_tokens]
+    pasted_norm = [_bare(word) for word in pasted_tokens]
+    forward = _aligned_before_index(before_norm, pasted_norm, index)
+    if forward is None:
+        return False
+    rev_index = len(pasted_norm) - 1 - index
+    reverse = _aligned_before_index(before_norm[::-1], pasted_norm[::-1], rev_index)
+    if reverse is None or len(before_norm) - 1 - reverse != forward:
+        return False
+    return _norm_word(before_tokens[forward]) == _norm_word(restored)
+
+
+def _correction(pasted: str, field: str) -> tuple[list[str], int, str] | None:
+    """``(pasted tokens, edited index, the user's word)``; see ``learned_correction``."""
     said = _tokens(pasted)
     seen = _tokens(field)
     if len(said) < 3 or not seen:
         return None
     matcher = SequenceMatcher(
-        None, [word.casefold() for word in said], [word.casefold() for word in seen],
+        None, [_norm_word(word) for word in said], [_norm_word(word) for word in seen],
         autojunk=False,
     )
     changes = []
@@ -555,7 +634,7 @@ def _correction(pasted: str, field: str) -> Optional[tuple[str, str]]:
     if tag != "replace" or i2 - i1 != 1 or j2 - j1 != 1:
         return None
     old, new = said[i1], seen[j1]
-    return (old, new) if _learnable(old, new) else None
+    return (said, i1, new) if _learnable(old, new) else None
 
 
 def _run_later(delay: float, function, *args) -> None:
@@ -602,11 +681,11 @@ def _on_reread(context, pasted_text: str, before_cleanup: Optional[str] = None) 
         if context is None or not context.caret_known:
             return
         field = f"{context.before}{context.selected}{context.after}"
-        found = _correction(pasted_text, field)
-        if found is None:
+        correction = _correction(pasted_text, field)
+        if correction is None:
             return
-        replaced, word = found
-        if reverted_cleanup(before_cleanup, replaced, word):
+        pasted_tokens, index, word = correction
+        if before_cleanup and _at_cleanup_edit(before_cleanup, pasted_tokens, index, word):
             # Undoing an AI edit is deliberate; one sighting is enough.
             _run_later(0, _learn, word, True)
             return

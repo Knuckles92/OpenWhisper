@@ -14,12 +14,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from PyQt6.QtCore import QPointF, QRectF, QSizeF, Qt
+from PyQt6.QtCore import QPoint, QPointF, QRect, QRectF, QSizeF, Qt
 from PyQt6.QtGui import (
     QColor,
     QFont,
     QFontMetricsF,
     QGuiApplication,
+    QImage,
     QPainter,
     QPainterPath,
     QPainterPathStroker,
@@ -37,6 +38,12 @@ class Tool(StrEnum):
     TEXT = "text"
     STEP = "step"
     REDACT = "redact"
+
+
+class RedactStyle(StrEnum):
+    BLACKOUT = "blackout"
+    BLUR = "blur"
+    PIXELATE = "pixelate"
 
 
 @dataclass(frozen=True)
@@ -63,6 +70,9 @@ HIGHLIGHTER_ALPHA = 120
 BOX_FILL_ALPHA = 24
 BOX_RADIUS = 6.0
 REDACTION_COLOR = "#181A20"
+REDACTION_PIXEL_SIZE = 10.0
+REDACTION_BLUR_FACTOR = 10.0
+REDACTION_BLUR_PAD = 14.0
 STEP_RADIUS = 13.0
 STEP_RING = 2.0
 LABEL_PAD_X = 8.0
@@ -304,12 +314,68 @@ class Ellipse(Box):
         return outline
 
 
+def _device_patch_rect(bounds: QRectF, dpr: float, image_rect: QRect) -> QRect:
+    left = math.floor(bounds.left() * dpr)
+    top = math.floor(bounds.top() * dpr)
+    right = math.ceil(bounds.right() * dpr) - 1
+    bottom = math.ceil(bounds.bottom() * dpr) - 1
+    return QRect(QPoint(left, top), QPoint(right, bottom)).intersected(image_rect)
+
+
+def _pixelate_patch(backdrop: QImage, src: QRect, dpr: float) -> QImage:
+    patch = backdrop.copy(src)
+    patch.setDevicePixelRatio(1.0)
+    block = max(2, round(REDACTION_PIXEL_SIZE * dpr))
+    cols = max(1, round(patch.width() / block))
+    rows = max(1, round(patch.height() / block))
+    small = patch.scaled(
+        cols,
+        rows,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    return small.scaled(
+        patch.size(),
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.FastTransformation,
+    )
+
+
+def _blur_patch(backdrop: QImage, src: QRect, dpr: float) -> QImage:
+    pad = max(4, round(REDACTION_BLUR_PAD * dpr))
+    padded = src.adjusted(-pad, -pad, pad, pad).intersected(backdrop.rect())
+    patch = backdrop.copy(padded)
+    patch.setDevicePixelRatio(1.0)
+    w, h = patch.width(), patch.height()
+    mid_w = max(1, round(w / (3.0 * dpr)))
+    mid_h = max(1, round(h / (3.0 * dpr)))
+    low_w = max(1, round(w / (REDACTION_BLUR_FACTOR * dpr)))
+    low_h = max(1, round(h / (REDACTION_BLUR_FACTOR * dpr)))
+    smooth = Qt.TransformationMode.SmoothTransformation
+    ignore = Qt.AspectRatioMode.IgnoreAspectRatio
+    blurred = (
+        patch.scaled(mid_w, mid_h, ignore, smooth)
+        .scaled(low_w, low_h, ignore, smooth)
+        .scaled(mid_w, mid_h, ignore, smooth)
+        .scaled(w, h, ignore, smooth)
+    )
+    offset = src.topLeft() - padded.topLeft()
+    return blurred.copy(QRect(offset, src.size()))
+
+
 @dataclass
 class Redaction:
-    """An opaque cover baked into kept screenshots, independent of colour/fill."""
+    """A redaction baked into kept screenshots: blackout, blur, or pixelate."""
 
     start: QPointF
     end: QPointF
+    style: RedactStyle = RedactStyle.BLACKOUT
+    _cache: tuple[int, tuple[int, int, int, int], RedactStyle, QImage] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        self.style = RedactStyle(self.style)
 
     def rect(self) -> QRectF:
         return QRectF(self.start, self.end).normalized()
@@ -324,11 +390,69 @@ class Redaction:
         # Cover the boundary pixels too, including on fractional-scale screens.
         return QRectF(self.rect().toAlignedRect().adjusted(-1, -1, 1, 1))
 
-    def paint(self, painter: QPainter) -> None:
+    def _processed_patch(self, backdrop: QImage, src: QRect, dpr: float) -> QImage:
+        key = (backdrop.cacheKey(), (src.x(), src.y(), src.width(), src.height()), self.style)
+        if self._cache is not None and self._cache[:3] == key:
+            return self._cache[3]
+        if self.style is RedactStyle.BLUR:
+            result = _blur_patch(backdrop, src, dpr)
+        else:
+            result = _pixelate_patch(backdrop, src, dpr)
+        self._cache = (*key, result)
+        return result
+
+    def _paint_live_preview(self, painter: QPainter, bounds: QRectF) -> None:
+        painter.setClipRect(bounds, Qt.ClipOperation.IntersectClip)
+        if self.style is RedactStyle.BLUR:
+            painter.fillRect(bounds, QColor(24, 26, 32, 165))
+            painter.setPen(QPen(QColor(255, 255, 255, 95), 1.0))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(bounds.adjusted(0.5, 0.5, -0.5, -0.5))
+            return
+        # Pixelate preview on the transparent live desktop before the shot is baked.
+        tile = REDACTION_PIXEL_SIZE
+        dark = QColor(24, 26, 32, 185)
+        light = QColor(72, 78, 92, 165)
+        left, top = bounds.left(), bounds.top()
+        cols = max(1, math.ceil(bounds.width() / tile))
+        rows = max(1, math.ceil(bounds.height() / tile))
+        for row in range(rows):
+            y = top + row * tile
+            for col in range(cols):
+                x = left + col * tile
+                painter.fillRect(
+                    QRectF(x, y, tile, tile),
+                    dark if (row + col) % 2 == 0 else light,
+                )
+        painter.setPen(QPen(QColor(255, 255, 255, 80), 1.0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(bounds.adjusted(0.5, 0.5, -0.5, -0.5))
+
+    def paint(self, painter: QPainter, backdrop: QImage | None = None) -> None:
+        bounds = self.bounds()
         painter.save()
         try:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-            painter.fillRect(self.bounds(), QColor(REDACTION_COLOR))
+            if self.style is RedactStyle.BLACKOUT:
+                painter.fillRect(bounds, QColor(REDACTION_COLOR))
+                return
+            if backdrop is None or backdrop.isNull():
+                self._paint_live_preview(painter, bounds)
+                return
+            dpr = backdrop.devicePixelRatio() or 1.0
+            src = _device_patch_rect(bounds, dpr, backdrop.rect())
+            if src.isEmpty():
+                return
+            patch = self._processed_patch(backdrop, src, dpr)
+            target = QRectF(
+                src.x() / dpr, src.y() / dpr, src.width() / dpr, src.height() / dpr
+            )
+            painter.setClipRect(bounds, Qt.ClipOperation.IntersectClip)
+            painter.setRenderHint(
+                QPainter.RenderHint.SmoothPixmapTransform,
+                self.style is RedactStyle.BLUR,
+            )
+            painter.drawImage(target, patch)
         finally:
             painter.restore()
 
@@ -472,14 +596,31 @@ _DRAFTS: dict[Tool, Callable[[QPointF, QColor], Annotation]] = {
 }
 
 
+def paint_annotation(
+    item: Annotation, painter: QPainter, backdrop: QImage | None = None
+) -> None:
+    """Paint ``item`` onto ``painter``, passing ``backdrop`` for pixel-based redactions."""
+    if isinstance(item, Redaction):
+        item.paint(painter, backdrop)
+    else:
+        item.paint(painter)
+
+
 def new_draft(
-    tool: Tool, point: QPointF, color: QColor, *, box_infill: bool = False,
+    tool: Tool,
+    point: QPointF,
+    color: QColor,
+    *,
+    box_infill: bool = False,
+    redact_style: RedactStyle | str = RedactStyle.BLACKOUT,
 ) -> Annotation | None:
     """The shape a ``tool`` drag starts at ``point``; None for text and steps."""
     make = _DRAFTS.get(tool)
     draft = make(point, QColor(color)) if make is not None else None
     if isinstance(draft, Box):
         draft.infill = box_infill
+    elif isinstance(draft, Redaction):
+        draft.style = RedactStyle(redact_style)
     return draft
 
 

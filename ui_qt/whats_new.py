@@ -31,12 +31,11 @@ class WhatsNew:
 
 WHATS_NEW: Final[WhatsNew] = WhatsNew(
     release_line="2.8",
-    updated="2026-11-09",
+    updated="2026-11-23",
     text=(
-        "Walkthroughs: narrate while Auto Mode takes a screenshot at each "
-        "click, draw on the live desktop, then paste the AI write-up into "
-        "your coding agent with one shortcut. Redesigned Walkthrough and "
-        "Meeting Mode tabs, and meetings now use your dictation engine."
+        "Send walkthroughs and screenshots directly to your coding agent. "
+        "In Models & engines, browse speech models by family and import "
+        "compatible models already on your computer."
     ),
 )
 

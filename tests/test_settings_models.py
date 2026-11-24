@@ -1304,7 +1304,9 @@ class TestMeetingFollowsDictation(_DialogTestCase):
         assert dialog.meeting_local_model_field.isHidden()
         assert dialog.rail.value(MEETING_VOICE) == "base · Detect automatically"
 
-    def test_a_following_meeting_tracks_a_change_of_dictation_engine(self):
+    # Moonshine runs on Windows and macOS only; there is no Linux runtime.
+    @patch("services.components.current_platform_tag", return_value="win_amd64")
+    def test_a_following_meeting_tracks_a_change_of_dictation_engine(self, _platform):
         dialog, _values = self._make_dialog(active_model="base")
         dialog.engine_combo.setCurrentIndex(dialog.engine_combo.findData("moonshine"))
         assert dialog.rail.value(MEETING_VOICE).startswith("Moonshine")
@@ -1552,7 +1554,9 @@ class TestApiModelSelection(_DialogTestCase):
 
 
 class TestOptionalSpeechSummary(_DialogTestCase):
-    def test_rail_reports_optional_family_and_meeting_model(self):
+    # Moonshine runs on Windows and macOS only; there is no Linux runtime.
+    @patch("services.components.current_platform_tag", return_value="win_amd64")
+    def test_rail_reports_optional_family_and_meeting_model(self, _platform):
         dialog, _ = self._make_dialog(extra_settings={
             SettingsKey.SELECTED_MODEL: "parakeet",
             SettingsKey.MEETING_SPEECH_SEPARATE: True,

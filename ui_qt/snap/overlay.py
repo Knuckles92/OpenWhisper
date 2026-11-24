@@ -29,7 +29,12 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import QLineEdit, QWidget
 
-from services.settings import SettingsKey, resolve_snap_box_infill, settings_manager
+from services.settings import (
+    SettingsKey,
+    resolve_snap_box_infill,
+    resolve_snap_redact_style,
+    settings_manager,
+)
 from ui_qt.snap import affinity, chrome, export, macos, support
 from ui_qt.snap import toolbar as toolbar_module
 from ui_qt.snap.annotations import (
@@ -39,11 +44,13 @@ from ui_qt.snap.annotations import (
     Annotation,
     AnnotationStack,
     Label,
+    RedactStyle,
     Step,
     Tool,
     extend_draft,
     ink_for,
     new_draft,
+    paint_annotation,
 )
 from ui_qt.snap.geometry import (
     EDGE_MARGIN,
@@ -231,6 +238,7 @@ class SnapOverlay(QWidget):
     selecting = pyqtSignal()
     snap_toggled = pyqtSignal(bool)
     box_infill_toggled = pyqtSignal(bool)
+    redact_style_changed = pyqtSignal(str)
 
     def __init__(
         self, frozen: QImage, screen: QScreen | None = None, *, hint: str = "",
@@ -260,6 +268,7 @@ class SnapOverlay(QWidget):
         self._tool = Tool.ARROW
         self._color = 0
         self._box_infill = resolve_snap_box_infill()
+        self._redact_style = RedactStyle(resolve_snap_redact_style())
         self._editor: LabelEditor | None = None
         self._done = False
         self._configure()
@@ -295,6 +304,8 @@ class SnapOverlay(QWidget):
         toolbar.set_snap_enabled(self._snap_enabled)
         toolbar.infill_clicked.connect(self._toggle_box_infill)
         toolbar.set_box_infill(self._box_infill)
+        toolbar.redact_style_chosen.connect(self._choose_redact_style)
+        toolbar.set_redact_style(self._redact_style)
         return toolbar
 
     def _toggle_box_infill(self) -> None:
@@ -306,6 +317,17 @@ class SnapOverlay(QWidget):
     def set_box_infill(self, enabled: bool) -> None:
         self._box_infill = enabled
         self._toolbar.set_box_infill(enabled)
+
+    def _choose_redact_style(self, style: str) -> None:
+        resolved = RedactStyle(style)
+        settings_manager.save_setting(SettingsKey.SNAP_REDACT_STYLE, resolved.value)
+        self.set_redact_style(resolved)
+        self.redact_style_changed.emit(resolved.value)
+
+    def set_redact_style(self, style: RedactStyle | str) -> None:
+        resolved = RedactStyle(style)
+        self._redact_style = resolved
+        self._toolbar.set_redact_style(resolved)
 
     def set_snap_enabled(self, enabled: bool) -> None:
         self._snap_enabled = enabled
@@ -664,8 +686,13 @@ class SnapOverlay(QWidget):
             )
             self._add(step)
         else:
-            self._draft = new_draft(self._tool, self._annotation_point(point),
-                                    self.current_color(), box_infill=self._box_infill)
+            self._draft = new_draft(
+                self._tool,
+                self._annotation_point(point),
+                self.current_color(),
+                box_infill=self._box_infill,
+                redact_style=self._redact_style,
+            )
             self._update_marks(self._draft.bounds())
 
     def _extend_draft(
@@ -777,9 +804,9 @@ class SnapOverlay(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         for item in self._stack.items:
-            item.paint(painter)
+            paint_annotation(item, painter, self._frozen)
         if self._draft is not None:
-            self._draft.paint(painter)
+            paint_annotation(self._draft, painter, self._frozen)
 
     def _badge_text(self) -> str:
         crop = device_rect(

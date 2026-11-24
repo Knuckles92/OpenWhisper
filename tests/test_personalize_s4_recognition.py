@@ -162,7 +162,8 @@ class TestLocalSpeech:
     def test_an_engine_without_languages_keeps_the_code(self, speech):
         make, _path = speech
         backend = make("parakeet")
-        backend.backend_id = "local_whisper"  # a remote host's Whisper
+        # A remote host's Whisper: the client takes the host's family and model together.
+        backend.backend_id, backend.model_name = "local_whisper", "large-v3"
         assert backend.recognition_inputs(RecognitionContext(language="de")) == ("de", ())
 
     def test_no_language_leaves_the_engine_setting(self, speech):

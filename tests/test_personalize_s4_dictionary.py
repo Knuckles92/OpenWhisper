@@ -231,9 +231,13 @@ class TestMutators:
 class TestSpellingRules:
     @pytest.mark.parametrize("rule,expected", [
         ('Always spell my name "Alex Rivera"', ("Alex Rivera", ())),
+        ('Always spell the user\'s name "Alex Rivera".', ("Alex Rivera", ())),
+        ('Always spell my name as "Alex Rivera".', ("Alex Rivera", ())),
         ("Always spell the name “Ksenia” exactly as written.", ("Ksenia", ())),
         ('Spell "jon" as "John".', ("John", ("jon",))),
+        ('Always spell "jon" as "John".', ("John", ("jon",))),
         ('Spell it "Ksenia", not "Sonia"', ("Ksenia", ("Sonia",))),
+        ('Always spell my name "Ksenia", not "Sonia".', ("Ksenia", ("Sonia",))),
     ])
     def test_plain_spelling_rules(self, rule, expected):
         assert dictionary.spelling_rule(rule) == expected
@@ -241,6 +245,16 @@ class TestSpellingRules:
     @pytest.mark.parametrize("rule", [
         "Use British spelling.",
         'Write "Kubernetes" in full.',
+        'Never spell my name "Jon"',
+        'Do not spell my name "Jon".',
+        'Don\'t spell "jon" as "John".',
+        'Avoid spelling "Jon".',
+        'Never spell it "Sonia", not "Ksenia".',
+        'Spell my name not "Jon".',
+        'Spell out "API".',
+        'Spell "Kubernetes" in all caps.',
+        'Spell "jon" as "John" in emails.',
+        'When emailing clients, spell "jon" as "John".',
         'Spell "k8s" as "Kubernetes" except in code blocks.',
         'Spell "a", "b" and "c" carefully.',
         'Always spell "' + "x" * 70 + '"',
@@ -261,3 +275,47 @@ class TestSpellingRules:
         assert terms_of(settings) == ["John", "Ksenia"]
         assert dictionary.load_dictionary(settings)[0].heard == ("jon",)
         assert dictionary.move_spelling_rules(settings) == 0
+
+    def test_negative_and_ambiguous_rules_stay_in_learned_rules(self):
+        rules = [
+            'Never spell my name "Jon"',
+            'Don\'t spell "jon" as "John".',
+            'Spell out "API".',
+            'Spell "jon" as "John" in emails.',
+            'Spell "openai" as "OpenAI".',
+            'Spell it "GitHub", not "Github".',
+        ]
+        settings = {SettingsKey.TRANSCRIPT_CLEANUP_RULES: list(rules)}
+        assert dictionary.spelling_rules(settings) == []
+        assert dictionary.move_spelling_rules(settings) == 0
+        assert settings[SettingsKey.TRANSCRIPT_CLEANUP_RULES] == rules
+        assert dictionary.load_dictionary(settings) == []
+
+    def test_moving_rules_keeps_sixth_variant_and_removes_represented_duplicates(self):
+        five = ["jon", "jawn", "jhon", "jahn", "jean"]
+        settings = {
+            SettingsKey.TRANSCRIPT_CLEANUP_RULES: [
+                'Spell "jone" as "John".',
+                'Spell "JON" as "John".',
+                'Always spell my name "John"',
+            ],
+            KEY: [entry("John", heard=five)],
+        }
+        assert dictionary.move_spelling_rules(settings) == 2
+        assert settings[SettingsKey.TRANSCRIPT_CLEANUP_RULES] == ['Spell "jone" as "John".']
+        assert dictionary.load_dictionary(settings)[0].heard == tuple(five)
+        assert dictionary.move_spelling_rules(settings) == 0
+        assert settings[SettingsKey.TRANSCRIPT_CLEANUP_RULES] == ['Spell "jone" as "John".']
+
+    def test_moving_rules_full_dictionary_keeps_unsaved_and_drops_represented(self, monkeypatch):
+        monkeypatch.setattr(config, "MAX_DICTIONARY_TERMS", 1)
+        settings = {
+            SettingsKey.TRANSCRIPT_CLEANUP_RULES: [
+                'Always spell my name "Alex Rivera"',
+                'Always spell my name "Ksenia"',
+            ],
+            KEY: [entry("Ksenia")],
+        }
+        assert dictionary.move_spelling_rules(settings) == 1
+        assert settings[SettingsKey.TRANSCRIPT_CLEANUP_RULES] == ['Always spell my name "Alex Rivera"']
+        assert terms_of(settings) == ["Ksenia"]

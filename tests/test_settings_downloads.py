@@ -448,7 +448,9 @@ class TestFilter(_DialogTestCase):
         assert not dialog.rows["base"].isVisibleTo(dialog)
         assert not dialog.rows["tiny.en"].isVisibleTo(dialog)
 
-    def test_engine_rail_shows_one_family_and_hides_row_engine_badge(self):
+    # Parakeet has two runtimes only on Windows and Linux (MLX alone on a Mac).
+    @patch("services.components.current_platform_tag", return_value="win_amd64")
+    def test_engine_rail_shows_one_family_and_hides_row_engine_badge(self, _platform):
         dialog, _values = self._make_dialog()
         dialog.select_rail("qwen")
         assert dialog.rows["qwen-0.6b"].isVisibleTo(dialog)
@@ -485,7 +487,9 @@ class TestFilter(_DialogTestCase):
         # Active engine from _make_dialog is local_whisper -> "whisper" family.
         assert dialog.current_rail_key() == "whisper"
 
-    def test_engine_rail_combines_with_status_and_search(self):
+    # Moonshine runs on Windows and macOS only; there is no Linux runtime.
+    @patch("services.components.current_platform_tag", return_value="win_amd64")
+    def test_engine_rail_combines_with_status_and_search(self, _platform):
         dialog, _values = self._make_dialog(
             cached={BASE_REPO: _cached(BASE_REPO, 145_000_000)}
         )
@@ -1336,7 +1340,9 @@ class TestInlineRuntimeControls(_DialogTestCase):
         assert values[SettingsKey.WHISPER_DEVICE] == "cpu"
         assert len(changed) == 2
 
-    def test_optional_engine_device_persists_and_moonshine_is_cpu_only(self):
+    # Moonshine runs on Windows and macOS only; there is no Linux runtime.
+    @patch("services.components.current_platform_tag", return_value="win_amd64")
+    def test_optional_engine_device_persists_and_moonshine_is_cpu_only(self, _platform):
         dialog, values = self._make_dialog()
         dialog.select_rail("parakeet")
         assert dialog.banner_controls_strip.isVisibleTo(dialog)
