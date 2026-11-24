@@ -185,7 +185,9 @@ class ModelRowWidget(DownloadRow):
         name_label.setFont(name_font)
         title_row.addWidget(name_label, stretch=1)
 
-        self.engine_badge = QLabel("")
+        # Elides like the summary below, so the runtime pill can't push the
+        # row (and the window's minimum width) past the list column.
+        self.engine_badge = ElidingLabel("")
         self.engine_badge.setObjectName("modelRowEngine")
         self.engine_badge.setSizePolicy(
             QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed

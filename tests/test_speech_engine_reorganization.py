@@ -2,7 +2,6 @@
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
 from services import dictation_language
 from services.local_asr import catalog, custom, languages

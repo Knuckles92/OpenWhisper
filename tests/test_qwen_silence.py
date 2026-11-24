@@ -65,7 +65,9 @@ def test_speech_window_is_sent_intact_with_language_and_no_timestamp_changes(bac
 
 @pytest.mark.parametrize("family", ["parakeet", "parakeet_mlx", "nemotron", "moonshine"])
 def test_other_engines_never_run_the_qwen_detector(backend, monkeypatch, family):
-    backend.backend_id = family
+    from services.local_asr.catalog import DEFAULT_MODELS
+
+    backend.backend_id, backend.model_name = family, DEFAULT_MODELS[family]
     detector = Mock(side_effect=AssertionError("Qwen filter reached another engine"))
     monkeypatch.setattr(qwen_speech, "has_speech", detector)
     audio = np.full(16000, .001, np.float32)
