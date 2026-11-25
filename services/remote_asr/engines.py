@@ -197,7 +197,13 @@ def host_models() -> list:
     from services.components import is_installed
     from services.hf_access import resolve_model_repo, scan_cached_models
     from services.local_asr import cache
-    from services.local_asr.catalog import BUILTIN_MODELS, WHISPER_BACKEND, resolve_runtime, selected_device
+    from services.local_asr.catalog import (
+        BUILTIN_MODELS,
+        WHISPER_BACKEND,
+        model_supported_here,
+        resolve_runtime,
+        selected_device,
+    )
     from services.settings import settings_manager
 
     settings = settings_manager.load_all_settings()
@@ -205,6 +211,8 @@ def host_models() -> list:
     models = []
     # A custom model is the host's own file, never offered to another computer.
     for key, model in BUILTIN_MODELS.items():
+        if model.platforms and not model_supported_here(key):
+            continue
         if model.backend not in runtime_ready:
             component, _device = resolve_runtime(
                 model.backend, selected_device(model.backend, settings)

@@ -16,12 +16,19 @@ logger = logging.getLogger(__name__)
 
 def model_choices() -> list[dict]:
     from config import config
-    from services.local_asr.catalog import BUILTIN_MODELS, WHISPER_BACKEND
+    from services.local_asr.catalog import (
+        BUILTIN_MODELS,
+        WHISPER_BACKEND,
+        model_supported_here,
+    )
 
-    # Only the published catalog: never the host's custom models.
+    # Only the published catalog: never the host's custom models, and never
+    # platform-pinned models that cannot run on this host (such as Fourier 2B
+    # on macOS, where Qwen3-ASR loads Safetensors rather than a GGUF).
     return [
         {"family": model.backend, "model": key, "label": model.label}
         for key, model in BUILTIN_MODELS.items()
+        if not model.platforms or model_supported_here(key)
     ] + [
         {"family": WHISPER_BACKEND, "model": name, "label": f"Whisper {name}"}
         for name in config.WHISPER_MODEL_CHOICES if name != "auto"

@@ -439,3 +439,54 @@ def test_settings_tile_is_off_by_default_and_only_changes_host_permission(manage
         assert not remote_settings.host_model_management()
     finally:
         dialog.close()
+
+
+def test_platform_pinned_models_stay_out_of_unsupported_hosts_catalog_and_download(downloads, monkeypatch):
+    from services import components
+    from services.local_asr import cache
+    from services.remote_asr import engines
+    from services.remote_asr.model_management import model_choices
+
+    monkeypatch.setattr(components, "current_platform_tag", lambda: "darwin_arm64")
+    monkeypatch.setattr(components, "is_installed", lambda component: component == "asr-qwen")
+    monkeypatch.setattr(cache, "is_cached", lambda key: key in ("qwen-0.6b", "fourier-2b"))
+
+    assert "fourier-2b" not in {entry["model"] for entry in model_choices()}
+    assert "fourier-2b" not in {entry["model"] for entry in HostModelManager().catalog()["models"]}
+    assert "fourier-2b" not in {entry["model"] for entry in engines.host_models()}
+    with pytest.raises(ValueError, match="catalog"):
+        HostModelManager().download("qwen_asr", "fourier-2b", "laptop")
+    assert downloads.calls == []
+
+    monkeypatch.setattr(components, "current_platform_tag", lambda: "win_amd64")
+    assert "fourier-2b" in {entry["model"] for entry in model_choices()}
+
+
+def test_remote_download_prompt_repeats_noncommercial_model_notice(managed, downloads, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+
+    from services import components
+    from ui_qt.dialogs.remote_models import RemoteModelsPane
+
+    monkeypatch.setattr(components, "current_platform_tag", lambda: "win_amd64")
+    managed.service.set_model_management(True)
+    prompts = []
+
+    def capture(_parent, title, text, *args):
+        prompts.append((title, text))
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", capture)
+    pane = RemoteModelsPane(managed.service, "devbox")
+    pane.show()
+    try:
+        assert _pump_until(lambda: not pane._busy)
+        pane.select_model("qwen_asr:fourier-2b")
+        pane.download_button.click()
+        assert len(prompts) == 1
+        assert "Noncommercial use only" in prompts[0][1]
+        assert "Host Mode" in prompts[0][1]
+        assert "license from Oruk" in prompts[0][1]
+        assert downloads.calls == []
+    finally:
+        pane.close()
