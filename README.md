@@ -173,7 +173,7 @@ Choose **Settings → App → Appearance → Theme → Omarchy desktop** to foll
 | Parakeet | TDT 0.6B v3; Orukeet TDT 0.6B community adaptation | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meeting chunks |
 | Parakeet MLX | TDT 0.6B v3, MLX Community weights | Apple Silicon, macOS 14+: Apple GPU through Metal or CPU | Dictation with preview, uploads, meeting chunks |
 | Parakeet Unified | Unified EN 0.6B (native preview); TDT-CTC 110M (compact, included in All-in-One installers), English | Windows x64 and Linux x86_64 CPU / GPU through Vulkan (NVIDIA, AMD, Intel) | Dictation with preview, uploads; meetings (TDT-CTC 110M) |
-| Qwen3-ASR | 0.6B, 1.7B | Windows x64 / Linux x86_64 CPU or Vulkan GPU; Apple Silicon CPU or Apple GPU (MPS) | Dictation, uploads |
+| Qwen3-ASR | 0.6B, 1.7B; Fourier 2B (English, noncommercial, Windows/Linux) | Windows x64 / Linux x86_64 CPU or Vulkan GPU; Apple Silicon CPU or Apple GPU (MPS) for 0.6B / 1.7B | Dictation, uploads |
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU; Apple Silicon CPU, macOS 15+ | Dictation, uploads, meetings with native preview |
 | API | OpenAI: GPT-Transcribe; GPT-4o Transcribe, GPT-4o Mini Transcribe, and Whisper until OpenAI retires them on February 26, 2027. Groq: Whisper Large v3 / Turbo. Your own server: whatever it serves | OpenAI or Groq in the cloud (API key required), or an OpenAI-compatible speech server you run: Speaches, LocalAI, vLLM, whisper.cpp, or custom | Dictation, uploads |
@@ -183,7 +183,7 @@ Choose **Settings → App → Appearance → Theme → Omarchy desktop** to foll
 - **Languages:** Choose a supported language or **Auto** for detection. Coverage varies by engine; Moonshine and Parakeet Unified are English-only. Language selection controls transcription, not translation.
 - **Apple Silicon:** Choose **Auto** to use the Apple GPU where supported. See [GPU acceleration](#gpu-acceleration) for engine-specific support.
 
-See [speech model details](docs/speech-models.md) for language coverage, platform requirements, download verification, and Orukeet's license and validation status.
+See [speech model details](docs/speech-models.md) for language coverage, platform requirements, download verification, and Orukeet and Fourier 2B's license and validation status.
 
 ### Custom Whisper models
 

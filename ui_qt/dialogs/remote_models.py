@@ -1703,11 +1703,19 @@ class RemoteModelsPane(QWidget):
         choice = self._choice()
         if not self.download_button.isEnabled() or not choice:
             return
-        if self._confirm(
-            "Download on host?",
+        text = (
             f"Download {choice['label']} ({choice.get('download_size') or 'size unknown'}) "
-            f"on {self._host_name}? This uses the host's network and disk space.",
-        ):
+            f"on {self._host_name}? This uses the host's network and disk space."
+        )
+        try:
+            from services.model_catalog import get_model_details
+
+            notice = get_model_details(choice["model"]).notice
+        except KeyError:
+            notice = ""
+        if notice:
+            text = f"{text}\n\n{notice}"
+        if self._confirm("Download on host?", text):
             self._request(
                 "download_model", family=choice["family"], model=choice["model"]
             )

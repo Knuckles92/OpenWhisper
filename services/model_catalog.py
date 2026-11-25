@@ -498,7 +498,11 @@ _SPEECH_UPSTREAM_URLS: Final[Mapping[str, str]] = MappingProxyType({
 def _speech_model_details(key: str, model) -> ModelDetails:
     spec = speech_catalog.artifacts(key)
     backend = model.backend
-    native_qwen = backend == "qwen_asr" and speech_catalog.uses_transcribe_cpp(backend)
+    files = spec["files"]
+    native_qwen = backend == "qwen_asr" and (
+        speech_catalog.uses_transcribe_cpp(backend)
+        or any(f["name"].endswith(".gguf") for f in files)
+    )
     if backend == "moonshine":
         source = _MOONSHINE_SOURCE
     else:
@@ -511,7 +515,6 @@ def _speech_model_details(key: str, model) -> ModelDetails:
         license_url = f"{source}/blob/{spec['revision']}/LICENSE"
     else:
         license_url = source + "#license"
-    files = spec["files"]
     runtime_format = _SPEECH_RUNTIME_FORMATS.get(backend, "Safetensors")
     runtime_note = _SPEECH_RUNTIME_NOTES.get(backend, "Requires its optional Windows x64 runtime from Downloads.")
     device_note = _SPEECH_DEVICE_NOTES.get(backend, "CPU and NVIDIA GPU use separately installed runtimes.")
@@ -573,9 +576,11 @@ _CATALOG["fourier-2b"] = replace(
     limitations=("Runs on transcribe.cpp on Windows x64 and Linux x86_64 only.",
                  *_CATALOG["fourier-2b"].limitations[1:],
                  "English only. Community model; evaluate quality on your recordings."),
-    notice=("Noncommercial use only. Fourier 2B is by Oruk (oruk.ai) under CC BY-NC 4.0. "
-            "Commercial use, commercial integration, or hosted serving needs a separate "
-            "license from Oruk. Its model card, with the full notice, downloads with it."),
+    notice=("Noncommercial use only. Fourier 2B by Oruk (oruk.ai) is licensed under CC BY-NC 4.0. "
+            "Oruk permits personal, noncommercial use in OpenWhisper across devices you own, "
+            "including Host Mode. Commercial use, commercial integration, and serving it to "
+            "others require a separate license from Oruk. Its model card, with the full notice, "
+            "downloads with it."),
 )
 MODEL_CATALOG: Final[Mapping[str, ModelDetails]] = MappingProxyType(_CATALOG)
 

@@ -46,6 +46,7 @@ class TestConsentDialogCopy(_QtTestCase):
         body = HuggingFaceConsentDialog("fourier-2b", HuggingFaceAccessPolicy.ASK)._body_text()
         paragraphs = body.split("\n\n")
         assert paragraphs[1].startswith("Noncommercial use only.")
+        assert "Host Mode" in paragraphs[1]
         assert "license from Oruk" in paragraphs[1]
         assert "Noncommercial" not in HuggingFaceConsentDialog(
             "base", HuggingFaceAccessPolicy.ASK)._body_text()

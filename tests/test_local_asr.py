@@ -141,6 +141,15 @@ def test_fourier_is_the_publishers_pinned_gguf_with_its_model_card(platform, mon
 
     assert model_supported_here("fourier-2b", platform) == (platform != "darwin_arm64")
     assert model_language_choices("fourier-2b") == ("en",)
+    from services.local_asr.catalog import BUILTIN_MODELS
+    from services.model_catalog import _speech_model_details, get_model_details
+
+    fresh = _speech_model_details("fourier-2b", BUILTIN_MODELS["fourier-2b"])
+    assert fresh.runtime_format == "GGUF Q8"
+    assert "Vulkan" in fresh.limitations[1]
+    catalog_details = get_model_details("fourier-2b")
+    assert catalog_details.runtime_format == "GGUF Q8"
+    assert "Vulkan" in catalog_details.limitations[1]
 
 
 def test_qwen_download_replaces_legacy_weights_only_after_success(isolated_models, monkeypatch):

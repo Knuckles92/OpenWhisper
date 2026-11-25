@@ -4,7 +4,7 @@ See the [speech model comparison](../README.md#speech-models) for supported back
 
 ## Languages
 
-Optional local engines offer English, Russian, Spanish, French, Portuguese, Mandarin, and **Auto** where supported. Parakeet and Orukeet omit Mandarin; Moonshine and Parakeet Unified are English-only. Qwen supports all the listed presets. Nemotron includes Mandarin in its broader coverage tier, though accuracy may vary. **Auto** detects other languages supported by the selected model. Language selection transcribes speech; it does not translate it. Paired computers show the choices supported by the host engine.
+Optional local engines offer English, Russian, Spanish, French, Portuguese, Mandarin, and **Auto** where supported. Parakeet and Orukeet omit Mandarin; Moonshine, Parakeet Unified, and Fourier 2B are English-only. Qwen3-ASR 0.6B and 1.7B support all the listed presets. Nemotron includes Mandarin in its broader coverage tier, though accuracy may vary. **Auto** detects other languages supported by the selected model. Language selection transcribes speech; it does not translate it. Paired computers show the choices supported by the host engine.
 
 ## Downloads and platform notes
 
@@ -31,6 +31,12 @@ Two English models run on this engine:
 Windows x64 and Linux x86_64 use the same bundled transcribe.cpp runtime as Parakeet Unified. **Auto** uses a dedicated GPU through Vulkan when available and falls back to CPU. The Q8 GGUF weights are separate downloads of about 850 MB for 0.6B and 2.19 GB for 1.7B.
 
 If you used Qwen3-ASR on Windows before this change, your model selection is kept. Open **Downloads** to get the GGUF weights for that model. You can also remove the old Qwen3-ASR PyTorch runtime there. On Apple Silicon, Qwen3-ASR uses the Safetensors weights and the optional PyTorch runtime for CPU or Apple GPU.
+
+### Fourier 2B
+
+Fourier 2B is an optional English fine-tune of Qwen3-ASR 1.7B by Oruk AI. Its pinned 8-bit GGUF weights (2.19 GB) run on the bundled transcribe.cpp runtime on Windows x64 and Linux x86_64 only, and its model card (`README.md`) downloads alongside the weights. Fourier 2B is a community model, so evaluate it on your recordings.
+
+Fourier 2B by Oruk is licensed under CC BY-NC 4.0. Oruk permits personal, noncommercial use in OpenWhisper across devices you own, including Host Mode. Commercial use, commercial integration, and serving it to others require a separate license from Oruk; see the [publisher's model card and license](https://huggingface.co/oruk/oruk-fourier-2b/blob/8bcce21695e4ba13569c48de6cedffcb8a7576f5/README.md#license).
 
 ## Orukeet
 
