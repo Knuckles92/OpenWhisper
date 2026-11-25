@@ -85,6 +85,12 @@ BUILTIN_MODELS = {
             language_codes=_ALL_LANGUAGES, vad_gate=True,
         ),
         SpeechModel(
+            "fourier-2b", "qwen_asr", "Fourier 2B (English, noncommercial)",
+            "Oruk's English fine-tune of Qwen3-ASR 1.7B", "CC-BY-NC-4.0", "English",
+            family="qwen", platforms=("win_amd64", "linux_x86_64"), language_codes=("en",),
+            vad_gate=True,
+        ),
+        SpeechModel(
             "nemotron-3.5", "nemotron", "Nemotron 3.5 ASR 0.6B", "Live speech recognition",
             "OpenMDW-1.1", "Multilingual; coverage varies by locale", family="nemotron",
             language_codes=_ALL_LANGUAGES, streaming=True, meeting=True,

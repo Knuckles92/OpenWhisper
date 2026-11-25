@@ -42,6 +42,14 @@ class TestConsentDialogCopy(_QtTestCase):
         assert dialog.title_label.text() == 'Download "base" (about 145 MB)?'
         assert "145 MB" not in body
 
+    def test_noncommercial_model_states_its_terms_up_front(self):
+        body = HuggingFaceConsentDialog("fourier-2b", HuggingFaceAccessPolicy.ASK)._body_text()
+        paragraphs = body.split("\n\n")
+        assert paragraphs[1].startswith("Noncommercial use only.")
+        assert "license from Oruk" in paragraphs[1]
+        assert "Noncommercial" not in HuggingFaceConsentDialog(
+            "base", HuggingFaceAccessPolicy.ASK)._body_text()
+
     def test_large_model_title_carries_its_size(self):
         dialog = HuggingFaceConsentDialog("large-v3", HuggingFaceAccessPolicy.ASK)
         assert dialog.title_label.text() == 'Download "large-v3" (about 3.1 GB)?'

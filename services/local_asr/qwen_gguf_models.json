@@ -46,5 +46,23 @@
         "sha256": "0d167723bb72621e2d203810459ac8c1f382cfe252a46ff18b42bb5cd4a3a74c"
       }
     ]
+  },
+  "fourier-2b": {
+    "repo": "oruk/oruk-fourier-2b",
+    "revision": "8bcce21695e4ba13569c48de6cedffcb8a7576f5",
+    "files": [
+      {
+        "name": "Fourier-2B-Q8_0.gguf",
+        "url": "https://huggingface.co/oruk/oruk-fourier-2b/resolve/8bcce21695e4ba13569c48de6cedffcb8a7576f5/Fourier-2B-Q8_0.gguf",
+        "size_bytes": 2185030848,
+        "sha256": "6a7c419bd571f7b0e21da2d5ab1e3a1a3938a83470d622be57427af98f322981"
+      },
+      {
+        "name": "README.md",
+        "url": "https://huggingface.co/oruk/oruk-fourier-2b/resolve/8bcce21695e4ba13569c48de6cedffcb8a7576f5/README.md",
+        "size_bytes": 3995,
+        "sha256": "3535771adee676118899e4e742fb6fc77143522ccebc24d3459346c0d3ff63ec"
+      }
+    ]
   }
 }

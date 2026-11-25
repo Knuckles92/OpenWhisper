@@ -809,6 +809,15 @@ QLabel#downloadsFactLabel {
     font-weight: 600;
 }
 
+QLabel#downloadsLicenseNotice {
+    background-color: @warning-tint;
+    border: 1px solid @warning-tint-border;
+    border-radius: 8px;
+    color: @warning-text-strong;
+    font-size: 11px;
+    padding: 6px 9px;
+}
+
 QLabel#downloadsSourceNote {
     color: @slate-text-4;
     background-color: transparent;

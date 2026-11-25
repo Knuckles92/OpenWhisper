@@ -234,6 +234,7 @@ class HuggingFaceConsentDialog(QDialog):
             )
         lines = [
             availability,
+            *([details.notice] if details and details.notice else []),
             (f"Downloading connects to {', '.join(details.download_hosts)}. Source: {repo}."
              if details and details.download_hosts != ("huggingface.co",) else
              f"It can be downloaded from Hugging Face (huggingface.co), repository {repo}."),
