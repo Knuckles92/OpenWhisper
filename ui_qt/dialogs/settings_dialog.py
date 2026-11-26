@@ -456,6 +456,7 @@ class SettingsDialog(QDialog):
     TITLE_BAR_ALLOWANCE = 32
 
     on_audio_device_changed: Optional[Callable] = None
+    on_echo_cancel_changed: Optional[Callable] = None
     on_streaming_settings_changed: Optional[Callable] = None
     on_streaming_font_changed: Optional[Callable] = None
     on_streaming_layout_changed: Optional[Callable] = None
@@ -896,7 +897,7 @@ class SettingsDialog(QDialog):
         self._add_page(
             RECORDING,
             "Recording",
-            "Microphone, saved audio retention, and the live preview.",
+            "Microphone, live recording options, and saved audio retention.",
             self._build_recording_page,
         )
         self._add_page(
@@ -1849,6 +1850,21 @@ class SettingsDialog(QDialog):
             self._on_audio_device_changed
         )
 
+        self.streaming_enabled_tile = SettingTile(
+            "Real-time transcription preview",
+            "Shows text as you speak on the near-cursor overlay. Nemotron uses "
+            "native streaming; Parakeet transcribes short audio chunks with the "
+            "loaded model; Local Whisper uses a separate tiny.en preview model. "
+            "The final transcript uses your selected model and follows the "
+            "General paste and clipboard settings. Its text size is under "
+            "Appearance.",
+            design_icon("typography-blue.svg"),
+        )
+        self.streaming_enabled_check = self.streaming_enabled_tile.checkbox
+        self.streaming_enabled_check.toggled.connect(
+            self._on_streaming_enabled_changed
+        )
+
         self.audio_echo_cancellation_tile = SettingTile(
             "Cancel system audio (Beta)",
             "Off by default. Captures system audio alongside your microphone "
@@ -1861,13 +1877,13 @@ class SettingsDialog(QDialog):
         self.audio_echo_cancellation_check = (
             self.audio_echo_cancellation_tile.checkbox
         )
-        self._bindings.checkbox(
-            self.audio_echo_cancellation_check,
-            SettingsKey.AUDIO_ECHO_CANCELLATION,
-            SettingsKey.AUDIO_ECHO_CANCELLATION.read,
+        self.audio_echo_cancellation_check.toggled.connect(
+            self._on_echo_cancel_changed
         )
         self._tile_group(
-            layout, "System audio (Beta)", [self.audio_echo_cancellation_tile]
+            layout,
+            "During recording",
+            [self.streaming_enabled_tile, self.audio_echo_cancellation_tile],
         )
 
         self.recording_retention_combo = ElidingComboBox()
@@ -1942,22 +1958,6 @@ class SettingsDialog(QDialog):
         self._tile_group(
             layout, "Saved recordings", [self.recording_retention_tile]
         )
-
-        self.streaming_enabled_tile = SettingTile(
-            "Real-time transcription preview",
-            "Shows text as you speak on the near-cursor overlay. Nemotron uses "
-            "native streaming; Parakeet transcribes short audio chunks with the "
-            "loaded model; Local Whisper uses a separate tiny.en preview model. "
-            "The final transcript uses your selected model and follows the "
-            "General paste and clipboard settings. Its text size is under "
-            "Appearance.",
-            design_icon("typography-blue.svg"),
-        )
-        self.streaming_enabled_check = self.streaming_enabled_tile.checkbox
-        self.streaming_enabled_check.toggled.connect(
-            self._on_streaming_enabled_changed
-        )
-        self._tile_group(layout, "Live preview", [self.streaming_enabled_tile])
 
     def _build_appearance_page(self, layout: QVBoxLayout) -> None:
         self.ui_theme_combo = ElidingComboBox()
@@ -3589,6 +3589,12 @@ class SettingsDialog(QDialog):
         noun = "recording" if count == 1 else "recordings"
         self.recordings_usage_label.setText(f"Currently {count} {noun} using {format_file_size(total_bytes)}.")
 
+    def _on_echo_cancel_changed(self, checked: bool) -> None:
+        if not self._persist(SettingsKey.AUDIO_ECHO_CANCELLATION, bool(checked)):
+            return
+        if self.on_echo_cancel_changed:
+            self.on_echo_cancel_changed()
+
     def _on_streaming_enabled_changed(self, checked: bool) -> None:
         if not self._persist_many(
             {SettingsKey.STREAMING_ENABLED: bool(checked)},
@@ -4156,6 +4162,9 @@ class SettingsDialog(QDialog):
             self.update_notify_tile.setEnabled(self.update_check_check.isChecked())
         if self._page_is_loading(RECORDING):
             self._load_retention_settings(settings)
+            self.audio_echo_cancellation_check.setChecked(
+                SettingsKey.AUDIO_ECHO_CANCELLATION.read(settings)
+            )
             self.streaming_enabled_check.setChecked(SettingsKey.STREAMING_ENABLED.read(settings))
             self._microphones.load(settings)
         if self._page_is_loading(APPEARANCE):

@@ -2638,7 +2638,8 @@ QLabel#remoteServingLabel {
 }
 
 QCheckBox#engineCleanupCheck,
-QCheckBox#engineLivePreviewCheck {
+QCheckBox#engineLivePreviewCheck,
+QCheckBox#engineEchoCancelCheck {
     color: @text;
     font-size: 11px;
     spacing: 6px;
@@ -2646,7 +2647,8 @@ QCheckBox#engineLivePreviewCheck {
 }
 
 QCheckBox#engineCleanupCheck::indicator,
-QCheckBox#engineLivePreviewCheck::indicator {
+QCheckBox#engineLivePreviewCheck::indicator,
+QCheckBox#engineEchoCancelCheck::indicator {
     width: 15px;
     height: 15px;
     border-radius: 4px;
@@ -2655,32 +2657,37 @@ QCheckBox#engineLivePreviewCheck::indicator {
 }
 
 QCheckBox#engineCleanupCheck::indicator:checked,
-QCheckBox#engineLivePreviewCheck::indicator:checked {
+QCheckBox#engineLivePreviewCheck::indicator:checked,
+QCheckBox#engineEchoCancelCheck::indicator:checked {
     background-color: @accent;
     border-color: @accent;
     image: url(ui_qt/assets/check.svg);
 }
 
 QCheckBox#engineCleanupCheck::indicator:hover,
-QCheckBox#engineLivePreviewCheck::indicator:hover {
+QCheckBox#engineLivePreviewCheck::indicator:hover,
+QCheckBox#engineEchoCancelCheck::indicator:hover {
     border-color: @accent;
 }
 
 /* Grayed out while recording, or while the engine can't run a live preview.
    After the hover rule so a disabled box doesn't light up under the cursor. */
 QCheckBox#engineCleanupCheck:disabled,
-QCheckBox#engineLivePreviewCheck:disabled {
+QCheckBox#engineLivePreviewCheck:disabled,
+QCheckBox#engineEchoCancelCheck:disabled {
     color: @text-muted;
 }
 
 QCheckBox#engineCleanupCheck::indicator:disabled,
-QCheckBox#engineLivePreviewCheck::indicator:disabled {
+QCheckBox#engineLivePreviewCheck::indicator:disabled,
+QCheckBox#engineEchoCancelCheck::indicator:disabled {
     background-color: transparent;
     border-color: @border;
 }
 
 QCheckBox#engineCleanupCheck::indicator:checked:disabled,
-QCheckBox#engineLivePreviewCheck::indicator:checked:disabled {
+QCheckBox#engineLivePreviewCheck::indicator:checked:disabled,
+QCheckBox#engineEchoCancelCheck::indicator:checked:disabled {
     background-color: @accent-muted;
     border-color: @accent-muted;
 }
@@ -3308,7 +3315,8 @@ QPlainTextEdit#meetingBriefInput:focus {
    The named variants must outrank their checked/hover indicator rules. */
 QCheckBox::indicator:focus,
 QCheckBox#engineCleanupCheck::indicator:focus,
-QCheckBox#engineLivePreviewCheck::indicator:focus {
+QCheckBox#engineLivePreviewCheck::indicator:focus,
+QCheckBox#engineEchoCancelCheck::indicator:focus {
     border-color: @accent-soft;
 }
 

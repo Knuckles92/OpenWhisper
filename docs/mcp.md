@@ -14,8 +14,10 @@ The page follows the app's light, dark, system, or Omarchy theme and offers:
   this computer, or the OpenWhisper host's Tailscale address when remote access
   is enabled.
 - **Access token**, hidden on screen with a separate copy button.
-- **Setup prompt**, which tells the agent how to register the server and
-  verify it. Copy it directly or expand its preview.
+- **Setup prompt**, which tells the agent how to register the server, load
+  OpenWhisper's bundled Agent Skill, and verify it. Copy it directly or expand
+  its preview. **Copy skill prompt** copies a one-paste prompt focused on
+  installing both the MCP server and the `openwhisper` skill package.
 - **Claude Code**, with a command ready to paste into a terminal.
 - **Cursor**, with JSON to merge into the client's `mcpServers` configuration.
   Other clients may use a different config format.
@@ -27,10 +29,11 @@ on-screen preview shows `••••••••••••` in its place. If 
 available, the copy has `<PASTE_TOKEN>` (or the prompt asks for the token) and
 you paste it from **Access token**.
 - **Permissions**, with separate switches for **Rename dictations**,
-  **Rename finished meetings**, and **Read app preferences**. Expand
-  **Choose individual preferences** and its categories (with per-category **Allow all**
-  toggles) to allow individual setting writes across Dictation, Appearance,
-  Personalization, Cleanup, Walkthroughs, Meetings, History, and Updates.
+  **Rename finished meetings**, **Attach agent notes & tags**, and **Read app
+  preferences**. Expand **Choose individual preferences** and its categories
+  (with per-category **Allow all** toggles) to allow individual setting writes
+  across Dictation, Appearance, Personalization, Cleanup, Walkthroughs,
+  Meetings, History, and Updates.
   Reading preferences does not grant permission to change them. Permissions can
   be configured while MCP is off and apply to every assistant using the token.
 
@@ -100,6 +103,10 @@ of an incorrect Running status.
 | `update_settings` | Atomically change individually permitted preferences |
 | `retitle_transcription` | Set a local transcription's display title |
 | `retitle_meeting` | Set a finished local meeting's title |
+| `get_history_digest` | Fetch a bounded chronological bundle of dictations, meetings, and (when allowed) walkthroughs with text and annotations (`only_unannotated=true` for incremental organizing) |
+| `get_record_annotation`, `list_annotations`, `list_tags` | Read saved agent summaries, notes, tags, and `external_refs` on transcriptions, meetings, and walkthroughs |
+| `set_record_annotation`, `delete_record_annotation` | Attach, merge, or clear agent summaries, notes, tags, and `external_refs` on local records without changing transcript text; needs **Attach agent notes & tags** |
+| `organize_records` | Batch-retitle and/or annotate up to 25 local records in one call (supports `dry_run=true`) |
 | `get_live_state` | Whether OpenWhisper is recording, in a meeting, or in a walkthrough, plus live permissions |
 | `list_actions`, `list_profiles`, `list_transforms` | Your saved [actions](automation.md#actions), cleanup profiles, and text transforms |
 | `recent_events` | Recent [live events](automation.md#events), with a gap flag; needs **Follow live events** |
@@ -124,6 +131,42 @@ action, or a recording routed to one, with a program's words (sent, or
 changed by its text filter) also needs **Send words to my coding agents**; all three are off by
 default (see [Actions, live events and hooks](automation.md#live-api)). Any authorized
 client can opt into remote records already saved in this database.
+
+## Bundled Agent Skill (SEP-2640 & Installable Package)
+
+OpenWhisper ships an [Agent Skills](https://agentskills.io)-compatible skill
+package (`skills/openwhisper/`) directly with the desktop app and serves it
+over MCP so assistants know how OpenWhisper works, how to organize and annotate
+history, and how to use every tool safely:
+
+- **MCP Skills extension (SEP-2640)**: `initialize` and `server/discover`
+  advertise `capabilities.extensions["io.modelcontextprotocol/skills"]` alongside
+  `capabilities.resources`. Clients call `skills/list` and `skills/get` to read
+  the parsed frontmatter and SHA-256 file manifest, then fetch files via
+  `resources/read`.
+- **Standard MCP Resources**: every skill file is also exposed as a read-only
+  MCP resource (`skill://openwhisper/SKILL.md`,
+  `skill://openwhisper/references/tools.md`,
+  `skill://openwhisper/references/organizing-and-notes.md`,
+  `skill://openwhisper/references/workflows.md`, plus `skill://index.json`).
+- **One-step ZIP package**: authenticated clients can download the packaged
+  skill directory from `GET /v1/skills/openwhisper.zip` (and list metadata at
+  `GET /v1/skills`) using the same Bearer token. **Settings → API & MCP → Copy
+  skill prompt** copies a ready-to-paste prompt that connects MCP and installs
+  the skill automatically.
+
+## Agent Notes, Tags & External Links
+
+Enabling **Attach agent notes & tags** lets an assistant attach structured
+metadata (`summary`, `notes`, `tags`, `external_refs`, `author`) to any local
+transcription, meeting, or walkthrough without modifying original speech.
+In the desktop UI, annotated records show a subtle **✦ Note** pill and an
+**Agent Notes** button inside the past transcription dialog (or via right-click
+**Agent Notes…** on any past transcription, meeting, or walkthrough).
+Unannotated records remain visually unchanged. Agents that maintain their own
+external database (such as Obsidian, Notion, or a local knowledge store) can
+store lightweight `{system, id, label?, url?}` pointers in `external_refs`
+keyed to OpenWhisper's immutable record IDs.
 
 ## Query paired clients directly
 

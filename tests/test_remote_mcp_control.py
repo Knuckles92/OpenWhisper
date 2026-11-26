@@ -55,6 +55,7 @@ def test_state_reports_what_the_host_page_would_show(control):
     assert state["permissions"] == {
         "retitle_transcriptions": False,
         "retitle_meetings": False,
+        "manage_annotations": False,
         "settings_access": False,
     }
     assert state["granted"] == [] and len(state["controls"]) == len(SETTING_CONTROLS)

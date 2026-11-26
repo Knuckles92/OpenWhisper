@@ -33,6 +33,7 @@ from services.agent_mcp.setup import (
     chatgpt_config,
     claude_command,
     client_config,
+    skill_install_prompt,
 )
 from services.settings import SettingsKey
 from ui_qt.widgets.settings_switch import SettingsSwitch
@@ -428,9 +429,17 @@ class McpSettingsPage(QWidget):
             "permissions you choose. Share only with trusted assistants."
         )
         self.copy_setup.clicked.connect(self._copy_setup)
+        self.copy_skill_prompt = _ActionButton("Copy skill prompt")
+        self.copy_skill_prompt.setObjectName("mcpCopyButton")
+        self.copy_skill_prompt.set_base_minimum_size(0, 38)
+        self.copy_skill_prompt.setToolTip(
+            "Copies a one-paste prompt that connects MCP and installs OpenWhisper's bundled Agent Skill."
+        )
+        self.copy_skill_prompt.clicked.connect(self._copy_skill_prompt)
         self.preview = _Disclosure("Preview prompt", inline=True)
         self.copy_actions = _AdaptiveRow(
-            [(self.copy_setup, 0), None, (self.preview.toggle, 0)], spacing=10
+            [(self.copy_setup, 0), (self.copy_skill_prompt, 0), None, (self.preview.toggle, 0)],
+            spacing=10,
         )
         setup_layout.addWidget(self.copy_actions)
         self.setup_text = QPlainTextEdit()
@@ -521,6 +530,12 @@ class McpSettingsPage(QWidget):
                 "Rename finished meetings",
                 "Change titles of local saved meetings.",
                 "box-blue.svg",
+            ),
+            (
+                SettingsKey.MCP_MANAGE_ANNOTATIONS,
+                "Attach agent notes & tags",
+                "Let agents add summaries, notes, tags, and external links without changing transcript text.",
+                "notes-blue.svg",
             ),
             (
                 SettingsKey.MCP_SETTINGS_ACCESS,
@@ -798,6 +813,11 @@ class McpSettingsPage(QWidget):
         if url:
             self._copy(self._setup_for(url, self.server.token()))
 
+    def _copy_skill_prompt(self):
+        url = self._setup_url(self.server.status())
+        if url:
+            self._copy(skill_install_prompt(url, self.host_name, self.server.token()))
+
     def _render_setup(self):
         status = self.server.status()
         url = self._setup_url(status)
@@ -814,6 +834,7 @@ class McpSettingsPage(QWidget):
             url if ready else "The address appears when this connection is available."
         )
         self.copy_setup.setEnabled(ready)
+        self.copy_skill_prompt.setEnabled(ready)
         self.copy_url.setEnabled(ready)
         self.url.setEnabled(ready)
         kinds = ("setup prompt", "Claude Code command", "Cursor JSON", "ChatGPT config")

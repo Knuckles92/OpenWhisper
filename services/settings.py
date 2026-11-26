@@ -753,6 +753,9 @@ class SettingsKey:
     MCP_RETITLE_MEETINGS: Final = BoolSetting(
         "mcp_retitle_meetings", False, in_table=False,
     )
+    MCP_MANAGE_ANNOTATIONS: Final = BoolSetting(
+        "mcp_manage_annotations", False, in_table=False,
+    )
     MCP_SETTINGS_ACCESS: Final = BoolSetting(
         "mcp_settings_access", False, in_table=False,
     )

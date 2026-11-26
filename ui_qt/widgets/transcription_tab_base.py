@@ -61,6 +61,13 @@ _LIVE_PREVIEW_TIP = (
     "Uses extra processing; requires a supported backend."
 )
 
+_ECHO_CANCEL_TIP = (
+    "Cancel system audio (Beta).\n"
+    "Captures system audio alongside your microphone and uses WebRTC\n"
+    "echo cancellation to strip out speakers (shows, videos, music)\n"
+    "before transcription. Skips automatically on headphones."
+)
+
 
 def _host_status_note(status: str) -> str:
     """What the host's engine status adds to the link tooltip's first line.
@@ -132,6 +139,7 @@ class TranscriptionTabBase(QWidget):
     engine_downloads_requested = pyqtSignal()
     transcription_collapsed = pyqtSignal(bool, int)  # collapsed, freed-height delta
     live_preview_changed = pyqtSignal()  # Live preview checkbox persisted a change
+    echo_cancel_changed = pyqtSignal()  # Echo cancel (Beta) checkbox persisted a change
     cleanup_toggled = pyqtSignal()  # AI cleanup checkbox persisted a change
 
     CONTENT_OBJECT_NAME = "transcriptionTabContent"
@@ -141,6 +149,9 @@ class TranscriptionTabBase(QWidget):
     #: Show the Live preview checkbox in the engine footer. The preview only
     #: runs while dictating, so tabs without a microphone flow turn it off.
     LIVE_PREVIEW_CONTROL = True
+    #: Show the Echo cancel (Beta) checkbox in the engine footer. Only applies
+    #: to live microphone recordings, so file-upload tabs turn it off.
+    ECHO_CANCEL_CONTROL = True
     #: Dictation here uses "Languages I dictate in" once they're set, so the
     #: engine's Language field steps aside; files keep the engine's language.
     DICTATION_LANGUAGES = True
@@ -192,10 +203,12 @@ class TranscriptionTabBase(QWidget):
         # selected engine can preview, and a recording locks it.
         self._live_preview_wanted = False
         self._live_preview_locked = False
+        self._echo_cancel_locked = False
         self._setup_ui()
         self._connect_signals()
         self.load_cleanup_setting()
         self.load_live_preview_setting()
+        self.load_echo_cancel_setting()
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -343,6 +356,12 @@ class TranscriptionTabBase(QWidget):
         if not self.LIVE_PREVIEW_CONTROL:
             self.live_preview_check.hide()
 
+        self.echo_cancel_check = QCheckBox("Echo cancel (Beta)")
+        self.echo_cancel_check.setObjectName("engineEchoCancelCheck")
+        self.echo_cancel_check.setToolTip(_ECHO_CANCEL_TIP)
+        if not self.ECHO_CANCEL_CONTROL:
+            self.echo_cancel_check.hide()
+
         footer_row = QHBoxLayout()
         footer_row.setContentsMargins(0, 0, 0, 0)
         footer_row.setSpacing(6)
@@ -355,6 +374,8 @@ class TranscriptionTabBase(QWidget):
         footer_row.addWidget(self.cleanup_check)
         footer_row.addSpacing(6)
         footer_row.addWidget(self.live_preview_check)
+        footer_row.addSpacing(6)
+        footer_row.addWidget(self.echo_cancel_check)
         engine_layout.addLayout(footer_row)
 
         # Host side: which paired computers use this one's engine, slid in
@@ -466,6 +487,7 @@ class TranscriptionTabBase(QWidget):
         self.local_engine.help_requested.connect(self.help_requested)
         self.cleanup_check.toggled.connect(self._on_cleanup_toggled)
         self.live_preview_check.toggled.connect(self._on_live_preview_toggled)
+        self.echo_cancel_check.toggled.connect(self._on_echo_cancel_toggled)
         self.fixed_btn.toggled.connect(self._on_version_toggled)
         self.raw_btn.toggled.connect(self._on_version_toggled)
 
@@ -511,6 +533,32 @@ class TranscriptionTabBase(QWidget):
         """Lock the toggle, e.g. while recording, without unlocking it early."""
         self._live_preview_locked = locked
         self._sync_live_preview()
+
+    def _on_echo_cancel_toggled(self, checked: bool):
+        """Persist the beta echo-cancellation toggle and notify listeners."""
+        try:
+            settings_manager.save_setting(
+                SettingsKey.AUDIO_ECHO_CANCELLATION, bool(checked)
+            )
+        except Exception as exc:
+            logger.error("Couldn't save echo cancellation setting: %s", exc, exc_info=True)
+            self.load_echo_cancel_setting()
+            return
+        self.echo_cancel_changed.emit()
+
+    def load_echo_cancel_setting(self):
+        enabled = SettingsKey.AUDIO_ECHO_CANCELLATION.read(
+            settings_manager.load_all_settings()
+        )
+        blocked = self.echo_cancel_check.blockSignals(True)
+        self.echo_cancel_check.setChecked(enabled)
+        self.echo_cancel_check.blockSignals(blocked)
+        self.echo_cancel_check.setEnabled(not self._echo_cancel_locked)
+
+    def set_echo_cancel_locked(self, locked: bool) -> None:
+        """Lock the Echo cancel toggle while a recording is active."""
+        self._echo_cancel_locked = locked
+        self.echo_cancel_check.setEnabled(not locked)
 
     def live_preview_unavailable_reason(self) -> str:
         """Why the selected engine can't preview, or "" when it can."""

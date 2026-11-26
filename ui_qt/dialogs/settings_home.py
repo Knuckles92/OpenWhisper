@@ -483,6 +483,14 @@ class HomePage(QWidget):
             "streaming_enabled_check",
             SettingsKey.STREAMING_ENABLED,
         )
+        self.toggle(
+            group,
+            "Cancel system audio (Beta)",
+            "Filter out speaker audio like videos or music while recording.",
+            RECORDING,
+            "audio_echo_cancellation_check",
+            SettingsKey.AUDIO_ECHO_CANCELLATION,
+        )
         if self.dialog._native_wayland:
             self.paste_description.setText(
                 "Uses the desktop's paste shortcut on Hyprland; other Wayland desktops use manual paste."

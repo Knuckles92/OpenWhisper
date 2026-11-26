@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 PERMISSIONS = {
     "retitle_transcriptions": SettingsKey.MCP_RETITLE_TRANSCRIPTIONS,
     "retitle_meetings": SettingsKey.MCP_RETITLE_MEETINGS,
+    "manage_annotations": SettingsKey.MCP_MANAGE_ANNOTATIONS,
     "settings_access": SettingsKey.MCP_SETTINGS_ACCESS,
 }
 CHANGEABLE = frozenset({"enabled", "port", "tailscale", "writable", *PERMISSIONS})

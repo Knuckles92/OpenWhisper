@@ -6,18 +6,18 @@ import threading
 from contextlib import contextmanager
 from typing import List, Optional
 
-from sqlalchemy import create_engine, event, func, inspect, or_, text
+from sqlalchemy import create_engine, event, func, inspect, or_, select, text
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 from config import config
 from services.models import (
-    FAILED_RECORDING_KIND, HISTORY_CONTEXT_COLUMNS, Base, SchemaVersion, TranscriptionHistory,
-    history_context,
+    FAILED_RECORDING_KIND, HISTORY_CONTEXT_COLUMNS, Base, RecordAnnotation, SchemaVersion,
+    TranscriptionHistory, history_context,
 )
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 
 def _table_exists(conn, table: str) -> bool:
@@ -171,6 +171,11 @@ def _migrate_to_v18(conn) -> None:
             ))
 
 
+def _migrate_to_v19(conn) -> None:
+    # record_annotations is new in v19 and created by Base.metadata.create_all.
+    logger.info("Migration v18->v19: Record annotations table added via create_all")
+
+
 # (schema version a step brings the database to, step). A step runs when the
 # database is older than its version; steps run in this order. v16 needed none.
 _MIGRATIONS = (
@@ -186,6 +191,7 @@ _MIGRATIONS = (
     (15, _migrate_to_v15),
     (17, _migrate_to_v17),
     (18, _migrate_to_v18),
+    (19, _migrate_to_v19),
 )
 
 
@@ -475,6 +481,14 @@ class DatabaseManager:
         )
         pattern = f"%{escaped}%"
         with self.get_session() as session:
+            annotated_ids = select(RecordAnnotation.record_id).where(
+                RecordAnnotation.record_kind == "transcription",
+                or_(
+                    RecordAnnotation.summary.ilike(pattern, escape="\\"),
+                    RecordAnnotation.notes.ilike(pattern, escape="\\"),
+                    RecordAnnotation.tags_json.ilike(pattern, escape="\\"),
+                ),
+            )
             q = self._origin_filter(session.query(TranscriptionHistory), origin).filter(
                 or_(
                     TranscriptionHistory.text.ilike(pattern, escape="\\"),
@@ -484,6 +498,7 @@ class DatabaseManager:
                     TranscriptionHistory.title.ilike(pattern, escape="\\"),
                     TranscriptionHistory.origin_device_name.ilike(pattern, escape="\\"),
                     TranscriptionHistory.app_name.ilike(pattern, escape="\\"),
+                    TranscriptionHistory.id.in_(annotated_ids),
                 )
             ).order_by(TranscriptionHistory.timestamp.desc())
             if limit:
@@ -541,6 +556,9 @@ class DatabaseManager:
         with self.get_session() as session:
             entry = session.get(TranscriptionHistory, entry_id)
             if entry:
+                session.query(RecordAnnotation).filter_by(
+                    record_kind="transcription", record_id=entry_id
+                ).delete(synchronize_session=False)
                 session.delete(entry)
                 return True
             return False
@@ -598,6 +616,13 @@ class DatabaseManager:
         takes a laptop's only copy.
         """
         with self.get_session() as session:
+            local_ids = select(TranscriptionHistory.id).where(
+                TranscriptionHistory.origin_device_id.is_(None)
+            )
+            session.query(RecordAnnotation).filter(
+                RecordAnnotation.record_kind == "transcription",
+                RecordAnnotation.record_id.in_(local_ids),
+            ).delete(synchronize_session=False)
             session.query(TranscriptionHistory).filter(
                 TranscriptionHistory.origin_device_id.is_(None)
             ).delete()

@@ -352,6 +352,7 @@ class QuickRecordTab(TranscriptionTabBase):
             # the toggle would persist without taking effect until the next
             # recording. Lock it with the backend choice instead.
             self.set_live_preview_locked(True)
+            self.set_echo_cancel_locked(True)
             self.set_status("Recording in progress...")
         else:
             self.record_button.set_active(True)
@@ -361,6 +362,7 @@ class QuickRecordTab(TranscriptionTabBase):
             self.set_backend_enabled(True)
             self.local_engine.set_busy(False)
             self.set_live_preview_locked(False)
+            self.set_echo_cancel_locked(False)
             self.set_status("Ready to record")
 
     def set_partial_transcription(self, text: str, is_final: bool):

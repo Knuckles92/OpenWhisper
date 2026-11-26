@@ -21,6 +21,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QFont, QDesktopServices
 
 from config import config
+from services import annotations as record_annotations
 from services.format_utils import format_file_size
 from services.history_calendar import LABELLED_KINDS, classify_source
 from services.history_manager import (
@@ -234,10 +235,11 @@ def _unique_entries(entries) -> list:
     return shown
 
 
-def _card_fingerprint(entry, settings) -> dict:
+def _card_fingerprint(entry, settings, annotation=None) -> dict:
     """What a card shows, so an unchanged entry keeps its card."""
     value = {name: value for name, value in vars(entry).items() if not name.startswith("_")}
     value["cleanup_display"] = _format_cleanup_info(entry, settings)
+    value["annotation"] = annotation
     if entry.audio_file and not getattr(entry, "stored_on", None):
         value["audio_available"] = bool(history_manager.get_recording_path(entry.audio_file))
     return value
@@ -355,10 +357,13 @@ class HistoryItemWidget(QFrame):
     retranscribe_requested = pyqtSignal(str)
     #: ``(entry_id, version)``: show the original or the AI's version.
     version_requested = pyqtSignal(str, str)
+    #: Open the Agent Notes dialog for this entry.
+    notes_requested = pyqtSignal(str)
 
-    def __init__(self, entry: HistoryEntry, parent=None, *, settings=None):
+    def __init__(self, entry: HistoryEntry, parent=None, *, settings=None, annotation=None):
         super().__init__(parent)
         self.entry = entry
+        self._annotation = annotation
         self._failed_recording = getattr(entry, "entry_kind", None) == FAILED_RECORDING_KIND
         self._settings = settings
         self._cleanup_info = _format_cleanup_info(entry, settings) if _entry_was_cleaned(entry) else ""
@@ -507,6 +512,18 @@ class HistoryItemWidget(QFrame):
             self.location_chip = self._chip("historyLocationChip", location_text)
             self.location_chip.setToolTip(location_tip)
             chips.append(self.location_chip)
+        if self._annotation is not None and self._annotation.has_content:
+            tag_count = len(self._annotation.tags)
+            label = f"✦ Note · {tag_count}" if tag_count else "✦ Note"
+            note_btn = QPushButton(label)
+            note_btn.setObjectName("historyNoteChipBtn")
+            note_btn.setFont(QFont("Segoe UI", 9))
+            note_btn.setFixedHeight(20)
+            note_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            note_btn.setToolTip(self._annotation.tooltip())
+            note_btn.clicked.connect(lambda: self.notes_requested.emit(self.entry.id))
+            self.note_chip = note_btn
+            chips.append(note_btn)
         return chips
 
     def _add_audio_footer(self, layout: QVBoxLayout) -> None:
@@ -632,6 +649,19 @@ class HistoryItemWidget(QFrame):
                 font-size: 10px;
                 font-weight: 600;
             }
+            QPushButton#historyNoteChipBtn {
+                background-color: rgba(@purple-rgb, 0.14);
+                color: @purple-text;
+                border: 1px solid rgba(@purple-rgb, 0.30);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QPushButton#historyNoteChipBtn:hover {
+                background-color: rgba(@purple-rgb, 0.24);
+                border: 1px solid rgba(@purple-rgb, 0.48);
+            }
             QLabel#historyOriginalChip,
             QLabel#historyAppChip {
                 background-color: rgba(@overlay-rgb, 0.06);
@@ -731,6 +761,15 @@ class HistoryItemWidget(QFrame):
         if self._has_audio:
             retranscribe_action = menu.addAction(self._retranscribe_label)
             retranscribe_action.triggered.connect(self._request_retranscribe)
+
+        if is_local_entry(self.entry):
+            notes_label = (
+                "Agent Notes…"
+                if self._annotation is not None and self._annotation.has_content
+                else "Add Agent Note…"
+            )
+            notes_action = menu.addAction(notes_label)
+            notes_action.triggered.connect(lambda: self.notes_requested.emit(self.entry.id))
 
         # Always listed so the menu keeps its shape, but only live for entries
         # whose recording is still on disk.
@@ -1296,12 +1335,20 @@ class HistorySidebar(QWidget):
             return
 
         settings = settings_manager.load_all_settings()
+        local_ids = [entry.id for entry in shown if is_local_entry(entry)]
+        annotations_by_id = record_annotations.annotation_summaries_for_kind(
+            "transcription", local_ids
+        )
         self._history_cards = reconcile_cards(
             self.history_list_layout,
             shown,
             self._history_cards,
-            lambda entry: self._create_card(entry, settings),
-            lambda entry: _card_fingerprint(entry, settings),
+            lambda entry: self._create_card(
+                entry, settings, annotation=annotations_by_id.get(entry.id)
+            ),
+            lambda entry: _card_fingerprint(
+                entry, settings, annotation=annotations_by_id.get(entry.id)
+            ),
         )
         # Counted from the cards on screen, after they are built: set first,
         # a card that failed to build left the new count over the old list.
@@ -1329,8 +1376,8 @@ class HistorySidebar(QWidget):
         self.history_header.hide()
         self.history_list_layout.addWidget(self._make_empty_label(message))
 
-    def _create_card(self, entry, settings) -> HistoryItemWidget:
-        item = HistoryItemWidget(entry, settings=settings)
+    def _create_card(self, entry, settings, *, annotation=None) -> HistoryItemWidget:
+        item = HistoryItemWidget(entry, settings=settings, annotation=annotation)
         replaced = self._history_cards.get(entry.id)
         old_playback = replaced[1].playback if replaced is not None else None
         if item.playback is not None and old_playback is not None:
@@ -1341,7 +1388,29 @@ class HistorySidebar(QWidget):
         item.delete_requested.connect(self._on_delete_requested)
         item.retranscribe_requested.connect(self.retranscribe_requested.emit)
         item.version_requested.connect(self._on_version_requested)
+        item.notes_requested.connect(self._on_notes_requested)
         return item
+
+    def _on_notes_requested(self, entry_id: str) -> None:
+        entry = self.entry_for(entry_id)
+        if not entry or not is_local_entry(entry):
+            return
+        from ui_qt.dialogs.record_notes_dialog import RecordNotesDialog
+
+        title = (
+            getattr(entry, "title", None)
+            or getattr(entry, "source_name", None)
+            or entry.formatted_timestamp
+        )
+        dialog = RecordNotesDialog(
+            "transcription",
+            entry.id,
+            record_title=title,
+            parent=self.window(),
+        )
+        dialog.exec()
+        if dialog.changed:
+            self.refresh()
 
     def _add_remote_notice(self, notice: str) -> None:
         """Say above the list why the host's entries are missing."""

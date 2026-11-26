@@ -15,6 +15,7 @@ from meeting.content import (
     summarize_meeting_content,
 )
 from meeting.time_utils import format_meeting_duration, format_meeting_started_at
+from services import annotations as record_annotations
 from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.file_reveal import open_folder_in_file_manager
 from ui_qt.utils.list_reconcile import MeetingDelivery, reconcile_cards
@@ -101,10 +102,12 @@ class PastMeetingItem(QFrame):
     meeting_selected = pyqtSignal(str)
     copy_transcript_requested = pyqtSignal(str)
     delete_requested = pyqtSignal(str)
+    notes_requested = pyqtSignal(str)
 
-    def __init__(self, meeting: Dict[str, Any], parent=None):
+    def __init__(self, meeting: Dict[str, Any], parent=None, *, annotation=None):
         super().__init__(parent)
         self.meeting = dict(meeting)
+        self._annotation = annotation
         self.meeting_id = str(meeting.get("id") or "")
         #: The paired host that keeps this meeting, when it isn't kept here.
         self.stored_on = str(meeting.get("stored_on") or "")
@@ -196,6 +199,18 @@ class PastMeetingItem(QFrame):
         self.location_pill.setToolTip(tip)
         self.location_pill.setVisible(bool(location))
         footer.addWidget(self.location_pill)
+
+        if self._annotation is not None and self._annotation.has_content:
+            tag_count = len(self._annotation.tags)
+            note_btn = QPushButton(f"✦ Note · {tag_count}" if tag_count else "✦ Note", self)
+            note_btn.setObjectName("pastMeetingNotePill")
+            note_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+            note_btn.setFixedHeight(20)
+            note_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            note_btn.setToolTip(self._annotation.tooltip())
+            note_btn.clicked.connect(lambda: self.notes_requested.emit(self.meeting_id))
+            self.note_pill = note_btn
+            footer.addWidget(note_btn)
         footer.addStretch()
         layout.addLayout(footer)
 
@@ -264,6 +279,15 @@ class PastMeetingItem(QFrame):
         show_in_folder_action.setEnabled(bool(self._spool_dir()))
         show_in_folder_action.triggered.connect(self._on_show_in_folder)
 
+        if not self.meeting.get("origin_device_id"):
+            notes_label = (
+                "Agent Notes…"
+                if self._annotation is not None and self._annotation.has_content
+                else "Add Agent Note…"
+            )
+            notes_action = menu.addAction(notes_label)
+            notes_action.triggered.connect(lambda: self.notes_requested.emit(self.meeting_id))
+
         menu.addSeparator()
         delete_action = menu.addAction("Delete")
         delete_action.triggered.connect(
@@ -278,6 +302,10 @@ class PastMeetingItem(QFrame):
     def mousePressEvent(self, event) -> None:
         """Load the meeting in Qt when the card itself is clicked."""
         if event.button() == Qt.MouseButton.LeftButton:
+            child = self.childAt(event.pos())
+            if child is not None and isinstance(child, QPushButton):
+                super().mousePressEvent(event)
+                return
             self._emit_selected()
         super().mousePressEvent(event)
 
@@ -747,18 +775,35 @@ class PastMeetingsPanel(QWidget):
             )
             return
 
+        visible_meetings = meetings[:self.MAX_MEETINGS]
+        local_meeting_ids = [
+            str(m.get("id") or "")
+            for m in visible_meetings
+            if m.get("id") and not m.get("stored_on") and not m.get("origin_device_id")
+        ]
+        annotations_by_id = record_annotations.annotation_summaries_for_kind(
+            "meeting", local_meeting_ids
+        )
+
         def create(meeting):
-            card = PastMeetingItem(meeting, self.scroll_area.widget())
+            mid = str(meeting.get("id") or "")
+            card = PastMeetingItem(
+                meeting,
+                self.scroll_area.widget(),
+                annotation=annotations_by_id.get(mid),
+            )
             card.meeting_selected.connect(self._on_card_selected)
             card.copy_transcript_requested.connect(
                 self.copy_transcript_requested.emit
             )
             card.delete_requested.connect(self._confirm_delete)
+            card.notes_requested.connect(self._on_notes_requested)
             return card
 
         self._meeting_cards = reconcile_cards(
-            self.meetings_list_layout, meetings[:self.MAX_MEETINGS],
-            self._meeting_cards, create, lambda meeting: meeting,
+            self.meetings_list_layout, visible_meetings,
+            self._meeting_cards, create,
+            lambda meeting: (meeting, annotations_by_id.get(str(meeting.get("id") or ""))),
         )
 
         if self._has_more or len(meetings) > self.MAX_MEETINGS:
@@ -781,6 +826,22 @@ class PastMeetingsPanel(QWidget):
             if str(meeting.get("id") or "") == meeting_id:
                 return meeting
         return None
+
+    def _on_notes_requested(self, meeting_id: str) -> None:
+        meeting = self._meeting_by_id(meeting_id)
+        if not meeting or meeting.get("stored_on") or meeting.get("origin_device_id"):
+            return
+        from ui_qt.dialogs.record_notes_dialog import RecordNotesDialog
+
+        dialog = RecordNotesDialog(
+            "meeting",
+            meeting_id,
+            record_title=fallback_meeting_title(meeting),
+            parent=self.window(),
+        )
+        dialog.exec()
+        if dialog.changed:
+            self.refresh()
 
     @staticmethod
     def _meeting_has_audio(meeting: Optional[Dict[str, Any]]) -> bool:
@@ -972,6 +1033,19 @@ class PastMeetingsPanel(QWidget):
                 font-size: 12px;
                 padding: 8px 0px;
                 background-color: transparent;
+            }
+            QPushButton#pastMeetingNotePill {
+                background-color: rgba(@purple-rgb, 0.14);
+                color: @purple-text;
+                border: 1px solid rgba(@purple-rgb, 0.30);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QPushButton#pastMeetingNotePill:hover {
+                background-color: rgba(@purple-rgb, 0.24);
+                border: 1px solid rgba(@purple-rgb, 0.48);
             }
             QScrollArea#pastMeetingsScrollArea {
                 background-color: transparent;

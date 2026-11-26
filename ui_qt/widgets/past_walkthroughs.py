@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from services import annotations as record_annotations
 from services.walkthrough import library
 from services.walkthrough.document import clock
 from services.walkthrough.storage import captures_root
@@ -67,6 +68,8 @@ class Summary:
     thumb: QImage | None
     #: User-facing reference number such as "#001", or "".
     ref: str = ""
+    #: Attached agent/user annotation summary, if any.
+    annotation: object = None
 
 
 class _Relay(QObject):
@@ -205,6 +208,7 @@ class WalkthroughCard(QFrame):
     """One walkthrough: click, Enter or Space opens it."""
 
     clicked = pyqtSignal(object)
+    notes_requested = pyqtSignal(object)
 
     def __init__(self, summary: Summary, today: date, parent=None):
         super().__init__(parent)
@@ -229,6 +233,16 @@ class WalkthroughCard(QFrame):
         self.when_label.setObjectName("walkthroughCardWhen")
         top.addWidget(self.when_label)
         top.addStretch(1)
+        if summary.annotation is not None and summary.annotation.has_content:
+            tag_count = len(summary.annotation.tags)
+            note_btn = QPushButton(f"✦ Note · {tag_count}" if tag_count else "✦ Note")
+            note_btn.setObjectName("walkthroughCardNotePill")
+            note_btn.setFixedHeight(20)
+            note_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            note_btn.setToolTip(summary.annotation.tooltip())
+            note_btn.clicked.connect(lambda: self.notes_requested.emit(self.summary))
+            self.note_pill = note_btn
+            top.addWidget(note_btn)
         if summary.pill:
             pill = QLabel(summary.pill)
             pill.setObjectName("walkthroughCardPill")
@@ -259,12 +273,22 @@ class WalkthroughCard(QFrame):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
                 event.position().toPoint()):
+            child = self.childAt(event.position().toPoint())
+            if child is not None and isinstance(child, QPushButton):
+                super().mouseReleaseEvent(event)
+                return
             self.clicked.emit(self.summary.folder)
         super().mouseReleaseEvent(event)
 
     def contextMenuEvent(self, event):
         menu = context_menu(self)
         menu.addAction("Open walkthrough", lambda: self.clicked.emit(self.summary.folder))
+        notes_label = (
+            "Agent Notes…"
+            if self.summary.annotation is not None and self.summary.annotation.has_content
+            else "Add Agent Note…"
+        )
+        menu.addAction(notes_label, lambda: self.notes_requested.emit(self.summary))
         menu.addAction("Show in folder", lambda: reveal_in_file_manager(str(self.summary.folder)))
         menu.exec(event.globalPos())
         menu.deleteLater()
@@ -417,6 +441,19 @@ class PastWalkthroughsPanel(QWidget):
                 color: @warning-text;
                 border: 1px solid rgba(@warning-rgb, 0.28);
             }
+            QPushButton#walkthroughCardNotePill {
+                background-color: rgba(@purple-rgb, 0.14);
+                color: @purple-text;
+                border: 1px solid rgba(@purple-rgb, 0.30);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QPushButton#walkthroughCardNotePill:hover {
+                background-color: rgba(@purple-rgb, 0.24);
+                border: 1px solid rgba(@purple-rgb, 0.48);
+            }
             QLabel#walkthroughsEmpty {
                 color: @text-muted;
                 background: transparent;
@@ -442,19 +479,47 @@ class PastWalkthroughsPanel(QWidget):
             return
         summaries, total = result
         today = self._today()
+        annotations_by_id = record_annotations.annotation_summaries_for_kind(
+            "walkthrough", [s.folder.name for s in summaries]
+        )
         for card in self.cards:
             card.hide()
             card.setParent(None)
             card.deleteLater()
         self.cards = []
         for summary in summaries:
+            ann = annotations_by_id.get(summary.folder.name)
+            if ann is not None:
+                extra_words = " ".join(
+                    part for part in (summary.words, ann.summary, " ".join(ann.tags)) if part
+                ).lower()
+                summary = Summary(
+                    summary.folder, summary.when, summary.title, summary.meta,
+                    summary.pill, summary.pill_tone, extra_words, summary.thumb,
+                    summary.ref, ann,
+                )
             card = WalkthroughCard(summary, today)
             card.clicked.connect(self.walkthrough_selected)
+            card.notes_requested.connect(self._on_notes_requested)
             self.card_layout.addWidget(card)
             self.cards.append(card)
         self._total = total
         self.set_selected_folder(self._selected_folder)
         self._filter()
+
+    def _on_notes_requested(self, summary: Summary) -> None:
+        from ui_qt.dialogs.record_notes_dialog import RecordNotesDialog
+
+        heading = f"{summary.ref} · {summary.title}" if summary.ref else summary.title
+        dialog = RecordNotesDialog(
+            "walkthrough",
+            summary.folder.name,
+            record_title=heading,
+            parent=self.window(),
+        )
+        dialog.exec()
+        if dialog.changed:
+            self.refresh()
 
     def _filter(self, *_args) -> None:
         """Show the cards whose title or words hold every word searched for."""

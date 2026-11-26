@@ -1030,6 +1030,8 @@ class UploadFileTab(TranscriptionTabBase):
     TRANSCRIPT_MARKDOWN = True
     # Files are transcribed whole; there is no while-you-speak preview here.
     LIVE_PREVIEW_CONTROL = False
+    # Files have no live microphone or system-audio reference to cancel.
+    ECHO_CANCEL_CONTROL = False
     # Files always use the engine's language, so its Language field stays.
     DICTATION_LANGUAGES = False
 

@@ -430,6 +430,7 @@ class UIController(QObject):
         self.main_window.remote_runtime_selected.connect(self._on_remote_runtime_selected)
         self.main_window.remote_retry_requested.connect(self._on_remote_retry)
         self.main_window.live_preview_changed.connect(self._on_live_preview_changed)
+        self.main_window.echo_cancel_changed.connect(self._on_echo_cancel_changed)
         self.main_window.cleanup_toggled.connect(self._cleanup_agent_offer.maybe_offer)
         self.main_window.settings_requested.connect(self.open_settings_dialog)
         self.main_window.guided_setup_requested.connect(self.open_guided_setup)
@@ -577,6 +578,9 @@ class UIController(QObject):
 
     def _apply_agent_changes(self, kind: str, changes: dict) -> None:
         """Apply MCP notifications on the GUI thread through the usual UI hooks."""
+        if kind == "annotation":
+            self.main_window.refresh_history()
+            return
         if kind != "settings":
             self.main_window.refresh_history()
             from services.remote_records.sync import record_sync
@@ -596,6 +600,8 @@ class UIController(QObject):
             self._apply_ui_font_scale(changes[SettingsKey.UI_FONT_SCALE])
         if SettingsKey.STREAMING_ENABLED in changes:
             self._on_settings_streaming_changed()
+        if SettingsKey.AUDIO_ECHO_CANCELLATION in changes:
+            self.refresh_echo_cancel_controls()
         if SettingsKey.STREAMING_OVERLAY_FONT_SIZE in changes:
             self.overlay.refresh_streaming_font_size()
         if SettingsKey.STREAMING_OVERLAY_LAYOUT in changes:
@@ -653,6 +659,16 @@ class UIController(QObject):
         self.refresh_live_preview_controls()
         if self.on_streaming_settings_changed:
             self.on_streaming_settings_changed()
+
+    def _on_echo_cancel_changed(self):
+        """A tab footer toggled Echo cancel (Beta); sync an open Settings window."""
+        logger.info("Echo cancel (Beta) toggled via main GUI")
+        if self._settings_dialog is not None:
+            self._settings_dialog.refresh()
+
+    def _on_settings_echo_cancel_changed(self):
+        """Settings dialog toggled Cancel system audio (Beta): mirror it in the tabs."""
+        self.refresh_echo_cancel_controls()
 
     def _on_tray_update(self):
         self.main_window.restore_from_tray()
@@ -1638,6 +1654,7 @@ class UIController(QObject):
         dialog.on_dictation_transcribe = self.on_dictation_transcribe
         dialog.get_meeting_active = self.get_meeting_active
         dialog.on_audio_device_changed = self.on_audio_device_changed
+        dialog.on_echo_cancel_changed = self._on_settings_echo_cancel_changed
         dialog.on_streaming_settings_changed = self._on_settings_streaming_changed
         dialog.on_streaming_font_changed = self.overlay.refresh_streaming_font_size
         dialog.on_streaming_layout_changed = self.overlay.refresh_streaming_layout
@@ -1776,6 +1793,9 @@ class UIController(QObject):
 
     def refresh_live_preview_controls(self):
         self.main_window.refresh_live_preview_controls()
+
+    def refresh_echo_cancel_controls(self):
+        self.main_window.refresh_echo_cancel_controls()
 
     def _apply_ui_font_scale(self, percent: int) -> None:
         apply_ui_font_scale(percent)

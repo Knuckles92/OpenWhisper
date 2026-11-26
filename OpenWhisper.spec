@@ -61,6 +61,7 @@ datas = [
     (str(REPO_ROOT / "ui_qt" / "styles" / "theme.qss"), "ui_qt/styles"),
     (str(REPO_ROOT / "ui_qt" / "assets"), "ui_qt/assets"),
     (str(REPO_ROOT / "integrations" / "omarchy"), "integrations/omarchy"),
+    (str(REPO_ROOT / "skills" / "openwhisper"), "skills/openwhisper"),
     (str(REPO_ROOT / "webui" / "dist"), "webui/dist"),
     (str(REPO_ROOT / "docs" / "linux-system-audio.md"), "docs"),
     (str(REPO_ROOT / "THIRD_PARTY_NOTICES.md"), "."),

@@ -416,3 +416,27 @@ class RecordSync(Base):
     __table_args__ = (
         Index('idx_record_sync_state', 'state'),
     )
+
+
+class RecordAnnotation(Base):
+    """Agent or user metadata attached to a transcription, meeting, or walkthrough.
+
+    Stored separately from transcript tables so original speech remains
+    immutable while agents can attach human-readable notes, tags, and links
+    into their own external databases (``external_refs_json``).
+    """
+    __tablename__ = 'record_annotations'
+
+    # transcription | meeting | walkthrough
+    record_kind: Mapped[str] = mapped_column(String, primary_key=True)
+    record_id: Mapped[str] = mapped_column(String, primary_key=True)
+    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tags_json: Mapped[str] = mapped_column(Text, nullable=False, default='[]')
+    external_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default='[]')
+    author: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    __table_args__ = (
+        Index('idx_record_annotations_updated', 'updated_at'),
+    )

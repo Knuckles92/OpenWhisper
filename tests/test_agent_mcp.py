@@ -186,6 +186,13 @@ def test_official_client_discovery_retrieval_and_validation(running_server, mode
                     "update_settings",
                     "retitle_transcription",
                     "retitle_meeting",
+                    "get_record_annotation",
+                    "set_record_annotation",
+                    "delete_record_annotation",
+                    "list_annotations",
+                    "list_tags",
+                    "organize_records",
+                    "get_history_digest",
                     "get_live_state",
                     "list_actions",
                     "run_action",
@@ -251,6 +258,9 @@ def test_official_client_discovery_retrieval_and_validation(running_server, mode
                     "update_settings",
                     "retitle_transcription",
                     "retitle_meeting",
+                    "set_record_annotation",
+                    "delete_record_annotation",
+                    "organize_records",
                     "run_action",
                     "start_dictation",
                     "stop_dictation",
@@ -382,6 +392,7 @@ def test_control_permissions_writes_and_live_revocation(
                 assert caps == {
                     "retitle_transcriptions": False,
                     "retitle_meetings": False,
+                    "manage_annotations": False,
                     "settings_access": False,
                     "writable_settings": [],
                     "live_events": True,
@@ -409,6 +420,14 @@ def test_control_permissions_writes_and_live_revocation(
                     (
                         "retitle_meeting",
                         {"meeting_id": "m_a", "title": "Project meeting"},
+                    ),
+                    (
+                        "set_record_annotation",
+                        {
+                            "record_kind": "transcription",
+                            "record_id": "h_local",
+                            "summary": "Blocked note",
+                        },
                     ),
                 ):
                     assert (await client.call_tool(name, args)).is_error

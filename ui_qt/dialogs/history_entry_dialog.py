@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from services import annotations as record_annotations
 from services.format_utils import format_audio_duration, format_file_size
 from services.history_manager import (
     AI_VERSION,
@@ -136,6 +137,8 @@ class HistoryEntryDialog(QDialog):
     delete_requested = pyqtSignal(str)
     #: The entry now shows another version of its text; History refreshes.
     version_changed = pyqtSignal(str)
+    #: The entry's agent notes/tags changed; History refreshes.
+    annotation_changed = pyqtSignal(str)
 
     def __init__(self, entry: HistoryEntry, parent=None):
         """Initialize the history entry viewer.
@@ -149,6 +152,11 @@ class HistoryEntryDialog(QDialog):
         self._failed_recording = getattr(entry, "entry_kind", None) == FAILED_RECORDING_KIND
         self._read_versions(entry)
         self._showing_raw = self._version == ORIGINAL_VERSION
+        self._annotation: dict = (
+            record_annotations.get_annotation("transcription", entry.id)
+            if is_local_entry(entry)
+            else record_annotations.empty_annotation("transcription", entry.id)
+        )
         self._audio_path: Optional[str] = None
         if entry.audio_file and not getattr(entry, "stored_on", None):
             path = history_manager.get_recording_path(entry.audio_file)
@@ -313,6 +321,14 @@ class HistoryEntryDialog(QDialog):
 
         self.retranscribe_button.setVisible(self._audio_path is not None)
         primary_actions.addWidget(self.retranscribe_button)
+
+        self.notes_button = neutral_button(Button("Agent Notes"))
+        self.notes_button.set_base_minimum_size(96, 40)
+        self.notes_button.clicked.connect(self._open_agent_notes)
+        self.notes_button.setVisible(is_local_entry(self.entry))
+        self._refresh_notes_button()
+        primary_actions.addWidget(self.notes_button)
+
         primary_actions.addStretch()
         outer.addLayout(primary_actions)
 
@@ -494,6 +510,44 @@ class HistoryEntryDialog(QDialog):
         if not event.spontaneous():
             self.playback.stop()
         super().hideEvent(event)
+
+    def _refresh_notes_button(self) -> None:
+        if not self._annotation.get("exists"):
+            self.notes_button.setText("Agent Notes")
+            self.notes_button.setToolTip(
+                "View or attach agent notes, tags, and external references for this transcription"
+            )
+            return
+        tags = self._annotation.get("tags") or ()
+        suffix = f" ({len(tags)})" if tags else ""
+        self.notes_button.setText(f"✦ Agent Notes{suffix}")
+        tip_parts = []
+        if self._annotation.get("summary"):
+            tip_parts.append(str(self._annotation["summary"]))
+        if tags:
+            tip_parts.append("Tags: " + ", ".join(f"#{t}" for t in tags[:6]))
+        self.notes_button.setToolTip("\n".join(tip_parts) or "View or edit attached agent notes")
+
+    def _open_agent_notes(self) -> None:
+        from ui_qt.dialogs.record_notes_dialog import RecordNotesDialog
+
+        title = (
+            getattr(self.entry, "title", None)
+            or getattr(self.entry, "source_name", None)
+            or self.entry.formatted_timestamp
+        )
+        dialog = RecordNotesDialog(
+            "transcription",
+            self.entry.id,
+            record_title=title,
+            annotation=self._annotation,
+            parent=self,
+        )
+        dialog.exec()
+        if dialog.changed:
+            self._annotation = dialog.annotation
+            self._refresh_notes_button()
+            self.annotation_changed.emit(self.entry.id)
 
     def _on_retranscribe(self) -> None:
         """Request re-transcription using the current cleanup setting."""

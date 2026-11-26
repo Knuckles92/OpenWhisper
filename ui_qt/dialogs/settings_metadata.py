@@ -242,6 +242,13 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                ('microphone_backup_tile',
                 "If it's unplugged, use",
                 'OpenWhisper moves down this list, even in the middle of a dictation.'),
+               ('streaming_enabled_tile',
+                'Real-time transcription preview',
+                'Shows text as you speak on the near-cursor overlay. Nemotron uses native '
+                'streaming; Parakeet transcribes short audio chunks with the loaded model; Local '
+                'Whisper uses a separate tiny.en preview model. The final transcript uses your '
+                'selected model and follows the General paste and clipboard settings. Its text '
+                'size is under Appearance.'),
                ('audio_echo_cancellation_tile',
                 'Cancel system audio (Beta)',
                 'Off by default. Captures system audio alongside your microphone during dictation '
@@ -252,14 +259,7 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                 'Keep recordings',
                 'Keep a set number of recordings or cap the recordings folder size. The oldest '
                 'audio files are deleted automatically once the limit is passed; the newest '
-                'recording is always kept. Transcription history text is kept separately.'),
-               ('streaming_enabled_tile',
-                'Real-time transcription preview',
-                'Shows text as you speak on the near-cursor overlay. Nemotron uses native '
-                'streaming; Parakeet transcribes short audio chunks with the loaded model; Local '
-                'Whisper uses a separate tiny.en preview model. The final transcript uses your '
-                'selected model and follows the General paste and clipboard settings. Its text '
-                'size is under Appearance.')],
+                'recording is always kept. Transcription history text is kept separately.')],
  'cleanup': [('transcript_cleanup_tile',
               'Clean up transcripts with AI',
               'Runs the selected language model on each dictated transcript after transcription, '

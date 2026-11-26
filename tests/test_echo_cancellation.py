@@ -358,3 +358,149 @@ def test_settings_recording_page_exposes_beta_echo_cancellation_toggle(monkeypat
         )
         assert settings_metadata.CONTROL_DESTINATIONS["audio_echo_cancellation_tile"] == RECORDING
         assert settings_metadata.CONTROL_DESTINATIONS["audio_echo_cancellation_check"] == RECORDING
+
+        # Live recording toggles are grouped together under "During recording"
+        from PyQt6.QtWidgets import QLabel
+
+        recording_page = dialog._pages[RECORDING]
+        titles = [
+            label.text()
+            for label in recording_page.findChildren(QLabel)
+            if label.objectName() == "settingsTileGroupTitle"
+        ]
+        assert titles == ["Microphone", "During recording", "Saved recordings"]
+
+
+@pytest.mark.qt
+def test_settings_home_exposes_echo_cancellation_alongside_dictation_toggles(monkeypatch):
+    from tests.fakes.personalize import settings_dialogs
+    from ui_qt.dialogs import settings_dialog as settings_dialog_module
+    from ui_qt.dialogs.settings_destinations import OVERVIEW, RECORDING
+
+    monkeypatch.setattr(settings_dialog_module.AudioRecorder, "get_input_devices", staticmethod(lambda: []))
+
+    with settings_dialogs(get_loaded_model=lambda: None) as new_dialog:
+        dialog, store = new_dialog()
+        # Home renders the toggle without eagerly building Recording
+        assert dialog._built_pages == {OVERVIEW}
+        dictation_card = dialog.home.cards["dictation"]
+        echo_switch = dialog.home.controls[SettingsKey.AUDIO_ECHO_CANCELLATION]
+        assert dictation_card.isAncestorOf(echo_switch)
+        assert dictation_card.isAncestorOf(dialog.home.controls[SettingsKey.TRANSCRIPT_CLEANUP_ENABLED])
+        assert dictation_card.isAncestorOf(dialog.home.controls[SettingsKey.STREAMING_ENABLED])
+        assert not echo_switch.isChecked()
+
+        # Toggling on Home persists, notifies the main window callback, and syncs Recording
+        dialog.on_echo_cancel_changed = MagicMock()
+        echo_switch.click()
+        assert store.get(SettingsKey.AUDIO_ECHO_CANCELLATION) is True
+        dialog.on_echo_cancel_changed.assert_called_once_with()
+        dialog.select_destination(RECORDING)
+        assert dialog.audio_echo_cancellation_check.isChecked()
+
+        # Toggling on Recording syncs back to Home
+        dialog.audio_echo_cancellation_check.setChecked(False)
+        dialog.show_home()
+        assert not echo_switch.isChecked()
+
+
+@pytest.mark.qt
+def test_main_ui_echo_cancel_checkbox_placement_locking_and_persistence():
+    from PyQt6.QtWidgets import QApplication
+
+    from ui_qt.widgets.quick_record_tab import QuickRecordTab
+    from ui_qt.widgets.upload_file_tab import UploadFileTab
+
+    stored: dict = {}
+    manager = MagicMock()
+    manager.load_all_settings.side_effect = lambda: dict(stored)
+
+    def save_setting(key, value):
+        stored[key] = value
+        return True
+
+    manager.save_setting.side_effect = save_setting
+
+    with patch("ui_qt.widgets.transcription_tab_base.settings_manager", manager):
+        tab = QuickRecordTab()
+        tab.resize(680, 500)
+        tab.show()
+        QApplication.processEvents()
+        try:
+            assert tab.echo_cancel_check.isVisible()
+            assert tab.echo_cancel_check.text() == "Echo cancel (Beta)"
+            assert tab.engine_card.isAncestorOf(tab.echo_cancel_check)
+            preview_x = tab.live_preview_check.mapTo(tab, tab.live_preview_check.rect().topLeft()).x()
+            echo_x = tab.echo_cancel_check.mapTo(tab, tab.echo_cancel_check.rect().topLeft()).x()
+            assert preview_x < echo_x
+
+            # Defaults off, toggles persist and emit
+            assert not tab.echo_cancel_check.isChecked()
+            emitted = []
+            tab.echo_cancel_changed.connect(lambda: emitted.append(True))
+            tab.echo_cancel_check.setChecked(True)
+            assert stored[SettingsKey.AUDIO_ECHO_CANCELLATION] is True
+            assert emitted == [True]
+
+            # Failed save reverts without emitting
+            manager.save_setting.side_effect = OSError("disk full")
+            tab.echo_cancel_check.setChecked(False)
+            assert tab.echo_cancel_check.isChecked() is True
+            assert emitted == [True]
+
+            # Locks while recording and unlocks after
+            tab.is_recording = True
+            tab._update_recording_state()
+            assert not tab.echo_cancel_check.isEnabled()
+            tab.is_recording = False
+            tab._update_recording_state()
+            assert tab.echo_cancel_check.isEnabled()
+        finally:
+            tab.close()
+
+        upload = UploadFileTab()
+        upload.resize(680, 500)
+        upload.show()
+        QApplication.processEvents()
+        try:
+            assert not upload.echo_cancel_check.isVisible()
+        finally:
+            upload.close()
+
+
+@pytest.mark.qt
+def test_main_window_and_ui_controller_sync_echo_cancel_checkbox():
+    from ui_qt.main_window import MainWindow
+    from ui_qt.ui_controller import UIController
+
+    stored = {SettingsKey.AUDIO_ECHO_CANCELLATION: False}
+    manager = MagicMock()
+    manager.load_all_settings.side_effect = lambda: dict(stored)
+
+    def save_setting(key, value):
+        stored[key] = value
+        return True
+
+    manager.save_setting.side_effect = save_setting
+
+    with patch("ui_qt.widgets.transcription_tab_base.settings_manager", manager), \
+            patch("ui_qt.main_window.settings_manager", manager), \
+            patch("ui_qt.dialogs.meeting_intro_dialog.maybe_show_meeting_mode_intro", return_value=False):
+        window = MainWindow()
+        try:
+            emitted = []
+            window.echo_cancel_changed.connect(lambda: emitted.append(True))
+            window.quick_record_tab.echo_cancel_check.setChecked(True)
+            assert emitted == [True]
+            assert window.upload_file_tab.echo_cancel_check.isChecked()
+        finally:
+            window.close()
+
+    # Controller hooks keep Settings dialog and main window in sync
+    controller = UIController.__new__(UIController)
+    controller.main_window = MagicMock()
+    controller._settings_dialog = MagicMock()
+    controller._on_echo_cancel_changed()
+    controller._settings_dialog.refresh.assert_called_once_with()
+    controller._on_settings_echo_cancel_changed()
+    controller.main_window.refresh_echo_cancel_controls.assert_called_once_with()

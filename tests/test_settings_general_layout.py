@@ -216,10 +216,18 @@ class TestSettingsGeneralLayout(unittest.TestCase):
             recording = dialog._pages[RECORDING]
             self.assertGreaterEqual(len(recording.findChildren(QFormLayout)), 1)
             self.assertEqual(len(recording.findChildren(FieldTile)), 2)
-            self.assertEqual(len(recording.findChildren(SettingTile)), 1)
+            self.assertEqual(len(recording.findChildren(SettingTile)), 2)
+            self.assertEqual(
+                group_titles(recording),
+                ["Microphone", "During recording", "Saved recordings"],
+            )
             self.assertIs(
                 dialog.streaming_enabled_check,
                 dialog.streaming_enabled_tile.checkbox,
+            )
+            self.assertIs(
+                dialog.audio_echo_cancellation_check,
+                dialog.audio_echo_cancellation_tile.checkbox,
             )
             self.assertIs(
                 dialog.recording_retention_tile.control,
