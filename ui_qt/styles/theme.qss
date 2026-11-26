@@ -357,6 +357,9 @@ QScrollArea#settingsPageScroll > QWidget > QWidget,
 #downloadsPage QScrollArea,
 #downloadsPage QScrollArea > QWidget,
 #downloadsPage QScrollArea > QWidget > QWidget,
+QDialog#componentDetailsDialog QScrollArea#downloadsInspectorScroll,
+QDialog#componentDetailsDialog QScrollArea#downloadsInspectorScroll > QWidget,
+QDialog#componentDetailsDialog QScrollArea#downloadsInspectorScroll > QWidget > QWidget,
 QScrollArea#transcriptionTabScrollArea,
 QScrollArea#transcriptionTabScrollArea > QWidget,
 QScrollArea#transcriptionTabScrollArea > QWidget > QWidget,
@@ -604,7 +607,8 @@ QLineEdit#apiKeyInput[hasText="true"] {
     letter-spacing: 1px;
 }
 
-QWidget#modelManagerFieldGroup {
+QWidget#modelManagerFieldGroup,
+QWidget#meetingRemoteControls {
     background-color: transparent;
 }
 
@@ -828,7 +832,8 @@ QLabel#downloadsSourceNote {
 QPushButton#downloadsRepoButton,
 QPushButton#downloadsOriginButton,
 QPushButton#downloadsLicenseButton,
-QPushButton#downloadsToolButton {
+QPushButton#downloadsToolButton,
+QPushButton#downloadsCloseButton {
     color: @slate-text-2;
     background-color: @slate-field;
     border: 1px solid @slate-border-strong;
@@ -839,7 +844,8 @@ QPushButton#downloadsToolButton {
 QPushButton#downloadsRepoButton:hover,
 QPushButton#downloadsOriginButton:hover,
 QPushButton#downloadsLicenseButton:hover,
-QPushButton#downloadsToolButton:hover {
+QPushButton#downloadsToolButton:hover,
+QPushButton#downloadsCloseButton:hover {
     color: @slate-text;
     background-color: @slate-raised;
     border-color: @slate-border-hover;
@@ -2484,6 +2490,10 @@ QWidget#card {
     background-color: @surface;
     border-radius: 16px;
     border: 1px solid @border; /* Subtle border */
+}
+
+QWidget#cardContent {
+    background-color: transparent;
 }
 
 QWidget#controlPanel {

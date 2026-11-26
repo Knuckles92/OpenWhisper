@@ -54,6 +54,9 @@ _DIALOG_STYLE = """
         border: 1px solid rgba(@overlay-rgb, 0.06);
         border-radius: 10px;
     }
+    QWidget#historyEntryVersionToggle {
+        background-color: transparent;
+    }
     QLabel#historyEntryTitle {
         color: @text;
         background-color: transparent;
@@ -222,6 +225,7 @@ class HistoryEntryDialog(QDialog):
         body_header.addStretch()
 
         self.version_toggle = QWidget()
+        self.version_toggle.setObjectName("historyEntryVersionToggle")
         version_row = QHBoxLayout(self.version_toggle)
         version_row.setContentsMargins(0, 0, 0, 0)
         version_row.setSpacing(6)

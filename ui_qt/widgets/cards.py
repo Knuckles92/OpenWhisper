@@ -91,6 +91,7 @@ class HeaderCard(Card):
 
         if collapsible:
             self.content_widget = QWidget()
+            self.content_widget.setObjectName("cardContent")
             self.content_layout = QVBoxLayout(self.content_widget)
             self.content_layout.setContentsMargins(0, 0, 0, 0)
             self.content_layout.setSpacing(12)

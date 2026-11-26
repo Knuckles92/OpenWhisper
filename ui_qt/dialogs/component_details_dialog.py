@@ -74,6 +74,7 @@ class ComponentDetailsDialog(QDialog):
         detail_scroll.setMinimumHeight(180)
 
         content = QWidget()
+        content.setObjectName("downloadsInspectorContent")
         detail = QVBoxLayout(content)
         detail.setContentsMargins(0, 0, 6, 0)
         detail.setSpacing(12)

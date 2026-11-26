@@ -333,6 +333,7 @@ class McpSettingsPage(QWidget):
         self.status_label.setAccessibleName("MCP server status")
         status_row.addWidget(self.status_label, 1)
         self.retry = _ActionButton("Retry")
+        self.retry.setObjectName("mcpCopyButton")
         self.retry.set_base_minimum_size(70, 34)
         self.retry.clicked.connect(self._start)
         status_row.addWidget(self.retry)

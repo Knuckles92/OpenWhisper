@@ -31,7 +31,7 @@ from ui_qt.widgets import (
     PrimaryButton,
     WrappedLabel,
 )
-from ui_qt.widgets.buttons import fit_compact_button
+from ui_qt.widgets.buttons import fit_compact_button, neutral_button
 from ui_qt.widgets.download_row import DownloadRow, row_style
 from ui_qt.widgets.engine_field import DEVICE_LABELS as _DEVICE_LABELS
 from ui_qt.widgets.speech_backend_picker import backend_picker_label
@@ -784,7 +784,7 @@ class RemoteModelsPane(QWidget):
         self.detail.setObjectName("downloadsFactValue")
         details.addWidget(self.detail)
 
-        self.download_button = Button("Download model on host")
+        self.download_button = neutral_button(Button("Download model on host"))
         self.download_button.setObjectName("remoteModelDownloadButton")
         self.download_button.clicked.connect(self._download)
         details.addWidget(self.download_button)
@@ -804,7 +804,7 @@ class RemoteModelsPane(QWidget):
         self.runtime_detail.setObjectName("downloadsInspectorBody")
         details.addWidget(self.runtime_detail)
 
-        self.install_button = Button("Install runtime on host")
+        self.install_button = neutral_button(Button("Install runtime on host"))
         self.install_button.setObjectName("remoteRuntimeInstallButton")
         self.install_button.clicked.connect(self._install)
         details.addWidget(self.install_button)

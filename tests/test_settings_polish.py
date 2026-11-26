@@ -336,3 +336,63 @@ def test_paired_computer_remove_buttons_keep_the_danger_style(remote_page):
                if button.property("buttonId") == "remoteRemoveDeviceButton"]
     assert len(removes) == 2
     assert all(button.objectName() == "dangerButton" for button in removes)
+
+
+def test_meeting_voice_remote_controls_and_context_folder_buttons_use_settings_chrome():
+    """Secondary actions inside Settings cards use the compact neutral tone and transparent wrappers."""
+    from ui_qt.dialogs.remote_models import RemoteModelsPane
+    from ui_qt.dialogs.settings_destinations import MEETING_INTELLIGENCE, MEETING_VOICE
+    from ui_qt.dialogs.settings_dialog import SettingsDialog
+
+    dialog = SettingsDialog(get_loaded_model=lambda: None, background_cache_scan=False)
+    pane = RemoteModelsPane()
+    try:
+        dialog.show()
+        dialog.select_destination(MEETING_VOICE)
+        QApplication.processEvents()
+        models = dialog.models
+        models.meeting_engine_combo.setCurrentIndex(models.meeting_engine_combo.findData(True))
+        models.meeting_source_combo.setCurrentIndex(models.meeting_source_combo.findData("remote"))
+        QApplication.processEvents()
+
+        configure = dialog.findChild(QAbstractButton, "meetingConfigureRemoteButton")
+        test_btn = dialog.findChild(QAbstractButton, "meetingTestRemoteButton")
+        assert configure is not None and configure.property("tone") == "neutral"
+        assert test_btn is not None and test_btn.property("tone") == "neutral"
+        assert isinstance(models.meeting_remote_controls, ButtonRow)
+        assert models.meeting_remote_controls.objectName() == "meetingRemoteControls"
+        # Empty status stays hidden so it does not leave a dead gap above the description.
+        assert models.meeting_remote_status.isHidden()
+        models._set_meeting_remote_status("Ready: CUDA")
+        assert not models.meeting_remote_status.isHidden()
+
+        dialog.select_destination(MEETING_INTELLIGENCE)
+        QApplication.processEvents()
+        browse = dialog.findChild(QAbstractButton, "meetingContextFolderBrowse")
+        clear = dialog.findChild(QAbstractButton, "meetingContextFolderClear")
+        assert browse is not None and browse.property("tone") == "neutral"
+        assert clear is not None and clear.property("tone") == "neutral"
+
+        assert pane.download_button.property("tone") == "neutral"
+        assert pane.install_button.property("tone") == "neutral"
+
+        theme = THEME.read_text(encoding="utf-8")
+        assert "QWidget#meetingRemoteControls" in theme
+        assert "QPushButton#downloadsCloseButton" in theme
+        assert "QWidget#cardContent" in theme
+    finally:
+        pane.close()
+        pane.deleteLater()
+        dialog.close()
+        dialog.deleteLater()
+
+
+def test_mcp_retry_button_matches_mcp_secondary_button_style():
+    from ui_qt.dialogs.settings_mcp import McpSettingsView
+
+    view = McpSettingsView(settings_manager)
+    try:
+        assert view.local.retry.objectName() == "mcpCopyButton"
+    finally:
+        view.close()
+        view.deleteLater()

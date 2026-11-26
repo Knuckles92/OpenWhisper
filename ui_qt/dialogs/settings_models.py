@@ -101,6 +101,7 @@ from ui_qt.dialogs.settings_fields import (
 from ui_qt.utils.engine_selection import engine_selection_relay
 from ui_qt.utils.icons import design_icon as _design_icon
 from ui_qt.widgets import Button, ElidingComboBox, InfoTile
+from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.buttons import neutral_button
 from ui_qt.widgets.engine_field import DEVICE_LABELS, set_device_choices
 from ui_qt.widgets.agent_picker import BUILTIN, AgentPicker
@@ -535,20 +536,21 @@ class ModelAssignments(QObject):
         )
         self.meeting_local_model_field = self._field("Meeting speech model", self.meeting_whisper_picker)
         card.addWidget(self.meeting_local_model_field)
-        self.meeting_remote_controls = QWidget()
-        remote_layout = QHBoxLayout(self.meeting_remote_controls)
-        remote_layout.setContentsMargins(0, 0, 0, 0)
-        configure_remote = Button("Configure remote engine")
+        configure_remote = neutral_button(Button("Configure remote engine"))
         configure_remote.setObjectName("meetingConfigureRemoteButton")
         configure_remote.clicked.connect(self._open_meeting_remote_settings)
-        self.meeting_remote_test = Button("Test connection")
+        self.meeting_remote_test = neutral_button(Button("Test connection"))
         self.meeting_remote_test.setObjectName("meetingTestRemoteButton")
         self.meeting_remote_test.clicked.connect(self._test_meeting_remote)
-        remote_layout.addWidget(configure_remote)
-        remote_layout.addWidget(self.meeting_remote_test)
-        remote_layout.addStretch()
+        self.meeting_remote_controls = ButtonRow(
+            (configure_remote, self.meeting_remote_test),
+            spacing=8,
+            stretch=False,
+        )
+        self.meeting_remote_controls.setObjectName("meetingRemoteControls")
         card.addWidget(self.meeting_remote_controls)
         self.meeting_remote_status = self._caption("")
+        self.meeting_remote_status.hide()
         card.addWidget(self.meeting_remote_status)
         self.meeting_runtime_label = self._caption("")
         card.addWidget(self.meeting_runtime_label)
@@ -846,20 +848,26 @@ class ModelAssignments(QObject):
         self._refresh_meeting_source()
         self._refresh_rail_values()
 
+    def _set_meeting_remote_status(self, message: str) -> None:
+        self.meeting_remote_status.setText(message)
+        separate = bool(self.meeting_engine_combo.currentData())
+        remote = separate and self.meeting_source_combo.currentData() == "remote"
+        self.meeting_remote_status.setVisible(remote and bool(message))
+
     def _refresh_meeting_source(self):
         separate = bool(self.meeting_engine_combo.currentData())
         remote = separate and self.meeting_source_combo.currentData() == "remote"
         self.meeting_source_field.setVisible(separate)
         self.meeting_local_model_field.setVisible(separate and not remote)
         self.meeting_remote_controls.setVisible(remote)
-        self.meeting_remote_status.setVisible(remote)
+        self.meeting_remote_status.setVisible(remote and bool(self.meeting_remote_status.text()))
         self._refresh_meeting_runtime_label()
 
     def _test_meeting_remote(self):
         # Handshake and capability check only: no audio or model switches.
         settings = self._settings_snapshot()
         self.meeting_remote_test.setEnabled(False)
-        self.meeting_remote_status.setText("Connecting to the paired computer…")
+        self._set_meeting_remote_status("Connecting to the paired computer…")
         token = self._meeting_remote_token = next(_tokens)
         checked = _worker_relay().meeting_remote_checked
 
@@ -885,7 +893,7 @@ class ModelAssignments(QObject):
         if token != self._meeting_remote_token:
             return
         self.meeting_remote_test.setEnabled(True)
-        self.meeting_remote_status.setText(message)
+        self._set_meeting_remote_status(message)
 
     def _on_set_active_clicked(self, model_name: str):
         if self.on_set_active_requested:
