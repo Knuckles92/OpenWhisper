@@ -213,6 +213,8 @@ def test_permissions_default_and_ignore_malformed_values():
             permissions.require({}, key)
     assert not permissions.granted({}, "mcp_enabled")
     assert set(permissions.describe({})) == {
-        "live_events", "run_actions", "control_recording", "text_filters", "agent_prompts"
+        "live_events", "run_actions", "control_recording", "text_filters", "agent_prompts",
+        "control_meetings", "read_walkthroughs", "control_walkthroughs",
+        "manage_personalization", "control_app",
     }
     assert SETTING_DEFAULTS[SettingsKey.API_LIVE_EVENTS] is True
