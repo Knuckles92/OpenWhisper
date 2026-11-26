@@ -14,10 +14,14 @@ as modifiers.
 from __future__ import annotations
 
 import logging
+import socket
 import threading
 from typing import Dict, Iterable, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
+
+#: How long close() gives the drain thread to notice the hang-up.
+_DRAIN_EXIT_TIMEOUT_S = 1.0
 
 # keysym -> "kp <name>" suffix, kept in step with _hotkey_pynput._X11_KEYPAD_NAMES.
 _KEYPAD_KEYSYMS: Dict[str, int] = {}
@@ -173,10 +177,16 @@ class X11KeyGrabber:
             except Exception:
                 logger.debug("Could not release X11 shortcut grabs", exc_info=True)
             self._closed = True
+        # Closing the connection does not wake the drain: a thread already in
+        # select() keeps the socket open, so the server would never see this
+        # client leave (#141). Hanging up ends the read.
+        connection = self._display.display.socket
         try:
-            self._display.close()
-        except Exception:
-            logger.debug("Could not close the X11 key grab connection", exc_info=True)
+            connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass  # The connection had already ended.
+        self._thread.join(_DRAIN_EXIT_TIMEOUT_S)
+        connection.close()
 
 
 def create_grabber() -> Optional[X11KeyGrabber]:

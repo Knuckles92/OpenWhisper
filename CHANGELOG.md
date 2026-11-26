@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Fixed
+
+- **OpenWhisper no longer freezes after about a day on Linux/X11.** The five-minute refresh of the global shortcut hook left X server connections and threads behind, until the server refused new ones and the next refresh froze the app. A replaced hook now ends at once, even while nobody types. If the X server has no room for a new one, shortcuts keep working in the focused window and a later refresh restores the global ones. Dismissing a shortcut field without pressing a key no longer leaves its listener running. ([#141](https://github.com/Knuckles92/OpenWhisper/issues/141))
+
 ## [2.8.99] - 2026-11-23
 
 ### Added

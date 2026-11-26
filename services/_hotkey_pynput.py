@@ -6,6 +6,7 @@ them.
 """
 import logging
 import os
+import socket
 import sys
 import threading
 import time
@@ -116,6 +117,93 @@ _X11_KEYPAD_NAMES: Dict[int, str] = {
 }
 
 
+#: How long the Qt thread gives a stopped X11 listener to leave its thread.
+_X11_STOP_TIMEOUT_S = 1.0
+#: How long it waits to hear whether a new X11 listener is recording.
+_X11_START_TIMEOUT_S = 2.0
+
+
+class _X11ListenerLifecycle:
+    """The start and stop that pynput's X11 listeners lack (#141).
+
+    Mixed in ahead of a pynput X11 listener class.
+
+    Stop: the listener's thread sleeps in ``select()`` on its XRecord
+    connection. pynput's ``stop()`` queues the request that ends the
+    recording on that same connection, where nothing sends it before the
+    next key or button event, and where the server would not read it
+    anyway: it ignores a connection it is recording to. Until that event the
+    listener keeps its thread and both X connections, so replacing listeners
+    on a timer while nobody types runs the server out of clients. Hanging up
+    on the record connection ends the listener at once, with no request and
+    no further connection: the server frees the recording with the client,
+    and the thread wakes into pynput's own teardown.
+
+    Start: pynput cannot say that a listener failed to start. A refused
+    connection ends the thread, after which pynput's ``wait()``, ``stop()``
+    and ``join()`` block forever on a ready flag nobody is left to set.
+    """
+
+    #: What ended the listener, unless that was ``stop()``.
+    _failure: Optional[BaseException] = None
+    _ended = False
+
+    def _run(self):
+        try:
+            super()._run()
+        except Exception as exc:
+            # A stopped listener leaves through pynput's error path, since
+            # stop() hung up on it. Any other way out is a failure: wait()
+            # and join() hand it to whoever is starting or joining.
+            if self.running or not self._ready:
+                self._failure = exc
+                self._queue.put(sys.exc_info())
+                if self._ready:
+                    logger.warning("An X11 input listener lost its connection: %s", exc)
+        finally:
+            # pynput closes these only when its teardown runs to the end.
+            for name in ("_display_stop", "_display_record"):
+                display = getattr(self, name, None)
+                if display is not None:
+                    display.display.socket.close()
+            with self._condition:
+                self._ended = True
+                self._condition.notify_all()
+
+    def wait(self, timeout: Optional[float] = None) -> None:
+        """Return once the listener records; raise if it never will.
+
+        Returns after ``timeout`` seconds with a listener that is still
+        starting.
+        """
+        with self._condition:
+            self._condition.wait_for(lambda: self._ready or self._ended, timeout)
+            failed = self._ended and not self._ready
+        if failed:
+            raise self._failure or RuntimeError("The X11 listener ended before it started")
+
+    def _stop_platform(self):
+        if threading.current_thread() is self:
+            # A callback asked to stop: its exception is already unwinding
+            # into pynput's teardown.
+            return
+        record = getattr(self, "_display_record", None)
+        if record is not None:
+            try:
+                record.display.socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # Already closed: the listener is on its way out.
+        threading.Thread.join(self, _X11_STOP_TIMEOUT_S)
+
+
+def _start_listener(listener) -> None:
+    """Start a pynput listener; on X11, raise what kept it from recording."""
+    listener.daemon = True
+    listener.start()
+    if isinstance(listener, _X11ListenerLifecycle):
+        listener.wait(_X11_START_TIMEOUT_S)
+
+
 def _x11_keypad_listener(listener_class):
     """Report keypad keys as ``KeyCode(vk=<KP keysym>)``.
 
@@ -128,7 +216,7 @@ def _x11_keypad_listener(listener_class):
 
     key_code = _load_pynput_keyboard().KeyCode
 
-    class X11HotkeyListener(listener_class):
+    class X11HotkeyListener(_X11ListenerLifecycle, listener_class):
         def _event_to_key(self, display, event):
             if self._keycode_to_keysym(display, event.detail, 0) in _X11_KEYPAD_NAMES:
                 # Like pynput, read the keypad at its Num Lock level: KP_1
@@ -141,6 +229,18 @@ def _x11_keypad_listener(listener_class):
             return super()._event_to_key(display, event)
 
     return X11HotkeyListener
+
+
+def _mouse_listener_class():
+    """pynput's mouse listener, with a dependable start and stop on X11."""
+    listener_class = _load_pynput_mouse().Listener
+    if listener_class.__module__ != "pynput.mouse._xorg":
+        return listener_class
+
+    class X11MouseListener(_X11ListenerLifecycle, listener_class):
+        pass
+
+    return X11MouseListener
 
 
 def _is_xorg_listener(listener_class) -> bool:
@@ -666,8 +766,7 @@ class HotkeyManager:
                 on_release=self._on_release,
                 suppress=False,
             )
-            self._listener.daemon = True
-            self._listener.start()
+            _start_listener(self._listener)
         except Exception as exc:
             self._listener = None
             self.backend_available = False
@@ -724,9 +823,8 @@ class HotkeyManager:
         )
         if wanted and self._mouse_listener is None:
             try:
-                listener = _load_pynput_mouse().Listener(on_click=self._on_click)
-                listener.daemon = True
-                listener.start()
+                listener = _mouse_listener_class()(on_click=self._on_click)
+                _start_listener(listener)
             except Exception as exc:
                 logger.warning("Mouse button shortcuts unavailable: %s", exc, exc_info=True)
                 return
