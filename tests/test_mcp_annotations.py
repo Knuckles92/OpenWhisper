@@ -6,7 +6,6 @@ import json
 import os
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
 
 import pytest
 
@@ -15,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from services import annotations as record_annotations
 from services.agent_mcp.controls import AgentControls, ControlError
 from services.database import SCHEMA_VERSION, DatabaseManager
-from services.models import MeetingSegment, MeetingSession, RecordAnnotation, TranscriptionHistory
+from services.models import MeetingSegment, MeetingSession, TranscriptionHistory
 from services.settings import SettingsKey, SettingsManager
 
 T1 = "2026-11-24T10:00:00+00:00"

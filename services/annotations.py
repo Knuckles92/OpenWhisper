@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import select
 
 from services.models import RecordAnnotation
 

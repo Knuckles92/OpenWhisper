@@ -12,7 +12,7 @@ from PyQt6.QtCore import QCoreApplication, QObject, QThread, pyqtSignal
 from _version import __version__
 from services.actions.model import Action
 from services.automation import app_control
-from services.automation.control import ControlError, LiveState, app_control as registered, set_app_control
+from services.automation.control import ControlError, app_control as registered, set_app_control
 from services.settings import SettingsKey, settings_manager
 
 

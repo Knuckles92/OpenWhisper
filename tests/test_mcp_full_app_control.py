@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import QApplication
 
 from services.agent_mcp.app import create_app
 from services.agent_mcp.controls import CONTROLS_BY_KEY
-from services.automation import app_control_ext, catalog, events, permissions
+from services.automation import app_control_ext, catalog, events
 from services.automation.control import LiveState, set_app_control
 from services.database import DatabaseManager
 from services.settings import SettingsKey

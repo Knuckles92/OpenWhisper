@@ -18,7 +18,6 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
-    QWidget,
 )
 
 from services import annotations as record_annotations

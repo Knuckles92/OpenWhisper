@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import create_engine, delete, func, insert, or_, select, update
+from sqlalchemy import create_engine, delete, func, insert, select, update
 from sqlalchemy.pool import NullPool
 
 from services import annotations as record_annotations

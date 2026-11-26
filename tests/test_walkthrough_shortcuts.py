@@ -269,11 +269,13 @@ class FakeUI:
 class FakeTranscription:
     def __init__(self):
         self.recording_walkthrough = None
+        self.current_job = None
         self.started = []
         self.writing_up = False
         self.write_ups_canceled = 0
 
     def start_walkthrough(self, session, *, source):
+        self.current_job = SimpleNamespace(id="walkthrough-job", source=source)
         self.started.append(source)
         self.recording_walkthrough = session
         return True
