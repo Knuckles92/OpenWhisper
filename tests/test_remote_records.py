@@ -559,3 +559,70 @@ def test_renaming_a_device_rebadges_what_it_stored(host, client, tmp_path):
     later = _dictate(tmp_path, "after the rename")
     client.run_once()
     assert host.db.get_history_entry_by_id(later.id).origin_device_name == "Kitchen laptop"
+
+
+def test_batch_transfer_reports_monotonic_overall_progress_and_refreshes_summary(host, client, tmp_path):
+    for i in range(4):
+        _dictate(tmp_path, f"batch entry {i}")
+    client.set_location("host")
+    assert client.send_existing() == 4
+
+    seen = []
+    client.add_listener(lambda _kind: seen.append(client.status().progress))
+    client.run_once()
+
+    observed = [p for p in seen if p is not None]
+    assert observed
+    assert all(p.verb == "moving" for p in observed)
+    assert all(p.total == 4 for p in observed)
+    fractions = [p.fraction for p in observed]
+    # Overall batch progress advances monotonically instead of jumping 0 -> 99% per file.
+    assert fractions == sorted(fractions)
+    assert observed[-1].completed == 4
+    # Progress clears on completion and the stored summary reflects the moved records.
+    final = client.status()
+    assert final.progress is None
+    assert final.active == ""
+    assert final.stored["dictation"]["count"] == 4
+
+
+def test_switching_back_to_local_mid_batch_stops_remaining_uploads(host, client, tmp_path, monkeypatch):
+    for i in range(3):
+        _dictate(tmp_path, f"cancelable entry {i}")
+    client.set_location("host")
+    assert client.send_existing() == 3
+
+    real_upload = client.upload
+    uploaded = []
+
+    def upload_then_cancel(connection, kind, record_id, **kwargs):
+        real_upload(connection, kind, record_id, **kwargs)
+        uploaded.append(record_id)
+        if len(uploaded) == 1:
+            client.set_location("local")
+
+    monkeypatch.setattr(client, "upload", upload_then_cancel)
+    client.run_once()
+    assert len(uploaded) == 1
+    assert host.store.summary(client.device_id)["dictation"]["count"] == 1
+
+
+def test_bring_back_reports_batch_progress_and_clears_stored_summary(host, client, tmp_path):
+    for i in range(2):
+        _dictate(tmp_path, f"return entry {i}")
+    client.set_location("host")
+    assert client.send_existing() == 2
+    client.run_once()
+    assert client.status().stored["dictation"]["count"] == 2
+
+    seen = []
+    client.add_listener(lambda _kind: seen.append(client.status().progress))
+    assert client.bring_back() == 2
+
+    observed = [p for p in seen if p is not None]
+    assert observed
+    assert all(p.verb == "bringing_back" for p in observed)
+    assert any(p.total == 2 for p in observed)
+    final = client.status()
+    assert final.progress is None
+    assert final.stored["dictation"]["count"] == 0

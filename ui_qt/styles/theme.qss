@@ -1297,6 +1297,10 @@ QLabel#remoteHostStatus,
 QLabel#remoteHostIdentity,
 QLabel#remoteHostNote,
 QLabel#remoteDeviceLabel,
+QWidget#remoteStorageProgressBox,
+QLabel#remoteStorageProgressTitle,
+QLabel#remoteStorageProgressMeta,
+QLabel#remoteStorageProgressDetail,
 QLabel#remoteStorageStatus {
     background-color: transparent;
 }
@@ -2275,6 +2279,28 @@ QPushButton#recordsLocationBtn:hover:!checked {
 
 QPushButton#recordsLocationBtn:disabled {
     color: @text-muted;
+}
+
+QLabel#remoteStorageProgressTitle {
+    color: @text;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#remoteStorageProgressMeta {
+    color: @text-secondary;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+QLabel#remoteStorageProgressDetail {
+    color: @text-secondary;
+    font-size: 11px;
+}
+
+QLabel#remoteStorageStatus {
+    color: @text-secondary;
+    font-size: 12px;
 }
 
 QPushButton#transcriptExpandButton,

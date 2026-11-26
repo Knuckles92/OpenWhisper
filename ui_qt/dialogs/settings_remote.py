@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 from services.remote_asr import protocol
 from ui_qt.utils.palette import current_palette
 from ui_qt.widgets import (
+    AnimatedProgressBar,
     Button,
     DangerButton,
     ElidingComboBox,
@@ -165,6 +166,64 @@ def _records_host_problem(status, host: str) -> str:
     return ""
 
 
+#: Show per-file byte progress beneath a multi-record bar once one item is at least this large.
+_LARGE_RECORD_DETAIL_BYTES = 5 * 1024 * 1024
+
+
+def _format_storage_progress(progress, host: str) -> tuple[str, str, str]:
+    """Return ``(title, meta, detail)`` for the storage tile's progress strip."""
+    verb = progress.verb
+    pct = progress.percent
+    if progress.total > 1:
+        if verb == "bringing_back":
+            title = f"Bringing records back from {host}"
+        else:
+            label = {"moving": "Moving", "copying": "Copying"}.get(verb, "Sending")
+            title = f"{label} records to {host}"
+        meta = f"{progress.completed:,} of {progress.total:,}"
+        if pct is not None:
+            meta += f" · {pct}%"
+        detail = ""
+        if progress.current_total_bytes >= _LARGE_RECORD_DETAIL_BYTES:
+            kind = progress.current_kind or "record"
+            detail = (
+                f"Current {kind}: {_size(progress.current_bytes)} / "
+                f"{_size(progress.current_total_bytes)}"
+            )
+        return title, meta, detail
+
+    if progress.total == 1:
+        noun = (
+            "a meeting" if progress.current_kind == "meeting"
+            else "a dictation" if progress.current_kind == "dictation"
+            else "a record"
+        )
+        if verb == "bringing_back":
+            title = f"Bringing {noun} back from {host}"
+        else:
+            label = {"moving": "Moving", "copying": "Copying"}.get(verb, "Sending")
+            title = f"{label} {noun} to {host}"
+        if progress.current_total_bytes >= 1024 * 1024 and pct is not None:
+            meta = (
+                f"{_size(progress.current_bytes)} / "
+                f"{_size(progress.current_total_bytes)} · {pct}%"
+            )
+        elif pct is not None:
+            meta = f"{pct}%"
+        else:
+            meta = ""
+        return title, meta, ""
+
+    # Indeterminate (total == 0)
+    if verb == "bringing_back":
+        title = f"Bringing records back from {host}"
+    else:
+        label = {"moving": "Moving", "copying": "Copying"}.get(verb, "Sending")
+        title = f"{label} records to {host}"
+    meta = f"{progress.completed:,} done" if progress.completed else ""
+    return title, meta, ""
+
+
 def _sharing_address(state: dict, tailnet, on_tailnet: bool) -> str:
     """Where other computers reach this one, for the sharing status line."""
     where = protocol.format_address(state["address"] or state["host_name"], state["port"])
@@ -249,6 +308,7 @@ class RemoteEngineSection(QObject):
         self._records = records
         self._records_busy = ""
         self._records_note = ""
+        self._records_transferring = False
         self._recovery_busy = False
         self._select_engine: Optional[Callable[[str], None]] = None
         self._set_rail_value: Optional[Callable[[str], None]] = None
@@ -496,6 +556,33 @@ class RemoteEngineSection(QObject):
         switch_row.addWidget(switch)
         switch_row.addStretch(1)
         self.storage_tile.add_body_layout(switch_row)
+        self.storage_progress_box = QWidget()
+        self.storage_progress_box.setObjectName("remoteStorageProgressBox")
+        progress_layout = QVBoxLayout(self.storage_progress_box)
+        progress_layout.setContentsMargins(0, 4, 0, 2)
+        progress_layout.setSpacing(6)
+        progress_header = QHBoxLayout()
+        progress_header.setContentsMargins(0, 0, 0, 0)
+        progress_header.setSpacing(8)
+        self.storage_progress_title = WrappedLabel("")
+        self.storage_progress_title.setObjectName("remoteStorageProgressTitle")
+        self.storage_progress_meta = QLabel("")
+        self.storage_progress_meta.setObjectName("remoteStorageProgressMeta")
+        self.storage_progress_meta.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        progress_header.addWidget(self.storage_progress_title, stretch=1)
+        progress_header.addWidget(self.storage_progress_meta)
+        progress_layout.addLayout(progress_header)
+        self.storage_progress_bar = AnimatedProgressBar(bar_height=6)
+        self.storage_progress_bar.setObjectName("remoteStorageProgressBar")
+        progress_layout.addWidget(self.storage_progress_bar)
+        self.storage_progress_detail = WrappedLabel("")
+        self.storage_progress_detail.setObjectName("remoteStorageProgressDetail")
+        self.storage_progress_detail.hide()
+        progress_layout.addWidget(self.storage_progress_detail)
+        self.storage_progress_box.hide()
+        self.storage_tile.add_body(self.storage_progress_box)
         self.storage_status = WrappedLabel("")
         self.storage_status.setObjectName("remoteStorageStatus")
         self.storage_tile.add_body(self.storage_status)
@@ -737,6 +824,11 @@ class RemoteEngineSection(QObject):
         'pair_device_button',
         'bring_back_button',
         'storage_tile',
+        'storage_progress_box',
+        'storage_progress_title',
+        'storage_progress_meta',
+        'storage_progress_bar',
+        'storage_progress_detail',
         'host_status',
         'keep_records_tile',
         'manage_mcp_tile',
@@ -827,7 +919,7 @@ class RemoteEngineSection(QObject):
         self._refresh_host(service)
 
     def _refresh_records(self) -> None:
-        """The storage tile: the choice, what's on the host, what's under way."""
+        """The storage tile: the choice, progress bar, what's on the host."""
         if not self._built:
             return
         try:
@@ -838,6 +930,9 @@ class RemoteEngineSection(QObject):
             return
         self.storage_tile.setVisible(self._service is not None and status.paired)
         if not status.paired:
+            self.storage_progress_box.hide()
+            self.storage_progress_bar.reset()
+            self._records_transferring = False
             return
         host = status.host_name or "the host"
         host_button = self.location_buttons["host"]
@@ -849,26 +944,59 @@ class RemoteEngineSection(QObject):
             button.setEnabled(not self._records_busy)
         self.storage_tile.set_description(_records_location_description(status.location, host))
 
-        stored = _stored_phrase(status.stored)
-        lines = self._records_status_lines(status, host, stored)
-        self.storage_status.setText(" ".join(lines))
-        self.storage_status.setVisible(bool(lines))
-        self._show_record_actions(status, host, stored)
+        transferring = self._refresh_storage_progress(status, host)
+        if transferring and not self._records_transferring and status.progress is not None:
+            # Drop stale one-shot notes once a live transfer takes over the card.
+            self._records_note = ""
+        self._records_transferring = transferring
 
-    def _records_status_lines(self, status, host: str, stored: str) -> list:
+        stored = _stored_phrase(status.stored)
+        lines = self._records_status_lines(status, host, stored, transferring=transferring)
+        self.storage_status.setText("\n".join(lines))
+        self.storage_status.setVisible(bool(lines))
+        self._show_record_actions(status, host, stored, transferring=transferring)
+
+    def _refresh_storage_progress(self, status, host: str) -> bool:
+        """Show a smooth progress bar while records are being queued, moved, copied or fetched."""
+        progress = getattr(status, "progress", None)
+        if progress is not None:
+            title, meta, detail = _format_storage_progress(progress, host)
+            self.storage_progress_title.setText(title)
+            self.storage_progress_meta.setText(meta)
+            self.storage_progress_meta.setVisible(bool(meta))
+            self.storage_progress_detail.setText(detail)
+            self.storage_progress_detail.setVisible(bool(detail))
+            fraction = progress.fraction
+            if fraction is None:
+                self.storage_progress_bar.set_indeterminate()
+            else:
+                self.storage_progress_bar.set_fraction(fraction)
+            self.storage_progress_box.show()
+            return True
+        if self._records_busy or status.active:
+            self.storage_progress_title.setText(self._records_busy or status.active)
+            self.storage_progress_meta.setText("")
+            self.storage_progress_meta.hide()
+            self.storage_progress_detail.setText("")
+            self.storage_progress_detail.hide()
+            self.storage_progress_bar.set_indeterminate()
+            self.storage_progress_box.show()
+            return True
+        self.storage_progress_box.hide()
+        self.storage_progress_bar.reset()
+        return False
+
+    def _records_status_lines(self, status, host: str, stored: str, *,
+                              transferring: bool = False) -> list:
         lines = []
-        if self._records_busy:
-            lines.append(self._records_busy)
-        elif status.active:
-            lines.append(status.active)
         host_problem = _records_host_problem(status, host)
         if host_problem:
             lines.append(host_problem)
-        elif status.waiting and not status.active:
+        elif status.waiting and not transferring:
             lines.append(status.waiting)
-        if status.pending and not status.active and not self._records_busy:
-            lines.append(f"{status.pending} waiting to be sent.")
-        if status.error and status.pending and not status.active:
+        if status.pending and not transferring:
+            lines.append(f"{status.pending:,} waiting to be sent.")
+        if status.error and status.pending and not transferring:
             lines.append(status.error)
         if stored:
             lines.append(f"On {host}: {stored}.")
@@ -876,8 +1004,9 @@ class RemoteEngineSection(QObject):
             lines.append(self._records_note)
         return lines
 
-    def _show_record_actions(self, status, host: str, stored: str) -> None:
-        blocked = bool(self._records_busy)
+    def _show_record_actions(self, status, host: str, stored: str, *,
+                             transferring: bool = False) -> None:
+        blocked = bool(transferring)
         self.send_existing_button.setVisible(status.location != "local")
         self.send_existing_button.setText(
             "Move existing records" if status.location == "host" else "Copy existing records"
@@ -890,7 +1019,7 @@ class RemoteEngineSection(QObject):
         self.bring_back_button.setVisible(has_stored)
         self.bring_back_button.setToolTip(f"Move everything {host} keeps for this computer back here")
         self.bring_back_button.setEnabled(not blocked)
-        self.retry_records_button.setVisible(bool(status.pending and status.error and not status.active))
+        self.retry_records_button.setVisible(bool(status.pending and status.error and not transferring))
 
     def _refresh_client(self, service) -> None:
         pairing = service.client_pairing()
@@ -1655,7 +1784,7 @@ class RemoteEngineSection(QObject):
             queued = records.send_existing()
             if not queued:
                 return "Everything here is already on the host."
-            return f"Queued {queued} record{'s' if queued != 1 else ''} to send."
+            return ""
 
         self._run_records_job("Queuing records…", work)
 

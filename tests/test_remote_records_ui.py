@@ -21,7 +21,7 @@ from PyQt6.QtCore import QEvent
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from services.remote_records import sync as sync_module
-from services.remote_records.sync import SyncStatus
+from services.remote_records.sync import SyncProgress, SyncStatus
 
 
 class FakeRecords:
@@ -198,6 +198,61 @@ def test_what_the_host_keeps_is_counted_and_can_be_brought_back():
     assert "On devbox: 3 dictations and 1 meeting (2.0 KB)." in section.storage_status.text()
     assert section.bring_back_button.isVisibleTo(dialog)
     dialog.close()
+
+
+def test_storage_progress_bar_tracks_batch_cleanly_without_stale_queue_note():
+    records = FakeRecords(
+        location="host",
+        host_keeps=True,
+        host_supports=True,
+        pending=677,
+        stored={"dictation": {"count": 142, "bytes": 1024 * 1024}},
+        progress=SyncProgress(
+            verb="moving",
+            completed=142,
+            total=819,
+            current_fraction=0.5,
+            current_kind="dictation",
+            current_bytes=512,
+            current_total_bytes=1024,
+        ),
+    )
+    dialog, section = _section(records, _Service())
+    try:
+        assert section.storage_progress_box.isVisibleTo(dialog)
+        assert section.storage_progress_title.text() == "Moving records to devbox"
+        assert section.storage_progress_meta.text() == "142 of 819 · 17%"
+        assert not section.storage_progress_bar.is_indeterminate
+        assert abs(section.storage_progress_bar.fraction - (142.5 / 819)) < 0.001
+        assert not section.storage_progress_detail.isVisibleTo(dialog)
+        assert "Queued" not in section.storage_status.text()
+        assert "99%" not in section.storage_status.text()
+        assert not section.send_existing_button.isEnabled()
+        assert not section.bring_back_button.isEnabled()
+
+        # A large current item (e.g. a meeting) surfaces byte progress beneath the bar.
+        records.fields["progress"] = SyncProgress(
+            verb="moving",
+            completed=142,
+            total=819,
+            current_fraction=0.4,
+            current_kind="meeting",
+            current_bytes=40 * 1024 * 1024,
+            current_total_bytes=100 * 1024 * 1024,
+        )
+        section.refresh()
+        assert section.storage_progress_detail.isVisibleTo(dialog)
+        assert "Current meeting:" in section.storage_progress_detail.text()
+
+        # Once transfer finishes, the progress bar hides and actions re-enable.
+        records.fields["progress"] = None
+        records.fields["pending"] = 0
+        section.refresh()
+        assert not section.storage_progress_box.isVisibleTo(dialog)
+        assert section.send_existing_button.isEnabled()
+        assert section.bring_back_button.isEnabled()
+    finally:
+        dialog.close()
 
 
 def test_the_host_toggle_saves_the_opt_in():

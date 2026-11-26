@@ -68,6 +68,61 @@ class RecordsUnavailable(RuntimeError):
 
 
 @dataclass(frozen=True)
+class SyncProgress:
+    """In-flight transfer progress across a batch of records."""
+
+    #: "moving", "copying", "sending", or "bringing_back"
+    verb: str = "sending"
+    #: Records finished so far in this pass.
+    completed: int = 0
+    #: Total records in this pass (0 when unknown / indeterminate).
+    total: int = 0
+    #: Fractional progress through the current record (0.0 to 1.0).
+    current_fraction: float = 0.0
+    #: Kind of the record currently transferring ("dictation", "meeting", or "").
+    current_kind: str = ""
+    #: Bytes transferred so far for the current record, and its total size.
+    current_bytes: int = 0
+    current_total_bytes: int = 0
+
+    @property
+    def fraction(self) -> Optional[float]:
+        """Overall 0.0-1.0 progress across the pass, or None when indeterminate."""
+        if self.total <= 0:
+            return None
+        current = max(0.0, min(1.0, float(self.current_fraction)))
+        return max(0.0, min(1.0, (self.completed + current) / self.total))
+
+    @property
+    def percent(self) -> Optional[int]:
+        """Whole-number percentage (0-100), capped at 99 until the last record commits."""
+        frac = self.fraction
+        if frac is None:
+            return None
+        if self.completed >= self.total > 0:
+            return 100
+        return min(99, int(frac * 100))
+
+
+def _format_active_progress(progress: SyncProgress, host_name: str = "") -> str:
+    """Single-line fallback description of ``progress`` for callers reading ``status.active``."""
+    where = f" to {host_name}" if host_name else ""
+    from_where = f" from {host_name}" if host_name else ""
+    pct = progress.percent
+    pct_part = f" · {pct}%" if pct is not None else ""
+    if progress.total > 1:
+        if progress.verb == "bringing_back":
+            return f"Bringing records back{from_where} ({progress.completed} of {progress.total}){pct_part}"
+        verb = {"moving": "Moving", "copying": "Copying"}.get(progress.verb, "Sending")
+        return f"{verb} records{where} ({progress.completed} of {progress.total}){pct_part}"
+    noun = "meeting" if progress.current_kind == "meeting" else "dictation" if progress.current_kind == "dictation" else "record"
+    if progress.verb == "bringing_back":
+        return f"Bringing a {noun} back{from_where}{pct_part}"
+    verb = {"moving": "Moving", "copying": "Copying"}.get(progress.verb, "Sending")
+    return f"{verb} a {noun}{where}{pct_part}"
+
+
+@dataclass(frozen=True)
 class SyncStatus:
     """What the storage section of Settings shows."""
 
@@ -81,6 +136,7 @@ class SyncStatus:
     pending: int = 0
     waiting: str = ""
     active: str = ""
+    progress: Optional[SyncProgress] = None
     error: str = ""
     #: This computer's records on the host: {"dictation": {"count", "bytes"}, ...}.
     stored: Dict[str, dict] = field(default_factory=dict)
@@ -118,6 +174,7 @@ class RecordSync:
         self._stored: Dict[str, dict] = {}
         self._waiting = ""
         self._active = ""
+        self._progress_state: Optional[SyncProgress] = None
         self._error = ""
         self._failures = 0
         self._retry_at = 0.0
@@ -125,6 +182,7 @@ class RecordSync:
         self._unreachable_at = 0.0
         self._retry_failed = False
         self._progress_at = 0.0
+        self._records_notify_at = 0.0
         self._remote_items: Dict[tuple, dict] = {}
         self._audio_locks: Dict[str, threading.Lock] = {}
 
@@ -417,6 +475,7 @@ class RecordSync:
                 pending=len(pending),
                 waiting=self._waiting,
                 active=self._active,
+                progress=self._progress_state,
                 error=self._error,
                 stored=dict(self._stored),
             )
@@ -476,7 +535,7 @@ class RecordSync:
         """One pass over the outbox. Blocking; the worker thread's body."""
         pairing, _token = self._pairing()
         if pairing is None:
-            self._set(waiting="", active="", error="")
+            self._set(waiting="", active="", progress_state=None, error="")
             return
         self._retarget(pairing.fingerprint)
         if startup or time.monotonic() - self._digest_at >= DIGEST_CHECK_S:
@@ -493,16 +552,19 @@ class RecordSync:
         except Exception as exc:
             self._failed_attempt(str(exc) or "Couldn't reach the host.")
             return
+        changed = False
         try:
-            self._transfer(connection, pairing, rows, checkouts)
+            changed = self._transfer(connection, pairing, rows, checkouts)
         except RecordsUnavailable as exc:
             self._failed_attempt(str(exc))
         finally:
-            self._set(active="")
+            self._set(active="", progress_state=None)
             try:
                 connection.close()
             except Exception:
                 pass
+        if changed and not self._stop.is_set():
+            self.refresh_summary()
 
     def _outbox_rows(self) -> list:
         """Pending rows, plus failed ones once after the user asked to retry them."""
@@ -512,27 +574,137 @@ class RecordSync:
             rows += self._rows(state="failed")
         return rows
 
-    def _transfer(self, connection, pairing, rows: list, checkouts: list) -> None:
-        """Send ``rows`` and return ``checkouts`` over ``connection``, until stopped."""
+    @staticmethod
+    def _batch_verb(rows: list) -> str:
+        actions = {row.action for row in rows if row.action != "delete"}
+        if actions == {"move"}:
+            return "moving"
+        if actions == {"copy"}:
+            return "copying"
+        return "sending"
+
+    def _update_progress(self, progress: Optional[SyncProgress], host_name: str = "",
+                         *, force: bool = False) -> None:
+        """Store ``progress`` and notify listeners at most ~7 times a second."""
+        now = time.monotonic()
+        active = _format_active_progress(progress, host_name) if progress is not None else ""
+        changed = False
+        with self._lock:
+            if self._progress_state != progress or self._active != active:
+                self._progress_state = progress
+                self._active = active
+                changed = True
+        if not changed:
+            return
+        if force or now - self._progress_at >= 0.15:
+            self._progress_at = now
+            self._notify()
+
+    def _transfer(self, connection, pairing, rows: list, checkouts: list) -> bool:
+        """Send ``rows`` and return ``checkouts`` over ``connection``, until stopped.
+
+        Returns True when at least one record was stored on or deleted from the host.
+        """
         if not self._host_supports and (rows or checkouts):
             self._set(waiting=f"Update OpenWhisper on {pairing.host_name} to keep records there.")
-            return
-        for row in rows:
+            return False
+        upload_rows = [row for row in rows if row.action != "delete"]
+        batch_total = len(upload_rows)
+        batch_done = 0
+        verb = self._batch_verb(upload_rows)
+        batch_mode = len(rows) > 1
+        changed = False
+        if batch_total:
+            self._update_progress(
+                SyncProgress(
+                    verb=verb,
+                    completed=0,
+                    total=batch_total,
+                    current_kind=upload_rows[0].kind,
+                ),
+                host_name=pairing.host_name,
+                force=True,
+            )
+        for index, row in enumerate(rows):
             if self._stop.is_set():
-                return
-            self._process(connection, row, pairing.host_name)
+                if batch_mode and changed:
+                    self._notify("records")
+                return changed
+            if row.action != "delete":
+                current = self._row(row.kind, row.record_id)
+                if current is None or current.state == "done":
+                    batch_total = max(batch_done, batch_total - 1)
+                    if batch_total == 0:
+                        self._update_progress(None, force=True)
+                    continue
+                row = current
+                if row.action in ("move", "copy") and verb in ("moving", "copying"):
+                    expected = "moving" if row.action == "move" else "copying"
+                    if expected != verb:
+                        verb = expected
+
+                def on_bytes(sent: int, total_bytes: int, _kind=row.kind, _done=batch_done,
+                             _total=batch_total, _verb=verb) -> None:
+                    frac = (sent / total_bytes) if total_bytes else 0.0
+                    self._update_progress(
+                        SyncProgress(
+                            verb=_verb,
+                            completed=_done,
+                            total=_total,
+                            current_fraction=frac,
+                            current_kind=_kind,
+                            current_bytes=sent,
+                            current_total_bytes=total_bytes,
+                        ),
+                        host_name=pairing.host_name,
+                    )
+
+                processed = self._process(
+                    connection, row, pairing.host_name,
+                    on_bytes=on_bytes, notify_records=not batch_mode,
+                )
+                batch_done += 1
+                if processed:
+                    changed = True
+                if batch_total:
+                    next_kind = next(
+                        (r.kind for r in rows[index + 1:] if r.action != "delete"),
+                        row.kind,
+                    )
+                    self._update_progress(
+                        SyncProgress(
+                            verb=verb,
+                            completed=min(batch_done, batch_total),
+                            total=batch_total,
+                            current_fraction=0.0,
+                            current_kind=next_kind,
+                        ),
+                        host_name=pairing.host_name,
+                        force=(batch_done >= batch_total),
+                    )
+                if batch_mode and changed and time.monotonic() - self._records_notify_at >= 2.0:
+                    self._records_notify_at = time.monotonic()
+                    self._notify("records")
+            else:
+                if self._process(connection, row, pairing.host_name, notify_records=not batch_mode):
+                    changed = True
         for row in checkouts:
             if self._stop.is_set():
-                return
+                if batch_mode and changed:
+                    self._notify("records")
+                return changed
             self._return_checkout(connection, row)
+        if batch_mode and changed:
+            self._notify("records")
         self._failures = 0
         self._retry_at = 0.0
+        return changed
 
     def _failed_attempt(self, message: str) -> None:
         delay = RETRY_BACKOFF_S[min(self._failures, len(RETRY_BACKOFF_S) - 1)]
         self._failures += 1
         self._retry_at = time.monotonic() + delay
-        self._set(error=message, active="")
+        self._set(error=message, active="", progress_state=None)
 
     def _retarget(self, fingerprint: str) -> None:
         """Pending records follow the pairing: to the host paired now."""
@@ -571,11 +743,13 @@ class RecordSync:
             due.append(row)
         return due
 
-    def _process(self, connection, row, host_name: str) -> None:
+    def _process(self, connection, row, host_name: str, *,
+                 on_bytes: Optional[Callable[[int, int], None]] = None,
+                 notify_records: bool = True) -> bool:
         handler = self.kinds.get(row.kind)
         if handler is None:
             self._drop(row.kind, row.record_id)
-            return
+            return False
         if row.action == "delete":
             try:
                 if row.record_id == self.ALL:
@@ -585,17 +759,18 @@ class RecordSync:
                                        timeout=60)
             except Exception as exc:
                 self._record_failure(row, exc)
-                return
+                return False
             self._drop(row.kind, row.record_id)
-            self._notify("records")
-            return
+            if notify_records:
+                self._notify("records")
+            return True
         if not handler.exists(row.record_id):
             self._drop(row.kind, row.record_id)
-            return
+            return False
         reason = handler.ready(row.record_id)
         if reason:
             self._set(waiting=f"Waiting to send a {row.kind}: {reason}.")
-            return
+            return False
         if self._host_keeps is not True:
             self._set(waiting=(
                 f"{host_name} isn't keeping records for other computers yet. Turn on "
@@ -606,14 +781,15 @@ class RecordSync:
         # the record differ from it once sent, at worst sending it again.
         sent = self._digest(handler, row.record_id)
         try:
-            self.upload(connection, row.kind, row.record_id)
+            self.upload(connection, row.kind, row.record_id, on_bytes=on_bytes)
         except RecordsUnavailable:
             raise
         except Exception as exc:
             self._record_failure(row, exc)
-            return
-        self._uploaded(row.kind, row.record_id, row.action, sent)
+            return False
+        self._uploaded(row.kind, row.record_id, row.action, sent, notify=notify_records)
         self._set(waiting="", error="")
+        return True
 
     @staticmethod
     def _digest(handler, record_id: str) -> Optional[str]:
@@ -624,7 +800,7 @@ class RecordSync:
             return None
 
     def _uploaded(self, kind: str, record_id: str, action: str,
-                  sent: Optional[str] = None) -> None:
+                  sent: Optional[str] = None, *, notify: bool = True) -> None:
         """Mark a record sent; ``sent`` is its digest from before the upload."""
         handler = self.kinds[kind]
         self._put(kind, record_id, state="done",
@@ -637,7 +813,8 @@ class RecordSync:
         if current is not None and current != sent:
             # A move keeps its only copy here until the edit is sent too.
             self._put(kind, record_id, state="pending")
-            self._notify("records")
+            if notify:
+                self._notify("records")
             self.wake()
             return
         # A moved record open here (a meeting's dashboard) stays as a viewing
@@ -645,7 +822,8 @@ class RecordSync:
         if action == "move" and not handler.in_use(record_id):
             self._delete_quietly(kind, record_id)
             self._drop(kind, record_id)
-        self._notify("records")
+        if notify:
+            self._notify("records")
 
     def _delete_quietly(self, kind: str, record_id: str) -> None:
         with self._lock:
@@ -706,7 +884,8 @@ class RecordSync:
         return {"max_recordings": resolve_max_saved_recordings(settings),
                 "max_bytes": resolve_max_saved_recordings_bytes(settings)}
 
-    def upload(self, connection, kind: str, record_id: str) -> None:
+    def upload(self, connection, kind: str, record_id: str, *,
+               on_bytes: Optional[Callable[[int, int], None]] = None) -> None:
         """Send one record, resuming what the host already has, and commit it."""
         handler = self.kinds[kind]
         if kind == "dictation":
@@ -728,7 +907,7 @@ class RecordSync:
         total = sum(size for _name, _path, size in items)
         for attempt in range(2):
             try:
-                self._send(connection, kind, record_id, items, manifest, total)
+                self._send(connection, kind, record_id, items, manifest, total, on_bytes=on_bytes)
                 break
             except Exception as exc:
                 if attempt or getattr(exc, "code", None) != "bad_request":
@@ -737,7 +916,8 @@ class RecordSync:
                 connection.request("records_abort", kind=kind, record_id=record_id, timeout=30)
         connection.request("records_commit", kind=kind, record_id=record_id, timeout=300)
 
-    def _send(self, connection, kind, record_id, items, manifest: bytes, total: int) -> None:
+    def _send(self, connection, kind, record_id, items, manifest: bytes, total: int, *,
+              on_bytes: Optional[Callable[[int, int], None]] = None) -> None:
         begin = connection.request("records_begin", kind=kind, record_id=record_id,
                                    files=len(items), bytes=total, timeout=60)
         received = begin.get("received") if isinstance(begin.get("received"), dict) else {}
@@ -770,19 +950,34 @@ class RecordSync:
                     new_offset = int(reply.get("received") or 0)
                     sent += new_offset - offset
                     offset = new_offset
-                    self._progress(label, sent, total)
+                    self._report_send_progress(label, kind, sent, total, on_bytes)
             finally:
                 if handle is not None:
                     handle.close()
-            self._progress(label, sent, total)
+            self._report_send_progress(label, kind, sent, total, on_bytes)
 
-    def _progress(self, label: str, sent: int, total: int) -> None:
-        """At most four updates a second: each one refreshes Settings."""
-        now = time.monotonic()
-        if not total or now - self._progress_at < 0.25:
+    def _report_send_progress(self, label: str, kind: str, sent: int, total: int,
+                              on_bytes: Optional[Callable[[int, int], None]]) -> None:
+        if on_bytes is not None:
+            on_bytes(sent, total)
             return
-        self._progress_at = now
-        self._set(active=f"Sending a {label} · {min(99, sent * 100 // total)}%")
+        self._progress(label, sent, total, kind=kind)
+
+    def _progress(self, label: str, sent: int, total: int, *, kind: str = "") -> None:
+        """Fallback progress when ``upload`` is called directly outside ``_transfer``."""
+        if not total:
+            return
+        self._update_progress(
+            SyncProgress(
+                verb="sending",
+                completed=0,
+                total=1,
+                current_fraction=sent / total,
+                current_kind=kind or label,
+                current_bytes=sent,
+                current_total_bytes=total,
+            )
+        )
 
     # ---- reading the host's records ----
 
@@ -981,7 +1176,21 @@ class RecordSync:
     def _bring_back(self, progress: Optional[Callable[[str], None]] = None) -> int:
         """Move every record the host holds for this computer back here. Blocking."""
         moved = 0
+        pairing, _token = self._pairing()
+        host_name = pairing.host_name if pairing is not None else ""
         connection = self._open()
+        with self._lock:
+            expected_total = sum(
+                int((summary or {}).get("count") or 0)
+                for summary in self._stored.values()
+                if isinstance(summary, dict)
+            )
+        if expected_total:
+            self._update_progress(
+                SyncProgress(verb="bringing_back", completed=0, total=expected_total),
+                host_name=host_name,
+                force=True,
+            )
         try:
             for kind in KINDS:
                 handler = self.kinds.get(kind)
@@ -1004,11 +1213,41 @@ class RecordSync:
                         break
                     for item in items:
                         record_id = str(item["id"])
+                        total_count = max(expected_total, moved + len(items)) if expected_total else 0
                         if progress is not None:
-                            progress(f"Bringing back {moved + 1}…")
+                            progress(
+                                f"Bringing back {moved + 1} of {total_count}…"
+                                if total_count else f"Bringing back {moved + 1}…"
+                            )
+
+                        def on_fetch(got: int, total_bytes: int, _kind=kind,
+                                     _moved=moved, _total=total_count) -> None:
+                            frac = (got / total_bytes) if total_bytes else 0.0
+                            self._update_progress(
+                                SyncProgress(
+                                    verb="bringing_back",
+                                    completed=_moved,
+                                    total=_total,
+                                    current_fraction=frac,
+                                    current_kind=_kind,
+                                    current_bytes=got,
+                                    current_total_bytes=total_bytes,
+                                ),
+                                host_name=host_name,
+                            )
+
+                        self._update_progress(
+                            SyncProgress(
+                                verb="bringing_back",
+                                completed=moved,
+                                total=total_count,
+                                current_kind=kind,
+                            ),
+                            host_name=host_name,
+                        )
                         try:
                             with tempfile.TemporaryDirectory(dir=self._staging_parent()) as folder:
-                                record = self._fetch(connection, kind, record_id, folder)
+                                record = self._fetch(connection, kind, record_id, folder, on_fetch)
                                 handler.import_record(record_id, folder, record, None)
                         except Exception:
                             logger.warning("Could not bring back %s %s", kind, record_id, exc_info=True)
@@ -1017,8 +1256,20 @@ class RecordSync:
                         connection.request("records_delete", kind=kind, record_id=record_id, timeout=60)
                         self._drop(kind, record_id)
                         moved += 1
+                        self._update_progress(
+                            SyncProgress(
+                                verb="bringing_back",
+                                completed=moved,
+                                total=max(total_count, moved) if total_count else 0,
+                                current_kind=kind,
+                            ),
+                            host_name=host_name,
+                        )
         finally:
+            self._set(active="", progress_state=None)
             connection.close()
+            if moved and not self._stop.is_set():
+                self.refresh_summary()
             self._notify("records")
         return moved
 
