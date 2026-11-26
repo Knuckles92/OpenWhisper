@@ -98,6 +98,13 @@ def _forward(kind: str, payload: Mapping[str, Any], meeting_id: str) -> None:
             publish(catalog.MEETING_VOICE_COMMAND, catalog.meeting_voice_command(
                 meeting_id, command.strip()
             ))
+    elif kind == "finalization":
+        state = payload.get("finalization") if isinstance(payload.get("finalization"), Mapping) else payload
+        status = str(state.get("status") or "")
+        if status in {"complete", "completed", "done", "partial", "failed"}:
+            publish(catalog.MEETING_FINALIZED, catalog.meeting_finalized(
+                meeting_id, status, ok=status in {"complete", "completed", "done"}
+            ))
 
 
 def forward(kind: str, payload: Mapping[str, Any], *, meeting_id: str = "") -> None:

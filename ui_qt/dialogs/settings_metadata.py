@@ -48,6 +48,8 @@ CONTROL_DESTINATIONS = {'mcp_page': 'mcp',
  'audio_device_combo': 'recording',
  'audio_device_tile': 'recording',
  'microphone_backup_tile': 'recording',
+ 'audio_echo_cancellation_tile': 'recording',
+ 'audio_echo_cancellation_check': 'recording',
  'recording_retention_combo': 'recording',
  'recording_retention_tile': 'recording',
  'max_recordings_label': 'recording',
@@ -240,6 +242,12 @@ PAGE_SEARCH_FIELDS = {'mcp': [('mcp_history_tile',
                ('microphone_backup_tile',
                 "If it's unplugged, use",
                 'OpenWhisper moves down this list, even in the middle of a dictation.'),
+               ('audio_echo_cancellation_tile',
+                'Cancel system audio (Beta)',
+                'Off by default. Captures system audio alongside your microphone during dictation '
+                'and uses WebRTC echo cancellation to strip out speakers (shows, videos, music) '
+                'before transcription. Skips automatically when no speaker bleed is detected, '
+                'such as with headphones. On macOS, requires Screen Recording permission.'),
                ('recording_retention_tile',
                 'Keep recordings',
                 'Keep a set number of recordings or cap the recordings folder size. The oldest '

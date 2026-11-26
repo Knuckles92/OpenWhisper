@@ -55,6 +55,9 @@ cryptography>=42.0
 # Meeting Mode: system-audio loopback capture backend
 # Windows fallback for WASAPI; production path on Linux (Pulse/PipeWire-Pulse).
 soundcard>=0.4.3 ; sys_platform == "win32" or sys_platform == "linux"
+# Beta dictation echo cancellation: WebRTC AEC3 bindings for cancelling
+# system audio (speakers) bleeding into the microphone.
+pywebrtc-audio>=0.2.0
 # Meeting Mode: macOS system-audio capture. macOS has no loopback input
 # device, so the "Others" channel comes from a ScreenCaptureKit stream
 # (CoreMedia decodes its buffers, Quartz preflights the permission).

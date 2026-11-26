@@ -65,6 +65,8 @@ class Summary:
     #: Everything a search matches against, lowercased.
     words: str
     thumb: QImage | None
+    #: User-facing reference number such as "#001", or "".
+    ref: str = ""
 
 
 class _Relay(QObject):
@@ -127,7 +129,8 @@ def _thumb(path: Path, ratio: float, box: QSize = THUMB_SIZE, radius: float = 8)
 
 
 def summarize(folder: Path, today: date, ratio: float = 1.0, *,
-              thumb_size: QSize | None = THUMB_SIZE, thumb_radius: float = 8) -> Summary:
+              thumb_size: QSize | None = THUMB_SIZE, thumb_radius: float = 8,
+              number: int | None = None) -> Summary:
     """Read one capture folder for its card; any thread.
 
     ``thumb_size`` and ``thumb_radius`` shape its first screenshot, for a
@@ -139,13 +142,20 @@ def summarize(folder: Path, today: date, ratio: float = 1.0, *,
     except (OSError, ValueError, KeyError, TypeError):
         document = None
     when = _started(folder, document)
+    resolved_number = (
+        number if number is not None
+        else (document.number if document is not None and document.number is not None
+              else library.number_for(folder))
+    )
+    ref = library.format_number(resolved_number)
     if document is None:
         return Summary(
             folder, when,
             title="Not finished" if draft else "Can't be opened",
             meta=_day(when, today) if when else folder.name,
             pill="Interrupted" if draft else "", pill_tone="warning",
-            words=folder.name.lower(), thumb=None,
+            words=" ".join(part for part in (ref, folder.name) if part).lower(),
+            thumb=None, ref=ref,
         )
     shots = [section.shot for section in document.sections if section.shot]
     thumb = None
@@ -160,8 +170,8 @@ def summarize(folder: Path, today: date, ratio: float = 1.0, *,
         folder, when, title,
         meta=f"{_shots(len(shots))} · {clock(document.duration_s)}",
         pill="AI write-up" if write_up else "", pill_tone="",
-        words=" ".join([title, *(s.text for s in document.sections)]).lower(),
-        thumb=thumb,
+        words=" ".join([ref, title, *(s.text for s in document.sections)]).lower(),
+        thumb=thumb, ref=ref,
     )
 
 
@@ -172,14 +182,17 @@ def load_summaries(root: Path, today: date, *, limit=None, ratio=1.0, thumbnails
     def load() -> None:
         try:
             folders = library.entries(root)
+            numbers = library.folder_numbers(root)
         except OSError:
             logger.warning("Could not read walkthrough folders", exc_info=True)
             folders = []
+            numbers = {}
         summaries = []
         for folder in folders[:limit]:
             try:
                 summaries.append(summarize(folder, today, ratio,
-                                           thumb_size=THUMB_SIZE if thumbnails else None))
+                                           thumb_size=THUMB_SIZE if thumbnails else None,
+                                           number=numbers.get(folder)))
             except Exception:
                 logger.warning("Could not read walkthrough %s", folder, exc_info=True)
         loaded.emit(token, (summaries, len(folders)))
@@ -205,6 +218,12 @@ class WalkthroughCard(QFrame):
 
         top = QHBoxLayout()
         top.setSpacing(6)
+        if summary.ref:
+            self.ref_label = QLabel(summary.ref)
+            self.ref_label.setObjectName("walkthroughCardRef")
+            top.addWidget(self.ref_label)
+        else:
+            self.ref_label = None
         when = summary.when
         self.when_label = QLabel(f"{_day(when, today)} · {_time(when)}" if when else "")
         self.when_label.setObjectName("walkthroughCardWhen")

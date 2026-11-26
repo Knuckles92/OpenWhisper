@@ -175,6 +175,11 @@ def test_state_and_actions_need_only_the_token(client, control, settings):
         "control_recording": False,
         "text_filters": False,
         "agent_prompts": False,
+        "control_meetings": False,
+        "read_walkthroughs": False,
+        "control_walkthroughs": False,
+        "manage_personalization": False,
+        "control_app": False,
     }
     actions = call(client, "list_actions", modern=False)["structuredContent"]
     assert actions == {"actions": [{"id": "summarize", "name": "Summarize", "kind": "webhook"}]}

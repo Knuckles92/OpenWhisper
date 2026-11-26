@@ -86,6 +86,7 @@ python-dotenv==1.2.3
 python-multipart==0.0.32
 python-pptx==1.0.2
 python-xlib==0.33
+pywebrtc-audio==0.2.0
 PyYAML==6.0.3
 pywin32-ctypes==0.2.3
 pywin32==312

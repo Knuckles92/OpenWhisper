@@ -236,7 +236,10 @@ PAYLOAD_SCHEMAS: dict[str, dict] = {
     ),
     catalog.FILTER_FAILED: _object(filter_id=_STRING, name=_STRING, stage=_STRING, reason=_STRING),
     catalog.MEETING_STARTED: _object(meeting_id=_STRING, title=_TEXT),
+    catalog.MEETING_PAUSED: _object(meeting_id=_STRING),
+    catalog.MEETING_RESUMED: _object(meeting_id=_STRING),
     catalog.MEETING_ENDED: _object(meeting_id=_STRING, status=_STRING),
+    catalog.MEETING_FINALIZED: _object(meeting_id=_STRING, status=_STRING, ok=_BOOLEAN),
     catalog.MEETING_SEGMENTS: _object(
         meeting_id=_STRING,
         items={
@@ -251,6 +254,23 @@ PAYLOAD_SCHEMAS: dict[str, dict] = {
         },
     ),
     catalog.MEETING_VOICE_COMMAND: _object(meeting_id=_STRING, command=_TEXT),
+    catalog.WALKTHROUGH_STARTED: _object(job_id=_STRING, source=_SOURCE, auto_mode=_BOOLEAN),
+    catalog.WALKTHROUGH_SHOT_ADDED: _object(job_id=_STRING, shot_count={"type": "integer"}),
+    catalog.WALKTHROUGH_FINISHED: _object(
+        folder=_STRING,
+        number={"type": ["integer", "null"]},
+        ref=_STRING,
+        shots={"type": "integer"},
+        duration_s={"type": "number"},
+        written_up=_BOOLEAN,
+    ),
+    catalog.WALKTHROUGH_WRITEUP_COMPLETED: _object(
+        folder=_STRING,
+        number={"type": ["integer", "null"]},
+        ref=_STRING,
+        ok=_BOOLEAN,
+        error=_STRING,
+    ),
 }
 
 #: Optional subscription arguments, by event type; anything else is refused.

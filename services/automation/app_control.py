@@ -161,7 +161,14 @@ def _enabled_action(action_id: str):
     return action
 
 
-def _start(controller, action_id: str, source: str) -> str:
+def _start(
+    controller,
+    action_id: str,
+    source: str,
+    *,
+    profile_id: str = "",
+    route: bool = False,
+) -> str:
     runtime = controller.transcription_runtime
     if controller.recorder.is_recording:
         raise ControlError(BUSY, "OpenWhisper is already recording.")
@@ -169,9 +176,26 @@ def _start(controller, action_id: str, source: str) -> str:
         raise ControlError(BUSY, "OpenWhisper is busy with another recording.")
     if controller.is_meeting_active():
         raise ControlError(BUSY, "Meeting Mode is active; end the meeting first.")
+    if sum(bool(flag) for flag in (action_id, profile_id, route)) > 1:
+        raise ControlError(REFUSED, "Choose at most one of action_id, profile_id, or route.")
     if action_id:
         _enabled_action(action_id)
         start = partial(controller.start_action_recording, action_id, source=source)
+    elif profile_id:
+        from services.cleanup_profiles import find_cleanup_profile
+        from services.settings import settings_manager
+
+        if find_cleanup_profile(settings_manager.load_all_settings(), profile_id) is None:
+            raise ControlError(NOT_FOUND, f"No cleanup profile has id {profile_id!r}.")
+        start = partial(controller.start_profile_recording, profile_id, source=source)
+    elif route:
+        from services.actions import routing
+        from services.settings import settings_manager
+
+        status = routing.status(settings_manager.load_all_settings())
+        if not status.ready:
+            raise ControlError(REFUSED, status.message)
+        start = partial(runtime.start_recording, route="api", source=source)
     else:
         # What the record shortcut starts, with the caller as its source;
         # it refuses during backup or while the engine isn't ready.
@@ -229,6 +253,7 @@ class QtAppControl:
 
     def state(self) -> LiveState:
         from _version import __version__
+        from services.automation import app_control_ext as ext
 
         controller = self._require()
         runtime = controller.transcription_runtime
@@ -245,6 +270,8 @@ class QtAppControl:
             action_id=str(getattr(job, "action_id", "") or ""),
             job_id=str(getattr(job, "id", "") or ""),
             version=__version__,
+            meeting_state=ext.meeting_status(controller),
+            walkthrough_state=ext.walkthrough_status(controller),
         )
 
     def list_actions(self) -> list[dict]:
@@ -263,8 +290,24 @@ class QtAppControl:
             controller.transcription_runtime.run_action_text, action_id, text, source=source
         ))
 
-    def start_recording(self, *, action_id: str = "", source: str) -> str:
-        return call_on_qt(partial(_start, self._require(), action_id, source))
+    def start_recording(
+        self,
+        *,
+        action_id: str = "",
+        profile_id: str = "",
+        route: bool = False,
+        source: str,
+    ) -> str:
+        return call_on_qt(
+            partial(
+                _start,
+                self._require(),
+                action_id,
+                source,
+                profile_id=profile_id,
+                route=route,
+            )
+        )
 
     def stop_recording(self) -> None:
         call_on_qt(partial(_stop, self._require()))
@@ -274,6 +317,325 @@ class QtAppControl:
 
     def notify(self, text: str, *, title: str = "") -> None:
         call_on_qt(partial(_notify, self._require(), text, title))
+
+    # ---- Profiles, transforms & file transcription ----
+
+    def list_profiles(self) -> list[dict]:
+        from services.automation import app_control_ext as ext
+
+        return ext.list_profiles()
+
+    def list_transforms(self) -> list[dict]:
+        from services.automation import app_control_ext as ext
+
+        return ext.list_transforms()
+
+    def run_transform(self, transform_id: str, text: str, *, source: str = "mcp") -> str:
+        from services.automation import app_control_ext as ext
+
+        return ext.run_transform(self._require(), transform_id, text)
+
+    def transcribe_audio_file(
+        self, path: str, *, language: Optional[str] = None, source: str = "mcp"
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(
+            partial(ext.transcribe_audio_file, self._require(), path, language=language)
+        )
+
+    # ---- Meeting Mode ----
+
+    def meeting_status(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.meeting_status(self._require())
+
+    def start_meeting(
+        self, *, title: str = "", cloud: Optional[bool] = None, source: str = "mcp"
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.start_meeting, self._require(), title=title, cloud=cloud))
+
+    def pause_meeting(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.pause_meeting, self._require()))
+
+    def resume_meeting(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.resume_meeting, self._require()))
+
+    def end_meeting(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.end_meeting, self._require()))
+
+    def background_meeting(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.background_meeting, self._require()))
+
+    def retry_meeting_finalization(
+        self, *, step: str = "failed", meeting_id: Optional[str] = None
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(
+            partial(ext.retry_meeting_finalization, self._require(), step=step, meeting_id=meeting_id)
+        )
+
+    def manage_recovered_meeting(self, meeting_id: str, action: str) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.manage_recovered_meeting, self._require(), meeting_id, action))
+
+    def open_meeting_view(self, *, meeting_id: str = "", view: str = "dashboard") -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.open_meeting_view, self._require(), meeting_id=meeting_id, view=view))
+
+    # ---- Walkthroughs & screenshots ----
+
+    def walkthrough_status(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.walkthrough_status(self._require())
+
+    def start_walkthrough(
+        self, *, snap_mode: str = "", auto_mode: Optional[bool] = None, source: str = "mcp"
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(
+            partial(ext.start_walkthrough, self._require(), snap_mode=snap_mode, auto_mode=auto_mode, source=source)
+        )
+
+    def finish_walkthrough(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.finish_walkthrough, self._require()))
+
+    def cancel_walkthrough(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.cancel_walkthrough, self._require()))
+
+    def set_walkthrough_paused(self, paused: bool) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.set_walkthrough_paused, self._require(), paused))
+
+    def snap_walkthrough(self, *, snap_mode: str = "", source: str = "mcp") -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.snap_walkthrough, self._require(), snap_mode=snap_mode, source=source))
+
+    def choose_walkthrough_snap_mode(self, mode: str) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.choose_walkthrough_snap_mode, self._require(), mode))
+
+    def edit_walkthrough_shots(
+        self, action: str, *, number: Optional[int] = None, step: Optional[int] = None
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.edit_walkthrough_shots, self._require(), action, number=number, step=step))
+
+    def take_screenshot(self, *, source: str = "mcp") -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.take_screenshot, self._require(), source=source))
+
+    def list_walkthroughs(self, *, q: str = "", limit: int = 20) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.list_walkthroughs(q=q, limit=limit)
+
+    def get_walkthrough(
+        self, ref: str, *, spoken: bool = False, include_images: bool = False
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.get_walkthrough(ref, spoken=spoken, include_images=include_images)
+
+    def run_walkthrough_writeup(self, ref: str, *, style: str = "") -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.run_walkthrough_writeup(self._require(), ref, style=style)
+
+    # ---- Personalization ----
+
+    def get_personalization_summary(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.get_personalization_summary()
+
+    def list_dictionary(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.list_dictionary()
+
+    def add_dictionary_term(
+        self, term: str, *, heard: tuple[str, ...] = (), starred: bool = False
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(
+            partial(ext.add_dictionary_term, self._require(), term, heard=heard, starred=starred)
+        )
+
+    def bulk_add_dictionary_terms(self, items: list[dict], *, dry_run: bool = False) -> dict:
+        from services.automation import app_control_ext as ext
+
+        if dry_run:
+            return ext.bulk_add_dictionary_terms(self._require(), items, dry_run=True)
+        return call_on_qt(
+            partial(ext.bulk_add_dictionary_terms, self._require(), items, dry_run=False)
+        )
+
+    def remove_dictionary_term(self, term_or_id: str) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.remove_dictionary_term, self._require(), term_or_id))
+
+    def list_snippets(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.list_snippets()
+
+    def upsert_snippet(
+        self, trigger: str, text: str, *, snippet_id: str = "", formatted: bool = False
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(
+            partial(ext.upsert_snippet, self._require(), trigger, text, snippet_id=snippet_id, formatted=formatted)
+        )
+
+    def bulk_upsert_snippets(
+        self, items: list[dict], *, dry_run: bool = False, skip_existing: bool = True
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        if dry_run:
+            return ext.bulk_upsert_snippets(
+                self._require(), items, dry_run=True, skip_existing=skip_existing
+            )
+        return call_on_qt(
+            partial(
+                ext.bulk_upsert_snippets,
+                self._require(),
+                items,
+                dry_run=False,
+                skip_existing=skip_existing,
+            )
+        )
+
+    def delete_snippet(self, snippet_id: str) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.delete_snippet, self._require(), snippet_id))
+
+    def get_app_styles(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.get_app_styles()
+
+    def set_app_style_tone(self, category: str, tone: str) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.set_app_style_tone, self._require(), category, tone))
+
+    def set_app_style_override(self, match: str, category: str) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.set_app_style_override, self._require(), match, category))
+
+    def remove_app_style_override(self, match: str) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.remove_app_style_override, self._require(), match))
+
+    def list_walkthrough_styles(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.list_walkthrough_styles()
+
+    def upsert_walkthrough_style(self, name: str, instructions: str) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.upsert_walkthrough_style, self._require(), name, instructions))
+
+    def delete_walkthrough_style(self, style_id: str) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.delete_walkthrough_style, self._require(), style_id))
+
+    def list_languages(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.list_languages()
+
+    def set_active_language(self, code: str) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.set_active_language, self._require(), code))
+
+    def set_quick_record_profile(self, profile_id: str) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.set_quick_record_profile, self._require(), profile_id))
+
+    # ---- Engines, models, audio devices, remote & window ----
+
+    def engine_status(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.engine_status(self._require())
+
+    def list_models(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.list_models(self._require())
+
+    def select_model(self, engine: str, *, model: str = "") -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.select_model, self._require(), engine, model=model))
+
+    def download_model(self, model_name: str) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.download_model, self._require(), model_name))
+
+    def list_audio_devices(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.list_audio_devices()
+
+    def select_audio_device(self, name: str, *, hostapi: str = "") -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.select_audio_device, self._require(), name, hostapi=hostapi))
+
+    def remote_status(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.remote_status(self._require())
+
+    def reconnect_remote(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.reconnect_remote, self._require()))
+
+    def control_window(self, action: str, *, text: str = "", tab: str = "") -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.control_window, self._require(), action, text=text, tab=tab))
 
 
 def install(controller) -> None:

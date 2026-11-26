@@ -5532,6 +5532,30 @@ QLabel#walkthroughReadyTitle {
     font-weight: 600;
 }
 
+QToolButton#walkthroughReadyRef {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.14);
+    border: 1px solid @accent-tint-border;
+    border-radius: 6px;
+    padding: 1px 7px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QToolButton#walkthroughReadyRef:hover {
+    background-color: rgba(@accent-rgb, 0.24);
+}
+
+QLabel#walkthroughCardRef {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.12);
+    border: 1px solid @accent-tint-border;
+    border-radius: 5px;
+    padding: 0px 5px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
 QLabel#walkthroughReadySubtitle {
     color: @text-secondary;
     font-size: 12px;

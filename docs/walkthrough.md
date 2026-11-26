@@ -59,9 +59,13 @@ settings as **Settings → Dictation → Walkthroughs**:
 
 While the tab is open, the side panel on the right lists **Walkthroughs**
 instead of History, the way Meeting Mode lists Past Meetings there: one card
-per walkthrough, newest first, with its title (the write-up's heading, or
-its first words), its first screenshot, its length and an **AI write-up** or
-**Interrupted** label. The search box matches titles and everything said.
+per walkthrough, newest first, with its reference number (such as `#001`),
+its title (the write-up's heading, or its first words), its first screenshot,
+its length and an **AI write-up** or **Interrupted** label. The finished
+walkthrough popup also shows a clickable `#001` badge beside its title so you
+can copy or mention it easily (for example, telling an MCP-connected agent to
+read walkthrough `#001`). The search box matches reference numbers, titles and
+everything said.
 Clicking a card shows it in the tab's storyboard (below); **Open library**
 opens Saved Walkthroughs. The panel shows the newest 60; the library has
 them all.

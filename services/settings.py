@@ -886,6 +886,9 @@ class SettingsKey:
     # Ordered [{name, hostapi}] microphones; the single source of truth once
     # migrated from the legacy AUDIO_INPUT_DEVICE index (kept for downgrades).
     AUDIO_INPUT_PRIORITY: Final = ListSetting("audio_input_priority")
+    # Beta: cancel system audio (speakers) leaking into the microphone during
+    # dictation using WebRTC AEC3 with system-audio loopback as reference.
+    AUDIO_ECHO_CANCELLATION: Final = BoolSetting("audio_echo_cancellation", False)
     # Language codes the user dictates in, and the one currently active ("" =
     # the engine's own setting). Never written into LOCAL_ASR_LANGUAGE.
     DICTATION_LANGUAGES: Final = ListSetting("dictation_languages")
@@ -925,6 +928,12 @@ class SettingsKey:
     # On top of running actions: let a program send words to the user's
     # coding agent (an agent or Claude Code channel action), which acts on them.
     API_AGENT_PROMPTS: Final = BoolSetting("api_agent_prompts", False)
+    # Extended app control permissions: each powerful domain is opt-in and off by default.
+    API_CONTROL_MEETINGS: Final = BoolSetting("api_control_meetings", False)
+    API_READ_WALKTHROUGHS: Final = BoolSetting("api_read_walkthroughs", False)
+    API_CONTROL_WALKTHROUGHS: Final = BoolSetting("api_control_walkthroughs", False)
+    API_MANAGE_PERSONALIZATION: Final = BoolSetting("api_manage_personalization", False)
+    API_CONTROL_APP: Final = BoolSetting("api_control_app", False)
     # Saved hooks: [{id, name, url, events, enabled}] and so on; secrets are
     # in the credential store.
     AUTOMATION_WEBHOOKS: Final = ListSetting("automation_webhooks")

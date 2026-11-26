@@ -1849,6 +1849,27 @@ class SettingsDialog(QDialog):
             self._on_audio_device_changed
         )
 
+        self.audio_echo_cancellation_tile = SettingTile(
+            "Cancel system audio (Beta)",
+            "Off by default. Captures system audio alongside your microphone "
+            "during dictation and uses WebRTC echo cancellation to strip out "
+            "speakers (shows, videos, music) before transcription. Skips "
+            "automatically when no speaker bleed is detected, such as with "
+            "headphones. On macOS, requires Screen Recording permission.",
+            design_icon("filter-purple.svg"),
+        )
+        self.audio_echo_cancellation_check = (
+            self.audio_echo_cancellation_tile.checkbox
+        )
+        self._bindings.checkbox(
+            self.audio_echo_cancellation_check,
+            SettingsKey.AUDIO_ECHO_CANCELLATION,
+            SettingsKey.AUDIO_ECHO_CANCELLATION.read,
+        )
+        self._tile_group(
+            layout, "System audio (Beta)", [self.audio_echo_cancellation_tile]
+        )
+
         self.recording_retention_combo = ElidingComboBox()
         self.recording_retention_combo.addItem(
             "Keep all", RecordingRetentionMode.KEEP_ALL

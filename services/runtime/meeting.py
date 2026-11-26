@@ -1155,6 +1155,12 @@ class MeetingRuntime(QObject):
         self.meeting_state_changed.emit(
             {"active": True, "paused": True, "status": "paused", **_clock_fields(engine)}
         )
+        from services.automation import catalog, events
+
+        events.publish(
+            catalog.MEETING_PAUSED,
+            catalog.meeting_paused(str(getattr(engine, "meeting_id", "") or "")),
+        )
 
     def resume_meeting(self) -> None:
         engine = self._engine
@@ -1169,6 +1175,12 @@ class MeetingRuntime(QObject):
         self.meeting_status_update.emit("Meeting in progress")
         self.meeting_state_changed.emit(
             {"active": True, "paused": False, "status": "active", **_clock_fields(engine)}
+        )
+        from services.automation import catalog, events
+
+        events.publish(
+            catalog.MEETING_RESUMED,
+            catalog.meeting_resumed(str(getattr(engine, "meeting_id", "") or "")),
         )
 
     def end_meeting(self) -> None:

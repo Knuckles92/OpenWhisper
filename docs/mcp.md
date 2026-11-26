@@ -28,7 +28,9 @@ available, the copy has `<PASTE_TOKEN>` (or the prompt asks for the token) and
 you paste it from **Access token**.
 - **Permissions**, with separate switches for **Rename dictations**,
   **Rename finished meetings**, and **Read app preferences**. Expand
-  **Choose individual preferences** and its categories for all 21 write permissions.
+  **Choose individual preferences** and its categories (with per-category **Allow all**
+  toggles) to allow individual setting writes across Dictation, Appearance,
+  Personalization, Cleanup, Walkthroughs, Meetings, History, and Updates.
   Reading preferences does not grant permission to change them. Permissions can
   be configured while MCP is off and apply to every assistant using the token.
 
@@ -98,12 +100,17 @@ of an incorrect Running status.
 | `update_settings` | Atomically change individually permitted preferences |
 | `retitle_transcription` | Set a local transcription's display title |
 | `retitle_meeting` | Set a finished local meeting's title |
-| `get_live_state` | Whether OpenWhisper is recording or busy, and the live permissions |
-| `list_actions` | Your saved [actions](automation.md#actions) (no links, paths or folders) |
+| `get_live_state` | Whether OpenWhisper is recording, in a meeting, or in a walkthrough, plus live permissions |
+| `list_actions`, `list_profiles`, `list_transforms` | Your saved [actions](automation.md#actions), cleanup profiles, and text transforms |
 | `recent_events` | Recent [live events](automation.md#events), with a gap flag; needs **Follow live events** |
-| `run_action` | Run an action on text; needs **Run actions** |
+| `run_action`, `run_transform` | Run a saved action or text transform on text; needs **Run actions** |
 | `notify_user` | Show a short notice near the pointer; needs **Run actions** |
-| `start_dictation`, `stop_dictation`, `cancel_dictation` | Record for dictation or an action; needs **Start recordings** |
+| `start_dictation`, `stop_dictation`, `cancel_dictation` | Record for dictation, an action, a cleanup profile, or voice routing; needs **Start recordings** |
+| `get_meeting_live_state`, `start_meeting`, `pause_meeting`, `resume_meeting`, `end_meeting`, `background_meeting`, `retry_meeting_finalization`, `manage_recovered_meeting`, `open_meeting_view` | Inspect and control Meeting Mode lifecycle, recovery, and views; mutations need **Control Meeting Mode** |
+| `list_walkthroughs`, `get_walkthrough` | Browse and read saved walkthroughs by `#001` reference, `latest`, or folder ID (with optional screenshots); needs **Read saved walkthroughs** |
+| `start_walkthrough`, `finish_walkthrough`, `cancel_walkthrough`, `set_walkthrough_paused`, `snap_walkthrough`, `choose_walkthrough_snap_mode`, `edit_walkthrough_shots`, `run_walkthrough_writeup`, `take_screenshot` | Control walkthrough recording, screenshots, shot order, and AI write-ups; needs **Control walkthroughs & screenshots** |
+| `get_personalization_summary`, `list_dictionary`, `add_dictionary_term`, `bulk_add_dictionary_terms`, `remove_dictionary_term`, `list_snippets`, `upsert_snippet`, `bulk_upsert_snippets`, `delete_snippet`, `get_app_styles`, `set_app_style_tone`, `set_app_style_override`, `remove_app_style_override`, `list_walkthrough_styles`, `upsert_walkthrough_style`, `delete_walkthrough_style`, `list_languages`, `set_active_language`, `set_quick_record_profile` | Read a full personalization snapshot and manage dictionary terms (including bulk seed + `dry_run`), snippets, app style tones/overrides, walkthrough write-up styles, languages, and default Quick Record profile; mutations need **Manage dictionary, snippets & styles**. Built-in MCP prompts `personalize_from_context` and `personalize_from_history` guide assistants to seed personalization from past chats, projects, or dictation history. |
+| `get_engine_status`, `list_models`, `select_model`, `download_model`, `list_audio_devices`, `select_audio_device`, `get_remote_status`, `reconnect_remote`, `transcribe_audio_file`, `control_window` | Inspect and control speech engines/models, microphones, remote host connection, local audio file transcription, and desktop windows/Scratchpad; mutations need **Control models, devices, files & windows** |
 
 History retrieval tools remain read-only. They reuse the [History API](agent-api.md), including
 bounded cursor pagination, literal search, date filters, sanitized response

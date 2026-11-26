@@ -272,6 +272,11 @@ class AudioRecorder:
         self._overflow_times = deque()
         self._error_lock = threading.Lock()
         self._last_callback_at = 0.0
+        # Monotonic start time of the first recorded audio block, and closed
+        # (paused_at, resumed_at) spans, for aligning parallel loopback capture.
+        self.first_block_mono: Optional[float] = None
+        self._pause_started_mono: Optional[float] = None
+        self.pause_spans: List[tuple[float, float]] = []
         self._session_token = object()
         self._retiring_writers = []
         # Bumped for every stream this recorder opens or closes itself, so a
@@ -340,6 +345,9 @@ class AudioRecorder:
             self.input_overflows = 0
             self._overflow_times = deque()
             self._last_callback_at = 0.0
+            self.first_block_mono = None
+            self._pause_started_mono = None
+            self.pause_spans = []
             token = self._session_token
             self._audio_spool = RecordingJournal(
                 self.output_file, self.rate, self.channels,
@@ -538,6 +546,9 @@ class AudioRecorder:
                 self._post_roll_gate.arm()
                 self._stop_requested = True
                 self._stop_requested_at = time.monotonic()
+                if self._paused and self._pause_started_mono is not None:
+                    self.pause_spans.append((self._pause_started_mono, self._stop_requested_at))
+                    self._pause_started_mono = None
                 self._post_roll_deadline = (
                     self._stop_requested_at + config.POST_ROLL_MS / 1000.0
                 )
@@ -568,6 +579,8 @@ class AudioRecorder:
             if not self.is_recording or self._stop_requested or self._capture_canceled:
                 return False
             self._paused = True
+            if self._pause_started_mono is None:
+                self._pause_started_mono = time.monotonic()
         logger.info("Recording paused")
         return True
 
@@ -577,6 +590,9 @@ class AudioRecorder:
             if not self._paused:
                 return
             self._paused = False
+            if self._pause_started_mono is not None:
+                self.pause_spans.append((self._pause_started_mono, time.monotonic()))
+                self._pause_started_mono = None
         logger.info("Recording resumed")
 
     def _end_post_roll(self, reason: str) -> None:
@@ -631,13 +647,29 @@ class AudioRecorder:
                     # only what it hears is let go.
                     return
                 audio_copy = indata.copy()
+                block_frames = int(audio_copy.shape[0] if audio_copy.ndim else frames)
+                if self.first_block_mono is None:
+                    now_mono = self._last_callback_at
+                    block_start = now_mono - block_frames / float(self.rate)
+                    try:
+                        adc = float(time_info.inputBufferAdcTime)
+                        current = float(time_info.currentTime)
+                        if (
+                            math.isfinite(adc)
+                            and math.isfinite(current)
+                            and current > 0.0
+                            and 0.0 <= adc <= current
+                        ):
+                            block_start = now_mono - (current - adc)
+                    except Exception:
+                        pass
+                    self.first_block_mono = block_start
                 payload = audio_copy.tobytes()
                 if not self._audio_spool.append(payload):
                     self.dropped_frames += frames
                     self._stop_for_capture_error()
                     return
                 self._recorded_bytes += len(payload)
-                block_frames = int(audio_copy.shape[0] if audio_copy.ndim else frames)
                 self._recorded_sample_frames += block_frames
                 self._observe_block(audio_copy, block_frames)
 

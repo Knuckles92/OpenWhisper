@@ -345,6 +345,11 @@ def _sanitize_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "api_control_recording": False,
         "api_text_filters": False,
         "api_agent_prompts": False,
+        "api_control_meetings": False,
+        "api_read_walkthroughs": False,
+        "api_control_walkthroughs": False,
+        "api_manage_personalization": False,
+        "api_control_app": False,
         "mcp_events_enabled": False,
     })
     for key in _AUTOMATION_LISTS:

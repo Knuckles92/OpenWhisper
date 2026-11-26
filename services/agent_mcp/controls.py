@@ -16,15 +16,20 @@ from services.models import MeetingSession, TranscriptionHistory
 from services.titles import normalize_title
 from services.settings import (
     SETTING_DEFAULTS,
+    WALKTHROUGH_CAPTURE_DELAYS,
     MeetingLanguage,
+    RecordingOverlayLook,
     RecordingTriggerMode,
     SettingsKey,
+    SnapRedactStyle,
+    StreamingOverlayLayout,
     TranscriptCleanupLevel,
     TranscriptCleanupReasoning,
     UiFontScale,
-    RecordingOverlayLook,
-    StreamingOverlayLayout,
     UiTheme,
+    WalkthroughCopyFormat,
+    WalkthroughPageSize,
+    WalkthroughSnapMode,
     resolve_mcp_events_enabled,
     resolve_ui_theme,
 )
@@ -128,6 +133,26 @@ SETTING_CONTROLS = (
         SettingsKey.STREAMING_ENABLED, "Live preview", "Dictation", effect=LIVE
     ),
     SettingControl(
+        SettingsKey.RECORDING_HANDS_FREE_LATCH,
+        "Hands-free latch on quick double-press",
+        "Dictation",
+    ),
+    SettingControl(
+        SettingsKey.VOICE_ROUTING_ENABLED,
+        "Route by voice",
+        "Dictation",
+    ),
+    SettingControl(
+        SettingsKey.VOICE_ROUTING_ON_DICTATION,
+        "Route normal dictations by spoken action name",
+        "Dictation",
+    ),
+    SettingControl(
+        SettingsKey.COMMAND_MODE_INSERT_WITHOUT_SELECTION,
+        "Command Mode writes at cursor without selection",
+        "Dictation",
+    ),
+    SettingControl(
         SettingsKey.STREAMING_OVERLAY_FONT_SIZE,
         "Preview font size",
         "Appearance",
@@ -182,7 +207,43 @@ SETTING_CONTROLS = (
         effect=LIVE,
     ),
     SettingControl(
+        SettingsKey.COMPACT_MODE,
+        "Compact window mode",
+        "Appearance",
+        effect=LIVE,
+    ),
+    SettingControl(
+        SettingsKey.SCRATCHPAD_ALWAYS_ON_TOP,
+        "Keep Scratchpad always on top",
+        "Appearance",
+    ),
+    SettingControl(
         SettingsKey.MINIMIZE_TRAY, "Minimize to tray on close", "Appearance"
+    ),
+    SettingControl(
+        SettingsKey.APP_CONTEXT_ENABLED,
+        "Detect focused app for dictation context",
+        "Personalization",
+    ),
+    SettingControl(
+        SettingsKey.APP_STYLES_ENABLED,
+        "Adjust writing tone per app category",
+        "Personalization",
+    ),
+    SettingControl(
+        SettingsKey.DICTIONARY_LEARN_ENABLED,
+        "Learn corrections into personal dictionary",
+        "Personalization",
+    ),
+    SettingControl(
+        SettingsKey.DICTIONARY_STEER_RECOGNITION,
+        "Send dictionary terms as speech-recognition hints",
+        "Personalization",
+    ),
+    SettingControl(
+        SettingsKey.SNIPPETS_ENABLED,
+        "Expand spoken snippets",
+        "Personalization",
     ),
     SettingControl(
         SettingsKey.TRANSCRIPT_CLEANUP_ENABLED,
@@ -212,12 +273,159 @@ SETTING_CONTROLS = (
         max_length=20,
     ),
     SettingControl(
+        SettingsKey.WALKTHROUGH_AUTO_MODE,
+        "Walkthrough Auto Mode (capture on click)",
+        "Walkthroughs",
+    ),
+    SettingControl(
+        SettingsKey.WALKTHROUGH_CAPTURE_DELAY,
+        "Walkthrough Auto Mode capture delay (seconds)",
+        "Walkthroughs",
+        "integer",
+        WALKTHROUGH_CAPTURE_DELAYS,
+    ),
+    SettingControl(
+        SettingsKey.WALKTHROUGH_SNAP_MODE,
+        "Walkthrough screenshot capture mode",
+        "Walkthroughs",
+        "string",
+        WalkthroughSnapMode.ALL,
+        max_length=20,
+    ),
+    SettingControl(
+        SettingsKey.WALKTHROUGH_WRITE_UP,
+        "AI write-up after walkthrough",
+        "Walkthroughs",
+    ),
+    SettingControl(
+        SettingsKey.WALKTHROUGH_COPY_FORMAT,
+        "Walkthrough copy format on finish",
+        "Walkthroughs",
+        "string",
+        WalkthroughCopyFormat.ALL,
+        max_length=20,
+    ),
+    SettingControl(
+        SettingsKey.WALKTHROUGH_MINIMIZE_TO_TRAY,
+        "Minimize window to tray on walkthrough start",
+        "Walkthroughs",
+    ),
+    SettingControl(
+        SettingsKey.WALKTHROUGH_TITLE,
+        "Walkthrough default document title",
+        "Walkthroughs",
+        "string",
+        max_length=120,
+    ),
+    SettingControl(
+        SettingsKey.WALKTHROUGH_PAGE_SIZE,
+        "Walkthrough PDF page size",
+        "Walkthroughs",
+        "string",
+        WalkthroughPageSize.ALL,
+        max_length=10,
+    ),
+    SettingControl(
+        SettingsKey.WALKTHROUGH_SHOW_DETAILS,
+        "Show date, duration and screenshot count in walkthroughs",
+        "Walkthroughs",
+    ),
+    SettingControl(
+        SettingsKey.WALKTHROUGH_SHOW_ABOUT,
+        "Show intro note in walkthroughs",
+        "Walkthroughs",
+    ),
+    SettingControl(
+        SettingsKey.WALKTHROUGH_SHOW_CAPTIONS,
+        "Show screenshot captions in walkthroughs",
+        "Walkthroughs",
+    ),
+    SettingControl(
+        SettingsKey.WALKTHROUGH_KEEP_MARKS,
+        "Keep drawing marks between walkthrough screenshots",
+        "Walkthroughs",
+    ),
+    SettingControl(
+        SettingsKey.SNAP_REDACT_STYLE,
+        "Screenshot redaction style",
+        "Walkthroughs",
+        "string",
+        SnapRedactStyle.ALL,
+        max_length=20,
+    ),
+    SettingControl(
         SettingsKey.MEETING_LANGUAGE,
         "Meeting language",
         "Meetings",
         "string",
         MeetingLanguage.ALL,
         max_length=10,
+    ),
+    SettingControl(
+        SettingsKey.MEETING_END_REDECODE,
+        "High-accuracy re-transcription when meeting ends",
+        "Meetings",
+    ),
+    SettingControl(
+        SettingsKey.MEETING_END_POLISH,
+        "AI transcript polish when meeting ends",
+        "Meetings",
+    ),
+    SettingControl(
+        SettingsKey.MEETING_END_REPORT,
+        "Generate final report when meeting ends",
+        "Meetings",
+    ),
+    SettingControl(
+        SettingsKey.MEETING_LIVE_THINKING,
+        "Meeting live-pass thinking effort",
+        "Meetings",
+        "string",
+        TranscriptCleanupReasoning.ALL,
+        max_length=20,
+    ),
+    SettingControl(
+        SettingsKey.MEETING_FINAL_THINKING,
+        "Meeting final-report thinking effort",
+        "Meetings",
+        "string",
+        TranscriptCleanupReasoning.ALL,
+        max_length=20,
+    ),
+    SettingControl(
+        SettingsKey.MEETING_PAST_RECALL_ENABLED,
+        "Allow meeting agent to recall past meetings",
+        "Meetings",
+    ),
+    SettingControl(
+        SettingsKey.MEETING_SPEECH_SEPARATE,
+        "Separate overlapping voices in meetings",
+        "Meetings",
+    ),
+    SettingControl(
+        SettingsKey.TYPESAFE_CITATIONS_ENABLED,
+        "Meeting fast citation checks",
+        "Meetings",
+    ),
+    SettingControl(
+        SettingsKey.TYPESAFE_TOPIC_SHIFT_ENABLED,
+        "Meeting automatic topic-shift detection",
+        "Meetings",
+    ),
+    SettingControl(
+        SettingsKey.TYPESAFE_QUESTION_RADAR_ENABLED,
+        "Meeting live question radar",
+        "Meetings",
+    ),
+    SettingControl(
+        SettingsKey.TYPESAFE_HIGHLIGHTS_ENABLED,
+        "Meeting live highlights",
+        "Meetings",
+    ),
+    SettingControl(
+        SettingsKey.TYPESAFE_VOICE_COMMANDS_ENABLED,
+        "Meeting spoken note-taker commands",
+        "Meetings",
     ),
     SettingControl(
         SettingsKey.MEETING_REPORT_RIBBON, "Meeting report ribbon", "Meetings"
@@ -243,7 +451,7 @@ CONTROLS_BY_KEY = {control.key: control for control in SETTING_CONTROLS}
 
 
 #: Capabilities that let the token holder change something, rather than read.
-#: Reading live events is read access, like reading history.
+#: Reading live events and walkthroughs is read access, like reading history.
 WRITE_CAPABILITIES = (
     "retitle_transcriptions",
     "retitle_meetings",
@@ -252,6 +460,10 @@ WRITE_CAPABILITIES = (
     permissions.PUBLIC_NAMES[permissions.CONTROL_RECORDING],
     permissions.PUBLIC_NAMES[permissions.TEXT_FILTERS],
     permissions.PUBLIC_NAMES[permissions.AGENT_PROMPTS],
+    permissions.PUBLIC_NAMES[permissions.CONTROL_MEETINGS],
+    permissions.PUBLIC_NAMES[permissions.CONTROL_WALKTHROUGHS],
+    permissions.PUBLIC_NAMES[permissions.MANAGE_PERSONALIZATION],
+    permissions.PUBLIC_NAMES[permissions.CONTROL_APP],
 )
 
 

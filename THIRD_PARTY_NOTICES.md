@@ -30,6 +30,9 @@ The native Windows and Linux distributions include, among other dependencies:
   packages include `handy-computer/parakeet-tdt_ctc-110m-gguf` under
   `_internal/bundled_models/parakeet-110m-en` together with its upstream
   `LICENSE` and `NOTICE` files.
+- **pywebrtc-audio (WebRTC Audio Processing)** — Apache-2.0 License
+  (`strands-labs/pywebrtc-audio`, wrapping WebRTC Audio Processing under its
+  BSD-3-Clause terms). Used by the opt-in beta echo cancellation feature.
 
 Additional Python distributions retain their upstream license files under
 `_internal` (typically in `*.dist-info/licenses`, package-specific `LICENSE`

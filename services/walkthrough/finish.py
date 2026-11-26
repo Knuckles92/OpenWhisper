@@ -105,10 +105,16 @@ def build_documents(
         for index, shot in enumerate(shots)
     ]
     sections.append(Section(text=texts[len(shots)], notes=held(len(shots))))
+    from services.walkthrough import library
+
+    folder = session.folder()
+    number = library.read_number(folder)
+    if number is None:
+        number = library.allocate_number(folder.parent)
     walkthrough = Walkthrough(
         started_at=session.started_at, duration_s=duration_s, sections=tuple(sections),
+        number=number,
     )
-    folder = session.folder()
     document_format, page_size = document_settings()
     markdown_path = write_markdown(walkthrough, folder, document_format=document_format)
     pdf = write_pdf(walkthrough, folder, page_size=page_size, document_format=document_format)
@@ -129,6 +135,7 @@ def build_documents(
         shots=len(shots),
         duration_s=duration_s,
         first_shot=shots[0].path if shots else None,
+        number=number,
     )
 
 

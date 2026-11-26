@@ -100,6 +100,8 @@ class Walkthrough:
     #: Recording length in seconds.
     duration_s: float
     sections: tuple[Section, ...]
+    #: Monotonic user-facing reference number (1 -> "#001"), or None on legacy manifests.
+    number: int | None = None
 
 
 @dataclass(frozen=True)
@@ -330,6 +332,7 @@ def write_manifest(walkthrough: Walkthrough, folder: Path) -> Path:
     """
     manifest = {
         "version": MANIFEST_VERSION,
+        **({"number": walkthrough.number} if walkthrough.number is not None else {}),
         "started_at": walkthrough.started_at.astimezone().isoformat(timespec="seconds"),
         "duration_s": walkthrough.duration_s,
         "sections": [

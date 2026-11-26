@@ -221,9 +221,21 @@ class WalkthroughReadyCard(QWidget):
     def _details(self) -> QVBoxLayout:
         column = QVBoxLayout()
         column.setSpacing(3)
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(6)
         self.title = QLabel("")
         self.title.setObjectName("walkthroughReadyTitle")
-        column.addWidget(self.title)
+        title_row.addWidget(self.title)
+        self.ref_badge = QToolButton()
+        self.ref_badge.setObjectName("walkthroughReadyRef")
+        self.ref_badge.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.ref_badge.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.ref_badge.setVisible(False)
+        self.ref_badge.clicked.connect(self._copy_ref)
+        title_row.addWidget(self.ref_badge)
+        title_row.addStretch(1)
+        column.addLayout(title_row)
         self.subtitle = QLabel("")
         self.subtitle.setObjectName("walkthroughReadySubtitle")
         column.addWidget(self.subtitle)
@@ -336,6 +348,11 @@ class WalkthroughReadyCard(QWidget):
         error = getattr(result, "write_up_error", "")
         self.reason.setText(f"Write-up failed: {error}" if error else "")
         self.reason.setVisible(bool(error))
+        ref = getattr(result, "ref", "") or ""
+        self.ref_badge.setText(ref)
+        self.ref_badge.setToolTip(f"Click to copy reference {ref}" if ref else "")
+        self.ref_badge.setAccessibleName(f"Copy walkthrough reference {ref}" if ref else "")
+        self.ref_badge.setVisible(bool(ref))
         thumb = _thumbnail(result.first_shot)
         self.thumb.setVisible(thumb is not None)
         if thumb is not None:
@@ -430,6 +447,18 @@ class WalkthroughReadyCard(QWidget):
         self._place()
         if self.isVisible():
             self._timer.start(SHOW_MS)
+
+    def _copy_ref(self) -> None:
+        ref = getattr(self._result, "ref", "") if self._result is not None else ""
+        if not ref:
+            return
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(ref)
+        self.subtitle.setText(f"Copied {ref} — use it to refer to this walkthrough")
+        self.adjustSize()
+        self._place()
+        self._timer.start(SHOW_MS)
 
     def _open_chip(self) -> None:
         if self.chip.path is not None:

@@ -698,6 +698,138 @@ def _register_notify_routes(router, live: _LiveRoutes) -> None:
         return await live.respond("notify", work)
 
 
+def _register_extended_routes(router, live: _LiveRoutes) -> None:
+    """REST parity for meetings, walkthroughs, transforms, personalization, models & window."""
+    from fastapi import Query, Request
+
+    from services.automation import permissions
+    from services.automation.control import require_app_control
+
+    @router.get("/v1/meetings/live", operation_id="get_meeting_live_state")
+    async def meeting_live_state():
+        return await live.respond("meetings.live", lambda: require_app_control().meeting_status())
+
+    @router.post("/v1/meetings/start", status_code=202, operation_id="start_meeting")
+    async def meeting_start(request: Request):
+        try:
+            body = await read_json_body(request, MAX_SMALL_BODY)
+        except _Invalid as exc:
+            return live.failure("meetings.start", exc)
+
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_MEETINGS)
+            title = _string(body, "title", required=False, max_chars=200)
+            cloud = body.get("cloud")
+            if cloud is not None and type(cloud) is not bool:
+                raise _Invalid("cloud must be true or false.")
+            return require_app_control().start_meeting(title=title, cloud=cloud, source="api")
+
+        return await live.respond("meetings.start", work, status=202)
+
+    @router.post("/v1/meetings/pause", status_code=202, operation_id="pause_meeting")
+    async def meeting_pause():
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_MEETINGS)
+            return require_app_control().pause_meeting()
+
+        return await live.respond("meetings.pause", work, status=202)
+
+    @router.post("/v1/meetings/resume", status_code=202, operation_id="resume_meeting")
+    async def meeting_resume():
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_MEETINGS)
+            return require_app_control().resume_meeting()
+
+        return await live.respond("meetings.resume", work, status=202)
+
+    @router.post("/v1/meetings/end", status_code=202, operation_id="end_meeting")
+    async def meeting_end():
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_MEETINGS)
+            return require_app_control().end_meeting()
+
+        return await live.respond("meetings.end", work, status=202)
+
+    @router.get("/v1/walkthroughs", operation_id="list_walkthroughs")
+    async def walkthroughs_list(q: str = Query(default="", max_length=200), limit: int = Query(default=20, ge=1, le=100)):
+        def work():
+            permissions.require(live.saved(), permissions.READ_WALKTHROUGHS)
+            return require_app_control().list_walkthroughs(q=q, limit=limit)
+
+        return await live.respond("walkthroughs.list", work)
+
+    @router.get("/v1/walkthroughs/{ref}", operation_id="get_walkthrough")
+    async def walkthrough_get(ref: str, spoken: bool = False, include_images: bool = False):
+        def work():
+            permissions.require(live.saved(), permissions.READ_WALKTHROUGHS)
+            return require_app_control().get_walkthrough(ref, spoken=spoken, include_images=include_images)
+
+        return await live.respond("walkthroughs.get", work)
+
+    @router.post("/v1/walkthroughs/start", status_code=202, operation_id="start_walkthrough")
+    async def walkthrough_start(request: Request):
+        try:
+            body = await read_json_body(request, MAX_SMALL_BODY)
+        except _Invalid as exc:
+            return live.failure("walkthroughs.start", exc)
+
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_WALKTHROUGHS)
+            snap_mode = _string(body, "snap_mode", required=False, max_chars=20)
+            auto_mode = body.get("auto_mode")
+            if auto_mode is not None and type(auto_mode) is not bool:
+                raise _Invalid("auto_mode must be true or false.")
+            return require_app_control().start_walkthrough(snap_mode=snap_mode, auto_mode=auto_mode, source="api")
+
+        return await live.respond("walkthroughs.start", work, status=202)
+
+    @router.post("/v1/walkthroughs/snap", status_code=202, operation_id="snap_walkthrough")
+    async def walkthrough_snap(request: Request):
+        try:
+            body = await read_json_body(request, MAX_SMALL_BODY)
+        except _Invalid as exc:
+            return live.failure("walkthroughs.snap", exc)
+
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_WALKTHROUGHS)
+            snap_mode = _string(body, "snap_mode", required=False, max_chars=20)
+            return require_app_control().snap_walkthrough(snap_mode=snap_mode, source="api")
+
+        return await live.respond("walkthroughs.snap", work, status=202)
+
+    @router.post("/v1/walkthroughs/finish", status_code=202, operation_id="finish_walkthrough")
+    async def walkthrough_finish():
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_WALKTHROUGHS)
+            return require_app_control().finish_walkthrough()
+
+        return await live.respond("walkthroughs.finish", work, status=202)
+
+    @router.post("/v1/walkthroughs/cancel", status_code=202, operation_id="cancel_walkthrough")
+    async def walkthrough_cancel():
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_WALKTHROUGHS)
+            return require_app_control().cancel_walkthrough()
+
+        return await live.respond("walkthroughs.cancel", work, status=202)
+
+    @router.post("/v1/window", status_code=200, operation_id="control_window")
+    async def window_control(request: Request):
+        try:
+            body = await read_json_body(request, MAX_RUN_BODY)
+        except _Invalid as exc:
+            return live.failure("window", exc)
+
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_APP)
+            action = _string(body, "action", required=True, max_chars=40)
+            text = _string(body, "text", required=False, max_chars=MAX_ACTION_TEXT)
+            tab = _string(body, "tab", required=False, max_chars=40)
+            return require_app_control().control_window(action, text=text, tab=tab)
+
+        return await live.respond("window", work)
+
+
 def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None):
     """The live routes.
 
@@ -717,4 +849,5 @@ def create_live_router(settings, *, enabled: Optional[Callable[[], bool]] = None
     _register_filter_routes(router, live)
     _register_filter_lease_routes(router, live)
     _register_notify_routes(router, live)
+    _register_extended_routes(router, live)
     return router

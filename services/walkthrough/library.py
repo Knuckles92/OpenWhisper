@@ -26,8 +26,10 @@ if TYPE_CHECKING:
 DRAFT_NAME = "draft.json"
 AUDIO_NAME = "audio.wav"
 PREFERENCES_NAME = "retention.json"
+COUNTER_NAME = "counter.json"
 _FOLDER = re.compile(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:-\d+)?\Z")
 _SHOT = re.compile(r"shot-[1-9]\d*\.png\Z")
+_REF_NUMBER = re.compile(r"^(?:#|wt[-_]?|walkthrough[-_\s]*)?0*([1-9]\d*)$", re.IGNORECASE)
 #: An earlier write-up, kept when a newer one took its place: write-up-1.md is the first.
 _EARLIER = re.compile(r"write-up-([1-9]\d*)\.(?:md|pdf|docx)\Z")
 _FIXED = {DRAFT_NAME, AUDIO_NAME, "walkthrough.json", "walkthrough.md", "walkthrough.pdf",
@@ -136,8 +138,122 @@ def load_document(folder: Path) -> Walkthrough:
         sections.append(document.Section(str(section["text"]), shot,
                                          _seconds(stamp) if stamp is not None else None,
                                          None if shot else omitted, tuple(notes)))
+    raw_number = value.get("number")
+    number = raw_number if type(raw_number) is int and raw_number >= 1 else None
     return document.Walkthrough(datetime.fromisoformat(value["started_at"]),
-                                _seconds(value["duration_s"]), tuple(sections))
+                                _seconds(value["duration_s"]), tuple(sections),
+                                number=number)
+
+
+def format_number(number: int | None) -> str:
+    """User-facing reference label for a walkthrough number, e.g. ``#001``."""
+    if type(number) is not int or number < 1:
+        return ""
+    return f"#{number:03d}"
+
+
+def parse_ref_number(ref: str) -> int | None:
+    """Parse ``#001``, ``001``, ``1``, or ``wt-001`` into its positive integer."""
+    if not isinstance(ref, str):
+        return None
+    match = _REF_NUMBER.fullmatch(ref.strip())
+    return int(match.group(1)) if match else None
+
+
+def read_number(folder: Path) -> int | None:
+    """Read the persisted walkthrough number from ``folder/walkthrough.json``, if any."""
+    manifest_path = folder / MANIFEST_NAME
+    if not manifest_path.is_file():
+        return None
+    try:
+        value = read_json(manifest_path)
+    except (OSError, ValueError, TypeError):
+        return None
+    raw = value.get("number")
+    return raw if type(raw) is int and raw >= 1 else None
+
+
+def folder_numbers(root: Path) -> dict[Path, int]:
+    """Stable reference number for every walkthrough folder under ``root``.
+
+    Folders with a saved ``number`` keep it; legacy folders without one get
+    deterministic chronological numbers starting at 1 without mutating disk.
+    """
+    folders = list(reversed(entries(root)))  # oldest first
+    assigned: dict[Path, int] = {}
+    used: set[int] = set()
+    unnumbered: list[Path] = []
+    for folder in folders:
+        num = read_number(folder)
+        if num is not None and num not in used:
+            assigned[folder] = num
+            used.add(num)
+        else:
+            unnumbered.append(folder)
+    candidate = 1
+    for folder in unnumbered:
+        while candidate in used:
+            candidate += 1
+        assigned[folder] = candidate
+        used.add(candidate)
+        candidate += 1
+    return assigned
+
+
+def number_for(folder: Path, root: Path | None = None) -> int | None:
+    """Reference number for ``folder`` (saved, else chronological fallback)."""
+    saved = read_number(folder)
+    if saved is not None:
+        return saved
+    parent = root if root is not None else folder.parent
+    return folder_numbers(parent).get(folder)
+
+
+def allocate_number(root: Path) -> int:
+    """Reserve and persist the next monotonic walkthrough number under ``root``."""
+    root.mkdir(parents=True, exist_ok=True)
+    last = 0
+    counter_path = root / COUNTER_NAME
+    if counter_path.is_file():
+        try:
+            saved = read_json(counter_path).get("last", 0)
+            if type(saved) is int and saved > 0:
+                last = saved
+        except (OSError, ValueError, TypeError):
+            pass
+    existing = folder_numbers(root)
+    if existing:
+        last = max(last, max(existing.values()))
+    number = last + 1
+    try:
+        atomic_json(counter_path, {"last": number})
+    except OSError:
+        pass
+    return number
+
+
+def resolve_folder(root: Path, ref: str) -> Path | None:
+    """Resolve a walkthrough by ``#001`` / ``1``, ``latest``, or exact folder name."""
+    if not isinstance(ref, str) or not ref.strip():
+        return None
+    token = ref.strip()
+    folders = entries(root)
+    if not folders:
+        return None
+    if token.casefold() == "latest":
+        finished = [p for p in folders if (p / MANIFEST_NAME).is_file()]
+        return finished[0] if finished else folders[0]
+    if _FOLDER.fullmatch(token):
+        target = root / token
+        if target in folders:
+            return target
+    wanted = parse_ref_number(token)
+    if wanted is not None:
+        numbers = folder_numbers(root)
+        for folder, num in numbers.items():
+            if num == wanted:
+                return folder
+    return None
 
 
 def held_notes(walkthrough: Walkthrough) -> list[Note]:
@@ -210,8 +326,10 @@ def load_result(folder: Path, *, spoken: bool = False,
             number += 1
             parts.append(f"[Screenshot {number}]")
     history = "\n\n".join(parts)
+    number = walkthrough.number if walkthrough.number is not None else number_for(folder)
     return WalkthroughResult(folder, pdf, md, text, history, None, len(shots),
-                             walkthrough.duration_s, shots[0] if shots else None, written)
+                             walkthrough.duration_s, shots[0] if shots else None, written,
+                             number=number)
 
 
 def entries(root: Path) -> list[Path]:

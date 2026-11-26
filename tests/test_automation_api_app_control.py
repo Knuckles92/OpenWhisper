@@ -290,14 +290,20 @@ def test_notices_are_one_line(control, controller):
 
 def test_state_is_read_without_waiting_for_the_qt_thread(control, controller):
     idle = in_worker(control.state, pump=False)["value"]
-    assert idle == LiveState(False, False, False, "", "", "", __version__)
+    assert (idle.recording, idle.busy, idle.meeting, idle.mode, idle.action_id, idle.job_id, idle.version) == (
+        False, False, False, "", "", "", __version__,
+    )
+    assert idle.meeting_state["active"] is False
+    assert idle.walkthrough_state["active"] is False
 
     runtime = controller.transcription_runtime
     runtime._job = SimpleNamespace(id="job-9", mode="action", action_id="a1")
     controller.recorder.is_recording = True
     controller.meeting = True
     recording = in_worker(control.state, pump=False)["value"]
-    assert recording == LiveState(True, False, True, "action", "a1", "job-9", __version__)
+    assert (recording.recording, recording.busy, recording.meeting, recording.mode, recording.action_id, recording.job_id, recording.version) == (
+        True, False, True, "action", "a1", "job-9", __version__,
+    )
 
     # After the stop, the worker slot holds the job, as it is now: a routed
     # dictation is its action's job, while the recording's job is unchanged.

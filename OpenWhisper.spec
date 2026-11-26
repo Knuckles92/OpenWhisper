@@ -137,6 +137,7 @@ _COLLECT_PACKAGES = [
     "mcp_types",
     "jsonschema_specifications",
     "soundcard",
+    "pywebrtc_audio",
     # Plugin-style packages whose platform implementations are selected at
     # runtime. SecretStorage/jeepney back Linux's explicit keyring backend;
     # pynput selects its Xorg implementation dynamically.

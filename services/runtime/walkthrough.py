@@ -173,8 +173,19 @@ class WalkthroughRuntime(QObject):
         self._out_of_screenshots = self._ui.keep_overlay_out_of_screenshots(True)
         if sys.platform in ("win32", "darwin") and resolve_walkthrough_auto_mode(settings):
             self._start_auto(session, settings)
+            auto_started = True
         else:
             self._start_manual_drawing(session, settings)
+            auto_started = False
+        from services.automation import catalog, events
+
+        events.publish(
+            catalog.WALKTHROUGH_STARTED,
+            catalog.walkthrough_started(
+                self.controller.transcription_runtime.current_job,
+                auto_mode=auto_started,
+            ),
+        )
         logger.info("Walkthrough started")
 
     def _attach(self, panel) -> None:
@@ -793,6 +804,14 @@ class WalkthroughRuntime(QObject):
             self._panel.add_shot(shot.number, image, shot.kept_at_s, source_rect=source_rect)
         if not automatic:
             self._ui.show_overlay_caption(f"Screenshot {count} added")
+        from services.automation import catalog, events
+
+        events.publish(
+            catalog.WALKTHROUGH_SHOT_ADDED,
+            catalog.walkthrough_shot_added(
+                self.controller.transcription_runtime.current_job, count
+            ),
+        )
         return True
 
     def _on_dropped(self) -> None:

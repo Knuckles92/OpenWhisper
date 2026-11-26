@@ -556,12 +556,44 @@ class McpSettingsPage(QWidget):
         preferences_layout.setSpacing(10)
         self.setting_checks = {}
         self.setting_groups = {}
+        self.group_keys = {}
+        self.group_all_checks = {}
+        bulk_row = QHBoxLayout()
+        bulk_row.setContentsMargins(0, 0, 0, 4)
+        bulk_row.setSpacing(8)
+        self.allow_all_settings = _ActionButton("Allow all")
+        self.allow_all_settings.setObjectName("mcpCopyButton")
+        self.allow_all_settings.set_base_minimum_size(0, 30)
+        self.allow_all_settings.clicked.connect(
+            lambda: self._save_setting_permissions([c.key for c in SETTING_CONTROLS], True)
+        )
+        self.clear_all_settings = _ActionButton("Clear all")
+        self.clear_all_settings.setObjectName("mcpCopyButton")
+        self.clear_all_settings.set_base_minimum_size(0, 30)
+        self.clear_all_settings.clicked.connect(
+            lambda: self._save_setting_permissions([c.key for c in SETTING_CONTROLS], False)
+        )
+        bulk_row.addWidget(self.allow_all_settings)
+        bulk_row.addWidget(self.clear_all_settings)
+        bulk_row.addStretch(1)
+        preferences_layout.addLayout(bulk_row)
         for control in SETTING_CONTROLS:
             if control.group not in self.setting_groups:
                 group = _Disclosure(control.group)
                 group.toggle.setProperty("group", True)
                 self.setting_groups[control.group] = group
+                self.group_keys[control.group] = []
+                group_all = QCheckBox(f"Allow all {control.group}")
+                group_all.setAccessibleName(f"Allow all agent changes in {control.group}")
+                group_all.toggled.connect(
+                    lambda checked, grp=control.group: self._save_setting_permissions(
+                        self.group_keys[grp], checked
+                    )
+                )
+                group.body_layout.addWidget(group_all)
+                self.group_all_checks[control.group] = group_all
                 preferences_layout.addWidget(group)
+            self.group_keys[control.group].append(control.key)
             check = QCheckBox(control.label)
             check.setAccessibleName(f"Allow agent changes: {control.label}")
             check.setToolTip(control.effect)
@@ -717,9 +749,13 @@ class McpSettingsPage(QWidget):
         self.refresh()
 
     def _save_setting_permission(self, key, checked):
+        self._save_setting_permissions([key], checked)
+
+    def _save_setting_permissions(self, keys, checked):
         def commit(saved):
             permissions = dict(SettingsKey.MCP_WRITABLE_SETTINGS.read(saved))
-            permissions[key] = checked
+            for key in keys:
+                permissions[key] = checked
             saved[SettingsKey.MCP_WRITABLE_SETTINGS] = permissions
 
         try:
@@ -848,6 +884,11 @@ class McpSettingsPage(QWidget):
             check.blockSignals(True)
             check.setChecked(key in granted)
             check.blockSignals(False)
+        for grp, group_check in self.group_all_checks.items():
+            keys = self.group_keys.get(grp, ())
+            group_check.blockSignals(True)
+            group_check.setChecked(bool(keys) and all(k in granted for k in keys))
+            group_check.blockSignals(False)
         self.settings_permissions.setEnabled(
             SettingsKey.MCP_SETTINGS_ACCESS.read(preferences)
         )
@@ -963,7 +1004,10 @@ LIVE_ENDPOINTS = (
     ("GET", "/v1/actions", "Your saved actions"),
     ("POST", "/v1/actions/{id}/run", "Run an action with text"),
     ("POST", "/v1/recording/start", "Start dictating; also /stop and /cancel"),
+    ("POST", "/v1/meetings/start", "Control Meeting Mode (/pause, /resume, /end, /live)"),
+    ("GET", "/v1/walkthroughs", "List/read walkthroughs (#001), or /start, /snap, /finish, /cancel"),
     ("POST", "/v1/filters", "Change the words for a minute; renew or DELETE /v1/filters/{id}"),
+    ("POST", "/v1/window", "Show/minimize window, Scratchpad, Compact Mode, or switch tabs"),
     ("POST", "/v1/notify", "Show a short notice"),
 )
 
@@ -1088,6 +1132,36 @@ class LiveAutomationSection(QWidget):
                 "Lets a program run your Agent hotkey and Claude Code session actions with its "
                 "own words. Needs Run actions too.",
                 "send-purple.svg",
+            ),
+            (
+                SettingsKey.API_CONTROL_MEETINGS,
+                "Control Meeting Mode",
+                "Start, pause, resume, end, background, retry or open Meeting Mode.",
+                "box-blue.svg",
+            ),
+            (
+                SettingsKey.API_READ_WALKTHROUGHS,
+                "Read saved walkthroughs",
+                "List and read saved walkthrough transcripts, write-ups (#001) and screenshots.",
+                "file-music-blue.svg",
+            ),
+            (
+                SettingsKey.API_CONTROL_WALKTHROUGHS,
+                "Control walkthroughs & screenshots",
+                "Start, snap, pause, edit, finish or cancel walkthroughs, run write-ups, or take screenshots.",
+                "notes-blue.svg",
+            ),
+            (
+                SettingsKey.API_MANAGE_PERSONALIZATION,
+                "Manage dictionary, snippets & styles",
+                "Add or remove personal dictionary terms and snippets, adjust app styles, and switch languages or quick-record profile.",
+                "typography-blue.svg",
+            ),
+            (
+                SettingsKey.API_CONTROL_APP,
+                "Control models, devices, files & windows",
+                "Switch speech models, select microphones, transcribe local audio files, reconnect remote host, and control windows/Scratchpad.",
+                "cpu-blue.svg",
             ),
         ):
             row = _PermissionRow(title, description, icon)

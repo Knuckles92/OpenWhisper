@@ -21,9 +21,16 @@ CHANNEL_MESSAGE = "channel.message"
 ROUTE_DECIDED = "route.decided"
 FILTER_FAILED = "filter.failed"
 MEETING_STARTED = "meeting.started"
+MEETING_PAUSED = "meeting.paused"
+MEETING_RESUMED = "meeting.resumed"
 MEETING_ENDED = "meeting.ended"
+MEETING_FINALIZED = "meeting.finalized"
 MEETING_SEGMENTS = "meeting.segments"
 MEETING_VOICE_COMMAND = "meeting.voice_command"
+WALKTHROUGH_STARTED = "walkthrough.started"
+WALKTHROUGH_SHOT_ADDED = "walkthrough.shot_added"
+WALKTHROUGH_FINISHED = "walkthrough.finished"
+WALKTHROUGH_WRITEUP_COMPLETED = "walkthrough.writeup_completed"
 #: Synthetic, sent only on an event stream whose client missed events.
 EVENTS_GAP = "events.gap"
 
@@ -41,9 +48,16 @@ EVENT_TYPES: dict[str, str] = {
     ROUTE_DECIDED: "Route by voice chose an action, or fell back to pasting.",
     FILTER_FAILED: "A text filter timed out or answered badly; the text was kept.",
     MEETING_STARTED: "A meeting started.",
+    MEETING_PAUSED: "A live meeting was paused.",
+    MEETING_RESUMED: "A paused meeting resumed.",
     MEETING_ENDED: "A meeting ended.",
+    MEETING_FINALIZED: "Post-meeting transcription, polish and insights finished.",
     MEETING_SEGMENTS: "New finished lines of a meeting transcript.",
     MEETING_VOICE_COMMAND: "Someone gave the meeting note-taker a spoken command.",
+    WALKTHROUGH_STARTED: "A walkthrough recording started.",
+    WALKTHROUGH_SHOT_ADDED: "A screenshot was added to the active walkthrough.",
+    WALKTHROUGH_FINISHED: "A walkthrough finished and its documents were saved.",
+    WALKTHROUGH_WRITEUP_COMPLETED: "A walkthrough's AI write-up finished or failed.",
     EVENTS_GAP: "This stream missed events; fetch history to catch up.",
 }
 PUBLIC_TYPES: tuple[str, ...] = tuple(t for t in EVENT_TYPES if t != EVENTS_GAP)
@@ -240,8 +254,20 @@ def meeting_started(meeting_id: str, title: str) -> dict:
     return {"meeting_id": meeting_id or "", "title": title or ""}
 
 
+def meeting_paused(meeting_id: str) -> dict:
+    return {"meeting_id": meeting_id or ""}
+
+
+def meeting_resumed(meeting_id: str) -> dict:
+    return {"meeting_id": meeting_id or ""}
+
+
 def meeting_ended(meeting_id: str, status: str) -> dict:
     return {"meeting_id": meeting_id or "", "status": status or ""}
+
+
+def meeting_finalized(meeting_id: str, status: str, *, ok: bool = True) -> dict:
+    return {"meeting_id": meeting_id or "", "status": status or "", "ok": bool(ok)}
 
 
 def meeting_segments(meeting_id: str, items: Iterable[Mapping[str, Any]]) -> dict:
@@ -259,6 +285,55 @@ def meeting_segments(meeting_id: str, items: Iterable[Mapping[str, Any]]) -> dic
 
 def meeting_voice_command(meeting_id: str, command: str) -> dict:
     return {"meeting_id": meeting_id or "", "command": command or ""}
+
+
+def walkthrough_started(job: Any, *, auto_mode: bool = False) -> dict:
+    fields = job_fields(job)
+    return {
+        "job_id": fields["job_id"],
+        "source": fields["source"],
+        "auto_mode": bool(auto_mode),
+    }
+
+
+def walkthrough_shot_added(job: Any, shot_count: int) -> dict:
+    return {"job_id": job_fields(job)["job_id"], "shot_count": int(shot_count)}
+
+
+def walkthrough_finished(
+    *,
+    folder_name: str,
+    number: Optional[int],
+    ref: str,
+    shots: int,
+    duration_s: float,
+    written_up: bool,
+) -> dict:
+    return {
+        "folder": folder_name or "",
+        "number": number,
+        "ref": ref or "",
+        "shots": int(shots),
+        "duration_s": round(float(duration_s), 3),
+        "written_up": bool(written_up),
+    }
+
+
+def walkthrough_writeup_completed(
+    *,
+    folder_name: str,
+    number: Optional[int],
+    ref: str,
+    ok: bool,
+    error: str = "",
+) -> dict:
+    return {
+        "folder": folder_name or "",
+        "number": number,
+        "ref": ref or "",
+        "ok": bool(ok),
+        "error": str(error or "")[:200] if not ok else "",
+    }
 
 
 #: ``events.gap`` ``reason``: OpenWhisper no longer holds events published

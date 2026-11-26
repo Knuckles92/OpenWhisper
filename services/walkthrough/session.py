@@ -164,6 +164,15 @@ class WalkthroughResult:
     write_up_error: str = ""
     #: Screenshots kept during the recording whose file could not be written.
     lost_shots: int = 0
+    #: Monotonic user-facing reference number (1 -> "#001"), or None.
+    number: Optional[int] = None
+
+    @property
+    def ref(self) -> str:
+        """Short reference code shown in the ready popup and MCP, e.g. ``#001``."""
+        if type(self.number) is not int or self.number < 1:
+            return ""
+        return f"#{self.number:03d}"
 
     @property
     def name(self) -> str:

@@ -614,6 +614,10 @@ class UIController(QObject):
             self.refresh_cleanup_controls()
         if SettingsKey.RECORDING_TRIGGER_MODE in changes:
             self._on_settings_recording_trigger_mode_changed(changes[SettingsKey.RECORDING_TRIGGER_MODE])
+        if SettingsKey.COMPACT_MODE in changes:
+            setter = getattr(self.main_window, "set_compact_mode", None)
+            if callable(setter):
+                setter(bool(changes[SettingsKey.COMPACT_MODE]))
         if self._settings_dialog is not None:
             self._settings_dialog.refresh()
 

@@ -236,6 +236,8 @@ class TranscriptionRuntime:
         self._cancel_started_at = 0.0
         # True only while _cancel_recording announces that the recording stopped.
         self.canceling_recording = False
+        # Beta: parallel system-audio loopback capture for post-stop AEC.
+        self._echo_capture: Any = None
 
     @property
     def has_active_job(self) -> bool:
@@ -282,6 +284,7 @@ class TranscriptionRuntime:
         self._cancel_requested.set()
         if self._write_up_cancel is not None:
             self._write_up_cancel.set()
+        self._discard_echo_capture()
         self._incremental.discard()
 
     def _claim_job(self, job: Optional[dictation_pipeline.DictationJob] = None, *, require_idle_recorder: bool = False) -> bool:
@@ -319,6 +322,7 @@ class TranscriptionRuntime:
     def _forget_recording(self) -> None:
         """Drop the recording's job and profile so no later job inherits them."""
         self._release_remote_recording()
+        self._discard_echo_capture()
         with self._job_lock:
             self._job = None
             self._previewing = None
@@ -326,6 +330,87 @@ class TranscriptionRuntime:
             self._profile_settings = None
         # A stop that failed leaves no transcript, but the screenshots stay.
         self._end_walkthrough(keep=True)
+
+    def _start_echo_capture(self, settings: Optional[Dict[str, Any]]) -> bool:
+        """Start parallel loopback capture when beta echo cancellation is enabled."""
+        self._discard_echo_capture()
+        try:
+            loaded = settings if settings is not None else settings_manager.load_all_settings()
+            if not SettingsKey.AUDIO_ECHO_CANCELLATION.read(loaded):
+                return False
+            from services.echo_cancellation import LoopbackReferenceCapture, is_available
+
+            if not is_available():
+                logger.warning(
+                    "Beta echo cancellation is enabled but pywebrtc-audio is not installed; "
+                    "keeping raw microphone audio"
+                )
+                return False
+            capture = LoopbackReferenceCapture()
+            capture.start()
+            with self._job_lock:
+                self._echo_capture = capture
+            return True
+        except Exception:
+            logger.warning("Beta echo cancellation could not start", exc_info=True)
+            return False
+
+    def _stop_echo_capture(self, *, discard: bool = False) -> Any:
+        """Stop and take the active loopback reference capture, if any."""
+        with self._job_lock:
+            capture, self._echo_capture = self._echo_capture, None
+        if capture is None:
+            return None
+        try:
+            return capture.stop(discard=discard)
+        except Exception:
+            logger.warning("Beta echo cancellation loopback stop failed", exc_info=True)
+            return None
+
+    def _discard_echo_capture(self) -> None:
+        self._stop_echo_capture(discard=True)
+
+    def _apply_echo_cancellation(self, audio_path: str, reference: Any) -> None:
+        """Run offline WebRTC AEC3 on the saved dictation WAV; fail open on error."""
+        if reference is None or self._cancel_requested.is_set():
+            return
+        try:
+            from services.echo_cancellation import cancel_echo_in_wav
+
+            recorder = self.controller.recorder
+            mic_start = getattr(recorder, "first_block_mono", None)
+            pause_spans = tuple(getattr(recorder, "pause_spans", ()) or ())
+            result = cancel_echo_in_wav(
+                audio_path,
+                reference,
+                mic_start_mono=mic_start if isinstance(mic_start, (int, float)) else None,
+                pause_spans=pause_spans,
+            )
+            if result.applied:
+                logger.info(
+                    "Beta echo cancellation applied (%s): lag=%.1f ms, z=%.1f, "
+                    "rms %.1f -> %.1f dBFS (far %.1f dBFS) in %.0f ms",
+                    reference.backend or "loopback",
+                    result.delay_ms,
+                    result.correlation_z,
+                    result.input_rms_db,
+                    result.output_rms_db,
+                    result.far_rms_db,
+                    result.elapsed_ms,
+                )
+            else:
+                logger.info(
+                    "Beta echo cancellation skipped (%s; lag=%.1f ms, z=%.1f, far=%.1f dBFS)",
+                    result.reason,
+                    result.delay_ms,
+                    result.correlation_z,
+                    result.far_rms_db,
+                )
+        except Exception:
+            logger.warning(
+                "Beta echo cancellation failed; continuing with raw microphone audio",
+                exc_info=True,
+            )
 
     @property
     def recording_walkthrough(self):
@@ -454,6 +539,7 @@ class TranscriptionRuntime:
         self.controller.recording_state_changed.emit(False)
         self.controller.status_update.emit(message + ' — preserving captured audio')
         self.controller.streaming_runtime.cancel_streaming_session()
+        self._discard_echo_capture()
         self._incremental.discard()
         if self.has_active_job:
             return  # finish_recording_job observes last_capture_error after the save
@@ -605,10 +691,13 @@ class TranscriptionRuntime:
         logger.info("Recording started")
         self.controller.ui_controller.clear_transcription_stats()
         self.controller.ui_controller.main_window.clear_partial_transcription()
+        echo_capture_active = self._start_echo_capture(settings)
         self.controller.streaming_runtime.start_streaming_session(show_overlay=mode != JobMode.WALKTHROUGH)
-        if mode != JobMode.WALKTHROUGH:
+        if mode != JobMode.WALKTHROUGH and not echo_capture_active:
             # A walkthrough is decoded section by section once it stops,
             # never as one recording, so early windows would be wasted.
+            # When beta echo cancellation is active, the saved WAV is cleaned
+            # after stop, so early raw-mic windows would not match it.
             self._incremental.start(self.controller, recognition=self._job.recognition)
         self.controller.recording_state_changed.emit(True)
         publish_event(
@@ -808,11 +897,15 @@ class TranscriptionRuntime:
         """
         try:
             stop_completed = False
+            echo_reference = None
             try:
                 stop_completed = bool(
                     self.controller.recorder.wait_for_stop_completion()
                 )
             finally:
+                echo_reference = self._stop_echo_capture(
+                    discard=self._cancel_requested.is_set()
+                )
                 # The window preview stops without decoding its unfinished
                 # window, so the final decode starts at once; that window is
                 # decoded only if the transcript comes back empty (see
@@ -821,10 +914,11 @@ class TranscriptionRuntime:
                 self.controller._pending_streaming_text = (
                     self.controller.streaming_runtime.stop_streaming_session()
                 )
-                self._incremental.keep_stream_final(
-                    self.controller.streaming_runtime.finished_stream(),
-                    self.controller.recorder.get_recording_duration(),
-                )
+                if echo_reference is None:
+                    self._incremental.keep_stream_final(
+                        self.controller.streaming_runtime.finished_stream(),
+                        self.controller.recorder.get_recording_duration(),
+                    )
 
             if self._cancel_requested.is_set():
                 # Cancel landed during post-roll: _cancel_recording discarded
@@ -836,6 +930,11 @@ class TranscriptionRuntime:
             file_size = self._saved_recording_size(stop_completed)
             if file_size is None:
                 return
+
+            if echo_reference is not None:
+                self._apply_echo_cancellation(config.RECORDED_AUDIO_FILE, echo_reference)
+                if os.path.exists(config.RECORDED_AUDIO_FILE):
+                    file_size = os.path.getsize(config.RECORDED_AUDIO_FILE)
 
             self.controller._pending_audio_path = config.RECORDED_AUDIO_FILE
             self.controller._pending_audio_duration = (
@@ -1040,6 +1139,7 @@ class TranscriptionRuntime:
 
     def _cancel_recording(self, cancel_state: OverlayState) -> None:
         self.controller.streaming_runtime.cancel_streaming_session()
+        self._discard_echo_capture()
         self._incremental.discard()
         # Listeners can't yet read the cancel from the recorder: a walkthrough
         # must drop, not keep, a screenshot still being drawn.
@@ -1817,6 +1917,19 @@ class TranscriptionRuntime:
         self._write_up_cancel = None
         if getattr(self.controller, "_shutting_down", False) is True:
             return
+        from services.automation import catalog, events
+
+        error = getattr(result, "write_up_error", "") or ""
+        events.publish(
+            catalog.WALKTHROUGH_WRITEUP_COMPLETED,
+            catalog.walkthrough_writeup_completed(
+                folder_name=result.folder.name,
+                number=getattr(result, "number", None),
+                ref=getattr(result, "ref", ""),
+                ok=not error,
+                error=error,
+            ),
+        )
         self._copy_walkthrough(self.controller.ui_controller, result)
 
     def cancel_write_up(self) -> bool:
@@ -2491,6 +2604,19 @@ class TranscriptionRuntime:
             status += f". {shots} couldn't be saved and {'is' if lost == 1 else 'are'} left out"
         ui.set_status(status)
         ui.show_walkthrough_ready(result, copied=copied)
+        from services.automation import catalog, events
+
+        events.publish(
+            catalog.WALKTHROUGH_FINISHED,
+            catalog.walkthrough_finished(
+                folder_name=result.folder.name,
+                number=getattr(result, "number", None),
+                ref=getattr(result, "ref", ""),
+                shots=result.shots,
+                duration_s=result.duration_s,
+                written_up=bool(getattr(result, "written_up", False)),
+            ),
+        )
         if auto_paste:
             ui.paste_walkthrough(result, target)
 
