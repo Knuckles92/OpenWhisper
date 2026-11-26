@@ -7,15 +7,25 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-11-25
+
+### Added
+
+- **Fourier 2B in Downloads.** Oruk's English fine-tune of Qwen3-ASR 1.7B is an optional **Qwen3-ASR** download on Windows x64 and Linux x86-64: the publisher's pinned 8-bit GGUF (2.19 GB), checked by size and SHA-256, with its model card for the attribution and CC BY-NC 4.0 notice. It is for noncommercial use: Downloads, Host Mode download prompts, and batch download prompts say so, and that commercial use needs a separate license from Oruk.
+
+### Changed
+
+- **Consistent secondary buttons and transparent wrappers in Settings and dialogs.** Meeting remote controls, context folder buttons, remote model/runtime actions, auto-paste setup, MCP retry, and collapsible card/dialog containers now match the Settings chrome without stray background seams or empty status gaps.
+
 ### Fixed
 
 - **OpenWhisper no longer freezes after about a day on Linux/X11.** The five-minute refresh of the global shortcut hook left X server connections and threads behind, until the server refused new ones and the next refresh froze the app. A replaced hook now ends at once, even while nobody types. If the X server has no room for a new one, shortcuts keep working in the focused window and a later refresh restores the global ones. Dismissing a shortcut field without pressing a key no longer leaves its listener running. ([#141](https://github.com/Knuckles92/OpenWhisper/issues/141))
+- **Cleanup reversals and snippet placeholders are validated more reliably.** Anchored cleanup reversals and validated snippet placeholder ordering.
 
 ## [2.8.99] - 2026-11-23
 
 ### Added
 
-- **Fourier 2B in Downloads.** Oruk's English fine-tune of Qwen3-ASR 1.7B is an optional **Qwen3-ASR** download on Windows x64 and Linux x86-64: the publisher's pinned 8-bit GGUF (2.19 GB), checked by size and SHA-256, with its model card for the attribution and CC BY-NC 4.0 notice. It is for noncommercial use: Downloads, the download prompt and the batch download prompt say so, and that commercial use needs a separate license from Oruk.
 - **Use your own model with any local speech engine.** **Add custom…** in **Settings → Models & storage → Models & engines** now offers each engine with a runtime for this computer, alongside Whisper: choose a model file (a `.gguf` for Parakeet, Nemotron, Parakeet Unified, and Qwen3-ASR on Windows and Linux) or folder (Qwen3-ASR on a Mac, Moonshine, Parakeet MLX), give it a name, and pick it for that engine in **Voice model** or **Voice & speakers**. It loads from where it is, takes its engine's live-text and meeting support, and stays on this computer: a host never offers it to paired computers. Moonshine models now say their size instead of being told apart by name.
 
 - **Send a walkthrough straight to a coding agent.** **Send to** on the walkthrough's ready card and in Review (also under **⋯**) opens a menu that adds the walkthrough to any of your open T3 Code threads across all projects (listed with what each is doing), starts a new T3 Code thread in a project, or opens a new Claude Code, Codex or OpenCode session in a project folder. The agent gets the instructions, your words and each screenshot's path, so nothing needs pasting or attaching. T3 Code is reached through its own `t3` command on this computer.

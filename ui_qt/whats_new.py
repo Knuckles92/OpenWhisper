@@ -30,12 +30,13 @@ class WhatsNew:
 
 
 WHATS_NEW: Final[WhatsNew] = WhatsNew(
-    release_line="2.8",
-    updated="2026-11-23",
+    release_line="2.9",
+    updated="2026-11-25",
     text=(
-        "Send walkthroughs and screenshots directly to your coding agent. "
-        "In Models & engines, browse speech models by family and import "
-        "compatible models already on your computer."
+        "Fourier 2B is now available in Downloads as an optional Qwen3-ASR "
+        "model on Windows and Linux. Send walkthroughs directly to your coding "
+        "agent, browse models by family, and enjoy leak-free Linux/X11 "
+        "shortcut refreshes."
     ),
 )
 
