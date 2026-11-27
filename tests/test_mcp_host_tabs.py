@@ -251,10 +251,14 @@ def test_host_setup_names_the_host_and_points_at_its_tailscale_address(tmp_path)
         assert page.agent_location.currentIndex() == 0
         assert page.url.text() == "http://100.64.0.9:8767/mcp"
         assert "Tailscale" in page.url_label.text()
+        assert "only works on" not in page.setup_hint.text()
         page.agent_location.setCurrentIndex(1)
         assert page.url.text() == "http://127.0.0.1:8767/mcp"
         assert "jed" in page.setup_text.toPlainText()
-        assert "jed" in page.url_label.text()
+        assert page.url_label.text() == "Address for assistants running on jed"
+        # A localhost address copied here is useless on this computer; say so.
+        assert "only works on jed" in page.setup_hint.text()
+        assert "choose This computer" in page.setup_hint.text()
     finally:
         close(view)
 

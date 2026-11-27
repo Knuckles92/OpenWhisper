@@ -825,7 +825,7 @@ class McpSettingsPage(QWidget):
         self.url_label.setText(
             "Tailscale MCP address"
             if remote
-            else f"MCP address on {self.host_name}"
+            else f"Address for assistants running on {self.host_name}"
             if self.host_name
             else "Local MCP address"
         )
@@ -861,6 +861,13 @@ class McpSettingsPage(QWidget):
                 else " Copy the access token separately when asked."
                 if kind == 0
                 else f" Replace {TOKEN_PLACEHOLDER} with the access token."
+            )
+            + (
+                # The host's localhost address: useless to an assistant here.
+                f" This address only works on {self.host_name}. For an assistant"
+                " on this computer, choose This computer above."
+                if self.host_name and not remote
+                else ""
             )
         )
         if not ready:
