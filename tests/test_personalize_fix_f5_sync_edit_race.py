@@ -86,7 +86,7 @@ def test_an_unedited_upload_is_done_once(host, client, tmp_path, monkeypatch):  
     sends = []
     real_send = RecordSync._send
     monkeypatch.setattr(RecordSync, "_send",
-                        lambda self, *args: sends.append(1) or real_send(self, *args))
+                        lambda self, *args, **kwargs: sends.append(1) or real_send(self, *args, **kwargs))
 
     client.run_once()
     client.run_once()
