@@ -292,13 +292,24 @@ class MeetingRuntime(QObject):
         thread.
         """
         threading.Thread(
-            target=self._recovery_scan_worker,
+            target=self._startup_recovery_worker,
             name="meeting-recovery-scan", daemon=True,
         ).start()
         threading.Thread(
             target=self._restore_last_finalization_worker,
             name="meeting-restore-finalization", daemon=True,
         ).start()
+
+    def _startup_recovery_worker(self) -> None:
+        try:
+            from meeting.recovery import settle_interrupted_meetings
+
+            if settle_interrupted_meetings(self._repository(), self.meeting_busy):
+                self._refresh_past_meetings()
+                self._wake_record_sync()
+        except Exception:
+            logger.exception("Could not settle interrupted post-meeting work")
+        self._recovery_scan_worker()
 
     def _recovery_scan_worker(self) -> None:
         try:

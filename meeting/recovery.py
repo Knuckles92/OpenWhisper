@@ -21,7 +21,11 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from meeting.interfaces import CHANNELS, SpooledChunk
 from meeting.refinalize import acquire_model_lease, release_model_lease
 from meeting.state.schema import FinalizationState, now_iso, parse_state_json
-from meeting.stored import finalization_from_meeting_row
+from meeting.stored import (
+    finalization_from_meeting_row,
+    has_interrupted_work,
+    settle_interrupted,
+)
 from meeting.time_utils import seconds_since
 
 logger = logging.getLogger(__name__)
@@ -533,6 +537,58 @@ def find_recoverable_meetings(repository: Any) -> List[Dict[str, Any]]:
         logger.info("Found %d recoverable meeting(s): %s",
                     len(recoverable), [m.get("id") for m in recoverable])
     return recoverable
+
+
+def settle_interrupted_meetings(
+    repository: Any, busy: Optional[Callable[[str], bool]] = None,
+) -> int:
+    """Save, once, that post-meeting work a dead session left running stopped.
+
+    Final insights, an insight review and tailored reports save "running"
+    while they work, and nothing clears it when the app exits first. Readers
+    that show a past meeting treat that as interrupted, but the saved row
+    kept saying "running" for good, so anything waiting for the meeting to
+    finish (moving it to a paired host) waited forever. At startup no worker
+    owns a finished meeting, so the saved claim is settled here.
+
+    Args:
+        repository: A ``MeetingRepository``.
+        busy: Whether this process is working on a meeting right now; such a
+            meeting is left alone.
+
+    Returns:
+        How many meetings were corrected.
+    """
+    settled = 0
+    for meeting in repository.list_meetings():
+        meeting_id = str(meeting.get("id") or "")
+        status = str(meeting.get("status") or "")
+        if status not in ("ended", "failed") or meeting.get("origin_device_id"):
+            continue
+        state = parse_state_json(meeting.get("state_json"))
+        if not state or not has_interrupted_work(state):
+            continue
+        if busy is not None and busy(meeting_id):
+            continue
+        # Patch the raw document so keys this version does not model survive.
+        state = settle_interrupted(
+            state,
+            cloud_enabled=bool(
+                meeting.get("cloud_enabled", state.get("cloud_enabled", False))
+            ),
+            meeting_status=status,
+        )
+        try:
+            repository.update_meeting(
+                meeting_id, state_json=json.dumps(state, ensure_ascii=False)
+            )
+        except Exception:
+            logger.exception("Could not settle interrupted work on meeting %s", meeting_id)
+            continue
+        settled += 1
+    if settled:
+        logger.info("Marked interrupted post-meeting work stopped on %d meeting(s)", settled)
+    return settled
 
 
 def finalize_meeting(repository: Any, meeting: Dict[str, Any],

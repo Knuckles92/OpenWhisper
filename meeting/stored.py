@@ -103,10 +103,48 @@ def _historical_payload(
     payload["status"] = str(meeting.get("status") or payload.get("status") or "ended")
     payload["cloud_enabled"] = bool(meeting.get("cloud_enabled", False))
     payload.setdefault("seq", int(meeting.get("state_seq") or 0))
-    payload["finalization"] = FinalizationState.normalize_historical(
-        payload.get("finalization"),
+    return settle_interrupted(
+        payload,
         cloud_enabled=payload["cloud_enabled"],
         meeting_status=payload["status"],
+    )
+
+
+def has_interrupted_work(data: dict[str, Any]) -> bool:
+    """Whether a saved document still claims post-meeting work is in flight.
+
+    Only meaningful for a meeting no worker owns: a live run legitimately
+    saves these same values while it works.
+    """
+    finalization = data.get("finalization")
+    if isinstance(finalization, dict) and finalization.get("status") in {
+        "pending", "running",
+    }:
+        return True
+    review = data.get("insight_review")
+    if isinstance(review, dict) and review.get("status") == "running":
+        return True
+    reports = data.get("custom_reports")
+    return isinstance(reports, list) and any(
+        isinstance(report, dict) and report.get("status") == "running"
+        for report in reports
+    )
+
+
+def settle_interrupted(
+    data: dict[str, Any], *, cloud_enabled: bool, meeting_status: str,
+) -> dict[str, Any]:
+    """``data`` with work its process died in the middle of marked stopped.
+
+    Final insights, an insight review and tailored reports save "running"
+    while they work. Nothing clears that when the app exits first, so for a
+    meeting no worker owns it means interrupted, never still running.
+    """
+    payload = dict(data)
+    payload["finalization"] = FinalizationState.normalize_historical(
+        payload.get("finalization"),
+        cloud_enabled=cloud_enabled,
+        meeting_status=meeting_status,
     ).to_dict()
     review = payload.get("insight_review")
     if isinstance(review, dict) and review.get("status") == "running":

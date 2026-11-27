@@ -17,6 +17,7 @@ from meeting.recovery import (
     find_recoverable_meetings,
     is_session_dead,
     reconcile_meeting_audio,
+    settle_interrupted_meetings,
 )
 from meeting.state.schema import MeetingState
 
@@ -189,6 +190,88 @@ def test_mark_ended_keeps_permanent_capture_gap_after_transcription():
     assert reloaded.status == "failed"
     assert reloaded.capture["audio_incomplete"] is True
     assert "dropped" in reloaded.capture["integrity_error"]
+
+
+class StoredMeetings(FakeRepository):
+    """Finished meetings as the repository would list them."""
+
+    def __init__(self, *meetings):
+        super().__init__()
+        self.meetings = {m["id"]: dict(m) for m in meetings}
+
+    def list_meetings(self):
+        return [dict(m) for m in self.meetings.values()]
+
+    def get_meeting(self, meeting_id):
+        meeting = self.meetings.get(meeting_id)
+        return dict(meeting) if meeting else None
+
+    def update_meeting(self, meeting_id, **fields):
+        super().update_meeting(meeting_id, **fields)
+        self.meetings[meeting_id].update(fields)
+
+
+def _stored(meeting_id, *, status="ended", cloud=True, origin=None, **state):
+    payload = MeetingState(
+        meeting_id=meeting_id, status=status, cloud_enabled=cloud,
+    ).to_dict()
+    payload.update(state)
+    return {
+        "id": meeting_id, "status": status, "cloud_enabled": cloud,
+        "origin_device_id": origin, "state_json": json.dumps(payload),
+    }
+
+
+def test_settle_marks_work_a_dead_session_left_running_as_stopped():
+    repo = StoredMeetings(_stored(
+        "m_stale",
+        finalization={"status": "running", "steps": [
+            {"id": "summary", "status": "completed"},
+            {"id": "actions", "status": "running"},
+        ]},
+        insight_review={"status": "running", "enabled": True},
+        custom_reports=[{"id": "r1", "status": "running"}, {"id": "r2", "status": "ready"}],
+        future_key={"kept": True},
+    ))
+
+    assert settle_interrupted_meetings(repo) == 1
+
+    saved = json.loads(repo.meetings["m_stale"]["state_json"])
+    assert saved["finalization"]["status"] == "failed"
+    assert [s["status"] for s in saved["finalization"]["steps"]] == ["completed", "failed"]
+    assert saved["insight_review"]["status"] == "unavailable"
+    assert [r["status"] for r in saved["custom_reports"]] == ["failed", "ready"]
+    assert saved["future_key"] == {"kept": True}
+    # Settled for good: the next start has nothing left to correct.
+    assert settle_interrupted_meetings(repo) == 0
+    assert len(repo.updates) == 1
+
+
+def test_settle_leaves_meetings_it_does_not_own_or_that_are_fine():
+    running = {"status": "running"}
+    repo = StoredMeetings(
+        _stored("m_done", finalization={"status": "completed"}),
+        _stored("m_live", status="active", finalization=running),
+        _stored("m_recover", status="needs_recovery", finalization=running),
+        _stored("m_device", origin="device-1", finalization=running),
+        _stored("m_busy", finalization=running),
+    )
+
+    assert settle_interrupted_meetings(repo, busy=lambda mid: mid == "m_busy") == 0
+    assert repo.updates == []
+
+
+def test_settled_meeting_can_move_to_the_paired_host():
+    """A stale "running" used to keep a finished meeting off the host for good."""
+    from services.remote_records.kinds import MeetingRecords
+
+    repo = StoredMeetings(_stored("m_stale", finalization={"status": "running"}))
+    records = MeetingRecords(repository=repo)
+    assert records.ready("m_stale") == "its insights are still being written"
+
+    settle_interrupted_meetings(repo)
+
+    assert records.ready("m_stale") is None
 
 
 def test_pid_alive_rejects_missing_and_dead_pids():
