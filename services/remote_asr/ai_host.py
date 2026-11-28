@@ -81,14 +81,6 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _MODEL_NAME_RE = re.compile(r"[\w.:/@\[\]+-]{1,200}")
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
-#: Reading source prompt for Claude Code when staging walkthrough.md + PNGs
-#: directly in a sandboxed temp folder (no Qt PDF rendering needed on host).
-_STAGED_MD_SOURCE = (
-    "The walkthrough is walkthrough.md in this folder, and its screenshots are "
-    "PNG files beside it. Read walkthrough.md and any screenshots you need for "
-    "a closer look. Read no other files."
-)
-
 
 def _safe_shot_name(name: Any) -> str:
     if not isinstance(name, str) or not _SHOT_NAME_RE.fullmatch(name):
@@ -626,7 +618,7 @@ class HostAIServices:
                 f"No local write-up agent is configured on {self._host_name}.",
                 code="unavailable",
             )
-        from services.walkthrough.write_up import agent_name
+        from services.walkthrough.write_up import STAGED_MARKDOWN_NAME, agent_name
 
         markdown = req.get("markdown")
         if not isinstance(markdown, str) or not markdown.strip():
@@ -696,7 +688,7 @@ class HostAIServices:
 
         stage_dir = tempfile.mkdtemp(prefix="openwhisper-remote-wu-")
         try:
-            with open(os.path.join(stage_dir, "walkthrough.md"), "w", encoding="utf-8", newline="\n") as handle:
+            with open(os.path.join(stage_dir, STAGED_MARKDOWN_NAME), "w", encoding="utf-8", newline="\n") as handle:
                 handle.write(markdown)
             shot_order: list[str] = []
             staged_shots: dict[str, _StagedShot] = {}
@@ -881,118 +873,54 @@ class HostAIServices:
         ).start()
 
     def _run_writeup_job(self, job: _WriteUpJob) -> None:
-        from meeting.agent.installed.drivers import AgentUnavailable
         from services.walkthrough import write_up
-        from services.walkthrough.document import clock
         from services.walkthrough.session import Note
 
+        outcome, error, markdown = "failed", "", ""
+        look_fields: dict[str, str] = {}
         try:
-            notes = [Note(text, section) for text, section in job.notes]
-            instructions = (job.instructions or "").strip() or write_up.DEFAULT_INSTRUCTIONS
-            speech = write_up._SPEECH_WITH_NOTES if job.follow_notes else write_up._SPEECH
-            if notes:
-                speech += " " + write_up._HELD_NOTES + (
-                    "" if job.follow_notes else " " + write_up._NOTE_LIMIT
-                )
-            common: dict[str, Any] = {
-                "model": "",
-                "timeout_s": write_up._TIMEOUT_S,
-                "stall_s": write_up._STALL_S,
-                "cancel_event": job.cancel_event,
+            # The call a walkthrough written up on this computer makes, so
+            # the two can't come to ask their agents for different things.
+            markdown, look = write_up.draft(
+                job.agent,
+                write_up.staged(job.stage_dir, job.shot_order, job.markdown, job.duration_s),
+                instructions=job.instructions or "",
+                follow_notes=job.follow_notes,
+                notes=[Note(text, section) for text, section in job.notes],
+                cancel_event=job.cancel_event,
+                run=self._write_up_runner,
+            )
+            outcome = "done"
+            look_fields = {
+                "text_color": look.text_color,
+                "heading_color": look.heading_color,
+                "font": look.font,
             }
-            if job.agent == MeetingAgentCore.CLAUDE_CODE:
-                runner: Callable[..., Any]
-                if self._write_up_runner is not None:
-                    runner = self._write_up_runner
-                else:
-                    from meeting.agent.installed.core import run_reading_task
-
-                    runner = run_reading_task
-
-                lines = [instructions, "", "The walkthrough: walkthrough.md"]
-                if job.shot_order:
-                    lines.append(f"Its screenshots, beside it: {', '.join(job.shot_order)}")
-                lines.append(f"It is {clock(job.duration_s)} of speech.")
-                user_prompt = "\n".join(lines) + write_up._notes(notes, job.shot_order)
-                outcome = runner(
-                    job.agent,
-                    system_prompt=write_up._CHARTER.format(
-                        source=_STAGED_MD_SOURCE, speech=speech,
-                    ),
-                    user_prompt=user_prompt,
-                    folder=job.stage_dir,
-                    **common,
-                )
-            else:
-                if self._write_up_runner is not None:
-                    runner = self._write_up_runner
-                else:
-                    from meeting.agent.installed.core import run_viewing_task
-
-                    runner = run_viewing_task
-
-                lines = [instructions, ""]
-                if job.shot_order:
-                    lines.append(f"The screenshots attached, in order: {', '.join(job.shot_order)}")
-                lines += [
-                    f"It is {clock(job.duration_s)} of speech.",
-                    "",
-                    "<walkthrough>",
-                    job.markdown.strip(),
-                    "</walkthrough>",
-                ]
-                user_prompt = "\n".join(lines) + write_up._notes(notes, job.shot_order)
-                images = [os.path.realpath(os.path.join(job.stage_dir, name)) for name in job.shot_order]
-                outcome = runner(
-                    job.agent,
-                    system_prompt=write_up._CHARTER.format(
-                        source=write_up._VIEW_SOURCE, speech=speech,
-                    ),
-                    user_prompt=user_prompt,
-                    images=images,
-                    **common,
-                )
-
-            with self._lock:
-                job.host_ms = round((time.perf_counter() - job.started_at) * 1000, 1)
-                job.updated_at = time.monotonic()
-                if job.cancel_event.is_set() or getattr(outcome, "canceled", False):
-                    job.status = "canceled"
-                    job.error = "canceled"
-                elif not getattr(outcome, "ok", False):
-                    job.status = "failed"
-                    job.error = str(getattr(outcome, "error", "") or f"{job.agent_name} failed")
-                else:
-                    text, look = write_up.document_text(
-                        str(getattr(outcome, "text", "") or ""), job.shot_order,
-                    )
-                    if not text:
-                        job.status = "failed"
-                        job.error = f"{job.agent_name} sent back no document"
-                    else:
-                        job.status = "done"
-                        job.result_markdown = text
-                        job.result_look = {
-                            "text_color": look.text_color,
-                            "heading_color": look.heading_color,
-                            "font": look.font,
-                        }
-        except AgentUnavailable as exc:
-            with self._lock:
-                job.status = "failed"
-                job.error = str(exc)
-                job.updated_at = time.monotonic()
+        except write_up.WriteUpCanceled:
+            outcome = "canceled"
+        except write_up.WriteUpFailed as exc:
+            # Its message is the agent's own or names this host's setting;
+            # draft() reads nothing whose path could be in it.
+            error = str(exc) or f"{job.agent_name} failed"
         except Exception as exc:
             logger.warning("Remote walkthrough write-up failed: %s", type(exc).__name__)
-            with self._lock:
-                job.status = "failed"
-                job.error = f"{job.agent_name} failed ({type(exc).__name__})"
-                job.updated_at = time.monotonic()
+            error = f"{job.agent_name} failed ({type(exc).__name__})"
         finally:
+            # The paired computer's files go, whatever became of the job.
             if job.stage_dir:
                 shutil.rmtree(job.stage_dir, ignore_errors=True)
-                with self._lock:
-                    job.stage_dir = ""
+        with self._lock:
+            job.stage_dir = ""
+            job.host_ms = round((time.perf_counter() - job.started_at) * 1000, 1)
+            job.updated_at = time.monotonic()
+            if outcome == "canceled" or job.cancel_event.is_set():
+                job.status, job.error = "canceled", "canceled"
+            elif outcome == "done":
+                job.status = "done"
+                job.result_markdown = markdown
+                job.result_look = look_fields
+            else:
+                job.status, job.error = "failed", error
 
     def _handle_walkthrough_status(self, header: dict, payload: bytes, device: dict) -> dict:
         req = protocol.merge_json_payload(header, payload)

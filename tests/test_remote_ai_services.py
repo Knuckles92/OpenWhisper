@@ -29,6 +29,7 @@ from services.remote_asr.ai_client import (
 from services.remote_asr.ai_host import HostAIServices
 from services.remote_asr.client import (
     RemoteConnection,
+    RemoteEngineError,
     RemoteRequestError,
     pair_with_host,
 )
@@ -646,6 +647,77 @@ def test_transcript_cleanup_remote_cancel_stops_host_and_returns_raw(tmp_path, m
         assert cleaner.last_error == CANCELED_REASON
     finally:
         release.set()
+        pool.close_all()
+        host.stop()
+
+
+def test_paired_host_cleanup_is_a_route_beside_the_installed_agents(monkeypatch):
+    """The class asks its route two things, can it run and run it, whoever
+    cleans up: nothing in it is specific to the paired host."""
+    paired = {"value": True}
+    replies = iter(["  Tidy.  ", "   "])
+    calls: list = []
+
+    def fake_cleanup(text, **kwargs):
+        calls.append((text, kwargs))
+        return {"text": next(replies)}
+
+    monkeypatch.setattr(ai_client, "has_remote_host", lambda settings=None: paired["value"])
+    monkeypatch.setattr(ai_client, "remote_text_cleanup", fake_cleanup)
+    cancel = threading.Event()
+    cleaner = TranscriptCleanup(
+        provider=TranscriptCleanupProvider.REMOTE_HOST, reasoning="low", cancel_event=cancel,
+    )
+
+    assert cleaner.client is None and cleaner.api_key is None
+    assert cleaner.attempt_timeout_s == 120.0
+    assert cleaner.cleanup("um tidy", system_prompt="Tidy this.") == "Tidy."
+    assert cleaner.last_error is None
+    text, sent = calls[0]
+    assert text == "um tidy"
+    assert sent == {
+        "system_prompt": "Tidy this.", "reasoning": "low", "timeout_s": 120.0,
+        "deadline_s": None, "cancel_event": cancel,
+    }
+    # A blank reply keeps the words, as it does from an endpoint or an agent.
+    assert cleaner.cleanup("keep me") == "keep me"
+    assert cleaner.last_error == "empty response"
+
+    paired["value"] = False
+    assert cleaner.is_available() is False
+    assert cleaner.cleanup("raw") == "raw"
+    assert cleaner.last_error == "cleanup unavailable"
+    assert len(calls) == 2
+
+
+def test_host_write_up_reports_a_missing_agent_under_its_own_setting(tmp_path, monkeypatch):
+    """The host's job is the local one's call, so its failures read the same:
+    a missing agent names the page that chooses the write-up's agent."""
+    from meeting.agent.installed.core import MEETING_AGENT_SETTING
+    from meeting.agent.installed.drivers import AgentUnavailable
+
+    def missing(agent_id, **kwargs):
+        raise AgentUnavailable(f"Codex is not installed. Choose another in {MEETING_AGENT_SETTING}.")
+
+    host_settings = {
+        SettingsKey.REMOTE_HOST_WALKTHROUGH_WRITEUP: True,
+        SettingsKey.WALKTHROUGH_WRITE_UP_AGENT: MeetingAgentCore.CODEX,
+    }
+    ai = HostAIServices(
+        settings_loader=lambda: dict(host_settings), write_up_runner=missing,
+        host_name="StudioHost",
+    )
+    host, _eng, _pairing, _token, pool = _start_host(tmp_path, ai_services=ai)
+    try:
+        shot = _make_png(tmp_path / "shot-1.png")
+        with pytest.raises(RemoteEngineError) as failed:
+            remote_walkthrough_writeup(
+                "Words\n\n![Screenshot 1](shot-1.png)\n", [shot],
+                poll_interval_s=0.05, pool=pool,
+            )
+        assert write_up.WRITE_UP_AGENT_SETTING in str(failed.value)
+        assert MEETING_AGENT_SETTING not in str(failed.value)
+    finally:
         pool.close_all()
         host.stop()
 
