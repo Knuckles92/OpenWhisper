@@ -12,13 +12,9 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from meeting.call_detection import (
-    ABSENT_FOR_RESET_S,
     AUTO_STOP_GRACE_S,
-    CALL_ENDED_AFTER_S,
-    DROPOUT_GRACE_S,
     GENERIC_CALL_STABLE_S,
     KNOWN_CALL_STABLE_S,
-    MAX_OBSERVATION_GAP_S,
     ActiveAudioProcess,
     BrowserContext,
     CallCandidate,
@@ -35,7 +31,6 @@ from meeting.call_detection import (
     WatchedAppStatus,
     canonical_app_id,
     candidate_from_microphone,
-    is_browser_id,
     only_native_call_app,
     pick_primary_process,
     provider_key_for_site,

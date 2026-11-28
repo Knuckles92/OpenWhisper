@@ -22,7 +22,6 @@ from meeting.call_detection.catalog import (
 )
 from meeting.call_detection.detector import CallDetector, CallEndTracker
 from meeting.call_detection.models import (
-    ActiveAudioProcess,
     CallCandidate,
     CallEndGraceCancelled,
     CallEndGraceStarted,

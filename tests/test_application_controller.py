@@ -508,6 +508,11 @@ class DummyUIController:
         self.platform_ack_result = True
         self.meeting_recovery_requests = []
         self.meeting_recovery_scan_errors = []
+        self.meeting_call_offers = []
+        self.meeting_call_offers_withdrawn = []
+        self.meeting_call_auto_starts = []
+        self.meeting_call_end_graces = []
+        self.meeting_call_end_grace_cancellations = []
         self.update_checks = []
         self.update_download_progress_events = []
         self.update_download_results = []
@@ -588,6 +593,21 @@ class DummyUIController:
 
     def show_meeting_recovery_scan_error(self, message, on_retry):
         self.meeting_recovery_scan_errors.append((message, on_retry))
+
+    def on_meeting_call_detected(self, candidate, offer_id):
+        self.meeting_call_offers.append((candidate, offer_id))
+
+    def on_meeting_call_offer_withdrawn(self, offer_id):
+        self.meeting_call_offers_withdrawn.append(offer_id)
+
+    def on_meeting_call_auto_started(self, candidate):
+        self.meeting_call_auto_starts.append(candidate)
+
+    def on_meeting_call_end_grace_started(self, app_label, grace_s):
+        self.meeting_call_end_graces.append((app_label, grace_s))
+
+    def on_meeting_call_end_grace_cancelled(self, reason):
+        self.meeting_call_end_grace_cancellations.append(reason)
 
     def on_update_check_finished(self, result, error, manual):
         self.update_checks.append((result, error, manual))
