@@ -465,6 +465,16 @@ class MeetingServerBind:
     ALL: Final[Tuple[str, ...]] = (LOCALHOST, LAN)
 
 
+class MeetingCallDetectionPolicy:
+    """Values for ``SettingsKey.MEETING_CALL_DETECTION_POLICY``."""
+    ASK: Final[str] = "ask"
+    ALWAYS_RECORD: Final[str] = "always_record"
+    DONT_OFFER: Final[str] = "dont_offer"
+
+    ALL: Final[Tuple[str, ...]] = (ASK, ALWAYS_RECORD, DONT_OFFER)
+
+
+
 class HuggingFaceAccessPolicy:
     """Values for ``SettingsKey.HF_ACCESS_POLICY``.
 
@@ -740,6 +750,17 @@ class SettingsKey:
     MEETING_SERVER_PORT: Final = IntSetting(
         "meeting_server_port", config.MEETING_SERVER_PORT, clamp=(0, 65535),
     )
+    MEETING_CALL_DETECTION_POLICY: Final = ChoiceSetting(
+        "meeting_call_detection_policy",
+        MeetingCallDetectionPolicy.ASK,
+        MeetingCallDetectionPolicy.ALL,
+        normalize=_lower_stripped,
+    )
+    #: ``{provider_key: {"label": str, "policy": str}}`` for per-app/site rules
+    #: and seen call apps. ``policy`` is a ``MeetingCallDetectionPolicy`` value
+    #: or ``""`` / ``"default"`` to inherit the global default.
+    MEETING_CALL_DETECTION_APPS: Final = DictSetting("meeting_call_detection_apps")
+    MEETING_CALL_AUTO_STOP: Final = BoolSetting("meeting_call_auto_stop", False)
     MCP_ENABLED: Final = BoolSetting("mcp_enabled", False, in_table=False)
     MCP_PORT: Final = IntSetting(
         "mcp_port", MCP_DEFAULT_PORT, strict=True, valid=(1, 65535), in_table=False,
@@ -1609,6 +1630,9 @@ resolve_meeting_backup_agent = SettingsKey.MEETING_BACKUP_AGENT.read
 resolve_meeting_live_thinking = SettingsKey.MEETING_LIVE_THINKING.read
 resolve_meeting_final_thinking = SettingsKey.MEETING_FINAL_THINKING.read
 resolve_meeting_server_bind = SettingsKey.MEETING_SERVER_BIND.read
+resolve_meeting_call_detection_policy = SettingsKey.MEETING_CALL_DETECTION_POLICY.read
+resolve_meeting_call_detection_apps = SettingsKey.MEETING_CALL_DETECTION_APPS.read
+resolve_meeting_call_auto_stop = SettingsKey.MEETING_CALL_AUTO_STOP.read
 resolve_transcript_cleanup_level = SettingsKey.TRANSCRIPT_CLEANUP_LEVEL.read
 
 # On/off settings.

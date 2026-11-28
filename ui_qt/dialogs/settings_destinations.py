@@ -32,6 +32,7 @@ HOOKS: Final[str] = "hooks"
 
 # Meeting Mode
 MEETING_VOICE: Final[str] = "meeting_voice"
+MEETING_CALLS: Final[str] = "meeting_calls"
 MEETING_INTELLIGENCE: Final[str] = "meeting_intelligence"
 MEETING_FAST: Final[str] = "meeting_fast"
 MEETING_AFTER: Final[str] = "meeting_after"

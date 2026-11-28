@@ -39,6 +39,9 @@ from services.settings import (
     resolve_meeting_backup_agent,
     resolve_meeting_server_bind,
     resolve_meeting_server_port,
+    resolve_meeting_call_auto_stop,
+    resolve_meeting_call_detection_apps,
+    resolve_meeting_call_detection_policy,
     resolve_meeting_speaker_id_backend,
     resolve_meeting_whisper_model,
     resolve_meeting_asr_source,
@@ -166,6 +169,14 @@ class MeetingRuntime(QObject):
     meeting_guest_link_ready = pyqtSignal(str)
     # Past Meetings sidebar rebuild; always hop to the Qt GUI thread.
     past_meetings_refresh_requested = pyqtSignal()
+    # Automatic call detection & auto-stop signals (hop to Qt main thread).
+    meeting_call_detected = pyqtSignal(object, int)
+    meeting_call_offer_withdrawn = pyqtSignal(int)
+    meeting_call_auto_started = pyqtSignal(object)
+    meeting_call_end_grace_started = pyqtSignal(str, int)
+    meeting_call_end_grace_cancelled = pyqtSignal(str)
+    _call_auto_start_requested = pyqtSignal(object)
+    _call_end_stop_requested = pyqtSignal(str)
 
     def __init__(self, controller: "ApplicationController"):
         super().__init__()
@@ -208,6 +219,11 @@ class MeetingRuntime(QObject):
         #: start between the click and ``_build_options``. Every start
         #: rewrites it, so an abandoned one cannot leak into the next.
         self._pending_intent: str = ""
+        # Call detection & auto-stop state.
+        self._call_watcher = None
+        self._pending_call_app_id: Optional[str] = None
+        self._pending_call_app_label: Optional[str] = None
+        self._pending_call_auto_started: bool = False
 
     def connect_signals(self) -> None:
         ui = self.controller.ui_controller
@@ -222,6 +238,13 @@ class MeetingRuntime(QObject):
         self.meeting_platform_ack_requested.connect(self._on_platform_ack_requested)
         self.meeting_guest_link_ready.connect(ui.copy_meeting_guest_link)
         self.past_meetings_refresh_requested.connect(ui.main_window.refresh_past_meetings)
+        self.meeting_call_detected.connect(ui.on_meeting_call_detected)
+        self.meeting_call_offer_withdrawn.connect(ui.on_meeting_call_offer_withdrawn)
+        self.meeting_call_auto_started.connect(ui.on_meeting_call_auto_started)
+        self.meeting_call_end_grace_started.connect(ui.on_meeting_call_end_grace_started)
+        self.meeting_call_end_grace_cancelled.connect(ui.on_meeting_call_end_grace_cancelled)
+        self._call_auto_start_requested.connect(self._on_call_auto_start_requested)
+        self._call_end_stop_requested.connect(self._on_call_end_stop_requested)
 
     def toggle_from_hotkey(self) -> None:
         """Start or end Meeting Mode from its optional global hotkey; any thread."""
@@ -299,6 +322,132 @@ class MeetingRuntime(QObject):
             target=self._restore_last_finalization_worker,
             name="meeting-restore-finalization", daemon=True,
         ).start()
+        self._start_call_watcher()
+
+    def _start_call_watcher(self) -> None:
+        """Lazily start the background call-detection and auto-stop watcher."""
+        with self._lock:
+            if self._call_watcher is not None:
+                return
+        try:
+            from meeting.call_detection.watcher import CallDetectionWatcher
+
+            watcher = CallDetectionWatcher(
+                get_default_policy=resolve_meeting_call_detection_policy,
+                get_app_policies=resolve_meeting_call_detection_apps,
+                get_auto_stop_enabled=resolve_meeting_call_auto_stop,
+                is_meeting_busy=lambda: self.is_claimed or self.controller.meeting_active,
+                on_offer=lambda cand, oid: self.meeting_call_detected.emit(cand, oid),
+                on_offer_withdrawn=lambda oid: self.meeting_call_offer_withdrawn.emit(oid),
+                on_auto_record=lambda cand: self._call_auto_start_requested.emit(cand),
+                on_provider_seen=self._record_seen_call_provider,
+                on_call_end_grace_started=lambda label, grace_s: (
+                    self.meeting_call_end_grace_started.emit(label, grace_s)
+                ),
+                on_call_end_grace_cancelled=lambda reason: (
+                    self.meeting_call_end_grace_cancelled.emit(reason)
+                ),
+                on_call_end_stop_due=lambda label: (
+                    self._call_end_stop_requested.emit(label)
+                ),
+            )
+            with self._lock:
+                self._call_watcher = watcher
+            watcher.start()
+        except Exception:
+            logger.debug("Call detection watcher could not be started", exc_info=True)
+
+    def _record_seen_call_provider(self, provider_key: str, provider_label: str) -> None:
+        """Remember a detected call app/site in settings without overriding its policy."""
+        try:
+            apps = dict(resolve_meeting_call_detection_apps())
+            if provider_key in apps:
+                return
+            apps[provider_key] = {"label": provider_label, "policy": "default"}
+            settings_manager.set(SettingsKey.MEETING_CALL_DETECTION_APPS, apps)
+        except Exception:
+            logger.debug("Could not persist seen call provider %s", provider_key, exc_info=True)
+
+    def _on_call_auto_start_requested(self, candidate: Any) -> None:
+        """Start Meeting Mode automatically for a detected call (Qt main thread)."""
+        if self.is_claimed or self.controller.meeting_active:
+            return
+        with self._lock:
+            self._pending_call_app_id = getattr(candidate, "application", None)
+            self._pending_call_app_label = (
+                candidate.app_label() if hasattr(candidate, "app_label") else None
+            )
+            self._pending_call_auto_started = True
+        self.meeting_call_auto_started.emit(candidate)
+        self.start_meeting()
+
+    def _on_call_end_stop_requested(self, app_label: str) -> None:
+        """Stop Meeting Mode when the auto-stop grace countdown expires (Qt main thread)."""
+        if not self.is_active:
+            return
+        self.meeting_status_update.emit(
+            f"{app_label} call ended — stopping Meeting Mode..."
+        )
+        self.end_meeting()
+
+    def accept_call_offer(self, candidate: Any, offer_id: int) -> None:
+        """User clicked 'Start Meeting Mode' on a detected-call offer."""
+        watcher = self._call_watcher
+        if watcher is not None:
+            watcher.mark_offer_answered(offer_id)
+        with self._lock:
+            self._pending_call_app_id = getattr(candidate, "application", None)
+            self._pending_call_app_label = (
+                candidate.app_label() if hasattr(candidate, "app_label") else None
+            )
+            self._pending_call_auto_started = False
+        self.start_meeting()
+
+    def dismiss_call_offer(self, offer_id: int) -> None:
+        """User clicked 'Not now' on a detected-call offer."""
+        watcher = self._call_watcher
+        if watcher is not None:
+            watcher.mark_offer_answered(offer_id)
+
+    def timeout_call_offer(self, offer_id: int) -> None:
+        """Offer toast auto-dismissed unanswered after its timeout."""
+        watcher = self._call_watcher
+        if watcher is not None:
+            watcher.mark_offer_timed_out(offer_id)
+
+    def set_call_provider_policy(
+        self, candidate: Any, policy: str, offer_id: Optional[int] = None
+    ) -> None:
+        """Persist a per-app/site policy from the offer toast, and start if always_record."""
+        watcher = self._call_watcher
+        if watcher is not None and offer_id is not None:
+            watcher.mark_offer_answered(offer_id)
+        provider = candidate.provider() if hasattr(candidate, "provider") else None
+        if provider is not None:
+            try:
+                apps = dict(resolve_meeting_call_detection_apps())
+                apps[provider.key] = {"label": provider.label, "policy": policy}
+                settings_manager.set(SettingsKey.MEETING_CALL_DETECTION_APPS, apps)
+            except Exception:
+                logger.exception("Could not save call provider policy")
+        if policy == "always_record":
+            with self._lock:
+                self._pending_call_app_id = getattr(candidate, "application", None)
+                self._pending_call_app_label = (
+                    candidate.app_label() if hasattr(candidate, "app_label") else None
+                )
+                self._pending_call_auto_started = True
+            self.start_meeting()
+
+    def keep_recording_after_call_end(self) -> None:
+        """User clicked 'Keep recording' during the call-ended grace countdown."""
+        watcher = self._call_watcher
+        if watcher is not None:
+            watcher.keep_recording()
+
+    def stop_now_after_call_end(self) -> None:
+        """User clicked 'Stop now' during the call-ended grace countdown."""
+        self.end_meeting()
 
     def _startup_recovery_worker(self) -> None:
         try:
@@ -1009,6 +1158,13 @@ class MeetingRuntime(QObject):
             self._card_meeting_id = None
             self._deferred_start_errors = []
         self.controller.meeting_active = False
+        with self._lock:
+            self._pending_call_app_id = None
+            self._pending_call_app_label = None
+            self._pending_call_auto_started = False
+            watcher = self._call_watcher
+        if watcher is not None:
+            watcher.notify_meeting_stopped()
         # A start that failed before _start_asr ran emits no
         # "asr_released", so the lease has to be released here.
         # restore_local_engine is flag-guarded, so a duplicate call from
@@ -1067,6 +1223,20 @@ class MeetingRuntime(QObject):
             if demo else "Meeting in progress"
         )
         self.controller.meeting_active = True
+        with self._lock:
+            app_id = self._pending_call_app_id
+            app_label = self._pending_call_app_label
+            auto_started = self._pending_call_auto_started
+            self._pending_call_app_id = None
+            self._pending_call_app_label = None
+            self._pending_call_auto_started = False
+            watcher = self._call_watcher
+        if watcher is not None and not demo:
+            watcher.notify_meeting_started(
+                app_id=app_id,
+                app_label=app_label,
+                started_automatically=auto_started,
+            )
         self.meeting_state_changed.emit(
             {"active": True, "paused": False, "status": "active",
              "cloud_enabled": cloud, **_clock_fields(engine)}
@@ -2176,6 +2346,9 @@ class MeetingRuntime(QObject):
         state_payload = {"active": False, "status": status}
         if finalization:
             state_payload["finalization"] = finalization
+        watcher = self._call_watcher
+        if watcher is not None:
+            watcher.notify_meeting_stopped()
         self.meeting_state_changed.emit(state_payload)
 
     def _on_intelligence_event(self, payload: Dict[str, Any]) -> None:
@@ -2354,6 +2527,11 @@ class MeetingRuntime(QObject):
         for minutes. The wait is bounded instead — the meeting is already
         persisted, so only the tail of a consolidation pass is at risk.
         """
+        with self._lock:
+            watcher = self._call_watcher
+            self._call_watcher = None
+        if watcher is not None:
+            watcher.stop()
         self._shutdown_archive_dashboard()
         self._shutdown_engine(timeout=SHUTDOWN_JOIN_TIMEOUT_S)
         deadline = time.monotonic() + SHUTDOWN_JOIN_TIMEOUT_S
