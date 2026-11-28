@@ -172,7 +172,7 @@ Choose **Settings → App → Appearance → Theme → Omarchy desktop** to foll
 | Local Whisper | Standard Whisper sizes, turbo, Distil-Whisper | All platforms, CPU; NVIDIA CUDA on Windows/Linux | Dictation with preview, uploads, meetings |
 | Parakeet | TDT 0.6B v3; Orukeet TDT 0.6B community adaptation | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meeting chunks |
 | Parakeet MLX | TDT 0.6B v3, MLX Community weights | Apple Silicon, macOS 14+: Apple GPU through Metal or CPU | Dictation with preview, uploads, meeting chunks |
-| Parakeet Unified | Unified EN 0.6B (native preview); TDT-CTC 110M (compact, included in All-in-One installers), English | Windows x64 and Linux x86_64 CPU / GPU through Vulkan (NVIDIA, AMD, Intel) | Dictation with preview, uploads; meetings (TDT-CTC 110M) |
+| Parakeet Unified | Unified EN 0.6B (native dictation preview); TDT-CTC 110M (compact, included in All-in-One installers), English | Windows x64 and Linux x86_64 CPU / GPU through Vulkan (NVIDIA, AMD, Intel) | Dictation with preview, uploads, meeting chunks |
 | Qwen3-ASR | 0.6B, 1.7B; Fourier 2B (English, noncommercial, Windows/Linux) | Windows x64 / Linux x86_64 CPU or Vulkan GPU; Apple Silicon CPU or Apple GPU (MPS) for 0.6B / 1.7B | Dictation, uploads |
 | Nemotron Streaming | 3.5 ASR Streaming 0.6B | Windows x64 and Linux x86_64 CPU / NVIDIA GPU; Apple Silicon CPU / Apple GPU (Metal); Intel Mac CPU | Dictation with preview, uploads, meetings with native preview |
 | Moonshine | Streaming Small / Medium, English | Windows x64 CPU; Apple Silicon CPU, macOS 15+ | Dictation, uploads, meetings with native preview |

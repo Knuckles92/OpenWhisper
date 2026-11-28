@@ -115,9 +115,9 @@ BUILTIN_MODELS = {
         ),
         SpeechModel(
             "parakeet-unified-en", "parakeet_unified", "Parakeet Unified EN 0.6B",
-            "English dictation with readable live text", "NVIDIA Open Model License", "English",
+            "English dictation and meetings with readable live text", "NVIDIA Open Model License", "English",
             family="parakeet", platforms=("win_amd64", "linux_x86_64"),
-            language_codes=("en",), streaming=True, stream_final=True,
+            language_codes=("en",), streaming=True, meeting=True, stream_final=True,
             warmup=True, incremental=True, preview=True, native_stream_preview=True,
         ),
         SpeechModel(

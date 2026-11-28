@@ -174,7 +174,11 @@ def test_live_worker_resumes_pending_audio_after_host_returns(
         asr.stop()
 
 
-@pytest.mark.parametrize("family,model", [("parakeet", "parakeet-v3"), ("nemotron", "nemotron-3.5")])
+@pytest.mark.parametrize("family,model", [
+    ("parakeet", "parakeet-v3"),
+    ("parakeet_unified", "parakeet-unified-en"),
+    ("nemotron", "nemotron-3.5"),
+])
 def test_remote_preview_emits_text_for_host_model(paired, engine, repo, family, model):
     import numpy as np
     from meeting.interfaces import CaptureBlock

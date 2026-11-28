@@ -295,8 +295,16 @@ class MeetingAsrEngine:
         model = MODELS.get(self._backend.model_name)
         if model is None:
             return  # Whisper has durable chunks, but no native preview.
-        preview_type = (MeetingSpeechPreview if model.streaming else
-                        WindowSpeechPreview if model.backend in ("parakeet", "parakeet_mlx", "parakeet_unified") else None)
+        # transcribe.cpp enforces one active stream per loaded model across all
+        # sessions (blocking offline run() and a second channel's stream), so
+        # meeting previews use stateless window decodes for parakeet_unified
+        # even when the model supports native streaming for single-channel
+        # dictation.
+        preview_type = (
+            WindowSpeechPreview if model.backend == "parakeet_unified" else
+            MeetingSpeechPreview if model.streaming else
+            WindowSpeechPreview if model.backend in ("parakeet", "parakeet_mlx") else None
+        )
         if preview_type is not None:
             self._preview = preview_type(
                 self._backend, callback, lambda: self._outstanding > 0 or self._stopping,

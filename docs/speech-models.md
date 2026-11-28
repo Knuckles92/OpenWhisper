@@ -24,7 +24,7 @@ Two English models run on this engine:
 - **Device:** **Auto** uses a dedicated GPU from any vendor through Vulkan, else the CPU. Choosing the GPU also accepts an integrated one.
 - **Live preview:** On **Parakeet Unified EN 0.6B**, live preview follows the model's own stream instead of re-decoding 3-second windows. Words appear about 2 seconds into speaking, short dictations included. In a 2026-10-31 test on a GTX 1050 Ti, 16% of the words in its live text were wrong, against 55% for Parakeet v3's preview. On **Parakeet TDT-CTC 110M**, live preview re-decodes short windows with the same loaded model (no extra download).
 - **Final text:** The saved recording is decoded at the end, as with Parakeet v3. On Parakeet Unified EN 0.6B, a dictation of 30 seconds or more pastes the stream's own final text instead, if the stream heard all of the recording (ready about 0.3 seconds after you stop).
-- **Validated:** Windows x64 on the CPU and on an RTX 2060 through Vulkan, and Linux x86_64 on the CPU. A Linux GPU through Vulkan has not been validated with the release libraries. Parakeet TDT-CTC 110M also supports Meeting Mode chunks and preview; Parakeet Unified EN 0.6B is dictation/upload only for now.
+- **Validated:** Windows x64 on the CPU and on an RTX 2060 through Vulkan, and Linux x86_64 on the CPU. A Linux GPU through Vulkan has not been validated with the release libraries. Both Parakeet Unified EN 0.6B and Parakeet TDT-CTC 110M support Meeting Mode chunks and windowed live preview (meetings use windowed preview rather than native streaming because transcribe.cpp allows one active stream per loaded model).
 
 ## Qwen3-ASR
 
