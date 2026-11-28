@@ -12,16 +12,18 @@ cd "$REPO_ROOT"
 
 CLEAN=0
 SKIP_DMG=0
+EDITION="full"
 MOUNT_POINT=""
 STAGE_DIR=""
 WORKDIR=""
 
 usage() {
     cat <<'EOF'
-Usage: ./scripts/build_installer_macos.sh [--clean] [--skip-dmg]
+Usage: ./scripts/build_installer_macos.sh [--clean] [--skip-dmg] [--edition full|client]
 
-  --clean     Remove build/, dist/, and installer/Output first.
-  --skip-dmg  Freeze and verify OpenWhisper.app without packing a DMG.
+  --clean                 Remove build/, dist/, and installer/Output first.
+  --skip-dmg              Freeze and verify OpenWhisper.app without packing a DMG.
+  --edition full|client   Edition to build (default: full).
 
 Environment:
   OPENWHISPER_PYTHON                 Override the venv interpreter.
@@ -42,11 +44,25 @@ while (($#)); do
     case "$1" in
         --clean) CLEAN=1 ;;
         --skip-dmg) SKIP_DMG=1 ;;
+        --edition)
+            shift
+            (($#)) || { echo "Missing value for --edition" >&2; usage >&2; exit 2; }
+            EDITION="$1"
+            ;;
+        --edition=*)
+            EDITION="${1#*=}"
+            ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
     esac
     shift
 done
+
+case "$EDITION" in
+    full|client) ;;
+    *) echo "Unsupported --edition value: $EDITION (expected full or client)" >&2; exit 2 ;;
+esac
+export OPENWHISPER_EDITION="$EDITION"
 
 step() {
     printf '\n\033[1;36m==> %s\033[0m\n' "$*"
@@ -170,14 +186,22 @@ DIST_APP="$REPO_ROOT/dist/${APP_NAME}.app"
 APP_BIN="$DIST_APP/Contents/MacOS/${APP_NAME}"
 INFO_PLIST="$DIST_APP/Contents/Info.plist"
 OUTPUT_DIR="$REPO_ROOT/installer/Output"
-DMG_ARTIFACT="$OUTPUT_DIR/${APP_NAME}-${VERSION}-macos-arm64.dmg"
+if [[ "$EDITION" == "client" ]]; then
+    DMG_ARTIFACT="$OUTPUT_DIR/${APP_NAME}-Client-${VERSION}-macos-arm64.dmg"
+    HEALTH_OUTPUT="build/release-health-client.json"
+    INSTALLED_HEALTH_OUTPUT="build/installed-release-health-client.json"
+else
+    DMG_ARTIFACT="$OUTPUT_DIR/${APP_NAME}-${VERSION}-macos-arm64.dmg"
+    HEALTH_OUTPUT="build/release-health.json"
+    INSTALLED_HEALTH_OUTPUT="build/installed-release-health.json"
+fi
 ICNS_PATH="$REPO_ROOT/build/macos/openwhisper.icns"
 
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || date +%s)}"
 [[ "$SOURCE_DATE_EPOCH" =~ ^[0-9]+$ ]] || fail "SOURCE_DATE_EPOCH must be an integer"
 export SOURCE_DATE_EPOCH
 
-step "Building OpenWhisper $VERSION for macOS arm64"
+step "Building OpenWhisper $VERSION ($EDITION) for macOS arm64"
 echo "    Python : $($PYTHON --version 2>&1)"
 echo "    Host   : $(uname -s) $(uname -m)"
 if [[ -n "${OPENWHISPER_MACOS_CODESIGN_IDENTITY:-}" ]]; then
@@ -238,10 +262,16 @@ audio_usage="$(plist_string NSAudioCaptureUsageDescription)"
 if /usr/libexec/PlistBuddy -c "Print :NSScreenCaptureUsageDescription" "$INFO_PLIST" >/dev/null 2>&1; then
     fail "NSScreenCaptureUsageDescription must not be invented for this release"
 fi
-echo "    bundle id $actual_id, version $actual_short, min macOS $actual_min"
+url_scheme="$(/usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes:0:CFBundleURLSchemes:0" "$INFO_PLIST" 2>/dev/null || true)"
+[[ "$url_scheme" == "openwhisper" ]] || \
+    fail "Info.plist is missing required openwhisper custom URL scheme in CFBundleURLTypes"
+echo "    bundle id $actual_id, version $actual_short, min macOS $actual_min, scheme $url_scheme://"
 
-step "Verifying required bundle assets"
+step "Verifying required bundle assets ($EDITION)"
 for relative in \
+    "Contents/Resources/edition.json" \
+    "Contents/Resources/services/whisper_models.json" \
+    "Contents/Resources/services/local_asr/models.json" \
     "Contents/Resources/ui_qt/styles/theme.qss" \
     "Contents/Resources/ui_qt/assets/openwhisper.ico" \
     "Contents/Resources/ui_qt/assets/openwhisper.png" \
@@ -266,18 +296,35 @@ for relative in \
     fail "required bundle asset missing: $relative"
 done
 
+edition_json="$(find "$DIST_APP/Contents" -type f -name 'edition.json' -print -quit)"
+[[ -n "$edition_json" ]] || fail "edition.json not found in $DIST_APP"
+actual_edition="$("$PYTHON" -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("edition", ""))' "$edition_json")"
+[[ "$actual_edition" == "$EDITION" ]] || \
+    fail "edition.json reported '$actual_edition', expected '$EDITION'"
+
 for forbidden in torch nvidia scipy sympy networkx; do
     if find "$DIST_APP" -type d -name "$forbidden" -print -quit | grep -q .; then
         fail "excluded package leaked into the bundle: $forbidden"
     fi
 done
 
+if [[ "$EDITION" == "client" ]]; then
+    for client_forbidden in ctranslate2 faster_whisper onnxruntime tokenizers huggingface_hub hf_xet av av.libs; do
+        if find "$DIST_APP" \( -type d -o -type f \) -name "$client_forbidden" -print -quit | grep -q .; then
+            fail "client-excluded package leaked into the macOS bundle: $client_forbidden"
+        fi
+    done
+    if find "$DIST_APP" -type f \( -name '*ctranslate2*' -o -name '*onnxruntime*' -o -name 'libavcodec*' -o -name 'libavformat*' -o -name 'libavutil*' -o -name 'libswresample*' -o -name 'libswscale*' \) -print -quit | grep -q .; then
+        fail "client-excluded native ML/FFmpeg library leaked into the macOS bundle"
+    fi
+fi
+
 step "Running frozen --version and --self-test"
 actual_version_cli="$("$APP_BIN" --version)"
 [[ "$actual_version_cli" == "OpenWhisper $VERSION" ]] || \
     fail "frozen executable reported '$actual_version_cli', expected 'OpenWhisper $VERSION'"
 "$APP_BIN" --self-test
-"$PYTHON" scripts/check_release_health.py --executable "$APP_BIN" --output build/release-health.json --timeout 45
+"$PYTHON" scripts/check_release_health.py --executable "$APP_BIN" --output "$HEALTH_OUTPUT" --timeout 45
 
 step "Verifying code signature"
 # Ad-hoc signatures are expected for the unnotarized preview. Do not gate on
@@ -448,7 +495,7 @@ codesign --verify --deep --strict --verbose=2 "$INSTALLED_APP"
 "$PYTHON" -c 'import subprocess, sys; subprocess.run([sys.argv[1], "--self-test"], check=True, timeout=120)' \
     "$INSTALLED_APP/Contents/MacOS/${APP_NAME}"
 "$PYTHON" scripts/check_release_health.py --executable "$INSTALLED_APP/Contents/MacOS/${APP_NAME}" \
-    --output build/installed-release-health.json --timeout 45
+    --output "$INSTALLED_HEALTH_OUTPUT" --timeout 45
 hdiutil detach "$MOUNT_POINT" >/dev/null
 rm -rf -- "$MOUNT_POINT"
 MOUNT_POINT=""

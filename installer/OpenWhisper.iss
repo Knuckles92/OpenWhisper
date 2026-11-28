@@ -19,7 +19,9 @@
 #define AppPublisher "Fiori Labs"
 #define AppURL "https://openwhisper.fiorilabs.tech"
 #define AppExeName "OpenWhisper.exe"
-#define SourceDir "..\dist\OpenWhisper"
+#ifndef SourceDir
+  #define SourceDir "..\dist\OpenWhisper"
+#endif
 
 [Setup]
 ; AppId uniquely identifies this application for upgrades and uninstall.
@@ -105,6 +107,14 @@ Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: startupicon
+
+[Registry]
+; Register the openwhisper:// custom URI protocol per-user (no admin needed)
+; so browser invite links ("openwhisper://pair?...") open OpenWhisper directly.
+Root: HKCU; Subkey: "Software\Classes\openwhisper"; ValueType: string; ValueName: ""; ValueData: "URL:OpenWhisper Protocol"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\openwhisper"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\openwhisper\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"",0"
+Root: HKCU; Subkey: "Software\Classes\openwhisper\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\_internal"

@@ -263,7 +263,7 @@ def test_release_workflow_includes_macos_arm64_dmg():
     assert "./scripts/build_installer_macos.sh --clean" in workflow
     assert "OpenWhisper-*-macos-arm64.dmg" in workflow
     assert "needs: [source, windows, linux, macos]" in workflow
-    assert "expected_artifacts=8" in workflow
+    assert "expected_artifacts=13" in workflow
     qualification = (ROOT / ".github/workflows/qualify-release.yml").read_text(encoding="utf-8")
     assert 'gh release upload "$RELEASE_TAG" release/* --clobber' in qualification
     assert "check_release_qualification.py" in qualification
@@ -372,8 +372,8 @@ def test_release_workflow_supports_documented_setup_only_recovery():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "setup_only_windows:" in workflow
     assert "rm -f release/OpenWhisper-*-win64.tar.xz" in workflow
-    assert "expected_artifacts=7" in workflow
-    assert "expected_artifacts=8" in workflow
+    assert "expected_artifacts=11" in workflow
+    assert "expected_artifacts=13" in workflow
     qualification = (ROOT / ".github/workflows/qualify-release.yml").read_text(encoding="utf-8")
     assert 'gh release delete-asset "$RELEASE_TAG" "$archive_name" --yes' in qualification
     assert 'release/* --clobber' in qualification
