@@ -96,6 +96,7 @@ from ui_qt.dialogs.settings_metadata import (
     PAGE_SEARCH_FIELDS,
     merge_page_module,
 )
+from services.remote_asr.invite import is_client_only_edition as _is_client_only_edition
 from ui_qt.utils.error_messages import format_action_error
 from ui_qt.utils.list_reconcile import HistoryDelivery
 from ui_qt.dialogs.settings_destinations import (
@@ -893,8 +894,12 @@ class SettingsDialog(QDialog):
         self._add_page(
             REMOTE_ENGINE,
             "Remote engine",
-            "Transcribe dictation and meetings with another computer's engine over your network or "
-            "Tailscale, or share this computer's engine with computers you pair.",
+            (
+                "Connect to an OpenWhisper Host over your network or Tailscale."
+                if _is_client_only_edition()
+                else "Transcribe dictation and meetings with another computer's engine over your network or "
+                "Tailscale, or share this computer's engine with computers you pair."
+            ),
             lambda layout: self.remote_section.build(self, layout, design_icon),
         )
         self._add_page(
@@ -981,8 +986,12 @@ class SettingsDialog(QDialog):
         )
         self._add_page(
             DOWNLOADS,
-            "Models & engines",
-            "Speech models, engine runtimes, and hardware preferences.",
+            "Host models & engines" if _is_client_only_edition() else "Models & engines",
+            (
+                "Browse and manage speech models and runtimes on your paired host."
+                if _is_client_only_edition()
+                else "Speech models, engine runtimes, and hardware preferences."
+            ),
             self._build_downloads_page,
             scroll=False,
         )
@@ -1275,6 +1284,7 @@ class SettingsDialog(QDialog):
 
     def _build_downloads_page(self, layout: QVBoxLayout) -> None:
         self.downloads.ensure_ui()
+        self.downloads.on_connect_host_requested = lambda: self.select_destination(REMOTE_ENGINE)
         if self._remote_service is not None:
             self.downloads.bind_remote_service(self._remote_service)
         self.hf_policy_combo = ElidingComboBox()
@@ -1298,9 +1308,12 @@ class SettingsDialog(QDialog):
             "disables downloads entirely."
         )
         self.hf_policy_combo.currentIndexChanged.connect(self._on_hf_policy_changed)
-        self.downloads.add_policy_control(
-            "When a model is missing from this computer", self.hf_policy_combo
-        )
+        if not _is_client_only_edition():
+            self.downloads.add_policy_control(
+                "When a model is missing from this computer", self.hf_policy_combo
+            )
+        else:
+            self.hf_policy_combo.hide()
         layout.addWidget(self.downloads, stretch=1)
 
     def _tile_group(
@@ -1758,7 +1771,10 @@ class SettingsDialog(QDialog):
         for index in range(combo.count()):
             agent = combo.itemData(index)
             name = agent_name(agent)
-            combo.setItemText(index, name if found.get(agent) else f"{name} (not installed)")
+            if agent == "remote_host":
+                combo.setItemText(index, name)
+            else:
+                combo.setItemText(index, name if found.get(agent) else f"{name} (not installed)")
 
     def _on_write_up_scan_done(self, token: int) -> None:
         if token == self._write_up_scan_token:
@@ -2975,6 +2991,11 @@ class SettingsDialog(QDialog):
             return
         self.select_destination(DOWNLOADS)
         self.downloads.show_host()
+
+    def handle_invite_link(self, invite) -> None:
+        """Open Remote engine and confirm pairing for a validated ``InviteLink``."""
+        self.select_destination(REMOTE_ENGINE)
+        self.remote_section.handle_invite_link(invite)
 
     def _on_destination_changed(self, key: str) -> None:
         if self._backup_busy and key != BACKUP:
