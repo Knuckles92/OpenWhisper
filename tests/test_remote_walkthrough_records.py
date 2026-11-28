@@ -17,6 +17,7 @@ from services.remote_asr.settings import ClientPairing
 from services.remote_asr.tls import ensure_host_identity
 from services.remote_records import host_store as host_store_mod
 from services.remote_records import sync as sync_module
+from services.remote_records import walkthrough_kind as walkthrough_kind_mod
 from services.remote_records.host_store import HostRecordStore
 from services.remote_records.kinds import WalkthroughRecords
 from services.remote_records.sync import RecordSync
@@ -349,3 +350,163 @@ def test_walkthrough_records_end_to_end_over_tls_speech_host(tmp_path, monkeypat
             sync.stop()
     finally:
         server.stop()
+
+
+def _snapshot_folder(folder: Path) -> dict[str, bytes]:
+    return {
+        entry.name: entry.read_bytes()
+        for entry in sorted(folder.iterdir())
+        if entry.is_file()
+    }
+
+
+def _leftover_temp_dirs(parent: Path) -> list[str]:
+    return [
+        entry.name
+        for entry in parent.iterdir()
+        if entry.name.startswith((".staging-", ".deleting-"))
+    ]
+
+
+def _prepare_update_fixture(tmp_path: Path):
+    src_root = tmp_path / "client_captures"
+    host_root = tmp_path / "host_captures"
+    rec_id = "2026-11-20_16-00-00"
+    folder = _make_walkthrough(src_root, rec_id, title="Original Guide", text="Step one.")
+    client_wt = WalkthroughRecords(str(src_root))
+    host_wt = WalkthroughRecords(str(host_root))
+    device = {"id": "dev-atomic", "name": "Laptop"}
+
+    initial_stage = tmp_path / "stage-init"
+    init_bundle = _stage_bundle(client_wt, None, rec_id, initial_stage)
+    host_wt.import_record(rec_id, str(initial_stage), init_bundle.record, device)
+
+    dest = host_root / "devices" / "dev-atomic" / rec_id
+    before = _snapshot_folder(dest)
+
+    # Prepare an incremental update (modify walkthrough.md, add write-up.md, keep shot-1.png)
+    (folder / "walkthrough.md").write_text("# Updated Guide\n\nStep one revised.\n", encoding="utf-8")
+    (folder / "write-up.md").write_text("# Updated Guide (Polished)\n\nRefined.\n", encoding="utf-8")
+    upd_bundle = client_wt.bundle(None, rec_id)
+    upd_bundle.record["update"] = True
+    stage_upd = tmp_path / "stage-upd"
+    for rel_name, src in upd_bundle.files.items():
+        if rel_name in ("files/shot-1.png", "files/walkthrough.pdf", "files/walkthrough.docx"):
+            continue
+        dst = stage_upd / Path(*rel_name.split("/"))
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+    return host_wt, device, rec_id, dest, before, stage_upd, upd_bundle
+
+
+def test_walkthrough_update_rolls_back_atomically_on_mid_move_failure(tmp_path, monkeypatch):
+    host_wt, device, rec_id, dest, before, stage_upd, upd_bundle = _prepare_update_fixture(tmp_path)
+
+    real_move = walkthrough_kind_mod._move
+    calls = {"n": 0}
+
+    def flaky_move(src: str, dst: str) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("simulated mid-update move failure")
+        real_move(src, dst)
+
+    monkeypatch.setattr(walkthrough_kind_mod, "_move", flaky_move)
+
+    with pytest.raises(OSError, match="mid-update move failure"):
+        host_wt.import_record(rec_id, str(stage_upd), upd_bundle.record, device)
+
+    assert _snapshot_folder(dest) == before
+    assert _leftover_temp_dirs(dest.parent) == []
+
+
+def test_walkthrough_update_rolls_back_atomically_on_post_swap_failure(tmp_path, monkeypatch):
+    host_wt, device, rec_id, dest, before, stage_upd, upd_bundle = _prepare_update_fixture(tmp_path)
+
+    real_read = walkthrough_kind_mod._read_walkthrough_manifest
+    calls = {"n": 0}
+
+    def fail_on_installed_manifest(folder: str) -> dict:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ValueError("simulated post-swap manifest corruption")
+        return real_read(folder)
+
+    monkeypatch.setattr(walkthrough_kind_mod, "_read_walkthrough_manifest", fail_on_installed_manifest)
+
+    with pytest.raises(ValueError, match="post-swap manifest corruption"):
+        host_wt.import_record(rec_id, str(stage_upd), upd_bundle.record, device)
+
+    assert _snapshot_folder(dest) == before
+    assert _leftover_temp_dirs(dest.parent) == []
+
+
+def test_walkthrough_update_rolls_back_when_final_replace_fails(tmp_path, monkeypatch):
+    host_wt, device, rec_id, dest, before, stage_upd, upd_bundle = _prepare_update_fixture(tmp_path)
+
+    real_replace = os.replace
+    failed_once = {"done": False}
+
+    def flaky_replace(src: str, dst: str) -> None:
+        if (
+            not failed_once["done"]
+            and os.path.basename(src).startswith(".staging-")
+            and os.path.abspath(dst) == os.path.abspath(str(dest))
+        ):
+            failed_once["done"] = True
+            raise OSError("simulated final swap failure")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(walkthrough_kind_mod.os, "replace", flaky_replace)
+
+    with pytest.raises(OSError, match="final swap failure"):
+        host_wt.import_record(rec_id, str(stage_upd), upd_bundle.record, device)
+
+    assert _snapshot_folder(dest) == before
+    assert _leftover_temp_dirs(dest.parent) == []
+
+
+def test_walkthrough_update_drops_stale_files_and_keeps_unchanged(tmp_path):
+    src_root = tmp_path / "client_captures"
+    host_root = tmp_path / "host_captures"
+    rec_id = "2026-11-20_17-00-00"
+    folder = _make_walkthrough(src_root, rec_id, title="Stale Check", with_write_up=True)
+
+    client_wt = WalkthroughRecords(str(src_root))
+    host_wt = WalkthroughRecords(str(host_root))
+    device = {"id": "dev-stale", "name": "Laptop"}
+
+    init_stage = tmp_path / "stage-init"
+    init_bundle = _stage_bundle(client_wt, None, rec_id, init_stage)
+    assert host_wt.import_record(rec_id, str(init_stage), init_bundle.record, device)["files"] == 8
+
+    # Remove write-up artifacts on client and edit walkthrough.md; keep shot-1.png & docs on host
+    for name in ("write-up.md", "write-up.pdf", "write-up.docx"):
+        (folder / name).unlink()
+    (folder / "walkthrough.md").write_text("# Stale Check\n\nCleaned up.\n", encoding="utf-8")
+
+    upd_bundle = client_wt.bundle(None, rec_id)
+    upd_bundle.record["update"] = True
+    stage_upd = tmp_path / "stage-upd"
+    dst_md = stage_upd / "files" / "walkthrough.md"
+    dst_md.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(folder / "walkthrough.md", dst_md)
+
+    res = host_wt.import_record(rec_id, str(stage_upd), upd_bundle.record, device)
+    assert res["files"] == 5
+
+    dest = host_root / "devices" / "dev-stale" / rec_id
+    assert set(host_wt.stored_files("dev-stale", rec_id)) == {
+        "files/walkthrough.json",
+        "files/walkthrough.md",
+        "files/walkthrough.pdf",
+        "files/walkthrough.docx",
+        "files/shot-1.png",
+    }
+    assert not (dest / "write-up.md").exists()
+    assert not (dest / "write-up.pdf").exists()
+    assert not (dest / "write-up.docx").exists()
+    assert (dest / "shot-1.png").read_bytes() == PNG_HEADER
+    assert "Cleaned up." in (dest / "walkthrough.md").read_text(encoding="utf-8")
+    assert _leftover_temp_dirs(dest.parent) == []

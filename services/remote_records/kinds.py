@@ -21,7 +21,7 @@ import os
 import shutil
 import uuid
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional
 
 from sqlalchemy import Boolean, Float, Integer, LargeBinary, String, Text, func
 
@@ -936,9 +936,23 @@ def _meeting_summary(meeting: dict) -> dict:
     return item
 
 
-from services.remote_records.walkthrough_kind import (  # noqa: E402
-    WalkthroughRecords as WalkthroughRecords,
-)
+if TYPE_CHECKING:
+    from services.remote_records.walkthrough_kind import (
+        WalkthroughRecords as WalkthroughRecords,
+    )
+
+
+def __getattr__(name: str):
+    if name == "WalkthroughRecords":
+        from services.remote_records.walkthrough_kind import WalkthroughRecords
+
+        globals()["WalkthroughRecords"] = WalkthroughRecords
+        return WalkthroughRecords
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> List[str]:
+    return sorted(set(globals()) | {"WalkthroughRecords"})
 
 
 

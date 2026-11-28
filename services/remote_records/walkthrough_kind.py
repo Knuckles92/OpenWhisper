@@ -219,50 +219,60 @@ class _FolderSwap:
         self.staged = staged
         self.dest = dest
         self.old_folder = old_folder
+        self.staging_dir: str | None = None
         self.tombstone: str | None = None
         self.placed = False
 
     def install(self, sizes: dict[str, int], *, update: bool) -> None:
         os.makedirs(self.parent_dir, exist_ok=True)
-        if update and self.old_folder and os.path.isdir(self.old_folder):
-            for name in sizes:
-                source = os.path.join(self.staged, name)
-                if os.path.isfile(source) and not os.path.islink(source):
-                    target = os.path.join(self.dest, name)
-                    if not _is_direct_child(self.dest, target) and os.path.exists(target):
-                        raise ValueError(f"Unsafe walkthrough target: {name}")
-                    _move(source, target)
-            return
+        staging_dir = os.path.join(
+            self.parent_dir, f".staging-{self.record_id}-{uuid.uuid4().hex}"
+        )
+        os.makedirs(staging_dir, exist_ok=False)
+        self.staging_dir = staging_dir
 
-        if self.old_folder and os.path.isdir(self.old_folder):
-            self.tombstone = os.path.join(
-                self.parent_dir, f".deleting-{self.record_id}-{uuid.uuid4().hex}"
-            )
-            os.replace(self.old_folder, self.tombstone)
-        os.makedirs(self.dest, exist_ok=True)
-        self.placed = True
         for name in sizes:
+            target = os.path.join(staging_dir, name)
+            if not _is_direct_child(staging_dir, target):
+                raise ValueError(f"Unsafe walkthrough target: {name}")
             source = os.path.join(self.staged, name)
             if os.path.isfile(source) and not os.path.islink(source):
-                _move(source, os.path.join(self.dest, name))
+                _move(source, target)
+            elif update and self.old_folder and os.path.isdir(self.old_folder):
+                kept = os.path.join(self.old_folder, name)
+                if not _is_direct_child(self.old_folder, kept) or not os.path.isfile(kept):
+                    raise ValueError(f"The walkthrough's {name} is missing.")
+                try:
+                    os.link(kept, target)
+                except OSError:
+                    shutil.copy2(kept, target)
+            else:
+                raise ValueError(f"The walkthrough's {name} is missing.")
 
-    def prune(self, keep_names: set) -> None:
-        if not os.path.isdir(self.dest):
-            return
-        for entry in list(os.listdir(self.dest)):
-            if entry in keep_names:
-                continue
-            path = os.path.join(self.dest, entry)
-            try:
-                if os.path.isfile(path) and not os.path.islink(path):
-                    os.remove(path)
-            except OSError:
-                logger.debug("Could not prune stale walkthrough file %s", path, exc_info=True)
+        if self.old_folder and os.path.isdir(self.old_folder):
+            tombstone = os.path.join(
+                self.parent_dir, f".deleting-{self.record_id}-{uuid.uuid4().hex}"
+            )
+            os.replace(self.old_folder, tombstone)
+            self.tombstone = tombstone
+
+        os.replace(staging_dir, self.dest)
+        self.staging_dir = None
+        self.placed = True
 
     def roll_back(self) -> None:
-        if self.placed:
+        if self.staging_dir and os.path.exists(self.staging_dir):
+            shutil.rmtree(self.staging_dir, ignore_errors=True)
+            self.staging_dir = None
+        if self.placed and os.path.exists(self.dest):
             shutil.rmtree(self.dest, ignore_errors=True)
-        if self.tombstone and self.old_folder and not os.path.exists(self.old_folder):
+            self.placed = False
+        if (
+            self.tombstone
+            and os.path.exists(self.tombstone)
+            and self.old_folder
+            and not os.path.exists(self.old_folder)
+        ):
             try:
                 os.replace(self.tombstone, self.old_folder)
                 self.tombstone = None
@@ -272,6 +282,7 @@ class _FolderSwap:
     def discard_old(self) -> None:
         if self.tombstone:
             shutil.rmtree(self.tombstone, ignore_errors=True)
+            self.tombstone = None
 
 
 class WalkthroughRecords:
@@ -561,9 +572,10 @@ class WalkthroughRecords:
         _check_staged_files(sizes, staged, old_folder if update else None)
 
         # Validate walkthrough.json before touching the destination directory.
+        staged_manifest = os.path.join(staged, MANIFEST_NAME)
         manifest_source_dir = (
             staged
-            if os.path.isfile(os.path.join(staged, MANIFEST_NAME))
+            if os.path.isfile(staged_manifest) and not os.path.islink(staged_manifest)
             else (old_folder or staged)
         )
         _read_walkthrough_manifest(manifest_source_dir)
@@ -578,8 +590,6 @@ class WalkthroughRecords:
             swap.roll_back()
             raise
         swap.discard_old()
-        if update:
-            swap.prune(set(sizes))
         if origin is not None:
             self._write_owner_name(origin, _origin_name(device))
         return {"files": len(sizes)}
