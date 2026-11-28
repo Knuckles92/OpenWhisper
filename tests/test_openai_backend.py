@@ -280,9 +280,13 @@ def test_selected_api_model_and_response_format(monkeypatch, chunks, split, mode
     from services.settings import SettingsKey
     from transcriber import openai_backend as module
 
-    monkeypatch.setattr(module.settings_manager, "load_all_settings", lambda: {
-        SettingsKey.API_TRANSCRIPTION_MODEL: model,
-    })
+    monkeypatch.setattr(
+        module.settings_manager,
+        "load_settings",
+        lambda keys: {
+            k: v for k, v in {SettingsKey.API_TRANSCRIPTION_MODEL: model}.items() if k in keys
+        },
+    )
     api = Mock()
     api.create.return_value = SimpleNamespace(text="  transcript  ") if model == "gpt-transcribe" else "  transcript  "
     backend = make_backend(api)
@@ -303,7 +307,11 @@ def test_chunks_keep_model_when_setting_changes_mid_upload(monkeypatch, chunks, 
     from transcriber import openai_backend as module
 
     settings = {SettingsKey.API_TRANSCRIPTION_MODEL: "gpt-transcribe"}
-    monkeypatch.setattr(module.settings_manager, "load_all_settings", lambda: dict(settings))
+    monkeypatch.setattr(
+        module.settings_manager,
+        "load_settings",
+        lambda keys: {k: v for k, v in settings.items() if k in keys},
+    )
     def respond(**kwargs):
         settings[SettingsKey.API_TRANSCRIPTION_MODEL] = "whisper-1"
         return SimpleNamespace(text="transcript")

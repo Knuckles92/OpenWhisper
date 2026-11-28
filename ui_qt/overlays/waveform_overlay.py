@@ -31,6 +31,7 @@ from ui_qt.snap import macos
 from ui_qt.utils.palette import token_color
 from ui_qt.waveform_styles import Particle, ParticleStyle, round_pen
 from ui_qt.widgets.buttons import hide_hotkey_hint, show_hotkey_hint
+from ui_qt.utils.font_scale import scaled_font
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +287,7 @@ class WaveformOverlay(QWidget):
                 painter = QPainter(self)
                 painter.fillRect(self.rect(), token_color("overlay-bg"))
                 painter.setPen(QPen(token_color("overlay-text")))
-                painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+                painter.setFont(scaled_font(10, QFont.Weight.Bold))
                 painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Error")
             except Exception:
                 pass  # The error frame is cosmetic; the failure is logged above.
@@ -555,7 +556,7 @@ class WaveformOverlay(QWidget):
 
     def _draw_label_at(self, painter: QPainter, text: str, alpha: float, dy: float) -> None:
         painter.setPen(QPen(token_color("overlay-text", int(255 * alpha))))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        painter.setFont(scaled_font(10, QFont.Weight.Bold))
         painter.drawText(QRectF(self._status_rect()).translated(0, dy), Qt.AlignmentFlag.AlignCenter, text)
 
     def _status_rect(self) -> QRect:
@@ -571,13 +572,13 @@ class WaveformOverlay(QWidget):
 
     def _draw_status(self, painter: QPainter, text: str, color: QColor) -> None:
         painter.setPen(QPen(color))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        painter.setFont(scaled_font(10, QFont.Weight.Bold))
         rect = self._status_rect().adjusted(12, 0, -12, 0)
         text = QFontMetrics(painter.font()).elidedText(text, Qt.TextElideMode.ElideRight, rect.width())
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
 
     def _streaming_preview_font(self) -> QFont:
-        return QFont("Segoe UI", self._streaming_font_size)
+        return scaled_font(self._streaming_font_size)
 
     def refresh_streaming_font_size(self):
         """Reload preview font size from settings and reflow if needed."""
@@ -891,13 +892,13 @@ class WaveformOverlay(QWidget):
         return "Command Mode" if command else self._recording_destination or "Hands-free"
 
     def _badge_width(self) -> float:
-        font = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+        font = scaled_font(8, QFont.Weight.DemiBold)
         lock = 8 + 5 if self._hands_free else 0
         return QFontMetrics(font).horizontalAdvance(self._badge_text()) + 18 + lock
 
     def _draw_mode_badge(self, painter: QPainter) -> None:
         text = self._badge_text()
-        font = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+        font = scaled_font(8, QFont.Weight.DemiBold)
         lock_width = 8 if self._hands_free else 0
         rect = QRectF(_BADGE_MARGIN, _BADGE_MARGIN, self._badge_width(), _BADGE_HEIGHT)
         self._badge_rect = rect
@@ -948,10 +949,10 @@ class WaveformOverlay(QWidget):
         return max(0.0, 1.0 - (time.monotonic() - self._language_changed_at) / _LANGUAGE_FLASH_S)
 
     def _chip_width(self) -> float:
-        return max(30, QFontMetrics(QFont("Segoe UI", 8, QFont.Weight.Bold)).horizontalAdvance(self._language_text()) + 18)
+        return max(30, QFontMetrics(scaled_font(8, QFont.Weight.Bold)).horizontalAdvance(self._language_text()) + 18)
 
     def _draw_language_chip(self, painter: QPainter) -> QRectF:
-        font = QFont("Segoe UI", 8, QFont.Weight.Bold)
+        font = scaled_font(8, QFont.Weight.Bold)
         text = self._language_text()
         width = self._chip_width()
         rect = QRectF(self.width() - _BADGE_MARGIN - width, _BADGE_MARGIN, width, _BADGE_HEIGHT)
@@ -991,7 +992,7 @@ class WaveformOverlay(QWidget):
         painter.setOpacity(moments.exit_opacity(t, self._transient_ms() / 1000))
         grow = moments.phase(t, 0.0, moments.POP_S)
         scale = 0.6 + 0.4 * moments.ease_out_back(grow)
-        font = QFont("Segoe UI", 13, QFont.Weight.Bold)
+        font = scaled_font(13, QFont.Weight.Bold)
         text = self._language_text()
         full_width = max(54, QFontMetrics(font).horizontalAdvance(text) + 28)
         width, height = full_width * scale, 30 * scale
@@ -1097,7 +1098,7 @@ class WaveformOverlay(QWidget):
         They drop their words for icons when the destination badge needs
         the room.
         """
-        font = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+        font = scaled_font(8, QFont.Weight.DemiBold)
         right = self.width() - _BADGE_MARGIN
         if self._chip_visible():
             right -= self._chip_width() + _CONTROL_GAP
@@ -1113,7 +1114,7 @@ class WaveformOverlay(QWidget):
 
     def _draw_walkthrough_controls(self, painter: QPainter) -> dict[str, QRectF]:
         """Snap and Done; see ``_layout_controls``."""
-        font = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+        font = scaled_font(8, QFont.Weight.DemiBold)
         rects = {}
         for key, (rect, label) in self._layout_controls().items():
             self._draw_control(painter, key, rect, label, font)
@@ -1315,7 +1316,7 @@ class WaveformOverlay(QWidget):
             painter.drawLine(QPointF(blade, cy - 11), QPointF(blade, cy + 11))
 
         painter.setPen(QPen(amber))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        painter.setFont(scaled_font(10, QFont.Weight.Bold))
         text = f"Splitting ({self.large_file_size_mb:.1f} MB)..."
         painter.drawText(rect.adjusted(0, h - 25, 0, 0), Qt.AlignmentFlag.AlignCenter, text)
 
@@ -1593,7 +1594,7 @@ class WaveformOverlay(QWidget):
         moments.draw_glyph(painter, center, t, 0.08, "bang")
         text_left = int(left + 2 * radius + 10)
         rect = QRect(text_left, 8, self.width() - text_left - 14, self.height() - 16)
-        font = QFont("Segoe UI", 10, QFont.Weight.DemiBold)
+        font = scaled_font(10, QFont.Weight.DemiBold)
         enter = moments.phase(t, 0.06, moments.LABEL_S)
         painter.setFont(font)
         painter.setPen(QPen(token_color("overlay-text", int(255 * enter))))

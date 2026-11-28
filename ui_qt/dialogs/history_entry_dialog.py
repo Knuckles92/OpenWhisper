@@ -46,6 +46,7 @@ from ui_qt.widgets.history_sidebar import (
     _kind_label,
     _location_chip,
 )
+from ui_qt.utils.font_scale import apply_scaled_font
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +269,7 @@ class HistoryEntryDialog(QDialog):
         self.transcript_text = QTextEdit()
         self.transcript_text.setObjectName("historyEntryTranscript")
         self.transcript_text.setReadOnly(True)
-        self.transcript_text.setFont(QFont("Segoe UI", 13))
+        apply_scaled_font(self.transcript_text, 13)
         self.transcript_text.setText(
             _failed_recording_hint(bool(self._audio_path)) if self._failed_recording else self._shown_text()
         )

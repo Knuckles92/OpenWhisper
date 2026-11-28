@@ -7,6 +7,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
 from ui_qt.widgets import PrimaryButton, Button
+from ui_qt.utils.font_scale import apply_scaled_font
 
 
 class CleanupRuleDialog(QDialog):
@@ -70,7 +71,7 @@ class CleanupRuleDialog(QDialog):
             "Review your new rule" if original is not None else "Edit learned rule"
         )
         title.setObjectName("cleanupRuleDialogTitle")
-        title.setFont(QFont("Segoe UI", 15, QFont.Weight.DemiBold))
+        apply_scaled_font(title, 15, QFont.Weight.DemiBold)
         heading.addWidget(title)
 
         subtitle = QLabel(
@@ -127,7 +128,7 @@ class CleanupRuleDialog(QDialog):
         self.rule_edit = QTextEdit()
         self.rule_edit.setObjectName("cleanupRuleEditor")
         self.rule_edit.setAcceptRichText(False)
-        self.rule_edit.setFont(QFont("Segoe UI", 12))
+        apply_scaled_font(self.rule_edit, 12)
         self.rule_edit.setPlainText(rule or "")
         self.rule_edit.setPlaceholderText("Enter the rule…")
         self.rule_edit.setMinimumHeight(80)

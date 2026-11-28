@@ -157,12 +157,18 @@ export default function CustomReports({
   const [draft, setDraft] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
+  const aiUnavailableReason = !state.cloud_enabled
+    ? 'AI insights are off. Turn on AI insights to request a custom report.'
+    : state.status !== 'ended' && !state.intelligence_online
+      ? 'AI insights are offline. Reconnect to request a custom report.'
+      : null;
+  const composerDisabled = pending || running || Boolean(aiUnavailableReason);
 
   if (readOnly && !reports.length) return null;
 
   const submit = async () => {
     const text = draft.trim();
-    if (!text || pending || running) return;
+    if (!text || composerDisabled) return;
     setPending(true);
     setError('');
     try {
@@ -218,7 +224,7 @@ export default function CustomReports({
               placeholder="What should this report cover, and who is it for?"
               value={draft}
               maxLength={MAX_REQUEST_CHARS}
-              disabled={pending || running}
+              disabled={composerDisabled}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
@@ -233,7 +239,7 @@ export default function CustomReports({
                   key={example}
                   type="button"
                   className="ghost"
-                  disabled={pending || running}
+                  disabled={composerDisabled}
                   onClick={() => setDraft(example)}
                 >
                   {example}
@@ -243,13 +249,14 @@ export default function CustomReports({
             <button
               type="button"
               className="primary"
-              disabled={pending || running || !draft.trim()}
+              disabled={composerDisabled || !draft.trim()}
               onClick={() => void submit()}
             >
               {pending ? 'Starting…' : running ? 'A report is being written…' : 'Write this report'}
             </button>
             <p role="status" aria-live="polite" className="custom-report-hint">
               {error
+                || aiUnavailableReason
                 || (running
                   ? 'One report is written at a time. This one will appear below.'
                   : 'Reports are written by the meeting’s AI insights model and saved with the meeting.')}

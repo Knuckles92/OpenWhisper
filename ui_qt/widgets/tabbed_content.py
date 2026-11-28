@@ -20,6 +20,7 @@ from services.settings import (
     settings_manager,
 )
 from ui_qt.utils.restyle import set_style_property
+from ui_qt.utils.font_scale import apply_scaled_font
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ class TabbedContentWidget(QWidget):
 
         self.tab_bar = QTabBar()
         self.tab_bar.setObjectName("contentTabBar")
-        self.tab_bar.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        apply_scaled_font(self.tab_bar, 13, QFont.Weight.DemiBold)
         self.tab_bar.setDrawBase(False)
         self.tab_bar.setExpanding(True)
         self.tab_bar.setUsesScrollButtons(False)

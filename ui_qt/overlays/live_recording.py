@@ -28,6 +28,7 @@ from PyQt6.QtGui import (
 from ui_qt.overlays import moments
 from ui_qt.utils.loudness import level_to_height
 from ui_qt.utils.palette import current_palette, token_color
+from ui_qt.utils.font_scale import scaled_font
 
 #: How far the particles' launch line sits above the overlay's bottom, as the
 #: legacy emitter did.
@@ -151,7 +152,7 @@ def wordless_label_width(elapsed: float, *, dot: bool = True, clock: bool = True
     if dot:
         parts.append(_DOT_D)
     if clock:
-        parts.append(QFontMetrics(QFont("Segoe UI", 10)).horizontalAdvance(format_clock(elapsed)))
+        parts.append(QFontMetrics(scaled_font(10)).horizontalAdvance(format_clock(elapsed)))
     return sum(parts) + _GAP * max(0, len(parts) - 1)
 
 
@@ -162,8 +163,8 @@ def draw_live_label(painter: QPainter, rect: QRectF, label: str, elapsed: float,
 
     The dot pops in with a ring, then pulses; the words rise into place.
     """
-    font = QFont("Segoe UI", 10, QFont.Weight.Bold)
-    clock_font = QFont("Segoe UI", 10)
+    font = scaled_font(10, QFont.Weight.Bold)
+    clock_font = scaled_font(10)
     metrics, clock_metrics = QFontMetrics(font), QFontMetrics(clock_font)
     dot_d, gap = _DOT_D, _GAP
     clock_text = format_clock(elapsed) if clock else ""

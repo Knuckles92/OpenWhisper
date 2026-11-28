@@ -58,6 +58,7 @@ from services.settings import (
     resolve_walkthrough_minimize_to_tray,
     settings_manager,
 )
+from ui_qt.utils.error_messages import format_action_error
 
 logger = logging.getLogger(__name__)
 
@@ -1288,7 +1289,9 @@ class UIController(QObject):
         try:
             result = latest_result()
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            self.set_status(f"Couldn't open the latest walkthrough: {exc}")
+            self.set_status(
+                format_action_error("Couldn't open the latest walkthrough", exc)
+            )
             return
         if result is None:
             self.set_status("No completed walkthrough to paste yet")
@@ -1337,7 +1340,7 @@ class UIController(QObject):
             self.set_status("Walkthrough copied" if copied else "Couldn't copy the walkthrough")
         except (OSError, ValueError, KeyError, TypeError) as exc:
             copied = False
-            self.set_status(f"Couldn't open the walkthrough: {exc}")
+            self.set_status(format_action_error("Couldn't open the walkthrough", exc))
         if self._walkthrough_ready is not None:
             self._walkthrough_ready.show_copy_status(result, copy_format, copied=copied)
 
@@ -1841,29 +1844,41 @@ class UIController(QObject):
         dialog = HuggingFaceConsentDialog(
             model_name, policy, env_blocked=env_blocked, parent=self.main_window
         )
-        dialog.exec()
-        return dialog.result_action
+        try:
+            dialog.exec()
+            return dialog.result_action
+        finally:
+            dialog.deleteLater()
 
     def show_required_runtime_dialog(self, model_name: str, component_id: str) -> bool:
         from ui_qt.dialogs.required_runtime_dialog import RequiredRuntimeDialog
 
         dialog = RequiredRuntimeDialog(model_name, component_id, parent=self.main_window)
-        return dialog.exec() == dialog.DialogCode.Accepted
+        try:
+            return dialog.exec() == dialog.DialogCode.Accepted
+        finally:
+            dialog.deleteLater()
 
     def show_gpu_runtime_dialog(self, model_name: str, gpu_component: str, cpu_component: str):
         """The GPU runtime offer; the runtime chosen, or None for Later."""
         from ui_qt.dialogs.required_runtime_dialog import GpuRuntimeDialog
 
         dialog = GpuRuntimeDialog(model_name, gpu_component, cpu_component, parent=self.main_window)
-        dialog.exec()
-        return dialog.choice
+        try:
+            dialog.exec()
+            return dialog.choice
+        finally:
+            dialog.deleteLater()
 
     def show_use_gpu_dialog(self, plan) -> bool:
         """The "Use this GPU" offer; True when accepted."""
         from ui_qt.dialogs.use_gpu_dialog import UseGpuDialog
 
         dialog = UseGpuDialog(plan, parent=self.main_window)
-        return dialog.exec() == dialog.DialogCode.Accepted
+        try:
+            return dialog.exec() == dialog.DialogCode.Accepted
+        finally:
+            dialog.deleteLater()
 
     def open_settings_destination(self, name: str = OVERVIEW):
         """Show Settings on one destination (single instance, re-raised).
@@ -2420,8 +2435,11 @@ class UIController(QObject):
             destination=destination,
             remote=remote,
         )
-        dialog.exec()
-        return dialog.result_action == MeetingConsentDialog.RESULT_ENABLE
+        try:
+            dialog.exec()
+            return dialog.result_action == MeetingConsentDialog.RESULT_ENABLE
+        finally:
+            dialog.deleteLater()
 
     def show_meeting_recovery_dialog(
         self,
@@ -2441,7 +2459,10 @@ class UIController(QObject):
         dialog = MeetingRecoveryDialog(list(meetings or []), parent=self.main_window)
         dialog.on_finalize = on_finalize
         dialog.on_discard = on_discard
-        dialog.exec()
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     def show_meeting_recovery_scan_error(
         self, message: str, on_retry: Callable[[], None]
@@ -2656,16 +2677,19 @@ class UIController(QObject):
         dialog.on_download_requested = self._on_update_download_requested
         dialog.on_cancel_requested = self._on_update_cancel_requested
         dialog.on_setup_requested = self._on_update_setup_requested
-        dialog.exec()
-        if dialog.result_action == AppUpdateDialog.RESULT_PRIMARY:
-            if (
-                result is not None
-                and result.release is not None
-                and not result.can_apply
-            ):
-                QDesktopServices.openUrl(QUrl(result.release.html_url))
-            elif result is None:
-                QDesktopServices.openUrl(QUrl(RELEASES_PAGE_URL))
+        try:
+            dialog.exec()
+            if dialog.result_action == AppUpdateDialog.RESULT_PRIMARY:
+                if (
+                    result is not None
+                    and result.release is not None
+                    and not result.can_apply
+                ):
+                    QDesktopServices.openUrl(QUrl(result.release.html_url))
+                elif result is None:
+                    QDesktopServices.openUrl(QUrl(RELEASES_PAGE_URL))
+        finally:
+            dialog.deleteLater()
         # exec() has returned, so the dialog is closed: a download the user
         # walked away from must not report into a dead widget.
         if self._update_dialog is dialog:
@@ -2828,7 +2852,9 @@ class UIController(QObject):
 
     def _on_code_change_poll(self) -> None:
         if not resolve_update_restart_prompt_enabled(
-            settings_manager.load_all_settings()
+            settings_manager.load_settings(
+                [SettingsKey.UPDATE_RESTART_PROMPT_ENABLED]
+            )
         ):
             self._code_change_timer.stop()
             return

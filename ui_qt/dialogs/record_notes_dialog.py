@@ -24,6 +24,7 @@ from services import annotations as record_annotations
 from services.format_utils import format_timestamp
 from ui_qt.widgets import Button, DangerButton, PrimaryButton
 from ui_qt.widgets.buttons import neutral_button
+from ui_qt.utils.font_scale import apply_scaled_font
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +198,7 @@ class RecordNotesDialog(QDialog):
 
         self.notes_edit = QPlainTextEdit()
         self.notes_edit.setObjectName("recordNotesEditor")
-        self.notes_edit.setFont(QFont("Segoe UI", 11))
+        apply_scaled_font(self.notes_edit, 11)
         self.notes_edit.setPlaceholderText(
             "Agent or personal notes, takeaways, action items, or context…"
         )

@@ -159,14 +159,14 @@ def polish_cleanup_rule(
     instruction = instruction.strip()
     if not instruction:
         return "", "empty instruction"
-    cleaner = TranscriptCleanup(
+    with TranscriptCleanup(
         provider=provider, model=model, reasoning=reasoning
-    )
-    result = cleaner.cleanup(
-        instruction,
-        system_prompt=config.TRANSCRIPT_CLEANUP_RULE_POLISH_PROMPT,
-    )
-    return result.strip(), cleaner.last_error
+    ) as cleaner:
+        result = cleaner.cleanup(
+            instruction,
+            system_prompt=config.TRANSCRIPT_CLEANUP_RULE_POLISH_PROMPT,
+        )
+        return result.strip(), cleaner.last_error
 
 
 class TranscriptCleanup:
@@ -208,6 +208,22 @@ class TranscriptCleanup:
         # With no ``_connection`` yet, the next configure() builds the client.
         if not defer_client:
             self._initialize_client()
+
+    def close(self) -> None:
+        """Close the underlying HTTP client pool, if initialized."""
+        client, self.client = self.client, None
+        self._connection = None
+        if client is not None:
+            try:
+                client.close()
+            except Exception as exc:
+                logger.debug("Error closing transcript cleanup client: %s", exc)
+
+    def __enter__(self) -> "TranscriptCleanup":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
 
     @staticmethod
     def _normalize_provider(provider: Optional[str]) -> str:

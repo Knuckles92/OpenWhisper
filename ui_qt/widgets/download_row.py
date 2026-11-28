@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QAbstractButton, QFrame
 
 from ui_qt.widgets.buttons import Button
 from ui_qt.utils.restyle import repolish
+from ui_qt.utils.font_scale import apply_scaled_font
 
 # Child labels must set an explicit transparent background — the global
 # ``QWidget { background-color: @bg }`` rule otherwise paints window-coloured
@@ -185,7 +186,7 @@ class DownloadRow(QFrame):
         button.setMaximumWidth(width)
         button.setMinimumHeight(28)
         button.setMaximumHeight(28)
-        button.setFont(QFont("Segoe UI", 10))
+        apply_scaled_font(button, 10)
 
     def _set_badge(self, text: str, tone: str) -> None:
         """Update badge text and dynamic tone property for QSS styling."""

@@ -52,6 +52,7 @@ from ui_qt.utils.collapse_animation import (
     UNLIMITED_HEIGHT,
     create_max_height_animation,
 )
+from ui_qt.utils.error_messages import friendly_error_message
 from ui_qt.widgets import (
     AnimatedProgressBar,
     Button,
@@ -96,6 +97,8 @@ class _ExportRelay(QObject):
     finished = pyqtSignal(int, int, str)
     failed = pyqtSignal(int, str)
     canceled = pyqtSignal(int)
+    #: Carries (load_token, items_list, friendly_error).
+    items_loaded = pyqtSignal(int, object, str)
 
 
 _relay: Optional[_ExportRelay] = None
@@ -158,6 +161,8 @@ class ExportDialogBase(QDialog):
         self,
         parent=None,
         item_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+        *,
+        async_load: bool = False,
     ):
         super().__init__(parent)
         self.setMinimumWidth(600)
@@ -165,6 +170,7 @@ class ExportDialogBase(QDialog):
         self.setModal(True)
         self._worker: threading.Thread | None = None
         self._export_token = 0
+        self._load_token = 0
         self._cancel_requested = threading.Event()
         self._anim_group: QParallelAnimationGroup | None = None
         self._section_targets: dict[QWidget, bool] = {}
@@ -177,13 +183,56 @@ class ExportDialogBase(QDialog):
         relay.finished.connect(self._relay_finished)
         relay.failed.connect(self._relay_failed)
         relay.canceled.connect(self._relay_canceled)
+        relay.items_loaded.connect(self._relay_items_loaded)
 
         self.setObjectName(f"{self._NAME_PREFIX}Dialog")
         self.setWindowTitle(self._TITLE)
         self._item_provider = item_provider
         self._items: List[Dict[str, Any]] = []
-        self._load_items()
-        self._setup_ui()
+        self._load_error = ""
+        self._loading = False
+        self._async_load = bool(async_load)
+
+        self._root_layout = QVBoxLayout(self)
+        self._root_layout.setContentsMargins(28, 24, 28, 20)
+        self._root_layout.setSpacing(14)
+
+        title = QLabel(self._TITLE)
+        title.setObjectName("modelManagerTitle")
+        self._root_layout.addWidget(title)
+        subtitle = WrappedLabel(self._SUBTITLE)
+        subtitle.setObjectName("modelManagerSubtitle")
+        self._root_layout.addWidget(subtitle)
+
+        self._body_container = QWidget(self)
+        self._body_layout = QVBoxLayout(self._body_container)
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_layout.setSpacing(14)
+        self._root_layout.addWidget(self._body_container, 1)
+
+        if self._async_load:
+            self._start_async_load()
+        else:
+            self._load_items()
+            self._setup_ui()
+
+    def _clear_body(self) -> None:
+        while self._body_layout.count():
+            item = self._body_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
+            elif item.layout() is not None:
+                sub = item.layout()
+                while sub.count():
+                    child = sub.takeAt(0)
+                    w = child.widget()
+                    if w is not None:
+                        w.hide()
+                        w.setParent(None)
+                        w.deleteLater()
 
     def _load_items(self) -> None:
         try:
@@ -192,21 +241,71 @@ class ExportDialogBase(QDialog):
         except Exception as exc:
             logger.exception(self._LOAD_LOG)
             self._items = []
-            self._load_error = str(exc)
+            self._load_error = friendly_error_message(
+                exc, fallback="Please try again."
+            )
+
+    def _start_async_load(self) -> None:
+        self._loading = True
+        self._load_error = ""
+        self._items = []
+        token = next(_tokens)
+        self._load_token = token
+        self._setup_loading_ui()
+
+        provider = self._item_provider
+        load_log = self._LOAD_LOG
+        loaded_signal = _export_relay().items_loaded
+
+        def work() -> None:
+            try:
+                items = list(provider() or [])
+                error = ""
+            except Exception as exc:
+                logger.exception(load_log)
+                items = []
+                error = friendly_error_message(exc, fallback="Please try again.")
+            loaded_signal.emit(token, items, error)
+
+        threading.Thread(
+            target=work,
+            name=f"{self._THREAD_NAME}-load",
+            daemon=True,
+        ).start()
+
+    def _relay_items_loaded(self, token: int, items, error: str) -> None:
+        if token != self._load_token:
+            return
+        self._loading = False
+        self._items = list(items or [])
+        self._load_error = error
+        self._setup_ui()
+
+    def _on_retry_load(self) -> None:
+        if self._async_load:
+            self._start_async_load()
+        else:
+            self._load_items()
+            self._setup_ui()
+
+    def _setup_loading_ui(self) -> None:
+        self._clear_body()
+        self.loading_label = WrappedLabel(f"Loading {self._NOUN_PLURAL}…")
+        self.loading_label.setObjectName("infoLabel")
+        self._body_layout.addWidget(self.loading_label)
+        self._body_layout.addStretch()
+        close_btn = Button("Close")
+        close_btn.clicked.connect(self.reject)
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(close_btn)
+        self._body_layout.addLayout(row)
 
     # ---- layout ----
 
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 20)
-        layout.setSpacing(14)
-
-        title = QLabel(self._TITLE)
-        title.setObjectName("modelManagerTitle")
-        layout.addWidget(title)
-        subtitle = WrappedLabel(self._SUBTITLE)
-        subtitle.setObjectName("modelManagerSubtitle")
-        layout.addWidget(subtitle)
+        self._clear_body()
+        layout = self._body_layout
 
         if self._load_error or not self._items:
             text = (
@@ -218,10 +317,14 @@ class ExportDialogBase(QDialog):
             notice.setObjectName("infoLabel")
             layout.addWidget(notice)
             layout.addStretch()
-            close_btn = Button("Close")
-            close_btn.clicked.connect(self.reject)
             row = QHBoxLayout()
             row.addStretch()
+            if self._load_error:
+                self.retry_btn = Button("Retry")
+                self.retry_btn.clicked.connect(self._on_retry_load)
+                row.addWidget(self.retry_btn)
+            close_btn = Button("Close")
+            close_btn.clicked.connect(self.reject)
             row.addWidget(close_btn)
             layout.addLayout(row)
             return

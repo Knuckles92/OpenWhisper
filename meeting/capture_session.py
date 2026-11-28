@@ -39,6 +39,16 @@ CAPTURE_RETRY_INTERVAL_S = 3.0
 CAPTURE_RECOVERY_BUDGET_S = 12.0
 #: Microphones one open tries before waiting for the next watchdog pass.
 MIC_OPEN_ATTEMPTS = 4
+#: Live capture telemetry updated every 1–2s during speech; broadcast in memory
+#: without triggering a full ``state_json`` SQLite write on each tick.
+_EPHEMERAL_CAPTURE_KEYS = frozenset({
+    "mic_receiving",
+    "loopback_receiving",
+    "mic_signal_windows",
+    "loopback_signal_windows",
+    "mic_source_generation",
+    "loopback_source_generation",
+})
 
 
 def where_it_failed(exc: Optional[BaseException]) -> str:
@@ -443,18 +453,32 @@ class MeetingCapture:
             stop_preview()
         with self._lock:
             spools = list(self.spools.values())
-        for spool in spools:
-            try:
-                chunk = spool.flush()
-            except Exception:
-                logger.exception("Spool flush failed")
+        if len(spools) <= 1:
+            results = [self._flush_one_spool(spool) for spool in spools]
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(
+                max_workers=len(spools), thread_name_prefix="meeting-spool-flush"
+            ) as pool:
+                futures = [pool.submit(self._flush_one_spool, spool) for spool in spools]
+                results = [future.result() for future in futures]
+        for chunk, failed in results:
+            if failed:
                 self._record_integrity_error(
                     "Meeting audio storage could not finish. Partial audio was kept."
                 )
-                continue
-            if chunk is not None:
+            elif chunk is not None:
                 self._on_chunk(chunk)
         self.check_spool_health()
+
+    @staticmethod
+    def _flush_one_spool(spool: Any) -> tuple[Optional[SpooledChunk], bool]:
+        try:
+            return spool.flush(), False
+        except Exception:
+            logger.exception("Spool flush failed")
+            return None, True
 
     def check_spool_health(self) -> None:
         """Surface writer failures away from the real-time audio callback."""
@@ -770,7 +794,23 @@ class MeetingCapture:
         previous = store.with_state(lambda state: dict(state.capture))
         if capture == previous:
             return
-        if store.update_runtime_fields(capture=capture):
+        durable_changed = any(
+            capture.get(k) != previous.get(k)
+            for k in capture
+            if k not in _EPHEMERAL_CAPTURE_KEYS
+        ) or any(
+            k not in capture
+            for k in previous
+            if k not in _EPHEMERAL_CAPTURE_KEYS
+        )
+        if durable_changed:
+            updated = store.update_runtime_fields(capture=capture)
+        else:
+            try:
+                updated = store.update_runtime_fields(capture=capture, persist=False)
+            except TypeError:
+                updated = store.update_runtime_fields(capture=capture)
+        if updated:
             self._emit_status(note=message or None)
 
     def _missing_parts(self, active: set) -> List[str]:

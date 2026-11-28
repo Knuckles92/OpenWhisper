@@ -18,6 +18,7 @@ from meeting.time_utils import format_meeting_duration, format_meeting_started_a
 from services import annotations as record_annotations
 from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.file_reveal import open_folder_in_file_manager
+from ui_qt.utils.font_scale import apply_scaled_font
 from ui_qt.utils.list_reconcile import MeetingDelivery, reconcile_cards
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.context_menu import context_menu
@@ -63,6 +64,8 @@ class _FetchRelay(QObject):
     progress = pyqtSignal(int, str, str)
     #: The asking panel's token, the meeting id, what follows, error.
     done = pyqtSignal(int, str, str, str)
+    #: The asking panel's token, generation, meetings list, error, source_filtered.
+    meetings_loaded = pyqtSignal(int, int, object, str, bool)
 
 
 _relay: Optional[_FetchRelay] = None
@@ -125,21 +128,21 @@ class PastMeetingItem(QFrame):
         self.title_label = QLabel(title, self)
         self.title_label.setObjectName("pastMeetingTitle")
         self.title_label.setWordWrap(True)
-        self.title_label.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+        apply_scaled_font(self.title_label, 12, QFont.Weight.DemiBold)
         layout.addWidget(self.title_label)
 
         self.date_label = QLabel(
             format_meeting_started_at(meeting.get("started_at")), self
         )
         self.date_label.setObjectName("pastMeetingMeta")
-        self.date_label.setFont(QFont("Segoe UI", 10))
+        apply_scaled_font(self.date_label, 10)
         layout.addWidget(self.date_label)
 
         preview = meeting_preview_text(meeting)
         self.preview_label = QLabel(preview, self)
         self.preview_label.setObjectName("pastMeetingPreview")
         self.preview_label.setWordWrap(True)
-        self.preview_label.setFont(QFont("Segoe UI", 11))
+        apply_scaled_font(self.preview_label, 11)
         layout.addWidget(self.preview_label)
         self.preview_label.setVisible(bool(preview))
 
@@ -179,8 +182,8 @@ class PastMeetingItem(QFrame):
         self.insights_pill = QLabel("", self)
         self.insights_pill.setObjectName("pastMeetingInsightsPill")
         self.insights_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.insights_pill.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
-        self.insights_pill.setFixedHeight(20)
+        apply_scaled_font(self.insights_pill, 9, QFont.Weight.DemiBold)
+        self.insights_pill.setMinimumHeight(20)
         footer.addWidget(self.insights_pill)
         if pill:
             label, tone = pill
@@ -194,8 +197,8 @@ class PastMeetingItem(QFrame):
         self.location_pill.setObjectName("pastMeetingInsightsPill")
         self.location_pill.setProperty("pillTone", "location")
         self.location_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.location_pill.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
-        self.location_pill.setFixedHeight(20)
+        apply_scaled_font(self.location_pill, 9, QFont.Weight.DemiBold)
+        self.location_pill.setMinimumHeight(20)
         self.location_pill.setToolTip(tip)
         self.location_pill.setVisible(bool(location))
         footer.addWidget(self.location_pill)
@@ -204,8 +207,8 @@ class PastMeetingItem(QFrame):
             tag_count = len(self._annotation.tags)
             note_btn = QPushButton(f"✦ Note · {tag_count}" if tag_count else "✦ Note", self)
             note_btn.setObjectName("pastMeetingNotePill")
-            note_btn.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
-            note_btn.setFixedHeight(20)
+            apply_scaled_font(note_btn, 9, QFont.Weight.DemiBold)
+            note_btn.setMinimumHeight(20)
             note_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             note_btn.setToolTip(self._annotation.tooltip())
             note_btn.clicked.connect(lambda: self.notes_requested.emit(self.meeting_id))
@@ -347,6 +350,8 @@ class PastMeetingsPanel(QWidget):
         self._meeting_load_generation = 0
         self._meeting_cards = {}
         self._meeting_cancel = threading.Event()
+        self._meeting_closed = threading.Event()
+        self.destroyed.connect(self._meeting_closed.set)
         self._source_filtered = False
         self._has_more = False
         #: Picks this panel's downloads off the shared relay.
@@ -358,6 +363,7 @@ class PastMeetingsPanel(QWidget):
         relay = _fetch_relay()
         relay.progress.connect(self._on_fetch_progress)
         relay.done.connect(self._on_fetch_done)
+        relay.meetings_loaded.connect(self._on_meetings_loaded)
         self._fetching: set = set()
 
     def set_selected_meeting_id(self, meeting_id: Optional[str]) -> None:
@@ -458,7 +464,7 @@ class PastMeetingsPanel(QWidget):
 
         title = QLabel("Past Meetings")
         title.setObjectName("pastMeetingsHeader")
-        title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        apply_scaled_font(title, 16, QFont.Weight.Bold)
         header.addWidget(title)
         header.addStretch()
 
@@ -472,7 +478,7 @@ class PastMeetingsPanel(QWidget):
         self.search_input.setObjectName("historySearchInput")
         self.search_input.setPlaceholderText("Search meetings...")
         self.search_input.setClearButtonEnabled(True)
-        self.search_input.setFixedHeight(32)
+        self.search_input.setMinimumHeight(32)
         self.search_input.textChanged.connect(self._on_search_text_changed)
         layout.addWidget(self.search_input)
 
@@ -502,7 +508,7 @@ class PastMeetingsPanel(QWidget):
         self.section_header = QLabel("")
         self.section_header.setObjectName("sectionHeader")
         self.section_header.hide()
-        self.section_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+        apply_scaled_font(self.section_header, 11, QFont.Weight.DemiBold)
         self.meetings_layout.addWidget(self.section_header)
 
         self.meetings_list_layout = QVBoxLayout()
@@ -656,20 +662,17 @@ class PastMeetingsPanel(QWidget):
         self._meeting_cancel.set()
         canceled = threading.Event()
         self._meeting_cancel = canceled
-        self.destroyed.connect(canceled.set)
-        delivery = MeetingDelivery()
-        delivery.loaded.connect(self._apply_meeting_results)
 
         limit = self.MAX_MEETINGS + 1
         # Explicit providers are small test/integration seams and retain their
         # synchronous behavior. Production repository reads run off the Qt
         # thread and return only one bounded page.
         if self._meeting_provider is None:
-            self._start_background_load(query, limit, generation, canceled, delivery)
+            self._start_background_load(query, limit, generation, canceled)
             return
         self._load_from_provider(query, limit)
 
-    def _start_background_load(self, query: str, limit: int, generation: int, canceled, delivery) -> None:
+    def _start_background_load(self, query: str, limit: int, generation: int, canceled) -> None:
         if self._repository is None:
             from meeting.persist.repository import SqlMeetingRepository
 
@@ -683,31 +686,46 @@ class PastMeetingsPanel(QWidget):
         load_meetings, repository = self._load_meetings, self._repository
         start_remote_listing = self._start_remote_listing
         merge_wait_s = self.REMOTE_MERGE_WAIT_S
+        token = self._token
+        closed = self._meeting_closed
+        loaded = _fetch_relay().meetings_loaded
 
         def load() -> None:
             meetings, source_filtered, error = _read_meetings(load_meetings, query, limit, repository)
-            if canceled.is_set():
+            if canceled.is_set() or closed.is_set():
                 return
             remote = None if error else start_remote_listing(query, limit, meetings)
             if remote is None:
-                delivery.loaded.emit(
-                    generation, meetings, error, source_filtered
+                loaded.emit(
+                    token, generation, meetings, error, source_filtered
                 )
                 return
             done, merged = remote
             if not done.wait(merge_wait_s):
-                delivery.loaded.emit(generation, meetings, "", source_filtered)
+                loaded.emit(token, generation, meetings, "", source_filtered)
                 while not done.wait(0.1):
-                    if canceled.is_set():
+                    if canceled.is_set() or closed.is_set():
                         return
-            if not canceled.is_set():
-                delivery.loaded.emit(generation, merged(), "", source_filtered)
+            if not (canceled.is_set() or closed.is_set()):
+                loaded.emit(token, generation, merged(), "", source_filtered)
 
         threading.Thread(
             target=load,
             name="past-meetings-load",
             daemon=True,
         ).start()
+
+    def _on_meetings_loaded(
+        self,
+        token: int,
+        generation: int,
+        meetings,
+        error: str,
+        source_filtered: bool,
+    ) -> None:
+        if token != self._token:
+            return
+        self._apply_meeting_results(generation, meetings, error, source_filtered)
 
     def _load_from_provider(self, query: str, limit: int) -> None:
         try:
@@ -839,9 +857,12 @@ class PastMeetingsPanel(QWidget):
             record_title=fallback_meeting_title(meeting),
             parent=self.window(),
         )
-        dialog.exec()
-        if dialog.changed:
-            self.refresh()
+        try:
+            dialog.exec()
+            if dialog.changed:
+                self.refresh()
+        finally:
+            dialog.deleteLater()
 
     @staticmethod
     def _meeting_has_audio(meeting: Optional[Dict[str, Any]]) -> bool:

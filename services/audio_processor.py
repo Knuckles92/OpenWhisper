@@ -3,11 +3,12 @@ import os
 import wave
 import numpy as np
 import tempfile
+import threading
 import logging
 import shutil
 from contextlib import closing
 from dataclasses import dataclass, field
-from typing import Callable, List, Tuple, Optional
+from typing import Callable, List, Sequence, Tuple, Optional
 from config import config
 from services.format_utils import format_audio_duration
 
@@ -126,6 +127,7 @@ class AudioProcessor:
 
     def __init__(self):
         self.temp_files: List[str] = []
+        self._temp_lock = threading.Lock()
 
     def check_file_size(self, audio_path: str) -> Tuple[bool, float]:
         """Return whether the file needs splitting and its size in MiB."""
@@ -232,7 +234,8 @@ class AudioProcessor:
                 progress_callback("Decoding and splitting audio...")
             temp_dir = tempfile.mkdtemp(prefix="audio_chunks_")
             # Register immediately: a failed write can leave a partial file.
-            self.temp_files.append(temp_dir)
+            with self._temp_lock:
+                self.temp_files.append(temp_dir)
 
             def save_chunk(samples, rate):
                 _raise_if_canceled(should_cancel)
@@ -289,8 +292,9 @@ class AudioProcessor:
 
     def _discard_temp_dir(self, temp_dir: str) -> None:
         shutil.rmtree(temp_dir, ignore_errors=True)
-        if temp_dir in self.temp_files:
-            self.temp_files.remove(temp_dir)
+        with self._temp_lock:
+            if temp_dir in self.temp_files:
+                self.temp_files.remove(temp_dir)
 
     def _load_audio_data(self, audio_path: str) -> Tuple[np.ndarray, int]:
         audio_data, sample_rate, _ = self._load_audio_metadata(audio_path)
@@ -454,9 +458,34 @@ class AudioProcessor:
             wav_file.setframerate(sample_rate)
             wav_file.writeframes(audio_data.tobytes())
 
-    def cleanup_temp_files(self):
-        """Clean up temporary files created during splitting."""
-        for temp_path in self.temp_files:
+    def cleanup_temp_files(self, chunk_files: Optional[Sequence[str]] = None):
+        """Clean up temporary files created during splitting.
+
+        When ``chunk_files`` is provided, only the tracked temp directories or
+        files owning those chunks are removed so concurrent split jobs do not
+        delete each other's uploads.
+        """
+        if chunk_files is None:
+            with self._temp_lock:
+                targets = list(self.temp_files)
+                self.temp_files.clear()
+        else:
+            owned = set()
+            for chunk in chunk_files:
+                chunk_abs = os.path.normcase(os.path.abspath(chunk))
+                owned.add(chunk_abs)
+                owned.add(os.path.normcase(os.path.dirname(chunk_abs)))
+            with self._temp_lock:
+                targets = []
+                remaining = []
+                for temp_path in self.temp_files:
+                    if os.path.normcase(os.path.abspath(temp_path)) in owned:
+                        targets.append(temp_path)
+                    else:
+                        remaining.append(temp_path)
+                self.temp_files = remaining
+
+        for temp_path in targets:
             try:
                 if os.path.isfile(temp_path):
                     os.remove(temp_path)
@@ -465,8 +494,8 @@ class AudioProcessor:
             except OSError as e:
                 logger.warning(f"Failed to cleanup temp file {temp_path}: {e}")
 
-        self.temp_files.clear()
-        logger.info("Temporary files cleaned up")
+        if targets:
+            logger.info("Temporary files cleaned up")
 
     def combine_transcriptions(self, transcriptions: List[str]) -> str:
         """Combine non-empty chunk transcripts with normalized spacing."""

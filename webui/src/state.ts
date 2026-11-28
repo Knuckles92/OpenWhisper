@@ -167,7 +167,41 @@ function trackSeqs(
   return next;
 }
 
-function mergeSegments(existing: Segment[], incoming: Segment[]): Segment[] {
+export function mergeSegments(existing: Segment[], incoming: Segment[]): Segment[] {
+  if (incoming.length === 0) return existing;
+  if (existing.length === 0) {
+    if (incoming.length === 1) return [incoming[0]];
+  } else if (incoming.length === 1) {
+    const seg = incoming[0];
+    const last = existing[existing.length - 1];
+    const existingIdx = existing.findIndex((s) => s.id === seg.id);
+    if (existingIdx < 0 && seg.start_s >= last.start_s) {
+      return [...existing, seg];
+    }
+    if (existingIdx >= 0 && existing[existingIdx].start_s === seg.start_s) {
+      const next = existing.slice();
+      next[existingIdx] = seg;
+      return next;
+    }
+  } else {
+    // Fast path for a small batch of strictly in-order new segments.
+    const last = existing[existing.length - 1];
+    let strictlyAfter = incoming[0].start_s >= last.start_s;
+    const seen = strictlyAfter ? new Set<string>() : null;
+    if (strictlyAfter && seen) {
+      for (let i = 0; i < incoming.length; i += 1) {
+        const cur = incoming[i];
+        if (seen.has(cur.id) || (i > 0 && cur.start_s < incoming[i - 1].start_s)) {
+          strictlyAfter = false;
+          break;
+        }
+        seen.add(cur.id);
+      }
+      if (strictlyAfter && !existing.some((s) => seen.has(s.id))) {
+        return [...existing, ...incoming];
+      }
+    }
+  }
   const map = new Map(existing.map((s) => [s.id, s]));
   for (const seg of incoming) map.set(seg.id, seg);
   return [...map.values()].sort((a, b) => a.start_s - b.start_s);

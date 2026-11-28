@@ -17,7 +17,7 @@ from services.models import (
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 
 def _table_exists(conn, table: str) -> bool:
@@ -176,6 +176,23 @@ def _migrate_to_v19(conn) -> None:
     logger.info("Migration v18->v19: Record annotations table added via create_all")
 
 
+def _migrate_to_v20(conn) -> None:
+    """Add indexes for hot query columns and ON DELETE CASCADE foreign keys."""
+    indexes = (
+        ("dictation_stats", "idx_dictation_stats_entry_id", "entry_id"),
+        ("transcription_history", "idx_history_audio_file", "audio_file"),
+        ("transcription_history", "idx_history_origin_timestamp", "origin_device_id, timestamp"),
+        ("meeting_participants", "idx_mparticipants_meeting", "meeting_id"),
+        ("meeting_questions", "idx_mquestions_meeting", "meeting_id"),
+    )
+    for table, index_name, columns in indexes:
+        if _table_exists(conn, table):
+            conn.execute(text(
+                f"CREATE INDEX IF NOT EXISTS {index_name} ON {table} ({columns})"
+            ))
+    logger.info("Migration v19->v20: Added indexes for history, stats, and meeting tables")
+
+
 # (schema version a step brings the database to, step). A step runs when the
 # database is older than its version; steps run in this order. v16 needed none.
 _MIGRATIONS = (
@@ -192,6 +209,7 @@ _MIGRATIONS = (
     (17, _migrate_to_v17),
     (18, _migrate_to_v18),
     (19, _migrate_to_v19),
+    (20, _migrate_to_v20),
 )
 
 

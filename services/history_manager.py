@@ -405,11 +405,19 @@ class HistoryManager:
             if not os.path.exists(self.recordings_folder):
                 return recordings
 
-            for filename in os.listdir(self.recordings_folder):
-                if filename.endswith('.wav'):
-                    file_path = os.path.join(self.recordings_folder, filename)
+            with os.scandir(self.recordings_folder) as entries:
+                for entry in entries:
+                    if not entry.name.endswith('.wav'):
+                        continue
+                    try:
+                        if not entry.is_file():
+                            continue
+                        stat = entry.stat()
+                    except FileNotFoundError:
+                        continue
 
-                    stat = os.stat(file_path)
+                    filename = entry.name
+                    file_path = entry.path
 
                     try:
                         parts = filename.replace('recording_', '').replace('.wav', '')
@@ -574,6 +582,7 @@ class HistoryManager:
                 os.remove(rec.file_path)
             except OSError as e:
                 logger.error(f"Failed to remove recording {rec.filename}: {e}")
+        self._invalidate_recordings_usage()
         self._forget_all_dictations()
         db.clear_history()
         _forget_replayable_events()
@@ -647,10 +656,13 @@ def _dictations_move_to_host() -> bool:
 class _LazyHistoryManager:
     def __init__(self) -> None:
         self._instance: Optional[HistoryManager] = None
+        self._lock = threading.Lock()
 
     def _get_instance(self) -> HistoryManager:
         if self._instance is None:
-            self._instance = HistoryManager()
+            with self._lock:
+                if self._instance is None:
+                    self._instance = HistoryManager()
         return self._instance
 
     def __getattr__(self, name: str):

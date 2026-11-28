@@ -58,6 +58,7 @@ from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.studio import COLUMN_WIDTH, GAP, Stage, StudioSplit, scaled
 from ui_qt.widgets.wrapped_label import WrappedLabel
+from ui_qt.utils.font_scale import apply_scaled_font, scaled_font
 
 logger = logging.getLogger(__name__)
 
@@ -1174,7 +1175,7 @@ class MeetingModeTab(QWidget):
 
         self.identity_title = WrappedLabel("", break_long_words=True)
         self.identity_title.setObjectName("meetingFinalizationIdentityTitle")
-        self.identity_title.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
+        apply_scaled_font(self.identity_title, 15, QFont.Weight.Bold)
         self.identity_title.setTextFormat(Qt.TextFormat.PlainText)
         identity_layout.addWidget(self.identity_title)
 
@@ -1182,7 +1183,7 @@ class MeetingModeTab(QWidget):
         details_row.setSpacing(12)
         self.identity_meta = WrappedLabel("")
         self.identity_meta.setObjectName("meetingFinalizationIdentityMeta")
-        self.identity_meta.setFont(QFont("Segoe UI", 11))
+        apply_scaled_font(self.identity_meta, 11)
         details_row.addWidget(self.identity_meta, 1, Qt.AlignmentFlag.AlignTop)
 
         record_actions = QVBoxLayout()
@@ -1237,12 +1238,12 @@ class MeetingModeTab(QWidget):
 
         self.finalization_title = WrappedLabel("Final insights")
         self.finalization_title.setObjectName("meetingFinalizationTitle")
-        self.finalization_title.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        apply_scaled_font(self.finalization_title, 13, QFont.Weight.DemiBold)
         fin_header_layout.addWidget(self.finalization_title, 1)
 
         self.finalization_step_badge = QLabel("")
         self.finalization_step_badge.setObjectName("meetingFinalizationStepBadge")
-        self.finalization_step_badge.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
+        apply_scaled_font(self.finalization_step_badge, 10, QFont.Weight.DemiBold)
         self.finalization_step_badge.setMinimumHeight(20)
         self.finalization_step_badge.hide()
         fin_header_layout.addWidget(self.finalization_step_badge)
@@ -2170,7 +2171,7 @@ class MeetingModeTab(QWidget):
 
         icon_label = QLabel(icon_text)
         icon_label.setObjectName("meetingFinalizationStepIcon")
-        icon_label.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        apply_scaled_font(icon_label, 11, QFont.Weight.Bold)
         icon_label.setStyleSheet(f"color: {icon_color};")
         icon_label.setFixedWidth(16)
         row_layout.addWidget(icon_label)
@@ -2178,7 +2179,7 @@ class MeetingModeTab(QWidget):
         name_label = WrappedLabel(step_name, break_long_words=True)
         name_label.setObjectName("meetingFinalizationStepName")
         name_label.setTextFormat(Qt.TextFormat.PlainText)
-        name_font = QFont("Segoe UI", 11)
+        name_font = scaled_font(11)
         if step_status == "running":
             name_font.setWeight(QFont.Weight.DemiBold)
         name_label.setFont(name_font)
@@ -2195,7 +2196,7 @@ class MeetingModeTab(QWidget):
 
         detail_label = QLabel(_step_detail_text(step_status))
         detail_label.setObjectName("meetingFinalizationStepDetail")
-        detail_label.setFont(QFont("Segoe UI", 10))
+        apply_scaled_font(detail_label, 10)
         row_layout.addWidget(detail_label)
 
         action_label = _step_action_label(step_id, step_status, allow_actions)

@@ -230,7 +230,7 @@ def test_a_v17_stats_table_gains_the_feature_columns(tmp_path):
                 ).one()
                 version = connection.exec_driver_sql("SELECT version FROM schema_version").scalar_one()
             assert tuple(row) == (None, 0, 0, 0, 0, 4)
-            assert version == SCHEMA_VERSION == 19
+            assert version == SCHEMA_VERSION == 20
         finally:
             manager.close()
         with closing(sqlite3.connect(path)) as conn, conn:

@@ -554,6 +554,12 @@ class _RedecodeBackend:
         backend = self.backend
         if backend.is_available() and getattr(backend, "model", None) is not None:
             return None
+        if backend.is_available() and getattr(backend, "model", None) is None:
+            return {
+                "ok": False,
+                "error": "Offline re-transcription is only supported for local Whisper models.",
+                "unsupported": True,
+            }
         if bool(getattr(backend, "is_model_missing", False)):
             error = "The Whisper model is not available yet. Approve the download and retry."
         else:

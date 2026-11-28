@@ -5,7 +5,7 @@ import { playMoment } from '../playback';
 import RecordingPlayer, { type PlaybackMoment } from './RecordingPlayer';
 import FinalizationDiagnostics from './FinalizationDiagnostics';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import { titleError } from '../titles';
 import { topicChapters } from '../chapters';
 import { initials, speakerColor } from '../people';
@@ -176,6 +176,7 @@ export default function HistoryPane({
   const [query, setQuery] = useState('');
   const [searchMode, setSearchMode] = useState<'keyword' | 'semantic'>('semantic');
   const searchGeneration = useRef(0);
+  const searchController = useRef<AbortController | null>(null);
   const [searchResults, setSearchResults] = useState<SearchRow[]>([]);
   const [searchStatus, setSearchStatus] = useState('');
   const [searching, setSearching] = useState(false);
@@ -313,19 +314,35 @@ export default function HistoryPane({
   useEffect(() => {
     if (!selectedId || !workRunning) return;
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let consecutiveErrors = 0;
     const poll = async () => {
+      let nextDelay: number | null = 2000;
       try {
         const response = await api.meetingState(token, selectedId, controller.signal);
-        if (!controller.signal.aborted) setDetail(response.state);
-      } catch {
-        if (!controller.signal.aborted) setDetailError('Could not refresh this meeting. Reopen it to reconnect.');
+        if (!controller.signal.aborted) {
+          consecutiveErrors = 0;
+          setDetail(response.state);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          consecutiveErrors += 1;
+          const terminal = err instanceof ApiError && [401, 403, 404].includes(err.status);
+          if (terminal || consecutiveErrors >= 3) {
+            setDetailError('Could not refresh this meeting. Reopen it to reconnect.');
+            nextDelay = null;
+          } else {
+            nextDelay = 2000 * (2 ** consecutiveErrors);
+          }
+        }
       } finally {
-        if (!controller.signal.aborted) timer = setTimeout(poll, 2000);
+        if (!controller.signal.aborted && nextDelay !== null) {
+          timer = setTimeout(poll, nextDelay);
+        }
       }
     };
     timer = setTimeout(poll, 2000);
-    return () => { controller.abort(); clearTimeout(timer); };
+    return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer); };
   }, [token, selectedId, workRunning]);
 
   useEffect(() => {
@@ -403,34 +420,47 @@ export default function HistoryPane({
     playMoment(audioRef.current, 0);
   }, [focused, detail]);
 
+  useEffect(() => () => searchController.current?.abort(), []);
+
   const runSearch = async () => {
-    if (searching) return;
+    searchController.current?.abort();
     const generation = ++searchGeneration.current;
     const q = query.trim();
     if (!q) {
+      searchController.current = null;
+      setSearching(false);
       setSearchResults([]);
       setSearchStatus('');
       return;
     }
+    const controller = new AbortController();
+    searchController.current = controller;
     setSearching(true);
     setSearchStatus('Searching meeting transcripts…');
     try {
-      const response = await api.searchHistory(token, q, searchMode);
-      if (generation !== searchGeneration.current) return;
+      const response = await api.searchHistory(token, q, searchMode, controller.signal);
+      if (controller.signal.aborted || generation !== searchGeneration.current) return;
       setSearchResults(response.results);
       setError(null);
       setSearchStatus(`${response.results.length} results. ${response.message || ''}`);
     } catch (err) {
-      if (generation !== searchGeneration.current) return;
+      if (controller.signal.aborted || generation !== searchGeneration.current) return;
       setError(err instanceof Error ? err.message : 'Search failed');
       setSearchStatus('Meeting transcript search failed.');
     } finally {
-      setSearching(false);
+      if (searchController.current === controller) {
+        searchController.current = null;
+        setSearching(false);
+      }
     }
   };
 
   const changeSearchMode = (mode: 'keyword' | 'semantic') => {
+    searchController.current?.abort();
+    searchController.current = null;
     ++searchGeneration.current;
+    setSearching(false);
+    setSearchResults([]);
     setSearchStatus('');
     setSearchMode(mode);
   };

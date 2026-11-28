@@ -49,6 +49,7 @@ from ui_qt.widgets.speech_backend_picker import (
     ensure_backend_item,
     populate_backend_combo,
 )
+from ui_qt.utils.font_scale import apply_scaled_font
 
 logger = logging.getLogger(__name__)
 
@@ -443,7 +444,7 @@ class TranscriptionTabBase(QWidget):
         self.transcript_text.setObjectName("transcriptText")
         self.transcript_text.setReadOnly(True)
         self.transcript_text.setMinimumHeight(self.TRANSCRIPT_MIN_HEIGHT)
-        self.transcript_text.setFont(QFont("Segoe UI", 13))
+        apply_scaled_font(self.transcript_text, 13)
         self.transcript_text.setPlaceholderText(self.TRANSCRIPT_PLACEHOLDER)
 
         pane_layout.addWidget(self.version_toggle)

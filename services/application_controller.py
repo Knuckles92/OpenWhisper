@@ -289,9 +289,13 @@ class ApplicationController(QObject):
         self.transcription_backends["api"] = api
 
         from services.local_asr.catalog import BACKENDS
+        from services.settings import SettingsKey
         from transcriber.optional_backend import LocalSpeechBackend
+        local_asr_settings = settings_manager.load_settings((SettingsKey.LOCAL_ASR_MODELS,))
         for key in BACKENDS:
-            self.transcription_backends[key] = LocalSpeechBackend(key)
+            self.transcription_backends[key] = LocalSpeechBackend(
+                key, initial_settings=local_asr_settings
+            )
         from transcriber.remote_backend import REMOTE_BACKEND, RemoteSpeechBackend
         remote = RemoteSpeechBackend()
         remote.on_link_changed = self.remote.remote_link_poke.emit
@@ -1349,6 +1353,7 @@ class ApplicationController(QObject):
         self.persistence_executor.shutdown(wait=True, cancel_futures=False)
 
         _attempt(self._cleanup_backends, "Error during transcription backends cleanup")
+        _attempt(lambda: self.transcription_runtime.close(), "Error closing transcription runtime")
         _attempt(lambda: self.ui_controller.cleanup(), "Error during UI controller cleanup")
         _attempt(lambda: db.close(), "Error closing database")
 

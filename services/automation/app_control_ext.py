@@ -1136,18 +1136,18 @@ def list_models(controller) -> dict[str, Any]:
     ]
     whisper_models: list[dict[str, Any]] = []
     try:
+        from services.hf_access import is_model_cached
         from services.model_catalog import MODEL_CATALOG
-        from services.model_manager import is_model_downloaded
 
         for name, info in MODEL_CATALOG.items():
             whisper_models.append({
                 "id": name,
                 "label": getattr(info, "display_name", name),
                 "language_support": getattr(info, "language_support", ""),
-                "downloaded": bool(is_model_downloaded(name)),
+                "downloaded": bool(is_model_cached(name)),
             })
     except Exception:
-        pass
+        logger.warning("Failed to list Whisper models", exc_info=True)
     local_asr: list[dict[str, Any]] = []
     try:
         from services.local_asr.catalog import MODELS
@@ -1159,7 +1159,7 @@ def list_models(controller) -> dict[str, Any]:
                 "label": getattr(info, "label", name),
             })
     except Exception:
-        pass
+        logger.warning("Failed to list local ASR models", exc_info=True)
     return {
         "selected_engine": SettingsKey.SELECTED_MODEL.read(saved),
         "selected_whisper_model": SettingsKey.WHISPER_MODEL.read(saved),

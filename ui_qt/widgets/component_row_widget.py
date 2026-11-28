@@ -23,6 +23,7 @@ from services.components import ComponentInfo, ComponentState, InstallPhase
 from services.format_utils import format_size_bytes
 from ui_qt.widgets.buttons import DangerButton, PrimaryButton
 from ui_qt.widgets.download_row import DownloadRow, row_style
+from ui_qt.utils.font_scale import apply_scaled_font, scaled_font
 
 logger = logging.getLogger(__name__)
 
@@ -128,21 +129,21 @@ class ComponentRowWidget(DownloadRow):
         from ui_qt.widgets.eliding_label import ElidingLabel
         self.name_label = ElidingLabel(self.component_id)
         self.name_label.setObjectName("componentRowName")
-        name_font = QFont("Segoe UI", 10)
+        name_font = scaled_font(10)
         name_font.setBold(True)
         self.name_label.setFont(name_font)
         identity.addWidget(self.name_label)
 
         self.summary_label = ElidingLabel("")
         self.summary_label.setObjectName("componentRowSummary")
-        self.summary_label.setFont(QFont("Segoe UI", 8))
+        apply_scaled_font(self.summary_label, 8)
         identity.addWidget(self.summary_label)
 
         row.addLayout(identity, stretch=1)
 
         self.size_label = ElidingLabel("")
         self.size_label.setObjectName("componentRowSize")
-        self.size_label.setFont(QFont("Segoe UI", 9))
+        apply_scaled_font(self.size_label, 9)
         self.size_label.setMinimumWidth(110)
         self.size_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter

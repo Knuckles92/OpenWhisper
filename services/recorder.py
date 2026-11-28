@@ -56,11 +56,11 @@ NOISE_FLOOR_PERCENTILE = 10
 SPEECH_LEVEL_PERCENTILE = 90
 
 
-def block_level_db(audio: np.ndarray) -> float:
-    """RMS level of one block of samples in dBFS, floored at the histogram."""
+def _block_rms_normalized(audio: np.ndarray) -> float:
+    """Normalized RMS amplitude in [0.0, 1.0+] for one block of samples."""
     samples = np.asarray(audio).reshape(-1)
     if samples.size == 0:
-        return float(LEVEL_HISTOGRAM_MIN_DB)
+        return 0.0
     if np.issubdtype(samples.dtype, np.integer):
         full_scale = float(-np.iinfo(samples.dtype).min)
     else:
@@ -68,9 +68,16 @@ def block_level_db(audio: np.ndarray) -> float:
     values = samples.astype(np.float64)
     mean_square = float(np.dot(values, values)) / values.size
     if mean_square <= 0.0:
+        return 0.0
+    return math.sqrt(mean_square) / full_scale
+
+
+def block_level_db(audio: np.ndarray) -> float:
+    """RMS level of one block of samples in dBFS, floored at the histogram."""
+    rms = _block_rms_normalized(audio)
+    if rms <= 0.0:
         return float(LEVEL_HISTOGRAM_MIN_DB)
-    level = 10.0 * math.log10(mean_square) - 20.0 * math.log10(full_scale)
-    return max(float(LEVEL_HISTOGRAM_MIN_DB), level)
+    return max(float(LEVEL_HISTOGRAM_MIN_DB), 20.0 * math.log10(rms))
 
 
 class PostRollGate:
@@ -685,17 +692,26 @@ class AudioRecorder:
 
     def _observe_block(self, audio_copy: np.ndarray, block_frames: int) -> None:
         """Hold ``_callback_lock``. Feed a stored block to post-roll, the level meter and streaming."""
-        if self._post_roll_gate.observe(block_level_db(audio_copy), block_frames):
+        rms = _block_rms_normalized(audio_copy)
+        level_db = (
+            float(LEVEL_HISTOGRAM_MIN_DB)
+            if rms <= 0.0
+            else max(float(LEVEL_HISTOGRAM_MIN_DB), 20.0 * math.log10(rms))
+        )
+        if self._post_roll_gate.observe(level_db, block_frames):
             self._end_post_roll("quiet")
 
         if self.audio_level_callback:
-            self._calculate_and_report_level(audio_copy)
+            self._calculate_and_report_level(audio_copy, rms_level=rms)
 
         if self.streaming_callback:
             try:
-                self.streaming_callback(audio_copy.copy())
-            except Exception as stream_err:
-                logger.debug(f"Streaming callback error: {stream_err}")
+                # audio_copy is already detached from PortAudio's buffer and is
+                # not mutated after this point.
+                self.streaming_callback(audio_copy)
+            except Exception:
+                # Never log on PortAudio's real-time callback thread.
+                pass
 
     def _status_error(self, status) -> Optional[str]:
         """Hold ``_callback_lock``. Why a flagged block ends the recording, or None.
@@ -931,14 +947,16 @@ class AudioRecorder:
             detail,
         )
 
-    def _calculate_and_report_level(self, audio_data: np.ndarray):
+    def _calculate_and_report_level(
+        self, audio_data: np.ndarray, *, rms_level: Optional[float] = None
+    ):
         try:
             if len(audio_data) > 0:
-                if self.dtype == np.int16:
-                    rms_level = np.sqrt(np.mean(audio_data.astype(np.float64) ** 2)) / 32767.0
-                elif self.dtype == np.float32:
-                    rms_level = np.sqrt(np.mean(audio_data ** 2))
-                else:
+                if rms_level is None:
+                    if self.dtype not in (np.int16, np.float32):
+                        return
+                    rms_level = _block_rms_normalized(audio_data)
+                elif self.dtype not in (np.int16, np.float32):
                     return
 
                 self._current_audio_level = (
@@ -951,8 +969,9 @@ class AudioRecorder:
                 if self.audio_level_callback:
                     self.audio_level_callback(self._current_audio_level)
 
-        except Exception as e:
-            logger.debug(f"Error calculating audio level: {e}")
+        except Exception:
+            # Never log on PortAudio's real-time callback thread.
+            pass
 
     def save_recording(self, filename: str = None, *,
                        allow_incomplete: bool = False) -> bool:

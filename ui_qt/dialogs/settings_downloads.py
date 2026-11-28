@@ -83,6 +83,7 @@ from ui_qt.widgets.segmented_bar import SegmentedBar
 logger = logging.getLogger(__name__)
 from ui_qt.widgets.wrapped_label import WrappedLabel
 from ui_qt.widgets.engine_field import set_device_choices
+from ui_qt.utils.error_messages import format_action_error, friendly_error_message
 
 
 @dataclass(frozen=True)
@@ -1589,7 +1590,9 @@ class DownloadsPage(QWidget):
                 })
             except Exception as exc:
                 logger.error("Couldn't save Whisper runtime settings: %s", exc, exc_info=True)
-                self.message_label.setText(f"Couldn't save device or quantization: {exc}")
+                self.message_label.setText(
+                    format_action_error("Couldn't save device or quantization", exc)
+                )
                 return
         elif backend_id in BACKENDS:
             device = self.engine_device_combo.currentData() or "auto"
@@ -1600,7 +1603,9 @@ class DownloadsPage(QWidget):
                 settings_manager.save_setting(SettingsKey.LOCAL_ASR_DEVICES, devices)
             except Exception as exc:
                 logger.error("Couldn't save %s device preference: %s", backend_id, exc, exc_info=True)
-                self.message_label.setText(f"Couldn't save device preference: {exc}")
+                self.message_label.setText(
+                    format_action_error("Couldn't save device preference", exc)
+                )
                 return
         else:
             return
@@ -2428,7 +2433,7 @@ class DownloadsPage(QWidget):
             try:
                 unregister(model_name)
             except ValueError as exc:
-                self.message_label.setText(str(exc))
+                self.message_label.setText(friendly_error_message(exc))
                 return
             invalidate_cached_models_snapshot()
             self.refresh()
@@ -2485,11 +2490,24 @@ class DownloadsPage(QWidget):
         missing = set(self._scoped_missing_names())
         for row in self.rows.values():
             if row.model_name in missing:
-                row.select_checkbox.setChecked(True)
+                blocked = row.select_checkbox.blockSignals(True)
+                try:
+                    row.select_checkbox.setChecked(True)
+                finally:
+                    row.select_checkbox.blockSignals(blocked)
+                self._selected_models.add(row.model_name)
+        self._update_selection_bar()
 
     def _on_clear_selection_clicked(self) -> None:
         for row in self.rows.values():
-            row.select_checkbox.setChecked(False)
+            if row.select_checkbox.isChecked():
+                blocked = row.select_checkbox.blockSignals(True)
+                try:
+                    row.select_checkbox.setChecked(False)
+                finally:
+                    row.select_checkbox.blockSignals(blocked)
+        self._selected_models.clear()
+        self._update_selection_bar()
 
     def _selected_names(self) -> List[str]:
         """Selection in catalog order — the order the batch downloads in."""
@@ -3020,7 +3038,8 @@ class DownloadsPage(QWidget):
         any_visible = False
         rows = sorted(self.rows.values(), key=self._sort_key)
         for index, row in enumerate(rows):
-            self.list_layout.insertWidget(index + 1, row)
+            if self.list_layout.indexOf(row) != index + 1:
+                self.list_layout.insertWidget(index + 1, row)
             row_family = family_of(row.backend)
             meta = _engine_meta(row_family)
             if show_family_badges:

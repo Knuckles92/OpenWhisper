@@ -36,6 +36,7 @@ from ui_qt.widgets import Button, ElidingComboBox, InfoTile, PrimaryButton
 from ui_qt.widgets.backup_calendar import BackupCalendar
 from ui_qt.widgets.buttons import compact_primary_button, neutral_button
 from ui_qt.widgets.eliding_label import ElidingLabel
+from ui_qt.utils.error_messages import format_action_error
 
 logger = logging.getLogger(__name__)
 
@@ -379,7 +380,9 @@ class BackupSettingsPage(QWidget):
             state = self._coordinator.snapshot() or {}
         except Exception as exc:
             logger.warning("Could not load backup settings", exc_info=True)
-            self.status_label.setText(f"Could not load backup settings: {exc}")
+            self.status_label.setText(
+                format_action_error("Could not load backup settings", exc)
+            )
             self._update_actions()
             return
         info = state.get("last_backup")
@@ -567,7 +570,7 @@ class BackupSettingsPage(QWidget):
         except Exception as exc:
             logger.warning("%s failed to start", operation, exc_info=True)
             self.set_busy(False)
-            self.status_label.setText(f"{operation} failed: {exc}")
+            self.status_label.setText(format_action_error(f"{operation} failed", exc))
 
     def _cancel(self) -> None:
         if self._coordinator is None:
@@ -576,7 +579,7 @@ class BackupSettingsPage(QWidget):
             self._coordinator.cancel()
         except Exception as exc:
             logger.warning("Could not cancel the backup operation", exc_info=True)
-            self.status_label.setText(f"Could not cancel: {exc}")
+            self.status_label.setText(format_action_error("Could not cancel", exc))
             return
         self.cancel_button.setEnabled(False)
         self.status_label.setText("Cancelling…")

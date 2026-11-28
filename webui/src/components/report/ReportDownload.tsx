@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { printDocumentTitle, printMeeting } from '../../print';
 import { enabledReportViews, REPORT_VIEW_META, resolveReportView, type ReportViewId } from '../../report';
+import { useDetailsDismiss } from '../../useDetailsDismiss';
 import type { MeetingInfo, MeetingStateDoc } from '../../types';
 
 interface ReportDownloadProps {
@@ -21,6 +22,7 @@ export default function ReportDownload({
   activeView,
 }: ReportDownloadProps) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
+  useDetailsDismiss(detailsRef);
   const [preparing, setPreparing] = useState(false);
   const preparingRef = useRef(false);
   const preparation = useRef(0);

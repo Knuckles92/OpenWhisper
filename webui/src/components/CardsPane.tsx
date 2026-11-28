@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { GENERIC_CARD_KEYS, ops, type CardItem, type CardKey, type MeetingStateDoc, type Op, type Question } from '../types';
-import { CAPTURE_TAGS, CARD_LABELS, capturedRailFeed, sortedCardItems, type CapturedFeedEntry } from '../state';
+import { CAPTURE_TAGS, CARD_LABELS, capturedFeedEntries, selectSpotlightItems, sortedCardItems, type CapturedFeedEntry } from '../state';
 import { EvidenceRow } from './EvidenceChip';
 import CitationBadge from './CitationBadge';
 import { useEvidenceLookup } from '../evidence';
@@ -248,6 +248,15 @@ function CardItemRow({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => void saveEdit()}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              setDraft(item.text);
+              setEditing(false);
+            } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault();
+              void saveEdit();
+            }
+          }}
           disabled={saving}
           aria-label={`Edit ${tag.toLowerCase()}`}
           autoFocus
@@ -547,7 +556,11 @@ function CaptureComposer({ onSendOp }: { onSendOp: (op: Op) => Promise<boolean> 
   );
 }
 
-export default function CardsPane({
+const EMPTY_COUNTS: Record<LedgerTab, number> = {
+  all: 0, decisions: 0, actions: 0, risks: 0, questions: 0, other: 0,
+};
+
+const CardsPane = memo(function CardsPane({
   cards,
   onSendOp,
   onEvidenceClick,
@@ -563,17 +576,36 @@ export default function CardsPane({
   intelligenceOnline = true,
 }: CardsPaneProps) {
   const [tab, setTab] = useState<LedgerTab>('all');
-  const rail = newestFirst
-    ? capturedRailFeed(cards, questions, highlightTop)
-    : { top: [], rest: [] };
-  const feed = rail.rest.filter((entry) =>
-    entry.kind === 'item' ? !readOnly || entry.item.status !== 'removed' : true,
-  );
   // The live rail is a filterable ledger; print and archive keep the plain feed.
   const ledger = newestFirst && !readOnly;
-  const everything = ledger ? capturedRailFeed(cards, questions, 0).rest : [];
-  const counts = ledgerCounts(everything);
-  const filtered = tab === 'all' ? [] : everything.filter((entry) => ledgerTabOf(entry) === tab);
+  const allEntries = useMemo(
+    () => (newestFirst ? capturedFeedEntries(cards, questions) : []),
+    [newestFirst, cards, questions],
+  );
+  const rail = useMemo(() => {
+    if (!newestFirst) return { top: [] as CardItem[], rest: [] as CapturedFeedEntry[] };
+    if (highlightTop <= 0) return { top: [] as CardItem[], rest: allEntries };
+    const top = selectSpotlightItems(cards, highlightTop).map((pick) => pick.item);
+    const topIds = new Set(top.map((item) => item.id));
+    const rest = allEntries.filter(
+      (entry) => entry.kind !== 'item' || !topIds.has(entry.item.id),
+    );
+    return { top, rest };
+  }, [newestFirst, cards, highlightTop, allEntries]);
+  const feed = useMemo(
+    () => (readOnly
+      ? rail.rest.filter((entry) => (entry.kind === 'item' ? entry.item.status !== 'removed' : true))
+      : rail.rest),
+    [rail.rest, readOnly],
+  );
+  const counts = useMemo(
+    () => (ledger ? ledgerCounts(allEntries) : EMPTY_COUNTS),
+    [ledger, allEntries],
+  );
+  const filtered = useMemo(
+    () => (ledger && tab !== 'all' ? allEntries.filter((entry) => ledgerTabOf(entry) === tab) : []),
+    [ledger, tab, allEntries],
+  );
 
   const grouped = (
     <>
@@ -692,4 +724,6 @@ export default function CardsPane({
       <div className="capture-body">{body}</div>
     </section>
   );
-}
+});
+
+export default CardsPane;

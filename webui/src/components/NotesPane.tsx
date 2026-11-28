@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type FocusEvent } from 'react';
 import { isStuckToEnd, workspaceScroller } from '../scroll';
 import { ops, type CardItem, type Op } from '../types';
 import { sortedNoteItems } from '../state';
@@ -77,6 +77,7 @@ function NoteBlock({
   const [headingDraft, setHeadingDraft] = useState(noteHeading(item));
   const [bodyDraft, setBodyDraft] = useState(item.text);
   const [saving, setSaving] = useState(false);
+  const blockRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     if (!editing) {
@@ -90,7 +91,15 @@ function NoteBlock({
     item.status === 'confirmed' ? 'confirmed' : item.status === 'proposed' ? 'proposed' : '';
   const startS = noteStartS(item);
 
+  const cancelEdit = () => {
+    if (saving) return;
+    setHeadingDraft(noteHeading(item));
+    setBodyDraft(item.text);
+    setEditing(false);
+  };
+
   const saveEdit = async () => {
+    if (saving) return;
     const body = bodyDraft.trim();
     if (
       !body
@@ -115,12 +124,22 @@ function NoteBlock({
     }
   };
 
+  const handleEditorBlur = (event: FocusEvent<HTMLElement>) => {
+    const next = event.relatedTarget as Node | null;
+    if (next && blockRef.current?.contains(next)) return;
+    void saveEdit();
+  };
+
   const beginEdit = () => {
     if (!readOnly) setEditing(true);
   };
 
   return (
-    <article className={`note-block ${statusClass}${item.pinned ? ' pinned' : ''}`}>
+    <article
+      ref={blockRef}
+      className={`note-block ${statusClass}${item.pinned ? ' pinned' : ''}`}
+      onBlur={editing ? handleEditorBlur : undefined}
+    >
       <div className="note-block-top">
         {startS !== null && <time className="note-time">{formatTime(startS)}</time>}
         {editing ? (
@@ -128,6 +147,13 @@ function NoteBlock({
             className="note-heading-edit"
             value={headingDraft}
             onChange={(e) => setHeadingDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') cancelEdit();
+              else if (e.key === 'Enter') {
+                e.preventDefault();
+                void saveEdit();
+              }
+            }}
             disabled={saving}
             placeholder="Heading (optional)"
             aria-label="Note heading"
@@ -143,17 +169,36 @@ function NoteBlock({
         {item.pinned && <span className="note-pin">Pinned</span>}
       </div>
       {editing ? (
-        <textarea
-          className="note-body-edit"
-          value={bodyDraft}
-          onChange={(e) => setBodyDraft(e.target.value)}
-          onBlur={() => void saveEdit()}
-          disabled={saving}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setEditing(false);
-          }}
-          autoFocus
-        />
+        <>
+          <textarea
+            className="note-body-edit"
+            value={bodyDraft}
+            onChange={(e) => setBodyDraft(e.target.value)}
+            disabled={saving}
+            aria-label="Note text"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') cancelEdit();
+              else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                void saveEdit();
+              }
+            }}
+            autoFocus
+          />
+          <div className="note-action-buttons no-print" style={{ marginTop: 6 }}>
+            <button
+              type="button"
+              className="primary"
+              disabled={saving || !bodyDraft.trim()}
+              onClick={() => void saveEdit()}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button type="button" className="ghost" disabled={saving} onClick={cancelEdit}>
+              Cancel
+            </button>
+          </div>
+        </>
       ) : (
         <p className="note-body" onDoubleClick={beginEdit}>
           <InlineMarkdown text={item.text} />
@@ -327,7 +372,7 @@ function ghostText(status: string, cloudEnabled: boolean, intelligenceOnline: bo
 }
 
 /** The AI note taker's page: live, chronological meeting minutes. */
-export default function NotesPane({
+const NotesPane = memo(function NotesPane({
   notes,
   onRequestAdjustment,
   status,
@@ -345,7 +390,10 @@ export default function NotesPane({
   // "on" yanked the page to the first block and hid the topic hero.
   const stickToLatest = useRef(false);
   const lastCountRef = useRef(0);
-  const sorted = sortedNoteItems(notes.filter((item) => item.status !== 'removed'), newestFirst);
+  const sorted = useMemo(
+    () => sortedNoteItems(notes.filter((item) => item.status !== 'removed'), newestFirst),
+    [notes, newestFirst],
+  );
 
   // Follow the newest block inside the workspace scroller only. Never move
   // the window — that hid Pause / End whenever the note taker wrote.
@@ -410,4 +458,6 @@ export default function NotesPane({
       </div>
     </section>
   );
-}
+});
+
+export default NotesPane;

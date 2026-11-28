@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QFont
 
 from ui_qt.widgets import PrimaryButton, Button
+from ui_qt.utils.font_scale import apply_scaled_font
 
 
 class CleanupPromptDialog(QDialog):
@@ -21,7 +22,7 @@ class CleanupPromptDialog(QDialog):
 
         title = QLabel("Cleanup Prompt")
         title.setObjectName("headerLabel")
-        title.setFont(QFont("Segoe UI", 14, QFont.Weight.DemiBold))
+        apply_scaled_font(title, 14, QFont.Weight.DemiBold)
         layout.addWidget(title)
 
         info = QLabel(
@@ -34,7 +35,7 @@ class CleanupPromptDialog(QDialog):
 
         self.prompt_edit = QTextEdit()
         self.prompt_edit.setAcceptRichText(False)
-        self.prompt_edit.setFont(QFont("Segoe UI", 12))
+        apply_scaled_font(self.prompt_edit, 12)
         self.prompt_edit.setPlainText(prompt or "")
         self.prompt_edit.setPlaceholderText("Enter cleanup instructions…")
         layout.addWidget(self.prompt_edit, stretch=1)

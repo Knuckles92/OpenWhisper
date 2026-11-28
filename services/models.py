@@ -90,6 +90,8 @@ class TranscriptionHistory(Base):
 
     __table_args__ = (
         Index('idx_history_timestamp', 'timestamp'),
+        Index('idx_history_audio_file', 'audio_file'),
+        Index('idx_history_origin_timestamp', 'origin_device_id', 'timestamp'),
     )
 
     @classmethod
@@ -179,6 +181,7 @@ class DictationStat(Base):
 
     __table_args__ = (
         Index('idx_dictation_stats_timestamp', 'timestamp'),
+        Index('idx_dictation_stats_entry_id', 'entry_id'),
     )
 
 
@@ -321,6 +324,10 @@ class MeetingParticipant(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
 
+    __table_args__ = (
+        Index('idx_mparticipants_meeting', 'meeting_id'),
+    )
+
 
 class MeetingStateItem(Base):
     """Write-through mirror of one dashboard card item."""
@@ -366,6 +373,10 @@ class MeetingQuestion(Base):
     asked_at: Mapped[str] = mapped_column(String, nullable=False)
     resolved_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     resolved_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    __table_args__ = (
+        Index('idx_mquestions_meeting', 'meeting_id'),
+    )
 
 
 class MeetingEvent(Base):

@@ -12,6 +12,7 @@ off the UI thread; copying and opening wait until edits are saved.
 """
 from __future__ import annotations
 
+import itertools
 import logging
 import threading
 from datetime import date, datetime
@@ -20,6 +21,7 @@ from pathlib import Path
 from PyQt6.QtCore import (
     QEvent,
     QMimeData,
+    QObject,
     QPoint,
     QPointF,
     QRectF,
@@ -84,6 +86,7 @@ from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.widgets.walkthrough_copy_tips import set_copy_tip
 from ui_qt.widgets.walkthrough_icons import paint_icon
 from ui_qt.widgets.walkthrough_send import SendButton, relay, start_send
+from ui_qt.utils.error_messages import friendly_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -440,8 +443,8 @@ def _shots(count: int) -> str:
     return f"{count} screenshot{'' if count == 1 else 's'}"
 
 
-def _preview(path: Path, ratio: float) -> QPixmap | None:
-    """The screenshot decoded at the largest size it shows."""
+def _preview_image(path: Path, ratio: float) -> QImage | None:
+    """Decode ``path`` on any thread to a scaled ``QImage`` (Qt-thread safe)."""
     reader = QImageReader(str(path))
     size = reader.size()
     if not size.isValid():
@@ -452,9 +455,34 @@ def _preview(path: Path, ratio: float) -> QPixmap | None:
     image = reader.read()
     if image.isNull():
         return None
+    return image
+
+
+def _preview(path: Path, ratio: float) -> QPixmap | None:
+    """The screenshot decoded at the largest size it shows."""
+    image = _preview_image(path, ratio)
+    if image is None:
+        return None
     pixmap = QPixmap.fromImage(image)
     pixmap.setDevicePixelRatio(ratio)
     return pixmap
+
+
+class _PreviewRelay(QObject):
+    """Delivers background-decoded walkthrough preview images to the Qt thread."""
+
+    decoded = pyqtSignal(int, int, object, float)
+
+
+_preview_relay_instance: _PreviewRelay | None = None
+_preview_tokens = itertools.count(1)
+
+
+def _preview_relay() -> _PreviewRelay:
+    global _preview_relay_instance
+    if _preview_relay_instance is None:
+        _preview_relay_instance = _PreviewRelay()
+    return _preview_relay_instance
 
 
 def _pill(text: str, tone: str = "") -> QLabel:
@@ -692,18 +720,22 @@ class _Row(QFrame):
 
     def __init__(self, index: int, number: int, text: str, image: Path | None, *,
                  included: bool, stamp: str, can_omit: bool, line: str = "",
-                 notes: tuple[str, ...] = ()):
+                 notes: tuple[str, ...] = (), defer_preview: bool = False):
         super().__init__()
         self.setObjectName("wlSection")
         self.index = index
         self.line = line
+        self.image_path = image
+        self._included_initial = included
         self.preview: _Preview | None = None
         row = QHBoxLayout(self)
         row.setContentsMargins(8, 12, 14, 12)
         row.setSpacing(10)
         self.grip = _Grip(self)
         row.addWidget(self.grip)
-        row.addWidget(self._picture(image, included), PREVIEW_STRETCH, Qt.AlignmentFlag.AlignTop)
+        self._row_layout = row
+        self._picture_widget = self._picture(image, included, defer=defer_preview)
+        row.addWidget(self._picture_widget, PREVIEW_STRETCH, Qt.AlignmentFlag.AlignTop)
         column = QVBoxLayout()
         column.setSpacing(8)
         self.step = QLabel(str(number))
@@ -756,20 +788,51 @@ class _Row(QFrame):
             row.addStretch(1)
         return line
 
-    def _picture(self, image: Path | None, included: bool) -> QWidget:
-        shown = _preview(image, self.devicePixelRatioF()) if image else None
-        if shown is not None:
-            self.preview = _Preview(image, shown, included)
-            return self.preview
-        # As wide as the screenshots in the other rows, so the words line up.
-        empty = QLabel("No screenshot" if image is None else f"{image.name} is missing")
+    def _make_placeholder(self, text: str) -> QLabel:
+        empty = QLabel(text)
         empty.setObjectName("wlNoShot")
         empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty.setWordWrap(True)
         empty.setMinimumWidth(PREVIEW_MIN_WIDTH)
         empty.setMaximumWidth(PREVIEW_SIZE.width())
-        empty.setFixedHeight(64)
+        empty.setMinimumHeight(64)
         return empty
+
+    def _picture(self, image: Path | None, included: bool, *, defer: bool = False) -> QWidget:
+        if image is None:
+            return self._make_placeholder("No screenshot")
+        if defer:
+            return self._make_placeholder("Loading screenshot…")
+        shown = _preview(image, self.devicePixelRatioF())
+        if shown is not None:
+            self.preview = _Preview(image, shown, included)
+            return self.preview
+        # As wide as the screenshots in the other rows, so the words line up.
+        return self._make_placeholder(f"{image.name} is missing")
+
+    def apply_decoded_preview(self, image: QImage | None, ratio: float) -> _Preview | None:
+        """Swap the deferred placeholder for the decoded screenshot (or missing notice)."""
+        if self.image_path is None:
+            return None
+        included = self.check.isChecked() if self.check.isEnabled() else self._included_initial
+        if image is not None and not image.isNull():
+            pixmap = QPixmap.fromImage(image)
+            pixmap.setDevicePixelRatio(ratio)
+            replacement: QWidget = _Preview(self.image_path, pixmap, included)
+            self.preview = replacement
+        else:
+            replacement = self._make_placeholder(f"{self.image_path.name} is missing")
+            self.preview = None
+        old = self._picture_widget
+        idx = self._row_layout.indexOf(old)
+        if idx >= 0:
+            self._row_layout.insertWidget(idx, replacement, PREVIEW_STRETCH, Qt.AlignmentFlag.AlignTop)
+            self._row_layout.removeWidget(old)
+            old.hide()
+            old.setParent(None)
+            old.deleteLater()
+            self._picture_widget = replacement
+        return self.preview
 
     def set_number(self, number: int) -> None:
         self.step.setText(str(number))
@@ -1162,8 +1225,13 @@ class WalkthroughReview(QWidget):
         self.board: _Board | None = None
         #: The send in flight, or 0: its answer is the one this review shows.
         self._send_token = 0
+        self._preview_token = 0
+        self._preview_cancel = threading.Event()
+        self._preview_closed = threading.Event()
+        self.destroyed.connect(self._preview_closed.set)
         self._finished.connect(self._done)
         relay().sent.connect(self._sent)
+        _preview_relay().decoded.connect(self._on_preview_decoded)
         # One button, moved into whichever draft's banner shows; parked on the
         # widget in between so a replaced body never takes it along.
         self.recover_button = self._button("Recover draft", "wlPrimary", self._recover_draft)
@@ -1507,17 +1575,22 @@ class WalkthroughReview(QWidget):
                 walkthrough = library.load_document(self._folder)
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 if not draft:
-                    board.column.addWidget(self._empty("This walkthrough can't be opened", str(exc)))
+                    board.column.addWidget(
+                        self._empty("This walkthrough can't be opened", friendly_error_message(exc))
+                    )
             if walkthrough is not None:
                 try:
                     rows = (self._spoken_rows(walkthrough) if self._spoken
                             else self._write_up_rows())
                 except (OSError, ValueError) as exc:
-                    board.column.addWidget(self._empty("This walkthrough can't be opened", str(exc)))
+                    board.column.addWidget(
+                        self._empty("This walkthrough can't be opened", friendly_error_message(exc))
+                    )
                 else:
                     ready = True
                     for row in rows:
                         self._add_row(board, row)
+                    self._start_preview_decode(board)
         else:
             board.column.addWidget(self._empty(
                 "No walkthroughs yet",
@@ -1533,6 +1606,44 @@ class WalkthroughReview(QWidget):
         self._show_header(walkthrough, draft)
         self._show_actions(ready, draft)
 
+    def _start_preview_decode(self, board: _Board) -> None:
+        self._preview_cancel.set()
+        canceled = threading.Event()
+        self._preview_cancel = canceled
+        token = next(_preview_tokens)
+        self._preview_token = token
+        ratio = max(1.0, float(self.devicePixelRatioF()))
+        jobs = [
+            (pos, row.image_path)
+            for pos, row in enumerate(board.rows)
+            if row.image_path is not None and row.preview is None
+        ]
+        if not jobs:
+            return
+        closed = self._preview_closed
+        decoded = _preview_relay().decoded
+
+        def work() -> None:
+            for pos, path in jobs:
+                if canceled.is_set() or closed.is_set():
+                    return
+                image = _preview_image(path, ratio)
+                if canceled.is_set() or closed.is_set():
+                    return
+                decoded.emit(token, pos, image, ratio)
+
+        threading.Thread(target=work, name="walkthrough-preview-decode", daemon=True).start()
+
+    def _on_preview_decoded(self, token: int, pos: int, image, ratio: float) -> None:
+        if token != self._preview_token or self.board is None:
+            return
+        if pos < 0 or pos >= len(self.board.rows):
+            return
+        row = self.board.rows[pos]
+        preview = row.apply_decoded_preview(image, ratio)
+        if preview is not None:
+            preview.copy_requested.connect(self._copy_screenshot)
+
     def _spoken_rows(self, walkthrough) -> list[_Row]:
         rows = []
         for index, section in enumerate(walkthrough.sections):
@@ -1543,7 +1654,7 @@ class WalkthroughReview(QWidget):
                          else f"Until {clock(section.kept_at_s)}")
             rows.append(_Row(index, index + 1, section.text, image,
                              included=section.shot is not None, stamp=stamp, can_omit=True,
-                             notes=section.notes))
+                             notes=section.notes, defer_preview=True))
         return rows
 
     def _write_up_rows(self) -> list[_Row]:
@@ -1553,7 +1664,7 @@ class WalkthroughReview(QWidget):
         for index, (words, line) in enumerate(library.write_up_parts(text)):
             image = library.write_up_shot(self._folder, line) if line else None
             rows.append(_Row(index, index + 1, words, image, included=True,
-                             stamp="", can_omit=False, line=line))
+                             stamp="", can_omit=False, line=line, defer_preview=True))
         return rows
 
     def _add_row(self, board: _Board, row: _Row) -> None:
@@ -1913,7 +2024,7 @@ class WalkthroughReview(QWidget):
         try:
             result = library.load_result(self._folder, spoken=self._spoken, version=self._version)
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            self._set_notice(str(exc))
+            self._set_notice(friendly_error_message(exc))
             return
         self._copy_result(result, copy_format)
 
@@ -1926,7 +2037,7 @@ class WalkthroughReview(QWidget):
             else:
                 self._set_notice("Copying failed. Show it in its folder to attach the file.")
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            self._set_notice(str(exc))
+            self._set_notice(friendly_error_message(exc))
 
     def _send(self, dest) -> None:
         """Send the version shown to ``dest``, saving edits first as copying does."""
@@ -1938,7 +2049,7 @@ class WalkthroughReview(QWidget):
         try:
             result = library.load_result(self._folder, spoken=self._spoken, version=self._version)
         except (OSError, ValueError, KeyError, TypeError) as exc:
-            self._set_notice(str(exc))
+            self._set_notice(friendly_error_message(exc))
             return
         self._send_result(result, dest)
 

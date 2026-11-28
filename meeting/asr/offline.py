@@ -78,12 +78,17 @@ def offline_cut_ranges(
     total = max(0, int(sample_count))
     if total <= 0:
         return []
+    max_n = max(1, int(round(float(max_sec) * rate)))
+    scan_cap = max(max_n, int(float(max_sec) * rate) + 1)
     overlap_n = max(0, int(round(float(overlap_s) * rate)))
     position = 0
     ranges: List[Tuple[int, int]] = []
     while position < total:
-        remaining = audio[position:] if audio is not None else None
         remaining_n = total - position
+        remaining = (
+            audio[position : position + min(remaining_n, scan_cap)]
+            if audio is not None else None
+        )
         cut = None
         if remaining is not None and remaining.size:
             cut = find_cut_point(
@@ -95,7 +100,7 @@ def offline_cut_ranges(
                 quiet_window_s=quiet_window_s,
             )
         if cut is None:
-            cut = min(remaining_n, int(round(max_sec * rate)))
+            cut = min(remaining_n, max_n)
         cut = max(1, min(int(cut), remaining_n))
         end = position + cut
         ranges.append((position, end))

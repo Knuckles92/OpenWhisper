@@ -6,7 +6,7 @@ from typing import Optional, List, Tuple
 from .base import TranscriptionBackend
 from config import config
 from services import openai_retirement, speech_endpoints
-from services.settings import serving_api_model, settings_manager
+from services.settings import SettingsKey, serving_api_model, settings_manager
 from services.speech_endpoints import SpeechEndpoint
 
 logger = logging.getLogger(__name__)
@@ -100,7 +100,12 @@ class OpenAIBackend(TranscriptionBackend):
     def _target(self) -> Tuple[SpeechEndpoint, str]:
         """The endpoint and model the next request goes to."""
         if self.model_type == "api":
-            settings = settings_manager.load_all_settings()
+            settings = settings_manager.load_settings((
+                SettingsKey.API_TRANSCRIPTION_ENDPOINT,
+                SettingsKey.API_TRANSCRIPTION_SERVERS,
+                SettingsKey.API_TRANSCRIPTION_MODEL,
+                SettingsKey.SELECTED_MODEL,
+            ))
             endpoint = speech_endpoints.selected_endpoint(settings)
             return endpoint, speech_endpoints.endpoint_model(endpoint, settings)
         if self.model_type in config.API_MODEL_CHOICES:
@@ -318,6 +323,7 @@ class OpenAIBackend(TranscriptionBackend):
         """
         from services.audio_processor import audio_processor
 
+        chunk_files: List[str] = []
         try:
             chunk_files = audio_processor.split_audio_file(
                 audio_path, self._report_progress, should_cancel=lambda: self.should_cancel
@@ -331,10 +337,14 @@ class OpenAIBackend(TranscriptionBackend):
             )
             return self._transcribe_chunks(chunk_files, endpoint, api_model, **extra)
         finally:
-            try:
-                audio_processor.cleanup_temp_files()
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup temp files: {cleanup_error}", exc_info=True)
+            if chunk_files:
+                try:
+                    try:
+                        audio_processor.cleanup_temp_files(chunk_files)
+                    except TypeError:
+                        audio_processor.cleanup_temp_files()
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup temp files: {cleanup_error}", exc_info=True)
 
     def _transcribe_chunks(
         self, chunk_files: List[str], endpoint: SpeechEndpoint, api_model: str, **extra,

@@ -381,6 +381,30 @@ def _recover_pcm_tails(
     return recovered
 
 
+def _has_reconcilable_spool_files(spool_dir: str) -> bool:
+    """Fast filesystem check: True when ``spool_dir`` has sidecars or raw PCM."""
+    if not spool_dir or not os.path.isdir(spool_dir):
+        return False
+    try:
+        entries = list(os.scandir(spool_dir))
+    except OSError:
+        return True  # let reconcile_meeting_audio log/handle read errors
+    names = {entry.name for entry in entries if entry.is_file()}
+    for name in names:
+        if name.endswith(".recovery.json"):
+            return True
+    for name in names:
+        if name.endswith("_session.16k.pcm"):
+            wav_name = name[:-len("_session.16k.pcm")] + "_session.wav"
+            if wav_name not in names:
+                return True
+        elif name.endswith("_session.pcm"):
+            wav_name = name[:-len("_session.pcm")] + "_session.wav"
+            if wav_name not in names:
+                return True
+    return False
+
+
 def reconcile_meeting_audio(
     repository: Any,
     meeting: Dict[str, Any],
@@ -396,12 +420,16 @@ def reconcile_meeting_audio(
     meeting_id = str(meeting.get("id") or "")
     if not meeting_id or not callable(getattr(repository, "get_audio_chunks", None)):
         return {"orphan_chunks": 0, "tail_chunks": 0}
+    spool_dir = str(meeting.get("spool_dir") or "")
+    if not _has_reconcilable_spool_files(spool_dir):
+        return {"orphan_chunks": 0, "tail_chunks": 0}
     try:
         chunks = _registered_audio(repository, meeting_id)
         orphans = _recover_stranded_wavs(repository, meeting, chunks)
         # Reload after orphan registration so their coverage prevents the raw
         # session fallback from creating an overlapping chunk.
-        chunks = _registered_audio(repository, meeting_id)
+        if orphans:
+            chunks = _registered_audio(repository, meeting_id)
         tails = _recover_pcm_tails(repository, meeting, chunks)
         return {"orphan_chunks": orphans, "tail_chunks": tails}
     except Exception:
@@ -415,11 +443,13 @@ def reconcile_meeting_audio(
 
 def reconcile_startup_audio(repository: Any) -> int:
     """Reconcile dead/terminal meeting spools before recovery candidates load."""
-    list_meetings = getattr(repository, "list_meetings", None)
-    if not callable(list_meetings):
+    list_fn = getattr(repository, "list_meetings_for_reconcile", None)
+    if not callable(list_fn):
+        list_fn = getattr(repository, "list_meetings", None)
+    if not callable(list_fn):
         return 0
     try:
-        meetings = list_meetings()
+        meetings = list_fn()
     except Exception as exc:
         logger.exception("Failed to list meetings for audio reconciliation")
         raise RecoveryScanError("Could not list meetings for audio recovery") from exc
@@ -560,7 +590,9 @@ def settle_interrupted_meetings(
         How many meetings were corrected.
     """
     settled = 0
-    for meeting in repository.list_meetings():
+    list_fn = getattr(repository, "list_meetings_with_interrupted_work", None)
+    meetings = list_fn() if callable(list_fn) else repository.list_meetings()
+    for meeting in meetings:
         meeting_id = str(meeting.get("id") or "")
         status = str(meeting.get("status") or "")
         if status not in ("ended", "failed") or meeting.get("origin_device_id"):

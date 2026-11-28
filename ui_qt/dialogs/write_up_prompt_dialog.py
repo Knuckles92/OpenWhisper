@@ -14,6 +14,7 @@ from services.settings import settings_manager
 from services.walkthrough.styles import MAX_NAME, load_styles, save_style, style_for
 from ui_qt.widgets import Button, PrimaryButton
 from ui_qt.widgets.no_wheel import NoWheelComboBox
+from ui_qt.utils.font_scale import apply_scaled_font
 
 #: The style menu's first item while the prompt is the user's own words.
 OWN_WORDS = "Your own words"
@@ -37,7 +38,7 @@ class WriteUpPromptDialog(QDialog):
 
         title = QLabel("What should the write-up be?")
         title.setObjectName("headerLabel")
-        title.setFont(QFont("Segoe UI", 14, QFont.Weight.DemiBold))
+        apply_scaled_font(title, 14, QFont.Weight.DemiBold)
         layout.addWidget(title)
         info = QLabel(
             "The agent writes it up from your words as spoken, with this prompt"
