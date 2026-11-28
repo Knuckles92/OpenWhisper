@@ -1921,6 +1921,7 @@ def pair_with_invite(
         invite.code,
         peer_name,
         tailscale=False,
+        expected_fingerprint=invite.fingerprint,
     )
     paired_fp = str(getattr(result, "fingerprint", "") or "").upper()
     if not paired_fp or not hmac.compare_digest(paired_fp, invite.fingerprint):
@@ -1989,18 +1990,24 @@ def host_capabilities_from_settings(settings: Mapping[str, Any] | None = None) -
 def build_host_info_for_service(service: Any, settings: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Construct the ``HostInviteServer`` info dict from a ``RemoteEngineService``."""
     state = service.host_state() if service is not None and hasattr(service, "host_state") else {}
+    bind_addr = str(getattr(service, "_bind", "") or "").strip()
     alternates: list[str] = []
-    if state.get("address"):
-        alternates.append(str(state["address"]))
-    tailnet = state.get("tailscale")
-    if tailnet is not None and getattr(tailnet, "running", False) and getattr(tailnet, "address", ""):
-        alternates.append(str(tailnet.address))
+    if bind_addr in ("127.0.0.1", "::1"):
+        primary_address = bind_addr
+        alternates.append(bind_addr)
+    else:
+        if state.get("address"):
+            alternates.append(str(state["address"]))
+        tailnet = state.get("tailscale")
+        if tailnet is not None and getattr(tailnet, "running", False) and getattr(tailnet, "address", ""):
+            alternates.append(str(tailnet.address))
+        primary_address = str(state.get("address") or (alternates[0] if alternates else ""))
     pairing = state.get("pairing")
     pairing_code = pairing[0] if isinstance(pairing, (list, tuple)) and pairing else ""
     return {
         "host_name": state.get("host_name") or socket.gethostname(),
         "version": __version__,
-        "address": state.get("address") or (alternates[0] if alternates else ""),
+        "address": primary_address,
         "port": int(state.get("port") or protocol.DEFAULT_PORT),
         "fingerprint": state.get("fingerprint") or "",
         "alternates": alternates,

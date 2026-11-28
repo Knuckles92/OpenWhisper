@@ -1089,7 +1089,7 @@ class MeetingEngine:
                 logger.exception("Scheduler stop failed")
             self._scheduler = None
         self._shutdown_agent_core()
-        self._close_diarizer_embedder(self._diarizer)
+        self._close_diarizer_embedder(getattr(self, "_diarizer", None))
         if self.store and self.store.snapshot().get("insight_review", {}).get("enabled"):
             from meeting.insight_review import start_review
             start_review(self.store, self.repository)
@@ -1329,7 +1329,7 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Meeting web server stop failed")
         self._shutdown_agent_core()
-        self._close_diarizer_embedder(self._diarizer)
+        self._close_diarizer_embedder(getattr(self, "_diarizer", None))
         processing = self._processing_thread
         if (processing is not None and processing is not threading.current_thread()
                 and processing.is_alive()):

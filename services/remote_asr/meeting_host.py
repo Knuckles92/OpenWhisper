@@ -925,6 +925,8 @@ class HostMeetingServices:
         """Wire meeting AI, file decode, and walkthrough records into ``RemoteEngineService``."""
         from services.remote_records.walkthrough_kind import WalkthroughRecords
 
+        if hasattr(service, "_attach_meeting_services"):
+            service._attach_meeting_services(self)
         service.register_meeting_ai_handler(
             self.handle_meeting_ai,
             capabilities=self.meeting_ai_capabilities,

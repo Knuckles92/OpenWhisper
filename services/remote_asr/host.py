@@ -945,10 +945,13 @@ class SpeechHost:
             return {"meeting_ai": False, "speaker_diarization": False}
         if not isinstance(raw, dict):
             return {"meeting_ai": enabled, "speaker_diarization": enabled}
-        return {
+        result = {
             "meeting_ai": bool(enabled and raw.get("meeting_ai", True)),
             "speaker_diarization": bool(enabled and raw.get("speaker_diarization", True)),
         }
+        if "file_decode" in raw:
+            result["file_decode"] = bool(raw["file_decode"])
+        return result
 
     def _advertised_record_kinds(self) -> tuple[str, ...]:
         if self._record_kinds is None:
@@ -1289,8 +1292,11 @@ class SpeechHost:
             if ai_meta is not None:
                 ready["ai"] = ai_meta
         if self._meeting_ai_handler is not None:
-            ready["capabilities"].update(self._meeting_ai_advertised())
-        if self._file_decode_handler is not None:
+            meeting_caps = self._meeting_ai_advertised()
+            if self._file_decode_handler is None:
+                meeting_caps.pop("file_decode", None)
+            ready["capabilities"].update(meeting_caps)
+        if self._file_decode_handler is not None and "file_decode" not in ready["capabilities"]:
             ready["capabilities"]["file_decode"] = True
         return ready
 

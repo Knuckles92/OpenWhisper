@@ -31,7 +31,7 @@ from services.remote_asr.protocol import RECORD_CHUNK_BYTES
 
 logger = logging.getLogger(__name__)
 
-RECORD_KINDS = ("dictation", "meeting")
+RECORD_KINDS = ("dictation", "meeting", "walkthrough")
 MANIFEST = "record.json"
 _RECORD_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _DEVICE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -209,6 +209,13 @@ class HostRecordStore:
 
     # ---- dispatch ----
 
+    def _kind(self, raw_kind) -> tuple[str, RecordKind]:
+        kind = safe_kind(raw_kind)
+        handler = self.kinds.get(kind)
+        if handler is None:
+            raise ValueError("Unknown kind of record.")
+        return kind, handler
+
     def handle(self, op: str, header: dict, payload: bytes, device: dict) -> dict:
         device_id = device.get("id")
         # Only the host service supplies these grants, after the host owner
@@ -219,9 +226,9 @@ class HostRecordStore:
         if op == "records_list":
             return self._list_records(header, owners)
         if op == "records_clear":
-            kind = safe_kind(header.get("kind"))
-            return {"deleted": sum(self.kinds[kind].delete_all(owner) for owner in owners)}
-        kind = safe_kind(header.get("kind"))
+            _kind, handler = self._kind(header.get("kind"))
+            return {"deleted": sum(handler.delete_all(owner) for owner in owners)}
+        kind, _handler = self._kind(header.get("kind"))
         record_id = safe_record_id(header.get("record_id"))
         owner_id = device_id
         if len(owners) > 1 and op in _OWNED_RECORD_OPS:
@@ -229,11 +236,11 @@ class HostRecordStore:
         return self._record_op(op, kind, record_id, header, payload, device, owner_id)
 
     def _list_records(self, header: dict, owners: list) -> dict:
-        kind = safe_kind(header.get("kind"))
+        _kind, handler = self._kind(header.get("kind"))
         query = header.get("query") if isinstance(header.get("query"), str) else ""
         limit = _list_limit(header.get("limit", DEFAULT_LIST))
         records = [item for owner in owners
-                   for item in self.kinds[kind].list(owner, query[:200], limit)]
+                   for item in handler.list(owner, query[:200], limit)]
         records.sort(key=_newest_first_key, reverse=True)
         return {"records": records[:limit]}
 

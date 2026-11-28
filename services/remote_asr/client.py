@@ -270,14 +270,18 @@ def pair_with_host(
     device_name: str,
     *,
     tailscale: bool = False,
+    expected_fingerprint: Optional[str] = None,
     timeout: float = CONNECT_TIMEOUT_S,
 ) -> PairingResult:
     """Trade the code shown on the host for this computer's own token.
 
     With ``tailscale=True`` no code is sent: the host checks through
-    Tailscale that this computer belongs to its owner. Either way, the
-    certificate seen here is the one pinned from now on, so compare the
-    fingerprint the host shows with ``PairingResult.fingerprint``.
+    Tailscale that this computer belongs to its owner. When
+    ``expected_fingerprint`` is given, the peer's TLS certificate SHA-256
+    fingerprint is verified in constant time BEFORE sending the pairing
+    request so the code is never exposed to a wrong or MITM host. Either
+    way, the certificate seen here is the one pinned from now on, so
+    compare the fingerprint the host shows with ``PairingResult.fingerprint``.
     """
     request = {
         "type": "pair",
@@ -291,9 +295,16 @@ def pair_with_host(
         if not code:
             raise RemoteEngineError("Enter the pairing code shown on the host.")
         request["code"] = code
+    expected = (expected_fingerprint or "").strip().upper()
     ws = _open(host, port, timeout)
     try:
         fingerprint = peer_fingerprint(ws.socket)
+        if expected and not hmac.compare_digest(fingerprint.upper(), expected):
+            raise RemoteEngineError(
+                f"The host at {protocol.format_address(host, port)} presented "
+                f"a different security identity ({protocol.short_fingerprint(fingerprint) or 'unknown'}) "
+                f"than expected ({protocol.short_fingerprint(expected)}). Pairing was stopped."
+            )
         ws.send(json.dumps(request))
         reply = _read_json(ws, HANDSHAKE_TIMEOUT_S)
     finally:

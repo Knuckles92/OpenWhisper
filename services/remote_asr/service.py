@@ -135,6 +135,7 @@ class RemoteEngineService:
         on_host_catalog: Optional[Callable[[object, dict, dict], None]] = None,
         records_root: Optional[str] = None,
         ai_services=None,
+        meeting_services=None,
         meeting_ai_handler: Optional[Callable[[str, dict, bytes, dict], dict]] = None,
         meeting_ai_capabilities: Optional[Callable[[], dict]] = None,
         file_decode_handler: Optional[Callable[[str, dict, bytes, dict], dict]] = None,
@@ -147,10 +148,14 @@ class RemoteEngineService:
         self._extra_record_kinds = dict(extra_record_kinds or {})
         self._mcp_control = None
         self._ai_services = ai_services
+        self._meeting_services = meeting_services
         self._meeting_ai_handler = meeting_ai_handler
         self._meeting_ai_capabilities = meeting_ai_capabilities
         self._file_decode_handler = file_decode_handler
         self._invite_server = invite_server
+        self._invite_url = ""
+        self._invite_error = ""
+        self._invite_port_override: Optional[int] = None
         self._record_gate = RecordGate()
         from services.remote_asr.host import DeviceRegistry
         from services.remote_history.channel import HistoryBroker
@@ -454,9 +459,9 @@ class RemoteEngineService:
                 ai_handler=self.ai_request,
                 ai_capabilities=self.ai_capabilities,
                 meeting_ai_enabled=remote_settings.host_meeting_ai,
-                meeting_ai_capabilities=self._meeting_ai_capabilities,
-                meeting_ai_handler=self._meeting_ai_handler,
-                file_decode_handler=self._file_decode_handler,
+                meeting_ai_capabilities=self.meeting_ai_capabilities,
+                meeting_ai_handler=self.meeting_ai_request,
+                file_decode_handler=self.file_decode_request,
                 record_kinds=self.record_kinds,
             )
         return self._host
@@ -479,6 +484,45 @@ class RemoteEngineService:
                    cancel_event: Optional[threading.Event] = None) -> dict:
         return self.ai_services().handle(op, header, payload, device, cancel_event=cancel_event)
 
+    def meeting_services(self):
+        """Lazily instantiated Phase 2 host meeting AI, speaker ID, and file decode dispatcher."""
+        with self._lock:
+            if self._meeting_services is None:
+                from services.remote_asr.meeting_host import HostMeetingServices
+
+                self._meeting_services = HostMeetingServices(engine_provider=self._engine)
+            return self._meeting_services
+
+    def _attach_meeting_services(self, services) -> None:
+        with self._lock:
+            self._meeting_services = services
+
+    def register_meeting_services(self, services) -> None:
+        """Attach a ``HostMeetingServices`` instance and wire its handlers and lifecycle."""
+        self._attach_meeting_services(services)
+        services.register_on_service(self)
+
+    def meeting_ai_capabilities(self) -> dict:
+        with self._lock:
+            cap_fn = self._meeting_ai_capabilities
+        if cap_fn is not None:
+            return cap_fn()
+        return self.meeting_services().meeting_ai_capabilities()
+
+    def meeting_ai_request(self, op: str, header: dict, payload: bytes, device: dict) -> dict:
+        with self._lock:
+            handler = self._meeting_ai_handler
+        if handler is not None:
+            return handler(op, header, payload, device)
+        return self.meeting_services().handle_meeting_ai(op, header, payload, device)
+
+    def file_decode_request(self, op: str, header: dict, payload: bytes, device: dict) -> dict:
+        with self._lock:
+            handler = self._file_decode_handler
+        if handler is not None:
+            return handler(op, header, payload, device)
+        return self.meeting_services().handle_file_decode(op, header, payload, device)
+
     def register_meeting_ai_handler(
         self,
         handler: Optional[Callable[[str, dict, bytes, dict], dict]],
@@ -492,9 +536,9 @@ class RemoteEngineService:
             host = self._host
         if host is not None:
             host.set_meeting_ai_handler(
-                handler,
+                None if handler is None else self.meeting_ai_request,
                 enabled=remote_settings.host_meeting_ai,
-                capabilities=capabilities,
+                capabilities=None if handler is None else self.meeting_ai_capabilities,
             )
         self._notify("state")
 
@@ -507,7 +551,7 @@ class RemoteEngineService:
             self._file_decode_handler = handler
             host = self._host
         if host is not None:
-            host.set_file_decode_handler(handler)
+            host.set_file_decode_handler(None if handler is None else self.file_decode_request)
         self._notify("state")
 
     def register_record_kind(self, kind: str, handler) -> None:
@@ -518,18 +562,171 @@ class RemoteEngineService:
                 self._records.kinds[kind] = handler
         self._notify("state")
 
+    def invite_server(self):
+        """Lazily instantiated Phase 4 host invite HTTP server."""
+        with self._lock:
+            if self._invite_server is None:
+                from services.remote_asr.invite import (
+                    HostInviteServer,
+                    build_host_info_for_service,
+                )
+
+                self._invite_server = HostInviteServer(
+                    host_info_provider=lambda: build_host_info_for_service(self),
+                    pairing_code_provider=self.open_pairing,
+                    cache_enabled_provider=remote_settings.host_invite_cache,
+                )
+            return self._invite_server
+
     def register_invite_server(self, server) -> None:
         """Attach an optional host invite server managed on shutdown."""
         with self._lock:
             self._invite_server = server
         self._notify("state")
 
+    def _sync_invite_server_locked(self) -> None:
+        """Start or stop ``HostInviteServer`` to match sharing & invite settings.
+
+        Caller must hold ``self._apply_lock``.
+        """
+        with self._lock:
+            host = self._host
+            host_running = host is not None and host.running
+            server = self._invite_server
+            port_override = self._invite_port_override
+        want_running = host_running and remote_settings.host_invite_enabled()
+        port = port_override if port_override is not None else remote_settings.host_invite_port()
+        error = ""
+        try:
+            if not want_running:
+                if server is not None and getattr(server, "running", False):
+                    server.stop()
+                with self._lock:
+                    self._invite_url = ""
+                    self._invite_port_override = None
+            else:
+                if server is None:
+                    server = self.invite_server()
+                if server.running and port != 0 and server.port != port:
+                    server.stop()
+                if not server.running:
+                    server.start(port=port, bind=self._bind)
+        except OSError as exc:
+            error = (
+                f"Couldn't listen for client invites on port {port} ({exc.strerror or exc})."
+            )
+            logger.warning("Host invite server could not start: %s", exc)
+        except Exception as exc:
+            error = f"Couldn't start the invite server: {exc}"
+            logger.exception("Host invite server could not start")
+        with self._lock:
+            self._invite_error = error
+
+    def _sync_invite_server(self) -> None:
+        with self._apply_lock:
+            self._sync_invite_server_locked()
+
+    def invite_state(self) -> dict:
+        """Snapshot of the host invite HTTP server and current active invite link."""
+        with self._lock:
+            server = self._invite_server
+            url = self._invite_url
+            error = self._invite_error
+        running = bool(server is not None and getattr(server, "running", False))
+        session = server.active_invite() if server is not None else None
+        active = bool(running and session is not None)
+        expires_in_s = (
+            session.remaining_seconds(time.monotonic())
+            if active and session is not None
+            else 0.0
+        )
+        if not active:
+            url = ""
+        return {
+            "enabled": remote_settings.host_invite_enabled(),
+            "running": running,
+            "port": server.port if running and server is not None else remote_settings.host_invite_port(),
+            "cache_enabled": remote_settings.host_invite_cache(),
+            "active": active,
+            "url": url,
+            "token": session.token if active and session is not None else "",
+            "expires_in_s": expires_in_s,
+            "error": error,
+        }
+
+    def generate_invite(
+        self,
+        *,
+        ttl_seconds: Optional[float] = None,
+        pairing_code: Optional[str] = None,
+        port: Optional[int] = None,
+    ) -> dict:
+        """Start the invite HTTP server (if needed) and create a fresh revocable invite."""
+        from services.remote_asr.invite import (
+            DEFAULT_INVITE_TTL_S,
+            build_host_info_for_service,
+        )
+        from services.settings import SettingsKey, settings_manager
+
+        with self._apply_lock:
+            with self._lock:
+                host = self._host
+                host_running = host is not None and host.running
+            if not host_running:
+                raise RuntimeError("Turn on sharing before generating a client invite link.")
+            settings_manager.save_setting(SettingsKey.REMOTE_HOST_INVITE_ENABLED, True)
+            if port is not None:
+                with self._lock:
+                    self._invite_port_override = int(port)
+            self._sync_invite_server_locked()
+            with self._lock:
+                error = self._invite_error
+            if error:
+                raise RuntimeError(error)
+            server = self.invite_server()
+            ttl = DEFAULT_INVITE_TTL_S if ttl_seconds is None else float(ttl_seconds)
+            session = server.create_invite(ttl_seconds=ttl, pairing_code=pairing_code)
+            info = build_host_info_for_service(self)
+            addr = info.get("address") or "127.0.0.1"
+            url = server.invite_url(str(addr), session.token)
+            with self._lock:
+                self._invite_url = url
+        self._notify("state")
+        return {
+            "url": url,
+            "token": session.token,
+            "pairing_code": session.pairing_code,
+            "port": server.port,
+            "expires_at": session.expires_at,
+            "session": session,
+        }
+
+    def revoke_invite(self, token: Optional[str] = None) -> bool:
+        """Revoke the active invite (or one ``token``) and stop the server when revoking all."""
+        from services.settings import SettingsKey, settings_manager
+
+        with self._apply_lock:
+            with self._lock:
+                server = self._invite_server
+            revoked = bool(server.revoke_invite(token)) if server is not None else False
+            if token is None:
+                settings_manager.save_setting(SettingsKey.REMOTE_HOST_INVITE_ENABLED, False)
+                with self._lock:
+                    self._invite_url = ""
+                    self._invite_port_override = None
+                self._sync_invite_server_locked()
+            elif server is not None and server.active_invite() is None:
+                with self._lock:
+                    self._invite_url = ""
+        self._notify("state")
+        return revoked
+
     def record_kinds(self) -> Tuple[str, ...]:
         """Record kind ids offered by this host, without forcing disk initialization."""
         with self._lock:
             if self._records is not None:
                 return tuple(self._records.kinds)
-            return tuple(dict.fromkeys(("dictation", "meeting", *self._extra_record_kinds)))
+            return tuple(dict.fromkeys(("dictation", "meeting", "walkthrough", *self._extra_record_kinds)))
 
     # ---- records paired computers keep here ----
 
@@ -539,13 +736,18 @@ class RemoteEngineService:
             if self._records is None:
                 from config import user_data_path
                 from services.remote_records.host_store import HostRecordStore
-                from services.remote_records.kinds import DictationRecords, MeetingRecords
+                from services.remote_records.kinds import (
+                    DictationRecords,
+                    MeetingRecords,
+                    WalkthroughRecords,
+                )
 
                 self._records = HostRecordStore(
                     self._records_root or user_data_path("remote_records"),
                     {
                         "dictation": DictationRecords(),
                         "meeting": MeetingRecords(),
+                        "walkthrough": WalkthroughRecords(),
                         **self._extra_record_kinds,
                     },
                 )
@@ -650,12 +852,16 @@ class RemoteEngineService:
         from services.settings import SettingsKey, settings_manager
 
         settings_manager.save_setting(SettingsKey.REMOTE_HOST_INVITE_ENABLED, bool(enabled))
+        self._sync_invite_server()
         self._notify("state")
 
     def set_invite_port(self, port: int) -> None:
         from services.settings import SettingsKey, settings_manager
 
         settings_manager.save_setting(SettingsKey.REMOTE_HOST_INVITE_PORT, int(port))
+        with self._lock:
+            self._invite_port_override = None
+        self._sync_invite_server()
         self._notify("state")
 
     def set_invite_cache(self, enabled: bool) -> None:
@@ -815,6 +1021,7 @@ class RemoteEngineService:
                 logger.exception("Remote engine host could not start")
             with self._lock:
                 self._host_error = error
+            self._sync_invite_server_locked()
         self._notify("state")
 
     def set_host_enabled(self, enabled: bool) -> None:
@@ -1087,7 +1294,10 @@ class RemoteEngineService:
             with self._lock:
                 host = self._host
                 ai_services = self._ai_services
+                meeting_services = self._meeting_services
                 invite_server = self._invite_server
+                self._invite_url = ""
+                self._invite_port_override = None
                 self._pending_pairing = None
             if host is not None:
                 host.stop()
@@ -1096,6 +1306,11 @@ class RemoteEngineService:
                     ai_services.shutdown()
                 except Exception:
                     logger.debug("Host AI services shutdown raised", exc_info=True)
+            if meeting_services is not None and hasattr(meeting_services, "shutdown"):
+                try:
+                    meeting_services.shutdown()
+                except Exception:
+                    logger.debug("Host meeting services shutdown raised", exc_info=True)
             if invite_server is not None and hasattr(invite_server, "stop"):
                 try:
                     invite_server.stop()

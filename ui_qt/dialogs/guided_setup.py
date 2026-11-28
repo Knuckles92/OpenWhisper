@@ -1759,48 +1759,66 @@ class GuidedSetupDialog(QDialog):
     def _ensure_host_invite_server(self) -> remote_invite.HostInviteServer:
         service = self._resolve_remote_service()
         if self._host_invite_server is None:
-            self._host_invite_server = remote_invite.HostInviteServer(
-                host_info_provider=lambda: remote_invite.build_host_info_for_service(
-                    service, self.manager.load_all_settings()
-                ),
-                pairing_code_provider=(
-                    service.open_pairing if service is not None and hasattr(service, "open_pairing") else None
-                ),
-                cache_enabled_provider=lambda: bool(
-                    remote_invite.read_setting_compat(
-                        *remote_invite.HOST_INVITE_CACHE_SPEC, False, manager=self.manager
-                    )
-                ),
-            )
-            if service is not None and hasattr(service, "register_invite_server"):
-                try:
-                    service.register_invite_server(self._host_invite_server)
-                except Exception:
-                    logger.debug("Could not register guided invite server", exc_info=True)
+            factory = getattr(service, "invite_server", None) if service is not None else None
+            if callable(factory):
+                self._host_invite_server = factory()
+            else:
+                self._host_invite_server = remote_invite.HostInviteServer(
+                    host_info_provider=lambda: remote_invite.build_host_info_for_service(
+                        service, self.manager.load_all_settings()
+                    ),
+                    pairing_code_provider=(
+                        service.open_pairing if service is not None and hasattr(service, "open_pairing") else None
+                    ),
+                    cache_enabled_provider=lambda: bool(
+                        remote_invite.read_setting_compat(
+                            *remote_invite.HOST_INVITE_CACHE_SPEC, False, manager=self.manager
+                        )
+                    ),
+                )
+                if service is not None and hasattr(service, "register_invite_server"):
+                    try:
+                        service.register_invite_server(self._host_invite_server)
+                    except Exception:
+                        logger.debug("Could not register guided invite server", exc_info=True)
         return self._host_invite_server
 
     def _generate_and_copy_host_invite(self):
-        server = self._ensure_host_invite_server()
-        port = int(
-            remote_invite.read_setting_compat(
-                *remote_invite.HOST_INVITE_PORT_SPEC,
-                remote_invite.DEFAULT_INVITE_PORT,
-                manager=self.manager,
+        service = self._resolve_remote_service()
+        generate_fn = getattr(service, "generate_invite", None) if service is not None else None
+        if callable(generate_fn):
+            try:
+                generated = generate_fn()
+                url = str(generated["url"])
+                factory = getattr(service, "invite_server", None)
+                if callable(factory):
+                    self._host_invite_server = factory()
+            except Exception as exc:
+                self.host_invite_url_label.setText(f"Could not start invite link server: {exc}")
+                set_style_property(self.host_invite_url_label, "tone", "attention")
+                return
+        else:
+            server = self._ensure_host_invite_server()
+            port = int(
+                remote_invite.read_setting_compat(
+                    *remote_invite.HOST_INVITE_PORT_SPEC,
+                    remote_invite.DEFAULT_INVITE_PORT,
+                    manager=self.manager,
+                )
             )
-        )
-        try:
-            if not server.running:
-                server.start(port=port)
-            session = server.create_invite()
-            info = remote_invite.build_host_info_for_service(
-                self._resolve_remote_service(), self.manager.load_all_settings()
-            )
-            host_addr = info.get("address") or "127.0.0.1"
-            url = server.invite_url(str(host_addr), session.token)
-        except Exception as exc:
-            self.host_invite_url_label.setText(f"Could not start invite link server: {exc}")
-            set_style_property(self.host_invite_url_label, "tone", "attention")
-            return
+            try:
+                if not server.running:
+                    server.start(port=port)
+                session = server.create_invite()
+                info = remote_invite.build_host_info_for_service(
+                    service, self.manager.load_all_settings()
+                )
+                host_addr = info.get("address") or "127.0.0.1"
+                url = server.invite_url(str(host_addr), session.token)
+            except Exception as exc:
+                self.host_invite_url_label.setText(f"Could not start invite link server: {exc}")
+                set_style_property(self.host_invite_url_label, "tone", "attention")
+                return
 
         self._host_invite_url = url
         clipboard = QApplication.clipboard()
@@ -1819,6 +1837,10 @@ class GuidedSetupDialog(QDialog):
             logger.debug("Could not render invite QR preview", exc_info=True)
 
     def _revoke_guided_host_invite(self):
+        service = self._resolve_remote_service()
+        revoke_fn = getattr(service, "revoke_invite", None) if service is not None else None
+        if callable(revoke_fn):
+            revoke_fn()
         if self._host_invite_server is not None:
             self._host_invite_server.revoke_invite()
         self._host_invite_url = ""

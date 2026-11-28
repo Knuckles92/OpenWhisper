@@ -330,6 +330,7 @@ class RemoteEngineSection(QObject):
         #: While a pairing request waits on the host: {"name", "sas", "canceled"}.
         self._request = None
         self._invite_server: Optional[remote_invite.HostInviteServer] = None
+        self._custom_invite_server = False
         self._active_invite_url = ""
         self._host_caps: dict = {}
         self._host_ai_meta: dict = {}
@@ -1072,6 +1073,7 @@ class RemoteEngineSection(QObject):
     def bind_invite_server(self, server: Optional[remote_invite.HostInviteServer]) -> None:
         """Attach an externally-managed ``HostInviteServer`` for the Invite card."""
         self._invite_server = server
+        self._custom_invite_server = server is not None
         if self._built:
             self._refresh_invite_card()
 
@@ -2020,24 +2022,28 @@ class RemoteEngineSection(QObject):
     def _ensure_invite_server(self) -> remote_invite.HostInviteServer:
         if self._invite_server is None:
             service = self._service
-            self._invite_server = remote_invite.HostInviteServer(
-                host_info_provider=lambda: remote_invite.build_host_info_for_service(
-                    service, settings_manager.load_all_settings()
-                ),
-                pairing_code_provider=(
-                    service.open_pairing if service is not None and hasattr(service, "open_pairing") else None
-                ),
-                cache_enabled_provider=lambda: bool(
-                    remote_invite.read_setting_compat(
-                        *remote_invite.HOST_INVITE_CACHE_SPEC, False, manager=settings_manager
-                    )
-                ),
-            )
-            if service is not None and hasattr(service, "register_invite_server"):
-                try:
-                    service.register_invite_server(self._invite_server)
-                except Exception:
-                    logger.debug("Could not register HostInviteServer on service", exc_info=True)
+            factory = getattr(service, "invite_server", None) if service is not None else None
+            if callable(factory):
+                self._invite_server = factory()
+            else:
+                self._invite_server = remote_invite.HostInviteServer(
+                    host_info_provider=lambda: remote_invite.build_host_info_for_service(
+                        service, settings_manager.load_all_settings()
+                    ),
+                    pairing_code_provider=(
+                        service.open_pairing if service is not None and hasattr(service, "open_pairing") else None
+                    ),
+                    cache_enabled_provider=lambda: bool(
+                        remote_invite.read_setting_compat(
+                            *remote_invite.HOST_INVITE_CACHE_SPEC, False, manager=settings_manager
+                        )
+                    ),
+                )
+                if service is not None and hasattr(service, "register_invite_server"):
+                    try:
+                        service.register_invite_server(self._invite_server)
+                    except Exception:
+                        logger.debug("Could not register HostInviteServer on service", exc_info=True)
         return self._invite_server
 
     def _refresh_invite_card(self, state: Optional[dict] = None) -> None:
@@ -2045,6 +2051,21 @@ class RemoteEngineSection(QObject):
             return
         running = bool(state.get("running")) if isinstance(state, dict) else False
         self.invite_generate_button.setEnabled(self._service is not None and running)
+        invite_state_fn = (
+            getattr(self._service, "invite_state", None)
+            if self._service is not None
+            else None
+        )
+        if not self._custom_invite_server and callable(invite_state_fn):
+            inv_state = invite_state_fn()
+            if inv_state.get("active") and inv_state.get("url"):
+                self._active_invite_url = str(inv_state["url"])
+                if self._invite_server is None:
+                    factory = getattr(self._service, "invite_server", None)
+                    if callable(factory):
+                        self._invite_server = factory()
+            elif not running or not inv_state.get("active"):
+                self._active_invite_url = ""
         session = self._invite_server.active_invite() if self._invite_server is not None else None
         has_active = session is not None and bool(self._active_invite_url)
         self.invite_copy_button.setEnabled(has_active)
@@ -2062,6 +2083,21 @@ class RemoteEngineSection(QObject):
 
     def _generate_invite(self) -> None:
         if self._service is None:
+            return
+        generate_fn = getattr(self._service, "generate_invite", None)
+        if not self._custom_invite_server and callable(generate_fn):
+            try:
+                generated = generate_fn()
+                self._active_invite_url = str(generated["url"])
+                factory = getattr(self._service, "invite_server", None)
+                if callable(factory):
+                    self._invite_server = factory()
+            except Exception as exc:
+                logger.warning("Could not generate client invite link", exc_info=True)
+                self.invite_url_label.setText(f"Could not start invite server: {exc}")
+                return
+            self._copy_invite_link()
+            self._refresh_invite_card(self._service.host_state())
             return
         server = self._ensure_invite_server()
         port = int(
@@ -2143,16 +2179,24 @@ class RemoteEngineSection(QObject):
         dialog.exec()
 
     def _revoke_invite(self) -> None:
+        revoke_fn = (
+            getattr(self._service, "revoke_invite", None)
+            if self._service is not None
+            else None
+        )
+        if callable(revoke_fn):
+            revoke_fn()
         if self._invite_server is not None:
             self._invite_server.revoke_invite()
         self._active_invite_url = ""
-        setter = getattr(self._service, "set_invite_enabled", None) if self._service is not None else None
-        if callable(setter):
-            setter(False)
-        else:
-            remote_invite.save_setting_compat(
-                *remote_invite.HOST_INVITE_ENABLED_SPEC, False, manager=settings_manager
-            )
+        if not callable(revoke_fn):
+            setter = getattr(self._service, "set_invite_enabled", None) if self._service is not None else None
+            if callable(setter):
+                setter(False)
+            else:
+                remote_invite.save_setting_compat(
+                    *remote_invite.HOST_INVITE_ENABLED_SPEC, False, manager=settings_manager
+                )
         self._refresh_invite_card(self._service.host_state() if self._service is not None else None)
 
     def _pair_invite_link(self) -> None:
