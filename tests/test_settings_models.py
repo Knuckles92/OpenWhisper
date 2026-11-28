@@ -1314,9 +1314,18 @@ class TestMeetingFollowsDictation(_DialogTestCase):
 
     def test_an_engine_that_cannot_run_meetings_says_what_meetings_use(self):
         dialog, _values = self._make_dialog(
-            extra_settings={SettingsKey.SELECTED_MODEL: "parakeet_unified"})
+            extra_settings={SettingsKey.SELECTED_MODEL: "qwen_asr"})
         text = dialog.meeting_runtime_label.text()
-        assert text.startswith("Parakeet Unified EN 0.6B can't transcribe meetings, so meetings use ")
+        assert text.startswith("Qwen3-ASR 0.6B can't transcribe meetings, so meetings use ")
+
+    def test_parakeet_unified_follows_dictation_for_meetings(self):
+        dialog, _values = self._make_dialog(
+            extra_settings={
+                SettingsKey.SELECTED_MODEL: "parakeet_unified",
+                SettingsKey.LOCAL_ASR_MODELS: {"parakeet_unified": "parakeet-unified-en"},
+            })
+        text = dialog.meeting_runtime_label.text()
+        assert "Parakeet Unified EN 0.6B, the same as dictation." in text
 
     def test_use_for_meetings_gives_meetings_the_paired_computer(self):
         dialog, values = self._make_dialog(active_model="base")

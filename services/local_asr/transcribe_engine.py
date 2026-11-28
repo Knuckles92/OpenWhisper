@@ -115,10 +115,8 @@ class TranscribeRecognizer:
         except self._tc.InputTooShort:
             return dict(text="", segments=[])
         text = result.text.strip()
-        segments = [dict(text=segment.text.strip(), start=segment.t0_ms / 1000, end=segment.t1_ms / 1000)
-                    for segment in result.segments if segment.text.strip()]
-        if text and not segments:
-            segments = [dict(text=text, start=0., end=len(samples) / _SAMPLE_RATE)]
+        duration = len(samples) / _SAMPLE_RATE
+        segments = _segments_from_result(result, text, duration)
         return dict(text=text, segments=segments)
 
     def stream(self, key, samples, language=None, finish=False):
@@ -169,6 +167,63 @@ class TranscribeRecognizer:
         self._end_stream()
         self.session.close()
         self.model.close()
+
+
+#: A segment ends at sentence punctuation, or after this many words (matching nvidia.py).
+_SEGMENT_MAX_WORDS = 24
+#: One post-subsample FastConformer encoder frame (80 ms); used when an RNN-T
+#: single-word segment carries a zero-width point timestamp (t1_ms == t0_ms).
+_MIN_SEGMENT_SPAN_S = 0.08
+
+
+def _segments_from_result(result, text: str, duration: float) -> list[dict]:
+    """Build sentence-level timed segments from ``result.words`` when available.
+
+    transcribe.cpp's Parakeet family returns a single clip-wide segment alongside
+    word-level timestamps. Splitting words on sentence boundaries matches
+    ``NvidiaRecognizer`` so Meeting Mode gets per-sentence transcript turns and
+    speaker-diarization intervals. Models without word timestamps (e.g. Qwen3)
+    fall back to ``result.segments`` or a full-clip segment.
+    """
+    words = []
+    for word in getattr(result, "words", None) or ():
+        word_text = (getattr(word, "text", "") or "").strip()
+        if not word_text:
+            continue
+        start = max(0.0, float(word.t0_ms) / 1000)
+        end = max(start, float(word.t1_ms) / 1000)
+        if duration > 0:
+            start = min(start, duration)
+            end = min(end, duration)
+        words.append(dict(text=word_text, start=start, end=end))
+    if words:
+        segments, current = [], []
+        for idx, word in enumerate(words):
+            current.append(word)
+            if word["text"].rstrip().endswith((".", "?", "!")) or len(current) >= _SEGMENT_MAX_WORDS:
+                next_start = words[idx + 1]["start"] if idx + 1 < len(words) else duration
+                segments.append(_word_segment(current, next_start, duration))
+                current = []
+        if current:
+            segments.append(_word_segment(current, duration, duration))
+        return segments
+    segments = [
+        dict(text=segment.text.strip(), start=segment.t0_ms / 1000, end=segment.t1_ms / 1000)
+        for segment in (getattr(result, "segments", None) or ())
+        if segment.text.strip()
+    ]
+    if text and not segments:
+        segments = [dict(text=text, start=0., end=duration)]
+    return segments
+
+
+def _word_segment(words: list[dict], next_start: float, duration: float) -> dict:
+    start = words[0]["start"]
+    end = max(start, words[-1]["end"])
+    if end <= start and duration > start:
+        limit = min(duration, next_start) if next_start > start else duration
+        end = min(limit, start + _MIN_SEGMENT_SPAN_S)
+    return dict(text=" ".join(w["text"] for w in words), start=start, end=end)
 
 
 def _log(level, message):

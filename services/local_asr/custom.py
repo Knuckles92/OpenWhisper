@@ -222,10 +222,7 @@ def inspect_source(path: str | Path, backend: str = "", *, verify_builtin_hash: 
         sug_label = bm.label
     else:
         sug_streaming = info.streaming if info.streaming is not None else (base.streaming if base else False)
-        if target_backend == "parakeet_unified" and sug_streaming is False:
-            sug_meeting = True
-        else:
-            sug_meeting = base.meeting if base else False
+        sug_meeting = base.meeting if base else False
         sug_multilingual = (
             info.multilingual
             if info.multilingual is not None
@@ -386,12 +383,7 @@ def _model(entry) -> SpeechModel:
     label = entry.get("label")
     base = BUILTIN_MODELS[DEFAULT_MODELS[backend]]
     streaming = entry["streaming"] if isinstance(entry.get("streaming"), bool) else base.streaming
-    if isinstance(entry.get("meeting"), bool):
-        meeting = entry["meeting"]
-    elif backend == "parakeet_unified" and not streaming:
-        meeting = True
-    else:
-        meeting = base.meeting
+    meeting = entry["meeting"] if isinstance(entry.get("meeting"), bool) else base.meeting
     stream_final = base.stream_final and streaming
     vad_gate = entry["vad_gate"] if isinstance(entry.get("vad_gate"), bool) else base.vad_gate
     multilingual = entry["multilingual"] if isinstance(entry.get("multilingual"), bool) else None

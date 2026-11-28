@@ -69,9 +69,18 @@ def test_a_separate_meeting_engine_ignores_dictation(whisper_fallback):
     assert (speech.source, speech.model, speech.separate) == ("local", "moonshine-small", True)
 
 
+def test_a_meeting_follows_parakeet_unified_en(whisper_fallback):
+    speech = resolve_meeting_speech({
+        SettingsKey.SELECTED_MODEL: "parakeet_unified",
+        SettingsKey.LOCAL_ASR_MODELS: {"parakeet_unified": "parakeet-unified-en"},
+    })
+    assert (speech.source, speech.model, speech.separate, speech.note) == (
+        "local", "parakeet-unified-en", False, ""
+    )
+
+
 @pytest.mark.parametrize("settings,named", [
     ({SettingsKey.SELECTED_MODEL: "api"}, "The API engine"),
-    ({SettingsKey.SELECTED_MODEL: "parakeet_unified"}, "Parakeet Unified EN 0.6B"),
     ({SettingsKey.SELECTED_MODEL: "qwen_asr",
       SettingsKey.LOCAL_ASR_MODELS: {"qwen_asr": "qwen-1.7b"}}, "Qwen3-ASR 1.7B"),
 ])

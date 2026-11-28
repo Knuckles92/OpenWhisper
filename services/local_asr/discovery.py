@@ -217,7 +217,7 @@ def _custom_gguf_candidate(
 
     base = BUILTIN_MODELS[DEFAULT_MODELS[backend]]
     streaming = info.streaming if info.streaming is not None else base.streaming
-    meeting = True if (backend == "parakeet_unified" and not streaming) else base.meeting
+    meeting = base.meeting
     multilingual = info.multilingual
     label = info.name or resolved.stem
     return DiscoveredModel(

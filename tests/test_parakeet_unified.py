@@ -37,7 +37,7 @@ CPU = _device("AMD Ryzen 7", kind="cpu", device_type="cpu", memory=48 << 30)
 def test_unified_is_an_english_streaming_engine_on_the_transcribe_runtime():
     model = catalog.MODELS["parakeet-unified-en"]
     assert (model.backend, model.streaming, model.stream_final, model.meeting) == (
-        "parakeet_unified", True, True, False
+        "parakeet_unified", True, True, True
     )
     assert catalog.DEFAULT_MODELS["parakeet_unified"] == "parakeet-unified-en"
     assert config.MODEL_VALUE_MAP["Parakeet Unified"] == "parakeet_unified"
@@ -293,6 +293,68 @@ def test_transcribe_returns_text_and_timed_segments(binding, tmp_path):
     # A window too short for the encoder has no words rather than an error.
     assert engine.transcribe(_samples(.005)) == dict(text="", segments=[])
     assert engine.transcribe(array.array("f")) == dict(text="", segments=[])
+
+
+def test_transcribe_splits_word_timestamps_into_sentence_segments(binding, tmp_path):
+    binding()
+    engine = transcribe_engine.TranscribeRecognizer(str(tmp_path), "m.gguf", "auto")
+    words = [
+        SimpleNamespace(text="First", t0_ms=100, t1_ms=100),
+        SimpleNamespace(text="sentence.", t0_ms=400, t1_ms=400),
+        SimpleNamespace(text="Yes!", t0_ms=900, t1_ms=900),
+        SimpleNamespace(text="Next", t0_ms=1300, t1_ms=1450),
+        SimpleNamespace(text="turn", t0_ms=1500, t1_ms=1800),
+    ]
+    engine.session.run = lambda samples, language=None: SimpleNamespace(
+        text="First sentence. Yes! Next turn",
+        segments=[SimpleNamespace(text="First sentence. Yes! Next turn", t0_ms=100, t1_ms=1800)],
+        words=words,
+    )
+    result = engine.transcribe(_samples(2), "auto")
+    assert result["text"] == "First sentence. Yes! Next turn"
+    assert result["segments"] == [
+        dict(text="First sentence.", start=0.1, end=0.4),
+        # Single-word RNN-T point timestamp (t1 == t0) expands by one encoder frame (80 ms).
+        dict(text="Yes!", start=0.9, end=pytest.approx(0.98)),
+        dict(text="Next turn", start=1.3, end=1.8),
+    ]
+
+
+def test_meeting_preview_uses_window_preview_for_parakeet_unified(monkeypatch):
+    from meeting.asr.engine import MeetingAsrEngine
+    from transcriber.optional_backend import LocalSpeechBackend
+
+    engine = object.__new__(MeetingAsrEngine)
+    backend = object.__new__(LocalSpeechBackend)
+    backend.model_name = "parakeet-unified-en"
+    engine._backend = backend
+    engine._preview = None
+    engine._outstanding = 0
+    engine._stopping = False
+    engine.language = "en"
+
+    chosen = []
+
+    def window_factory(*args):
+        chosen.append(("window", args))
+        return SimpleNamespace(stop=lambda: None)
+
+    def stream_factory(*args):
+        chosen.append(("stream", args))
+        return SimpleNamespace(stop=lambda: None)
+
+    monkeypatch.setattr("meeting.asr.preview.WindowSpeechPreview", window_factory)
+    monkeypatch.setattr("meeting.asr.preview.MeetingSpeechPreview", stream_factory)
+
+    def callback(_payload):
+        return None
+
+    engine.start_preview(callback)
+    assert len(chosen) == 1
+    assert chosen[0][0] == "window"
+    assert chosen[0][1][0] is backend
+    assert chosen[0][1][1] is callback
+    assert chosen[0][1][3] == "en"
 
 
 def test_stream_returns_one_revised_line_and_closes_on_finish(binding, tmp_path):
