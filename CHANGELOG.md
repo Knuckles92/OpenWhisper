@@ -7,6 +7,19 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+## [2.9.2] - 2026-11-28
+
+### Added
+
+- **Automatic call detection and auto-stop for Meeting Mode.** OpenWhisper now detects active calls across native apps (Zoom, Microsoft Teams, Slack, Discord, FaceTime, WhatsApp, Webex, and more) and supported browser meetings (Google Meet, Teams web, Zoom web, Jitsi, and others) on macOS, Windows, and Linux. Configure default and per-app/per-site policies (**Ask each time**, **Record automatically**, or **Don't offer**) and opt-in mute-safe auto-stop with a 30-second grace countdown in **Settings → Meeting Mode → Call detection**, with non-intrusive corner prompts. ([#145](https://github.com/Knuckles92/OpenWhisper/pull/145))
+- **System-audio echo cancellation in Meeting Mode.** Loudspeaker bleed is now stripped from the microphone channel during live Meeting Mode capture and offline session re-decoding using GCC-PHAT lag alignment, headphone detection, and WebRTC AEC3 (`pywebrtc-audio`), while remaining headphone-safe and fail-open. ([#148](https://github.com/Knuckles92/OpenWhisper/pull/148))
+- **Live meeting state and interactive controls in MCP.** Added `get_meeting_dashboard_state` (`GET /v1/meetings/live/state`) for full live or saved meeting snapshots and job progress, plus interactive live controls (gated by `CONTROL_MEETINGS`) to update meeting details, manage dashboard cards and Q&A inbox items, rename participants or reassign speakers, request live AI note adjustments or custom reports, and undo live edits. ([#146](https://github.com/Knuckles92/OpenWhisper/pull/146))
+- **MCP tools for learned transcript cleanup rules.** Added read/write MCP tools (`list_cleanup_rules`, `add_cleanup_rule`, `update_cleanup_rule`, `remove_cleanup_rule`) so coding agents can inspect and manage learned cleanup rules from recent transcriptions, gated behind a dedicated opt-in **Manage learned cleanup rules** permission (off by default) in **Settings → Automate → API & MCP**. ([#147](https://github.com/Knuckles92/OpenWhisper/pull/147))
+
+### Changed
+
+- **Parakeet Unified EN 0.6B now supports Meeting Mode.** Windows x64 and Linux x86_64 installs using **Parakeet Unified EN 0.6B** for dictation now use it automatically for meetings (locally and via Host Mode), and it can be selected directly as a meeting engine, with stateless windowed live previews and sentence-level diarization segments. ([#149](https://github.com/Knuckles92/OpenWhisper/pull/149))
+
 ## [2.9.1] - 2026-11-27
 
 ### Added

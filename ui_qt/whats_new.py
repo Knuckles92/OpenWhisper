@@ -31,12 +31,12 @@ class WhatsNew:
 
 WHATS_NEW: Final[WhatsNew] = WhatsNew(
     release_line="2.9",
-    updated="2026-11-27",
+    updated="2026-11-28",
     text=(
-        "AssemblyAI Dictation API is now available under the API engine, "
-        "alongside expanded MCP skills and history annotations, beta echo "
-        "cancellation, and performance and scaling improvements across the "
-        "desktop and web UI."
+        "Meeting Mode now supports automatic call detection and auto-stop, "
+        "system-audio echo cancellation, and Parakeet Unified EN 0.6B, "
+        "while MCP gains live meeting controls and opt-in learned cleanup "
+        "rule management."
     ),
 )
 
