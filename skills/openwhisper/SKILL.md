@@ -95,10 +95,13 @@ database and live desktop app.
   strategies, and syncing with an external knowledge base.
 
 ### 3. Personalize OpenWhisper from Context or History
-- Call `get_personalization_summary` first to avoid duplicates.
+- Call `get_personalization_summary` first to avoid duplicates (includes
+  dictionary, snippets, learned cleanup rules, app styles, and profiles).
 - Preview batches with `dry_run=true` on `bulk_add_dictionary_terms` (up to 50)
-  and `bulk_upsert_snippets` (up to 20).
-- See `references/workflows.md` for step-by-step recipes.
+  and `bulk_upsert_snippets` (up to 20), or `add_cleanup_rule(..., dry_run=true)`
+  for learned cleanup rules (requires **Manage learned cleanup rules**).
+- See `references/workflows.md` for step-by-step recipes (including adding a
+  learned cleanup rule using the user's last transcription as context).
 
 ## Reference Files (Load On Demand)
 

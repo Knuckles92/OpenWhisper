@@ -153,6 +153,7 @@ def test_state_has_control_state_permissions_and_listeners(client, control, bus)
             "read_walkthroughs": False,
             "control_walkthroughs": False,
             "manage_personalization": False,
+            "manage_cleanup_rules": False,
             "control_app": False,
         },
         "listeners": {"events": 1, "claude_channel": 2},
@@ -470,7 +471,7 @@ def test_without_settings_the_defaults_apply(tmp_path, control, bus):
             "control_recording": False, "text_filters": False,
             "agent_prompts": False, "control_meetings": False,
             "read_walkthroughs": False, "control_walkthroughs": False,
-            "manage_personalization": False, "control_app": False,
+            "manage_personalization": False, "manage_cleanup_rules": False, "control_app": False,
         }
         denied = test_client.post("/v1/actions/a1/run", json={"text": "hi"}, headers=AUTH)
         assert denied.status_code == 403

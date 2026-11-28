@@ -936,6 +936,7 @@ class SettingsKey:
     API_READ_WALKTHROUGHS: Final = BoolSetting("api_read_walkthroughs", False)
     API_CONTROL_WALKTHROUGHS: Final = BoolSetting("api_control_walkthroughs", False)
     API_MANAGE_PERSONALIZATION: Final = BoolSetting("api_manage_personalization", False)
+    API_MANAGE_CLEANUP_RULES: Final = BoolSetting("api_manage_cleanup_rules", False)
     API_CONTROL_APP: Final = BoolSetting("api_control_app", False)
     # Saved hooks: [{id, name, url, events, enabled}] and so on; secrets are
     # in the credential store.

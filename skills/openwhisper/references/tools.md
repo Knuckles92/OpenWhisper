@@ -56,16 +56,18 @@ text, or returns raw audio files.
 | `get_walkthrough` | **Read saved walkthroughs** (`read_walkthroughs`) | Pass `ref="#001"`, `"latest"`, or folder ID; optional `spoken=true`, `include_images=true` |
 | `start_walkthrough`, `finish_walkthrough`, `cancel_walkthrough`, `set_walkthrough_paused`, `snap_walkthrough`, `choose_walkthrough_snap_mode`, `edit_walkthrough_shots`, `run_walkthrough_writeup`, `take_screenshot` | **Control walkthroughs & screenshots** (`control_walkthroughs`) | Live walkthrough capture and AI write-up control |
 
-## 5. Personalization
+## 5. Personalization & Learned Cleanup Rules
 
 Read tools (`get_personalization_summary`, `list_dictionary`, `list_snippets`,
-`get_app_styles`, `list_walkthrough_styles`, `list_languages`, `list_profiles`,
-`list_transforms`) require no extra write switch. Mutations require **Manage
-dictionary, snippets & styles** (`manage_personalization`):
+`list_cleanup_rules`, `get_app_styles`, `list_walkthrough_styles`, `list_languages`,
+`list_profiles`, `list_transforms`) require no extra write switch.
 
-- Dictionary: `add_dictionary_term`, `bulk_add_dictionary_terms` (up to 50, `dry_run`), `remove_dictionary_term`
-- Snippets: `upsert_snippet`, `bulk_upsert_snippets` (up to 20, `dry_run`, `skip_existing`), `delete_snippet`
-- Styles & Languages: `set_app_style_tone`, `set_app_style_override`, `remove_app_style_override`, `upsert_walkthrough_style`, `delete_walkthrough_style`, `set_active_language`, `set_quick_record_profile`
+- **Manage dictionary, snippets & styles** (`manage_personalization`):
+  - Dictionary: `add_dictionary_term`, `bulk_add_dictionary_terms` (up to 50, `dry_run`), `remove_dictionary_term`
+  - Snippets: `upsert_snippet`, `bulk_upsert_snippets` (up to 20, `dry_run`, `skip_existing`), `delete_snippet`
+  - Styles & Languages: `set_app_style_tone`, `set_app_style_override`, `remove_app_style_override`, `upsert_walkthrough_style`, `delete_walkthrough_style`, `set_active_language`, `set_quick_record_profile`
+- **Manage learned cleanup rules** (`manage_cleanup_rules`):
+  - `add_cleanup_rule` (1–500 chars, supports `dry_run=true`), `update_cleanup_rule`, `remove_cleanup_rule` (by 0-based `index` or `rule` text)
 
 ## 6. Live Recording, Actions, Meetings, Events & App Control
 

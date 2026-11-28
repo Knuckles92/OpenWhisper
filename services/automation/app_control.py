@@ -590,6 +590,32 @@ class QtAppControl:
 
         return call_on_qt(partial(ext.set_quick_record_profile, self._require(), profile_id))
 
+    # ---- Learned cleanup rules ----
+
+    def list_cleanup_rules(self) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.list_cleanup_rules()
+
+    def add_cleanup_rule(self, rule: str, *, dry_run: bool = False) -> dict:
+        from services.automation import app_control_ext as ext
+
+        if dry_run:
+            return ext.add_cleanup_rule(self._require(), rule, dry_run=True)
+        return call_on_qt(partial(ext.add_cleanup_rule, self._require(), rule, dry_run=False))
+
+    def update_cleanup_rule(self, index: int, rule: str) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(partial(ext.update_cleanup_rule, self._require(), index, rule))
+
+    def remove_cleanup_rule(self, *, index: Optional[int] = None, rule: str = "") -> dict:
+        from services.automation import app_control_ext as ext
+
+        return call_on_qt(
+            partial(ext.remove_cleanup_rule, self._require(), index=index, rule=rule)
+        )
+
     # ---- Engines, models, audio devices, remote & window ----
 
     def engine_status(self) -> dict:

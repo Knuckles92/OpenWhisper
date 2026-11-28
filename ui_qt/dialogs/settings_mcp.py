@@ -1186,6 +1186,12 @@ class LiveAutomationSection(QWidget):
                 "typography-blue.svg",
             ),
             (
+                SettingsKey.API_MANAGE_CLEANUP_RULES,
+                "Manage learned cleanup rules",
+                "Add, edit or remove learned transcript cleanup rules that guide how AI cleanup rewrites future dictations.",
+                "filter-purple.svg",
+            ),
+            (
                 SettingsKey.API_CONTROL_APP,
                 "Control models, devices, files & windows",
                 "Switch speech models, select microphones, transcribe local audio files, reconnect remote host, and control windows/Scratchpad.",
