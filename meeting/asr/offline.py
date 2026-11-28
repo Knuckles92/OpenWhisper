@@ -369,6 +369,7 @@ def transcribe_meeting_sessions(
     channels: Iterable[str] = CHANNELS,
     transcribe_fn: Optional[TranscribeFn] = None,
     progress_cb: Optional[Callable[[str, int, int], None]] = None,
+    echo_cancellation: bool = True,
 ) -> List[TranscriptSegment]:
     """Run the offline pass over every capture channel and merge by time.
 
@@ -382,16 +383,54 @@ def transcribe_meeting_sessions(
         transcribe_fn: Injectable decoder (tests); defaults to
             :func:`transcribe_session_audio`.
         progress_cb: Optional window progress callback.
+        echo_cancellation: When True, run headphone-safe WebRTC AEC3 on the
+            microphone session using the loopback session as far-end reference
+            before decoding.
 
     Returns:
         All channels' segments sorted by ``start_s``.
     """
     decoder = transcribe_fn or transcribe_session_audio
+    channel_list = list(channels)
+    loaded: Dict[str, Tuple[Optional[np.ndarray], int, float]] = {}
+    if os.path.isdir(spool_dir) or chunks:
+        for channel in channel_list:
+            loaded[channel] = load_channel_session(spool_dir, channel, chunks)
+        if (
+            echo_cancellation
+            and CHANNEL_MIC in loaded
+            and CHANNEL_LOOPBACK not in loaded
+        ):
+            loaded[CHANNEL_LOOPBACK] = load_channel_session(
+                spool_dir, CHANNEL_LOOPBACK, chunks
+            )
+
+    if echo_cancellation and CHANNEL_MIC in loaded and CHANNEL_LOOPBACK in loaded:
+        mic_frames, mic_rate, mic_origin = loaded[CHANNEL_MIC]
+        lb_frames, lb_rate, lb_origin = loaded[CHANNEL_LOOPBACK]
+        if (
+            mic_frames is not None
+            and mic_frames.size > 0
+            and lb_frames is not None
+            and lb_frames.size > 0
+        ):
+            from meeting.capture.echo_cancel import cancel_session_echo
+
+            cleaned_mic, _applied = cancel_session_echo(
+                mic_frames,
+                mic_origin,
+                lb_frames,
+                lb_origin,
+                sample_rate=mic_rate,
+                loopback_sample_rate=lb_rate,
+            )
+            loaded[CHANNEL_MIC] = (cleaned_mic, mic_rate, mic_origin)
+
     merged: List[TranscriptSegment] = []
-    for channel in channels:
-        if not os.path.isdir(spool_dir) and not chunks:
+    for channel in channel_list:
+        if channel not in loaded:
             continue
-        frames, rate, origin = load_channel_session(spool_dir, channel, chunks)
+        frames, rate, origin = loaded[channel]
         if frames is None or frames.size == 0:
             logger.info("No session audio for offline ASR on channel %s", channel)
             continue

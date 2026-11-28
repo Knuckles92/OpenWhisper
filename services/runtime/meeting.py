@@ -1150,6 +1150,7 @@ class MeetingRuntime(QObject):
             report_views=resolve_meeting_report_views(settings),
             demo_mode=demo,
             system_audio_policy=str(system_audio_policy or "auto"),
+            echo_cancellation=not demo,
         )
 
     def pause_meeting(self) -> None:

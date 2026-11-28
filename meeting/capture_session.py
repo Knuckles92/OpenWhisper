@@ -181,9 +181,38 @@ class MeetingCapture:
         self._loopback_was_available = False
         self._explicit_message: Optional[str] = None
         self.integrity_error: Optional[str] = None
+        self._echo_canceller: Optional[Any] = None
         # Restart and watchdog failures repeat every pass while a device is
         # gone; only the first of a run is a warning.
         self._failures = FailureLog(logger)
+
+    def _init_echo_canceller(self) -> Optional[Any]:
+        """Create the live per-chunk AEC bridge when enabled and available."""
+        if (
+            self._system_audio_disabled
+            or bool(getattr(self._options, "demo_mode", False))
+            or not bool(getattr(self._options, "echo_cancellation", True))
+        ):
+            return None
+        try:
+            from services.echo_cancellation import is_available
+
+            if not is_available():
+                logger.info(
+                    "Meeting echo cancellation unavailable (pywebrtc-audio not installed); "
+                    "keeping raw microphone audio"
+                )
+                return None
+            from meeting.capture.echo_cancel import MeetingEchoCanceller
+
+            return MeetingEchoCanceller()
+        except Exception:
+            logger.warning(
+                "Meeting echo cancellation could not initialize; "
+                "keeping raw microphone audio",
+                exc_info=True,
+            )
+            return None
 
     def start(self, meeting_id: str, spool_dir: str) -> Optional[str]:
         """Open mic and loopback streams; returns a user-facing degradation
@@ -217,6 +246,7 @@ class MeetingCapture:
         self.integrity_error = None
         self.mic_excluded = []
         self.mic_device = None
+        self._echo_canceller = self._init_echo_canceller()
         if not self._open_mic():
             logger.warning("No microphone could be opened; mic channel disabled")
 
@@ -365,6 +395,10 @@ class MeetingCapture:
                 ),
             )
             created_spool = True
+            if channel == CHANNEL_MIC and self._echo_canceller is not None:
+                set_transform = getattr(spool, "set_chunk_transform", None)
+                if callable(set_transform):
+                    set_transform(self._echo_canceller.cancel_chunk)
         started = False
         try:
             source.start(self.make_block_router(channel, spool, monitor))
@@ -424,10 +458,18 @@ class MeetingCapture:
             if not self._recording() or self._clock.is_paused:
                 return
             try:
+                t_meeting: Optional[float] = None
+                if channel == CHANNEL_LOOPBACK and self._echo_canceller is not None:
+                    t_meeting = self._clock.meeting_time(block.t_mono)
+                    self._echo_canceller.feed_loopback(
+                        block.frames, t_meeting, block.sample_rate
+                    )
                 spool.feed(block)
                 feed_preview = getattr(self._asr(), "feed_preview", None)
                 if callable(feed_preview):
-                    feed_preview(block, self._clock.meeting_time(block.t_mono))
+                    if t_meeting is None:
+                        t_meeting = self._clock.meeting_time(block.t_mono)
+                    feed_preview(block, t_meeting)
             except Exception:
                 if not error_logged[0]:
                     error_logged[0] = True
@@ -463,6 +505,9 @@ class MeetingCapture:
             ) as pool:
                 futures = [pool.submit(self._flush_one_spool, spool) for spool in spools]
                 results = [future.result() for future in futures]
+        canceller, self._echo_canceller = self._echo_canceller, None
+        if canceller is not None:
+            canceller.clear()
         for chunk, failed in results:
             if failed:
                 self._record_integrity_error(
