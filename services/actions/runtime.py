@@ -331,20 +331,65 @@ def program_words_allowed(action, settings) -> bool:
         settings, permissions.AGENT_PROMPTS)
 
 
+def _is_client_only_edition() -> bool:
+    try:
+        from services.edition import is_client_only
+
+        return bool(is_client_only())
+    except Exception:
+        return False
+
+
+def _should_ask_remote_host(agent_id: str) -> bool:
+    from services.settings import MeetingAgentCore
+
+    if agent_id == MeetingAgentCore.REMOTE_HOST:
+        return True
+    if not _is_client_only_edition():
+        return False
+    from services.actions import agents
+    from services.remote_asr.ai_client import has_remote_host
+
+    return agents._find(agent_id) is None and has_remote_host()
+
+
+def _ask_remote_host(
+    text: str, *, agent: str, model: str, cancel: threading.Event,
+) -> ActionResult:
+    from services.remote_asr.ai_client import remote_agent_ask
+
+    try:
+        reply = remote_agent_ask(text, agent=agent, model=model, cancel_event=cancel)
+    except Exception as exc:
+        return ActionResult(False, str(exc) or "Paired host didn't answer.")
+    ok = bool(reply.get("ok"))
+    message = str(reply.get("message") or ("Paired host answered" if ok else "Paired host didn't answer."))
+    output = str(reply.get("output") or "") if ok else None
+    stopped = bool(reply.get("stopped"))
+    return ActionResult(ok, message, output=output, stopped=stopped)
+
+
 def _agent(params: dict, text: str, job, cancel: threading.Event) -> ActionResult:
     from config import config
     from services.actions import agents
+    from services.settings import MeetingAgentCore
 
     if params["include_selection"]:
         # Only a job the user started has the selection (begin_job). Its
         # capture ran while they spoke; a worker can afford to wait for one
         # still running.
         text = prompt_with_context(text, job.snapshot(timeout=config.CONTEXT_CAPTURE_DEADLINE_S))
+    agent_id = params["agent"]
     if params["mode"] == AgentMode.ASK:
+        if _should_ask_remote_host(agent_id):
+            remote_agent = "" if agent_id == MeetingAgentCore.REMOTE_HOST else agent_id
+            return _ask_remote_host(text, agent=remote_agent, model=params["model"], cancel=cancel)
         # The ask says whether its cancel stopped it (``stopped``); one that
         # answered, or failed on its own, wasn't.
-        return agents.ask(params["agent"], text, model=params["model"], cancel=cancel)
-    return agents.handoff(params["agent"], text, folder=params["folder"],
+        return agents.ask(agent_id, text, model=params["model"], cancel=cancel)
+    if agent_id == MeetingAgentCore.REMOTE_HOST:
+        return ActionResult(False, "Paired host actions only support Quick answer mode.")
+    return agents.handoff(agent_id, text, folder=params["folder"],
                           surface=params["surface"], new_folder=params["new_folder"])
 
 

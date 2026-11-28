@@ -220,10 +220,17 @@ def test_the_on_off_resolvers_were_all_found():
                 if isinstance(k, BoolSetting)]) >= 45
 
 
+#: Choices deliberately added after the 77b63c1 snapshot (tested directly in
+#: tests/test_remote_ai_services.py rather than against the pre-feature oracle).
+NEW_CHOICES_SINCE_SNAPSHOT: frozenset[str] = frozenset({"remote_host"})
+
+
 @pytest.mark.parametrize("name", sorted(SINGLE_KEY_RESOLVERS))
 def test_single_key_resolver_matches_the_old_one(name):
     key = SINGLE_KEY_RESOLVERS[name]
     for value in _battery(key):
+        if isinstance(value, str) and value in NEW_CHOICES_SINCE_SNAPSHOT:
+            continue
         _same(getattr(new, name), getattr(old, name), _mapping(key, value))
 
 
@@ -239,6 +246,8 @@ def test_the_declaration_reads_what_its_resolver_returns(name):
     }:
         pytest.skip("derived value")
     for value in _battery(key):
+        if isinstance(value, str) and value in NEW_CHOICES_SINCE_SNAPSHOT:
+            continue
         _same(key.read, getattr(old, name), _mapping(key, value))
 
 

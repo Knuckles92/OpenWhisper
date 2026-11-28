@@ -41,7 +41,7 @@ MARKDOWN_NAME = "write-up.md"
 PDF_NAME = "write-up.pdf"
 DOCX_NAME = "write-up.docx"
 #: The agents that can write one up, in the order Settings lists them.
-AGENTS = MeetingAgentCore.INSTALLED
+AGENTS = (*MeetingAgentCore.INSTALLED, MeetingAgentCore.REMOTE_HOST)
 
 #: What the agent is asked for unless Settings has the user's own words.
 DEFAULT_INSTRUCTIONS = (
@@ -164,6 +164,17 @@ def write_up(
     from meeting.agent.installed.core import MEETING_AGENT_SETTING
     from meeting.agent.installed.drivers import AgentUnavailable
 
+    if agent == MeetingAgentCore.REMOTE_HOST:
+        return _write_up_remote(
+            result,
+            shots,
+            instructions=instructions,
+            follow_notes=follow_notes,
+            notes=notes,
+            cancel_event=cancel_event,
+            run=run,
+        )
+
     name = agent_name(agent)
     names = [Path(shot).name for shot in shots]
     instructions = instructions or DEFAULT_INSTRUCTIONS
@@ -203,8 +214,59 @@ def write_up(
     return _write(result, text, look, keep_latest=True)
 
 
+def _write_up_remote(
+    result: WalkthroughResult,
+    shots: Sequence[Path],
+    *,
+    instructions: str = "",
+    follow_notes: bool = False,
+    notes: Sequence[Note] = (),
+    cancel_event: threading.Event | None = None,
+    run: Callable[..., object] | None = None,
+) -> WalkthroughResult:
+    """Delegate the walkthrough write-up to the paired OpenWhisper host."""
+    from services.remote_asr.ai_client import RemoteAICanceled, remote_walkthrough_writeup
+    from services.walkthrough.document import Look
+
+    names = [Path(shot).name for shot in shots]
+    try:
+        spoken = Path(result.markdown).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise WriteUpFailed(f"could not read {Path(result.markdown).name}: {exc}") from exc
+
+    runner = run or remote_walkthrough_writeup
+    try:
+        reply = runner(
+            spoken,
+            shots,
+            instructions=instructions,
+            follow_notes=follow_notes,
+            notes=notes,
+            duration_s=result.duration_s,
+            cancel_event=cancel_event,
+        )
+    except RemoteAICanceled:
+        raise WriteUpFailed("canceled") from None
+    except Exception as exc:
+        raise WriteUpFailed(str(exc) or "Paired host write-up failed") from exc
+
+    remote_markdown, raw_look, label = reply
+    text, parsed_look = document_text(str(remote_markdown or ""), names)
+    if not text:
+        raise WriteUpFailed(f"{label or 'Paired host'} sent back no document")
+    look_fields = raw_look if isinstance(raw_look, dict) else {}
+    look = Look(
+        text_color=str(look_fields.get("text_color") or parsed_look.text_color or ""),
+        heading_color=str(look_fields.get("heading_color") or parsed_look.heading_color or ""),
+        font=str(look_fields.get("font") or parsed_look.font or ""),
+    )
+    return _write(result, text, look, keep_latest=True)
+
+
 def agent_name(agent: str) -> str:
     """What the status line and Settings call ``agent``."""
+    if agent == MeetingAgentCore.REMOTE_HOST:
+        return "Paired host"
     from services.installed_agents import AGENT_SPECS
 
     return AGENT_SPECS[agent].name

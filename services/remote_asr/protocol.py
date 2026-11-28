@@ -129,6 +129,32 @@ its nonce before seeing the client's, so a computer in the middle can't steer
 the two numbers to match, and the fingerprint is in the hash, so relaying the
 nonces unchanged gives two different numbers. The client may send
 ``pair_cancel`` while it waits. Older hosts close the connection.
+
+Host-facilitated AI services are additive operations under protocol version 1.
+Each service requires an explicit host opt-in (off by default, rechecked on
+every request), never exposes host API keys or local paths, and runs in a
+separate admission lane so slow LLM/agent jobs never block speech decoding:
+
+* ``ready.capabilities`` adds ``text_cleanup``, ``fast_judgments``,
+  ``walkthrough_writeup``, ``agent_ask``, ``meeting_ai``,
+  ``speaker_diarization``, ``file_decode``, and ``walkthrough_records``.
+* ``ready.ai`` carries non-secret display labels and readiness metadata for
+  enabled AI services only.
+* ``text_generate`` / ``text_cleanup`` runs host-configured text cleanup,
+  rewrite, transform, or rule-polish requests and returns
+  ``{text, provider, model, host_ms}``.
+* ``fast_judge`` runs the host's TypeSafe / Jev or TextModelJudge route and
+  returns validated answers.
+* ``walkthrough_writeup_start`` / ``walkthrough_writeup_put`` /
+  ``walkthrough_writeup_status`` / ``walkthrough_writeup_cancel`` stages a
+  walkthrough and bounded PNG screenshots into a sandboxed temp folder on the
+  host, runs the host's write-up agent asynchronously, and cleans up the temp
+  folder on completion or cancellation.
+* ``agent_ask`` / ``agent_ask_cancel`` runs an opt-in headless quick answer on
+  the host's installed coding agent.
+* Large JSON request bodies (e.g. long transcripts, inline screenshots, or
+  meeting snapshots) may be sent as UTF-8 JSON bytes in the binary payload so
+  the request header stays inside ``MAX_HEADER_BYTES``.
 """
 from __future__ import annotations
 
@@ -141,6 +167,7 @@ import numpy as np
 
 PROTOCOL_VERSION = 1
 DEFAULT_PORT = 47821
+DEFAULT_INVITE_PORT = 47822
 PATH = "/openwhisper/v1/engine"
 SAMPLE_RATE = 16000
 
@@ -153,6 +180,54 @@ MAX_REPLY_BYTES = 8 * 1024 * 1024
 #: File bytes per ``records_put`` frame and per ``records_fetch`` reply.
 #: Well inside both frame limits, base64 included.
 RECORD_CHUNK_BYTES = 1024 * 1024
+
+#: Bounds on host-facilitated AI requests and staged walkthrough assets.
+MAX_AI_TEXT_CHARS = 200_000
+MAX_AI_PROMPT_CHARS = 64_000
+MAX_AI_JSON_BYTES = 4 * 1024 * 1024
+MAX_WALKTHROUGH_MARKDOWN_BYTES = 2 * 1024 * 1024
+MAX_WALKTHROUGH_SHOTS = 64
+MAX_WALKTHROUGH_SHOT_BYTES = 10 * 1024 * 1024
+MAX_WALKTHROUGH_TOTAL_BYTES = 50 * 1024 * 1024
+WALKTHROUGH_CHUNK_BYTES = RECORD_CHUNK_BYTES
+
+#: Protocol operation groups routed through the non-ASR admission/handler lanes.
+AI_ADMITTED_OPS = frozenset({
+    "text_generate",
+    "text_cleanup",
+    "fast_judge",
+    "walkthrough_writeup_start",
+    "agent_ask",
+})
+AI_CONTROL_OPS = frozenset({
+    "walkthrough_writeup_put",
+    "walkthrough_writeup_status",
+    "walkthrough_writeup_cancel",
+    "agent_ask_cancel",
+})
+AI_OPS = AI_ADMITTED_OPS | AI_CONTROL_OPS
+
+MEETING_AI_ADMITTED_OPS = frozenset({
+    "speaker_embed",
+    "meeting_agent_turn",
+    "meeting_custom_report",
+})
+MEETING_AI_CONTROL_OPS = frozenset({
+    "meeting_agent_status",
+    "meeting_agent_cancel",
+})
+MEETING_AI_OPS = MEETING_AI_ADMITTED_OPS | MEETING_AI_CONTROL_OPS
+
+FILE_DECODE_ADMITTED_OPS = frozenset({"file_decode_finish"})
+FILE_DECODE_CONTROL_OPS = frozenset({
+    "file_decode_begin",
+    "file_decode_put",
+    "file_decode_abort",
+})
+FILE_DECODE_OPS = FILE_DECODE_ADMITTED_OPS | FILE_DECODE_CONTROL_OPS
+
+#: All non-ASR compute operations gated by SpeechHost._ai_admission.
+NON_ASR_ADMITTED_OPS = AI_ADMITTED_OPS | MEETING_AI_ADMITTED_OPS | FILE_DECODE_ADMITTED_OPS
 
 #: WebSocket close codes the host uses (4000-4999 is the application range).
 CLOSE_UNAUTHORIZED = 4401
@@ -176,6 +251,41 @@ _HEADER = struct.Struct(">I")
 
 class ProtocolError(ValueError):
     """A frame that does not follow this protocol."""
+
+
+class RemoteServiceError(RuntimeError):
+    """A sanitized handler error carrying an explicit protocol error ``code``."""
+
+    def __init__(self, message: str, *, code: str = "error", retry_after_ms: Optional[int] = None):
+        super().__init__(message)
+        self.code = code
+        self.retry_after_ms = retry_after_ms
+
+
+def pack_json_payload(data: dict) -> bytes:
+    """Encode a JSON request body for the binary payload slot, bounded by ``MAX_AI_JSON_BYTES``."""
+    raw = json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    if len(raw) > MAX_AI_JSON_BYTES:
+        raise ProtocolError("Request JSON payload is too large")
+    return raw
+
+
+def merge_json_payload(header: dict, payload: bytes) -> dict:
+    """Merge an optional UTF-8 JSON object in ``payload`` with ``header``.
+
+    ``header`` fields (such as ``id`` and ``op``) always win over payload keys.
+    """
+    if not payload:
+        return dict(header)
+    if len(payload) > MAX_AI_JSON_BYTES:
+        raise ProtocolError("Request JSON payload is too large")
+    try:
+        body = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ProtocolError("Request payload is not valid JSON") from exc
+    if not isinstance(body, dict):
+        raise ProtocolError("Request JSON payload must be an object")
+    return {**body, **header}
 
 
 def encode_audio(audio) -> bytes:

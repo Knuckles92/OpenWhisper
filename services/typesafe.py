@@ -146,7 +146,15 @@ def _openrouter_route() -> JudgeRoute:
 
 
 OPENROUTER_ROUTE = _openrouter_route()
-#: The two routes to Jev itself; the text-model route depends on Settings.
+REMOTE_HOST_ROUTE = JudgeRoute(
+    id=TypeSafeProvider.REMOTE_HOST,
+    name="Paired host",
+    endpoint="remote_host://fast_judge",
+    model="remote_host",
+    credential_env="",
+    timeout_s=TEXT_MODEL_TIMEOUT_S,
+)
+#: The two routes to Jev itself; the text-model and remote-host routes depend on Settings.
 ROUTES: Dict[str, JudgeRoute] = {route.id: route for route in (TYPESAFE_ROUTE, OPENROUTER_ROUTE)}
 #: Where a profile without a base URL (OpenAI's) sends requests.
 _OPENAI_BASE_URL = "https://api.openai.com/v1"
@@ -584,6 +592,61 @@ class TypeSafeJudge(_RouteJudge):
                 == (other.endpoint, other.model, other._api_key))
 
 
+class RemoteFastJudge(_RouteJudge):
+    """Delegate fast typed judgments to the paired OpenWhisper host."""
+
+    def __init__(
+        self,
+        *,
+        route: JudgeRoute = REMOTE_HOST_ROUTE,
+        model: Optional[str] = None,
+        timeout_s: Optional[float] = None,
+        monotonic: Optional[Callable[[], float]] = None,
+        pool: Any = None,
+    ) -> None:
+        super().__init__(route, model, timeout_s, monotonic)
+        self._pool = pool
+        self._label = f"Fast judgments on {route.name}"
+
+    def ask(
+        self,
+        state: Any,
+        questions: Mapping[str, Mapping[str, Any]],
+        timeout_s: Optional[float] = None,
+    ) -> Optional[Dict[str, Dict[str, Any]]]:
+        """Return validated answers from the paired host, or ``None`` on failure."""
+        if not questions:
+            return None
+        budget = self._budget(timeout_s)
+        try:
+            encoded = json.dumps({"state": state, "questions": dict(questions)})
+        except (TypeError, ValueError):
+            self._warn("%s state is not JSON-serializable; skipping judgment", self._label)
+            return None
+        if len(encoded) > MAX_STATE_CHARS:
+            self._warn("%s request of %d chars exceeds the %d bound; skipping",
+                       self._label, len(encoded), MAX_STATE_CHARS)
+            return None
+        started = self._monotonic()
+        try:
+            from services.remote_asr.ai_client import remote_fast_judge
+
+            reply = remote_fast_judge(state, questions, timeout_s=budget, pool=self._pool)
+            answers = validate_answers({"answers": reply.get("answers")}, questions)
+        except Exception as exc:
+            self._record(started, ok=False)
+            self._warn("%s request failed: %s", self._label, type(exc).__name__)
+            return None
+        self._record(started, ok=True)
+        return answers
+
+    def same_connection(self, other: Any) -> bool:
+        return (
+            isinstance(other, RemoteFastJudge)
+            and (self.route.endpoint, self._pool) == (other.route.endpoint, other._pool)
+        )
+
+
 class FollowingJudge(_Primitives):
     """Ask through whichever judge ``provider`` returns at the moment of asking.
 
@@ -641,11 +704,30 @@ def text_model_route(settings: Optional[Dict[str, Any]] = None) -> JudgeRoute:
     )
 
 
+def remote_host_route(settings: Optional[Dict[str, Any]] = None) -> JudgeRoute:
+    """The fast-judgments route pointing at the paired OpenWhisper host."""
+    from services.remote_asr import settings as remote_settings
+
+    pairing = remote_settings.load_client_pairing(settings)
+    if pairing is None:
+        return REMOTE_HOST_ROUTE
+    return JudgeRoute(
+        id=TypeSafeProvider.REMOTE_HOST,
+        name=pairing.host_name or "Paired host",
+        endpoint=f"wss://{pairing.address}",
+        model="remote_host",
+        credential_env="",
+        timeout_s=TEXT_MODEL_TIMEOUT_S,
+    )
+
+
 def route_from_settings(settings: Optional[Dict[str, Any]] = None) -> JudgeRoute:
     """The route Settings → Fast judgments names, TypeSafe unless another was chosen."""
     provider = resolve_typesafe_provider(settings)
     if provider == TypeSafeProvider.TEXT_MODEL:
         return text_model_route(settings)
+    if provider == TypeSafeProvider.REMOTE_HOST:
+        return remote_host_route(settings)
     return ROUTES[provider]
 
 
@@ -672,6 +754,10 @@ def key_present(settings: Optional[Dict[str, Any]] = None, *,
     A route whose endpoint takes no key always has what it needs.
     """
     route = route or route_from_settings(settings)
+    if route.id == TypeSafeProvider.REMOTE_HOST:
+        from services.remote_asr import settings as remote_settings
+
+        return remote_settings.has_paired_host(settings)
     return bool(route_key(route))
 
 
@@ -686,6 +772,11 @@ def judge_from_settings(settings: Optional[Dict[str, Any]] = None,
     if not resolve_typesafe_enabled(settings):
         return None
     route = route_from_settings(settings)
+    if route.id == TypeSafeProvider.REMOTE_HOST:
+        if not key_present(settings, route=route):
+            logger.debug("Fast judgments set to paired host, but no host is paired")
+            return None
+        return RemoteFastJudge(route=route, **kwargs)
     key = route_key(route)
     if not key:
         logger.debug("Fast judgments enabled but %s is not set", route.credential_env)
@@ -720,6 +811,20 @@ def verify_key(api_key: str, *, route: JudgeRoute = TYPESAFE_ROUTE,
     is happening. Only the status class reaches the caller — an error body may
     echo the credential back.
     """
+    if route.id == TypeSafeProvider.REMOTE_HOST:
+        from services.remote_asr.ai_client import remote_fast_judge
+
+        started = time.monotonic()
+        try:
+            reply = remote_fast_judge(
+                _VERIFY_STATE, _VERIFY_QUESTIONS, timeout_s=max(timeout_s, route.timeout_s),
+            )
+            validate_answers({"answers": reply.get("answers")}, _VERIFY_QUESTIONS)
+        except Exception as exc:
+            return False, str(exc) or f"Couldn't reach {route.name}."
+        elapsed = time.monotonic() - started
+        model_label = str(reply.get("model") or route.model)
+        return True, f"{route.name} ({model_label}) answered in {elapsed:.2f} s."
     key = (api_key or "").strip()
     if not key:
         return False, "Paste a key first."
