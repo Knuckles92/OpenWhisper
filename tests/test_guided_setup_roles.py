@@ -207,6 +207,7 @@ def test_full_guided_setup_offers_three_roles_and_routes_client_and_host_paths(i
             "fast_judgments": True,
             "walkthrough_writeup": True,
             "meeting_ai": True,
+            "speaker_diarization": False,
             "records": True,
         }
     })
@@ -215,10 +216,19 @@ def test_full_guided_setup_offers_three_roles_and_routes_client_and_host_paths(i
     setup.apply_host_ai_button.click()
     assert store.get(SettingsKey.SELECTED_MODEL) == "remote"
     assert store.get(SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER) == "remote_host"
+    assert store.get(SettingsKey.TYPESAFE_ENABLED) is True
     assert store.get(SettingsKey.TYPESAFE_PROVIDER) == "remote_host"
     assert store.get(SettingsKey.WALKTHROUGH_WRITE_UP_AGENT) == "remote_host"
     assert store.get(SettingsKey.MEETING_AGENT_CORE) == "remote_host"
+    # Speaker diarization is gated separately from meeting_ai!
+    assert store.get(SettingsKey.MEETING_SPEAKER_ID_BACKEND) != "remote_host"
     assert store.get(SettingsKey.REMOTE_RECORDS_LOCATION) == "host"
+
+    # When speaker_diarization is advertised, apply_host_ai_defaults enables it too.
+    remote_invite.apply_host_ai_defaults(
+        {"meeting_ai": True, "speaker_diarization": True}, manager=store
+    )
+    assert store.get(SettingsKey.MEETING_SPEAKER_ID_BACKEND) == "remote_host"
 
     # Next goes straight to Record (skipping local CLEAN_UP and hiding local download button!).
     setup.next_button.click()
@@ -328,6 +338,7 @@ def test_remote_settings_host_ai_toggles_invite_card_and_client_capabilities(iso
                 "fast_judgments": True,
                 "walkthrough_writeup": False,
                 "meeting_ai": True,
+                "speaker_diarization": False,
                 "records": True,
             },
             "ai": {"text_cleanup": {"enabled": True, "available": True, "label": "OpenAI gpt-4o-mini"}},
@@ -339,6 +350,14 @@ def test_remote_settings_host_ai_toggles_invite_card_and_client_capabilities(iso
     remote_sec.client_use_host_switches["text_cleanup"].setChecked(True)
     assert store.get(SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER) == "remote_host"
     assert store.get(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED) is True
+    remote_sec.client_use_host_switches["fast_judgments"].setChecked(True)
+    assert store.get(SettingsKey.TYPESAFE_ENABLED) is True
+    assert store.get(SettingsKey.TYPESAFE_PROVIDER) == "remote_host"
+    remote_sec.client_use_host_switches["fast_judgments"].setChecked(False)
+    assert store.get(SettingsKey.TYPESAFE_ENABLED) is False
+    remote_sec.client_use_host_switches["meeting_ai"].setChecked(True)
+    assert store.get(SettingsKey.MEETING_AGENT_CORE) == "remote_host"
+    assert store.get(SettingsKey.MEETING_SPEAKER_ID_BACKEND) != "remote_host"
 
 
 def test_client_only_settings_hides_host_tab_and_local_model_panels(isolated_ui, monkeypatch):
@@ -382,6 +401,15 @@ def test_client_only_settings_hides_host_tab_and_local_model_panels(isolated_ui,
     assert not dlg.downloads.client_edition_banner.isHidden()
     assert "Powered by Studio-GPU" in dlg.downloads.client_edition_banner_label.text()
     assert dlg.hf_policy_combo.isHidden()
+
+    # HTML-unsafe host_name is escaped in RichText banner.
+    fake_service._pairing = ClientPairing(
+        host="192.168.1.30", port=47821, fingerprint=FP, host_name="<b>Evil&Host</b>"
+    )
+    dlg.downloads._refresh_remote_pairing()
+    banner_html = dlg.downloads.client_edition_banner_label.text()
+    assert "&lt;b&gt;Evil&amp;Host&lt;/b&gt;" in banner_html
+    assert "<b>Evil" not in banner_html
 
     # Unpaired Client-Only Downloads page shows clean unpaired card.
     fake_service._pairing = None

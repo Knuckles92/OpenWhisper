@@ -2261,7 +2261,10 @@ class RemoteEngineSection(QObject):
                 settings_snap.get(SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER) == remote_invite.REMOTE_HOST_PROVIDER
                 and bool(settings_snap.get(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED))
             ),
-            "fast_judgments": settings_snap.get(SettingsKey.TYPESAFE_PROVIDER) == remote_invite.REMOTE_HOST_PROVIDER,
+            "fast_judgments": (
+                settings_snap.get(SettingsKey.TYPESAFE_PROVIDER) == remote_invite.REMOTE_HOST_PROVIDER
+                and bool(settings_snap.get(SettingsKey.TYPESAFE_ENABLED))
+            ),
             "walkthrough_writeup": (
                 settings_snap.get(SettingsKey.WALKTHROUGH_WRITE_UP_AGENT) == remote_invite.REMOTE_HOST_PROVIDER
                 and bool(settings_snap.get(SettingsKey.WALKTHROUGH_WRITE_UP))
@@ -2302,10 +2305,13 @@ class RemoteEngineSection(QObject):
             else:
                 settings_manager.save_setting(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, False)
         elif cap_id == "fast_judgments":
-            settings_manager.save_setting(
-                SettingsKey.TYPESAFE_PROVIDER,
-                remote_invite.REMOTE_HOST_PROVIDER if checked else "typesafe",
-            )
+            if checked:
+                settings_manager.update_settings({
+                    SettingsKey.TYPESAFE_ENABLED: True,
+                    SettingsKey.TYPESAFE_PROVIDER: remote_invite.REMOTE_HOST_PROVIDER,
+                })
+            else:
+                settings_manager.save_setting(SettingsKey.TYPESAFE_ENABLED, False)
         elif cap_id == "walkthrough_writeup":
             if checked:
                 settings_manager.update_settings({
@@ -2316,15 +2322,22 @@ class RemoteEngineSection(QObject):
                 settings_manager.save_setting(SettingsKey.WALKTHROUGH_WRITE_UP, False)
         elif cap_id == "meeting_ai":
             if checked:
-                settings_manager.update_settings({
-                    SettingsKey.MEETING_AGENT_CORE: remote_invite.REMOTE_HOST_PROVIDER,
-                    SettingsKey.MEETING_SPEAKER_ID_BACKEND: remote_invite.REMOTE_HOST_PROVIDER,
-                })
+                updates = {}
+                if self._host_caps.get("meeting_ai"):
+                    updates[SettingsKey.MEETING_AGENT_CORE] = remote_invite.REMOTE_HOST_PROVIDER
+                if self._host_caps.get("speaker_diarization"):
+                    updates[SettingsKey.MEETING_SPEAKER_ID_BACKEND] = remote_invite.REMOTE_HOST_PROVIDER
+                if updates:
+                    settings_manager.update_settings(updates)
             else:
-                settings_manager.update_settings({
-                    SettingsKey.MEETING_AGENT_CORE: "pi",
-                    SettingsKey.MEETING_SPEAKER_ID_BACKEND: "off",
-                })
+                snap = settings_manager.load_all_settings()
+                updates = {}
+                if snap.get(SettingsKey.MEETING_AGENT_CORE) == remote_invite.REMOTE_HOST_PROVIDER:
+                    updates[SettingsKey.MEETING_AGENT_CORE] = "pi"
+                if snap.get(SettingsKey.MEETING_SPEAKER_ID_BACKEND) == remote_invite.REMOTE_HOST_PROVIDER:
+                    updates[SettingsKey.MEETING_SPEAKER_ID_BACKEND] = "off"
+                if updates:
+                    settings_manager.update_settings(updates)
         if self._service is not None:
             self._refresh_capabilities(self._service)
 

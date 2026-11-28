@@ -1025,6 +1025,7 @@ def _render_join_html(
     .card h2 {{ margin: 0 0 6px; font-size: 17px; font-weight: 600; }}
     .card p {{ margin: 0 0 14px; color: var(--muted); font-size: 14px; }}
     .btn-row {{ display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }}
+    .btn-row-spaced {{ margin-bottom: 12px; }}
     .btn {{
       display: inline-flex; align-items: center; justify-content: center;
       padding: 11px 18px; border-radius: 10px; font-weight: 600; font-size: 14px;
@@ -1131,7 +1132,7 @@ def _render_join_html(
       <p>
         Includes {host_name}'s verified TLS certificate fingerprint and a fresh pairing code.
       </p>
-      <div class="btn-row" style="margin-bottom: 12px;">
+      <div class="btn-row btn-row-spaced">
         <a class="btn btn-primary" href="{pair_uri_attr}">Connect OpenWhisper to {host_name}</a>
         <a class="btn" href="{invite_file_href}">Download .openwhisper-invite</a>
         <button type="button" class="btn" id="copyUriBtn">Copy invite link</button>
@@ -2034,12 +2035,14 @@ def apply_host_ai_defaults(
         updates[SettingsKey.TRANSCRIPT_CLEANUP_ENABLED] = True
         updates[SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER] = REMOTE_HOST_PROVIDER
     if capabilities.get("fast_judgments"):
+        updates[SettingsKey.TYPESAFE_ENABLED] = True
         updates[SettingsKey.TYPESAFE_PROVIDER] = REMOTE_HOST_PROVIDER
     if capabilities.get("walkthrough_writeup"):
         updates[SettingsKey.WALKTHROUGH_WRITE_UP] = True
         updates[SettingsKey.WALKTHROUGH_WRITE_UP_AGENT] = REMOTE_HOST_PROVIDER
     if capabilities.get("meeting_ai"):
         updates[SettingsKey.MEETING_AGENT_CORE] = REMOTE_HOST_PROVIDER
+    if capabilities.get("speaker_diarization"):
         updates[SettingsKey.MEETING_SPEAKER_ID_BACKEND] = REMOTE_HOST_PROVIDER
     if enable_records and capabilities.get("records"):
         updates[SettingsKey.REMOTE_RECORDS_LOCATION] = "host"
@@ -2109,17 +2112,12 @@ def _qt_confirm_replace_host(parent: Any, existing: Any, invite: InviteLink) -> 
     return answer == QMessageBox.StandardButton.Yes
 
 
-def install_qt_invite_bridge(
-    *,
-    data_dir: str | Path,
+def install_qt_file_open_filter(
     deliver: Callable[[InviteLink], None],
+    *,
     qt_app: Any = None,
-) -> tuple[InviteIpcServer, Any]:
-    """Start ``InviteIpcServer`` and macOS ``FileOpen`` URL hook bridged onto the Qt thread.
-
-    Returns ``(ipc_server, bridge_qobject)``; keep a reference to ``bridge_qobject``
-    for the lifetime of the app and call ``ipc_server.stop()`` on shutdown.
-    """
+) -> Any:
+    """Install a Qt ``FileOpen`` event filter for macOS ``openwhisper://`` deep links."""
     from PyQt6.QtCore import QEvent, QObject, pyqtSignal
     from PyQt6.QtWidgets import QApplication
 
@@ -2144,12 +2142,26 @@ def install_qt_invite_bridge(
                     logger.warning("Ignored invalid FileOpen invite: %s", exc)
             return super().eventFilter(watched, event)
 
-    bridge = _InviteBridge()
-    bridge.invite_received.connect(deliver)
     app = qt_app if qt_app is not None else QApplication.instance()
+    bridge = _InviteBridge(app)
+    bridge.invite_received.connect(deliver)
     if app is not None:
         app.installEventFilter(bridge)
+    return bridge
 
+
+def install_qt_invite_bridge(
+    *,
+    data_dir: str | Path,
+    deliver: Callable[[InviteLink], None],
+    qt_app: Any = None,
+) -> tuple[InviteIpcServer, Any]:
+    """Start ``InviteIpcServer`` and macOS ``FileOpen`` URL hook bridged onto the Qt thread.
+
+    Returns ``(ipc_server, bridge_qobject)``; keep a reference to ``bridge_qobject``
+    for the lifetime of the app and call ``ipc_server.stop()`` on shutdown.
+    """
+    bridge = install_qt_file_open_filter(deliver, qt_app=qt_app)
     ipc_server = InviteIpcServer(data_dir, lambda invite: bridge.invite_received.emit(invite))
     ipc_server.start()
     return ipc_server, bridge

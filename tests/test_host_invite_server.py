@@ -162,6 +162,8 @@ def test_join_page_serves_capabilities_os_buttons_and_security_headers(tmp_path)
         assert "654 321" in body
         assert f"/invite/{session.token}.openwhisper-invite" in body
         assert "data:image/svg+xml;base64," in body
+        # Strict CSP compatibility: zero inline style attributes anywhere in HTML.
+        assert 'style="' not in body
 
         # Security headers strictly enforced.
         lower_headers = {k.lower(): v for k, v in headers.items()}

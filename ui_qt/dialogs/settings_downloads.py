@@ -11,6 +11,7 @@ its models and runtime. The technical profile inspector slides over the
 catalog's right edge on demand when a model is selected, leaving the full
 catalog width clear when nothing is selected.
 """
+import html
 import itertools
 import logging
 import sys
@@ -928,8 +929,9 @@ class DownloadsPage(QWidget):
                 self.client_unpaired_card.show()
                 return
             self.client_unpaired_card.hide()
+            safe_host = html.escape(pairing.host_name)
             self.client_edition_banner_label.setText(
-                f"<b>Powered by {pairing.host_name}</b> · Managing speech models on your paired host. "
+                f"<b>Powered by {safe_host}</b> · Managing speech models on your paired host. "
                 f'Want local models on this PC? <a href="{remote_invite.GITHUB_RELEASES_URL}">'
                 "Get Full OpenWhisper</a>."
             )

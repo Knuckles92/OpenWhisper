@@ -561,34 +561,42 @@ def main() -> int:
         logging.getLogger(__name__).debug("Could not start invite IPC listener", exc_info=True)
         ipc_server = None
 
-    # If launched directly with an invite link, schedule delivery after startup finishes
-    # (in case Guided Setup does not auto-open for an already-configured install).
-    if peek_pending_startup_invite() is not None:
-        def _deliver_startup_when_ready() -> None:
-            import time as _time
+    # Attach macOS FileOpen URL filter (and deliver any pending startup invite)
+    # once QApplication and MainWindow are ready.
+    def _attach_qt_invite_hooks() -> None:
+        import time as _time
 
-            from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtWidgets import QApplication
 
-            deadline = _time.monotonic() + 25.0
-            while _time.monotonic() < deadline:
-                app = QApplication.instance()
-                if app is not None and any(
-                    hasattr(w, "restore_from_tray") and w.isVisible()
-                    for w in app.topLevelWidgets()
-                ):
-                    pending = consume_pending_startup_invite()
-                    if pending is not None:
-                        _run_on_qt_thread(lambda inv=pending: dispatch_incoming_invite(inv))
-                    return
-                _time.sleep(0.15)
+        from services.remote_asr.invite import install_qt_file_open_filter
 
-        import threading as _threading
+        file_open_installed = False
+        deadline = _time.monotonic() + 25.0
+        while _time.monotonic() < deadline:
+            app = QApplication.instance()
+            if app is not None and not file_open_installed:
+                file_open_installed = _run_on_qt_thread(
+                    lambda: install_qt_file_open_filter(dispatch_incoming_invite)
+                )
+            if app is not None and any(
+                hasattr(w, "restore_from_tray") and w.isVisible()
+                for w in app.topLevelWidgets()
+            ):
+                pending = consume_pending_startup_invite()
+                if pending is not None:
+                    _run_on_qt_thread(lambda inv=pending: dispatch_incoming_invite(inv))
+                return
+            if file_open_installed and peek_pending_startup_invite() is None:
+                return
+            _time.sleep(0.15)
 
-        _threading.Thread(
-            target=_deliver_startup_when_ready,
-            name="openwhisper-startup-invite",
-            daemon=True,
-        ).start()
+    import threading as _threading
+
+    _threading.Thread(
+        target=_attach_qt_invite_hooks,
+        name="openwhisper-qt-invite-hooks",
+        daemon=True,
+    ).start()
 
     try:
         return _bootstrap_main()

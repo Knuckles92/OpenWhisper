@@ -1676,8 +1676,12 @@ class GuidedSetupDialog(QDialog):
             enabled_names.append("Fast Judgments")
         if SettingsKey.WALKTHROUGH_WRITE_UP_AGENT in updates:
             enabled_names.append("Walkthrough Write-Ups")
-        if SettingsKey.MEETING_AGENT_CORE in updates:
+        if SettingsKey.MEETING_AGENT_CORE in updates and SettingsKey.MEETING_SPEAKER_ID_BACKEND in updates:
             enabled_names.append("Meeting AI & Speaker ID")
+        elif SettingsKey.MEETING_AGENT_CORE in updates:
+            enabled_names.append("Meeting AI")
+        elif SettingsKey.MEETING_SPEAKER_ID_BACKEND in updates:
+            enabled_names.append("Speaker ID")
         if SettingsKey.REMOTE_RECORDS_LOCATION in updates:
             enabled_names.append("Host Record Storage")
         self.host_ai_applied_note.setText(
