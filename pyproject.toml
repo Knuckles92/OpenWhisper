@@ -210,6 +210,8 @@ files = [
     "services/guided_setup.py",
     "services/hotkey_conflicts.py",
     "services/local_asr/catalog.py",
+    "services/remote_asr/ai_client.py",
+    "services/remote_asr/ai_host.py",
     "services/remote_asr/mcp_link.py",
     "services/remote_asr/model_management.py",
     "services/remote_asr/runtime.py",

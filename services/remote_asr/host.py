@@ -20,7 +20,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional
 
 from services.remote_asr import discovery, protocol, tailscale
 from services.remote_asr.activity import HostActivity
@@ -49,6 +49,11 @@ MAX_PENDING_HANDSHAKES = 12
 MAX_ACTIVE_JOBS = 2
 MAX_QUEUED_JOBS = 4
 MAX_JOB_WAIT_S = 30.0
+#: Non-ASR AI, meeting intelligence and file-decode requests run in a separate
+#: bounded admission lane so slow LLM/agent calls never stall speech decoding.
+MAX_ACTIVE_AI_JOBS = 4
+MAX_QUEUED_AI_JOBS = 12
+MAX_AI_JOB_WAIT_S = 60.0
 # Keep inbound frames buffered per connection small while a job waits; each
 # individual frame is bounded by the protocol's WebSocket max_size below.
 MAX_QUEUED_FRAMES_PER_CLIENT = 2
@@ -247,6 +252,8 @@ class _Client:
     recording_id: str = ""
     #: When it connected, by the wall clock (for the host dashboard).
     since: float = 0.0
+    #: Active cancel event for a blocking non-ASR AI request on this connection.
+    cancel_event: Optional[threading.Event] = None
 
 
 class _Reservation:
@@ -386,10 +393,19 @@ class SpeechHost:
         mcp_enabled: Optional[Callable[[], bool]] = None,
         mcp: Optional[Callable[[str, dict, str], dict]] = None,
         history=None,
+        ai_handler: Optional[Callable[[str, dict, bytes, dict, Optional[threading.Event]], dict]] = None,
+        ai_capabilities: Optional[Callable[[], dict]] = None,
+        meeting_ai_enabled: Optional[Callable[[], bool]] = None,
+        meeting_ai_capabilities: Optional[Callable[[], dict]] = None,
+        meeting_ai_handler: Optional[Callable[[str, dict, bytes, dict], dict]] = None,
+        file_decode_handler: Optional[Callable[[str, dict, bytes, dict], dict]] = None,
+        record_kinds: Optional[Callable[[], Iterable[str]]] = None,
         max_connections: int = MAX_CLIENT_CONNECTIONS,
         max_handshakes: int = MAX_PENDING_HANDSHAKES,
         max_active_jobs: int = MAX_ACTIVE_JOBS,
         max_queued_jobs: int = MAX_QUEUED_JOBS,
+        max_active_ai_jobs: int = MAX_ACTIVE_AI_JOBS,
+        max_queued_ai_jobs: int = MAX_QUEUED_AI_JOBS,
     ):
         self._engine_provider = engine_provider
         self.registry = registry
@@ -410,6 +426,13 @@ class SpeechHost:
         self._records_summary = records_summary or (lambda _device_id: {})
         self._mcp_enabled = mcp_enabled or (lambda: False)
         self._mcp = mcp
+        self._ai_handler = ai_handler
+        self._ai_capabilities = ai_capabilities
+        self._meeting_ai_enabled = meeting_ai_enabled or (lambda: False)
+        self._meeting_ai_capabilities = meeting_ai_capabilities
+        self._meeting_ai_handler = meeting_ai_handler
+        self._file_decode_handler = file_decode_handler
+        self._record_kinds = record_kinds
         from services.remote_history.channel import HistoryBroker
 
         self.history = history if history is not None else HistoryBroker(registry)
@@ -431,9 +454,42 @@ class SpeechHost:
         self._work_admission = _WorkAdmission(
             max(1, int(max_active_jobs)), max(0, int(max_queued_jobs)), MAX_JOB_WAIT_S,
         )
+        self._ai_admission = _WorkAdmission(
+            max(1, int(max_active_ai_jobs)), max(0, int(max_queued_ai_jobs)), MAX_AI_JOB_WAIT_S,
+        )
         self.port: Optional[int] = None
         #: What paired computers asked of this host since sharing started.
         self.activity = HostActivity()
+
+    def set_ai_handler(
+        self,
+        handler: Optional[Callable[[str, dict, bytes, dict, Optional[threading.Event]], dict]],
+        *,
+        capabilities: Optional[Callable[[], dict]] = None,
+    ) -> None:
+        """Install or replace the Phase 1 AI services handler slot."""
+        self._ai_handler = handler
+        self._ai_capabilities = capabilities
+
+    def set_meeting_ai_handler(
+        self,
+        handler: Optional[Callable[[str, dict, bytes, dict], dict]],
+        *,
+        enabled: Optional[Callable[[], bool]] = None,
+        capabilities: Optional[Callable[[], dict]] = None,
+    ) -> None:
+        """Install or replace the Phase 2 Meeting AI / speaker ID handler slot."""
+        self._meeting_ai_handler = handler
+        if enabled is not None:
+            self._meeting_ai_enabled = enabled
+        self._meeting_ai_capabilities = capabilities
+
+    def set_file_decode_handler(
+        self,
+        handler: Optional[Callable[[str, dict, bytes, dict], dict]],
+    ) -> None:
+        """Install or replace the Phase 2 remote audio file decode handler slot."""
+        self._file_decode_handler = handler
 
     # ---- lifecycle ----
 
@@ -489,6 +545,11 @@ class SpeechHost:
             thread, self._thread = self._thread, None
             self._pairing = None
             request = self._request
+            cancels = [
+                c.cancel_event for c in self._clients.values() if c.cancel_event is not None
+            ]
+        for cancel in cancels:
+            cancel.set()
         self.discovery.stop()
         if request is not None:
             request.stopped = True
@@ -672,6 +733,12 @@ class SpeechHost:
         self.history.remove(device_id)
         with self._lock:
             sockets = [c.ws for c in self._clients.values() if c.device_id == device_id]
+            cancels = [
+                c.cancel_event for c in self._clients.values()
+                if c.device_id == device_id and c.cancel_event is not None
+            ]
+        for cancel in cancels:
+            cancel.set()
         for ws in sockets:
             try:
                 ws.close(protocol.CLOSE_UNAUTHORIZED, "device removed")
@@ -839,6 +906,58 @@ class SpeechHost:
         except Exception:
             logger.warning("Could not read the MCP control permission", exc_info=True)
             return False
+
+    def _allows_meeting_ai(self) -> bool:
+        try:
+            return self._meeting_ai_handler is not None and self._meeting_ai_enabled() is True
+        except Exception:
+            logger.warning("Could not read the meeting AI permission", exc_info=True)
+            return False
+
+    def _ai_advertised(self) -> tuple[dict, Optional[dict]]:
+        """Return ``(capability_flags, ai_metadata_or_None)`` for ``ready``."""
+        if self._ai_handler is None or self._ai_capabilities is None:
+            return {}, None
+        try:
+            raw = self._ai_capabilities()
+        except Exception:
+            logger.warning("Could not read host AI capabilities", exc_info=True)
+            return {}, None
+        if not isinstance(raw, dict):
+            return {}, None
+        caps = raw.get("capabilities")
+        ai_meta = raw.get("ai")
+        return (
+            {str(k): bool(v) for k, v in caps.items()} if isinstance(caps, dict) else {},
+            dict(ai_meta) if isinstance(ai_meta, dict) else None,
+        )
+
+    def _meeting_ai_advertised(self) -> dict:
+        if self._meeting_ai_handler is None:
+            return {}
+        enabled = self._allows_meeting_ai()
+        if self._meeting_ai_capabilities is None:
+            return {"meeting_ai": enabled, "speaker_diarization": enabled}
+        try:
+            raw = self._meeting_ai_capabilities()
+        except Exception:
+            logger.warning("Could not read meeting AI capabilities", exc_info=True)
+            return {"meeting_ai": False, "speaker_diarization": False}
+        if not isinstance(raw, dict):
+            return {"meeting_ai": enabled, "speaker_diarization": enabled}
+        return {
+            "meeting_ai": bool(enabled and raw.get("meeting_ai", True)),
+            "speaker_diarization": bool(enabled and raw.get("speaker_diarization", True)),
+        }
+
+    def _advertised_record_kinds(self) -> tuple[str, ...]:
+        if self._record_kinds is None:
+            return ()
+        try:
+            return tuple(str(kind) for kind in self._record_kinds())
+        except Exception:
+            logger.debug("Could not read advertised record kinds", exc_info=True)
+            return ()
 
     def _stored_summary(self, device_id: str) -> dict:
         try:
@@ -1159,9 +1278,20 @@ class SpeechHost:
             ready["capabilities"]["mcp_control"] = self._controls_mcp()
         if self._records is not None:
             ready["capabilities"]["records"] = self._keeps_records()
+            if "walkthrough" in self._advertised_record_kinds():
+                ready["capabilities"]["walkthrough_records"] = self._keeps_records()
             # Counted even while storage is off, so a client can still find
             # (and bring back) what it stored before the owner turned it off.
             ready["records"] = self._stored_summary(device["id"])
+        if self._ai_handler is not None:
+            ai_caps, ai_meta = self._ai_advertised()
+            ready["capabilities"].update(ai_caps)
+            if ai_meta is not None:
+                ready["ai"] = ai_meta
+        if self._meeting_ai_handler is not None:
+            ready["capabilities"].update(self._meeting_ai_advertised())
+        if self._file_decode_handler is not None:
+            ready["capabilities"]["file_decode"] = True
         return ready
 
     def _drop_client(self, engine: HostEngine, streams: set, connection_id: str, device: dict) -> None:
@@ -1173,6 +1303,8 @@ class SpeechHost:
                 logger.debug("Could not cancel remote stream %s", session, exc_info=True)
         with self._lock:
             client = self._clients.pop(connection_id, None)
+            if client is not None and client.cancel_event is not None:
+                client.cancel_event.set()
             if client is not None and client.recording_id:
                 now = time.monotonic()
                 self._recording_reconnecting(now)
@@ -1205,9 +1337,10 @@ class SpeechHost:
         op = header.get("op")
         if op in ("recording_begin", "recording_end"):
             return self._recording_request(header, payload, connection_id)
-        costly = op in ("transcribe", "stream", "select_model", "configure_runtime",
-                        "model_catalog", "download_model", "install_runtime")
-        if costly:
+        costly_speech = op in ("transcribe", "stream", "select_model", "configure_runtime",
+                               "model_catalog", "download_model", "install_runtime")
+        costly_ai = op in protocol.NON_ASR_ADMITTED_OPS
+        if costly_speech or costly_ai:
             if self.update_active():
                 return {"id": request_id, "code": protocol.ENGINE_RELOADING,
                         "error": HOST_UPDATE_MESSAGE}
@@ -1216,20 +1349,25 @@ class SpeechHost:
             def still_connected() -> bool:
                 return (self.running and ws is not None and ws.state is State.OPEN)
 
-            if not self._work_admission.acquire(still_connected):
+            lane = self._work_admission if costly_speech else self._ai_admission
+            if not lane.acquire(still_connected):
                 return {"id": request_id, "code": "busy",
-                        "error": "The host is busy. Try again shortly.",
+                        "error": (
+                            "The host is busy. Try again shortly."
+                            if costly_speech
+                            else "The host AI service is busy. Try again shortly."
+                        ),
                         "retry_after_ms": 1000}
             try:
                 return self._dispatch_unpacked(
                     header, payload, engine, identity, connection_id, streams,
-                    device_name, device_id,
+                    device_name, device_id, ws,
                 )
             finally:
-                self._work_admission.release()
+                lane.release()
         return self._dispatch_unpacked(
             header, payload, engine, identity, connection_id, streams,
-            device_name, device_id,
+            device_name, device_id, ws,
         )
 
     def _recording_request(self, header: dict, payload: bytes, connection_id: str) -> dict:
@@ -1252,7 +1390,7 @@ class SpeechHost:
 
     def _dispatch_unpacked(self, header: dict, payload: bytes, engine: HostEngine,
                            identity: tuple, connection_id: str, streams: set,
-                           device_name: str, device_id: str) -> dict:
+                           device_name: str, device_id: str, ws=None) -> dict:
         request_id = header.get("id")
         op = header.get("op")
         if isinstance(op, str) and op.startswith("records_"):
@@ -1260,6 +1398,19 @@ class SpeechHost:
                                          {"id": device_id, "name": device_name})
         if op in self._MCP_OPS:
             return self._mcp_request(request_id, header, device_name)
+        if op in protocol.AI_OPS:
+            return self._ai_request(
+                request_id, header, payload, {"id": device_id, "name": device_name},
+                connection_id, ws,
+            )
+        if op in protocol.MEETING_AI_OPS:
+            return self._meeting_ai_request(
+                request_id, header, payload, {"id": device_id, "name": device_name},
+            )
+        if op in protocol.FILE_DECODE_OPS:
+            return self._file_decode_request(
+                request_id, header, payload, {"id": device_id, "name": device_name},
+            )
         try:
             audio = protocol.payload_audio(payload)
         except protocol.ProtocolError as exc:
@@ -1431,6 +1582,103 @@ class SpeechHost:
         if op in ("records_commit", "records_delete", "records_clear"):
             self._emit("records", {"device": device.get("name"), "op": op})
         return {"id": request_id, "result": result}
+
+    @staticmethod
+    def _handler_error_reply(request_id, exc: Exception, op: str, device_name: str) -> dict:
+        code = getattr(exc, "code", None)
+        if isinstance(code, str) and code:
+            reply = {"id": request_id, "code": code, "error": str(exc) or code}
+            retry_after_ms = getattr(exc, "retry_after_ms", None)
+            if isinstance(retry_after_ms, int) and retry_after_ms >= 0:
+                reply["retry_after_ms"] = retry_after_ms
+            return reply
+        if isinstance(exc, PermissionError):
+            return {"id": request_id, "code": "forbidden",
+                    "error": str(exc) or "This service is disabled on the host."}
+        if isinstance(exc, LookupError):
+            return {"id": request_id, "code": "not_found",
+                    "error": str(exc) or "Not found."}
+        if isinstance(exc, (ValueError, protocol.ProtocolError)):
+            return {"id": request_id, "code": "bad_request",
+                    "error": str(exc) or "Invalid request."}
+        if isinstance(exc, NotImplementedError):
+            return {"id": request_id, "code": "unsupported",
+                    "error": str(exc) or "Unsupported operation on this host."}
+        logger.warning("Remote %s request from %s failed", op, device_name, exc_info=True)
+        return {"id": request_id, "error": str(exc) or type(exc).__name__}
+
+    def _ai_request(self, request_id, header: dict, payload: bytes, device: dict,
+                    connection_id: str, ws=None) -> dict:
+        """Dispatch a Phase 1 host AI request with disconnect-aware cancellation."""
+        op = str(header.get("op") or "")
+        if self._ai_handler is None:
+            return {"id": request_id, "code": "unsupported",
+                    "error": "Update OpenWhisper on the host to use host AI services."}
+        if not device.get("id"):
+            return {"id": request_id, "code": "bad_request", "error": "Unknown device."}
+        cancel = threading.Event()
+        done = threading.Event()
+        with self._lock:
+            client = self._clients.get(connection_id)
+            if client is not None:
+                client.cancel_event = cancel
+
+        def watch_disconnect() -> None:
+            from websockets.protocol import State
+
+            while not done.wait(0.1):
+                if not self.running or (ws is not None and ws.state is not State.OPEN):
+                    cancel.set()
+                    return
+
+        if ws is not None and op in protocol.AI_ADMITTED_OPS:
+            threading.Thread(
+                target=watch_disconnect, name=f"remote-ai-watch-{connection_id}", daemon=True,
+            ).start()
+        try:
+            result = self._ai_handler(op, header, payload, device, cancel)
+        except Exception as exc:
+            return self._handler_error_reply(request_id, exc, op, str(device.get("name") or ""))
+        finally:
+            done.set()
+            with self._lock:
+                client = self._clients.get(connection_id)
+                if client is not None and client.cancel_event is cancel:
+                    client.cancel_event = None
+        return {"id": request_id, "result": result if isinstance(result, dict) else {}}
+
+    def _meeting_ai_request(self, request_id, header: dict, payload: bytes, device: dict) -> dict:
+        """Dispatch a Phase 2 meeting AI / speaker embedding request."""
+        op = str(header.get("op") or "")
+        if self._meeting_ai_handler is None:
+            return {"id": request_id, "code": "unsupported",
+                    "error": "Update OpenWhisper on the host to use remote meeting AI."}
+        if op in protocol.MEETING_AI_ADMITTED_OPS and not self._allows_meeting_ai():
+            return {"id": request_id, "code": "forbidden", "error": (
+                f"{self.host_name} isn't sharing meeting AI or speaker identification. "
+                "Turn it on in Settings → Remote engine there."
+            )}
+        if not device.get("id"):
+            return {"id": request_id, "code": "bad_request", "error": "Unknown device."}
+        try:
+            result = self._meeting_ai_handler(op, header, payload, device)
+        except Exception as exc:
+            return self._handler_error_reply(request_id, exc, op, str(device.get("name") or ""))
+        return {"id": request_id, "result": result if isinstance(result, dict) else {}}
+
+    def _file_decode_request(self, request_id, header: dict, payload: bytes, device: dict) -> dict:
+        """Dispatch a Phase 2 host-side uploaded audio file decode request."""
+        op = str(header.get("op") or "")
+        if self._file_decode_handler is None:
+            return {"id": request_id, "code": "unsupported",
+                    "error": "Update OpenWhisper on the host to decode uploaded audio files."}
+        if not device.get("id"):
+            return {"id": request_id, "code": "bad_request", "error": "Unknown device."}
+        try:
+            result = self._file_decode_handler(op, header, payload, device)
+        except Exception as exc:
+            return self._handler_error_reply(request_id, exc, op, str(device.get("name") or ""))
+        return {"id": request_id, "result": result if isinstance(result, dict) else {}}
 
     def _configure_runtime_request(self, request_id, header: dict, device_name: str) -> dict:
         if self._configure_runtime is None:

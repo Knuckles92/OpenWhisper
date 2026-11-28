@@ -191,6 +191,10 @@ def _provider_ready(settings: Mapping, *, wait: bool) -> Optional[bool]:
         provider = resolve_transcript_cleanup_provider(settings)
         model = resolve_transcript_cleanup_model(settings)
         from services.settings import TranscriptCleanupProvider
+        if provider == TranscriptCleanupProvider.REMOTE_HOST:
+            from services.remote_asr.ai_client import has_remote_host
+
+            return has_remote_host(settings)
         if provider in TranscriptCleanupProvider.INSTALLED:
             from services import installed_agents
 

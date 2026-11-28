@@ -110,7 +110,7 @@ class CleanupInfo:
 
 def provider_env_key(provider: str) -> str:
     """Return the environment variable name holding the provider's API key."""
-    if provider in TranscriptCleanupProvider.INSTALLED:
+    if provider in (*TranscriptCleanupProvider.INSTALLED, TranscriptCleanupProvider.REMOTE_HOST):
         return ""
     profile = get_profile(provider)
     if profile is not None:
@@ -122,7 +122,7 @@ def provider_env_key(provider: str) -> str:
 
 def find_api_key(provider: str) -> Optional[str]:
     """Resolve credentials, including a dummy key for auth-free endpoints."""
-    if provider in TranscriptCleanupProvider.INSTALLED:
+    if provider in (*TranscriptCleanupProvider.INSTALLED, TranscriptCleanupProvider.REMOTE_HOST):
         return None
     profile = get_profile(provider)
     if profile is not None:
@@ -229,7 +229,11 @@ class TranscriptCleanup:
     def _normalize_provider(provider: Optional[str]) -> str:
         if isinstance(provider, str) and get_profile(provider) is not None:
             return provider
-        if provider in (*TranscriptCleanupProvider.ALL, *TranscriptCleanupProvider.INSTALLED):
+        if provider in (
+            *TranscriptCleanupProvider.ALL,
+            *TranscriptCleanupProvider.INSTALLED,
+            TranscriptCleanupProvider.REMOTE_HOST,
+        ):
             return provider
         return config.TRANSCRIPT_CLEANUP_PROVIDER
 
@@ -241,6 +245,14 @@ class TranscriptCleanup:
             self._connection = None
             # CLI startup and sign-in take longer than an HTTP request.
             self._timeout_s = 60.0
+            return
+        if self.provider == TranscriptCleanupProvider.REMOTE_HOST:
+            if self.client is not None:
+                self.client.close()
+            self.client = None
+            self._connection = None
+            # The paired host may run a local model or coding agent.
+            self._timeout_s = 120.0
             return
         profile = get_profile(self.provider)
         if profile is None:
@@ -321,6 +333,10 @@ class TranscriptCleanup:
 
     def is_available(self) -> bool:
         """Whether cleanup can be attempted."""
+        if self.provider == TranscriptCleanupProvider.REMOTE_HOST:
+            from services.remote_asr.ai_client import has_remote_host
+
+            return has_remote_host()
         if self.provider in TranscriptCleanupProvider.INSTALLED:
             from services.installed_agents import resolve_agent
 
@@ -400,6 +416,8 @@ class TranscriptCleanup:
             return text
 
         try:
+            if self.provider == TranscriptCleanupProvider.REMOTE_HOST:
+                return self._cleanup_with_remote_host(text, prompt, timeout_s, deadline_s)
             if self.provider in TranscriptCleanupProvider.INSTALLED:
                 return self._cleanup_with_agent(text, prompt, timeout_s, deadline_s)
             client, give_up_s = self._attempt_budget(timeout_s, deadline_s)
@@ -459,6 +477,34 @@ class TranscriptCleanup:
         cleaned = outcome.text.strip()
         if not cleaned:
             raise RuntimeError("empty response")
+        self.last_error = None
+        return cleaned
+
+    def _cleanup_with_remote_host(
+        self,
+        text: str,
+        prompt: str,
+        timeout_s: Optional[float],
+        deadline_s: Optional[float],
+    ) -> str:
+        from services.remote_asr.ai_client import RemoteAICanceled, remote_text_cleanup
+
+        try:
+            reply = remote_text_cleanup(
+                text,
+                system_prompt=prompt,
+                reasoning=self.reasoning,
+                timeout_s=timeout_s if timeout_s is not None else self._timeout_s,
+                deadline_s=deadline_s,
+                cancel_event=self.cancel_event,
+            )
+        except RemoteAICanceled:
+            raise _CleanupCanceled(CANCELED_REASON) from None
+        cleaned = str(reply.get("text") or "").strip()
+        if not cleaned:
+            self.last_error = "empty response"
+            logger.warning("Remote transcript cleanup returned empty; using raw text")
+            return text
         self.last_error = None
         return cleaned
 

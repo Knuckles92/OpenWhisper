@@ -134,11 +134,23 @@ class RemoteEngineService:
         configure_engine: Optional[Callable[[str, str, dict, str], None]] = None,
         on_host_catalog: Optional[Callable[[object, dict, dict], None]] = None,
         records_root: Optional[str] = None,
+        ai_services=None,
+        meeting_ai_handler: Optional[Callable[[str, dict, bytes, dict], dict]] = None,
+        meeting_ai_capabilities: Optional[Callable[[], dict]] = None,
+        file_decode_handler: Optional[Callable[[str, dict, bytes, dict], dict]] = None,
+        extra_record_kinds: Optional[dict] = None,
+        invite_server=None,
     ):
         self._backend_provider = backend_provider
         self._records_root = records_root
         self._records = None
+        self._extra_record_kinds = dict(extra_record_kinds or {})
         self._mcp_control = None
+        self._ai_services = ai_services
+        self._meeting_ai_handler = meeting_ai_handler
+        self._meeting_ai_capabilities = meeting_ai_capabilities
+        self._file_decode_handler = file_decode_handler
+        self._invite_server = invite_server
         self._record_gate = RecordGate()
         from services.remote_asr.host import DeviceRegistry
         from services.remote_history.channel import HistoryBroker
@@ -439,8 +451,85 @@ class RemoteEngineService:
                 mcp_enabled=remote_settings.host_manages_mcp,
                 mcp=self.mcp_request,
                 history=self.history,
+                ai_handler=self.ai_request,
+                ai_capabilities=self.ai_capabilities,
+                meeting_ai_enabled=remote_settings.host_meeting_ai,
+                meeting_ai_capabilities=self._meeting_ai_capabilities,
+                meeting_ai_handler=self._meeting_ai_handler,
+                file_decode_handler=self._file_decode_handler,
+                record_kinds=self.record_kinds,
             )
         return self._host
+
+    # ---- host-facilitated AI & pluggable Phase 2/4 slots ----
+
+    def ai_services(self):
+        """Lazily instantiated Phase 1 host AI service dispatcher."""
+        with self._lock:
+            if self._ai_services is None:
+                from services.remote_asr.ai_host import HostAIServices
+
+                self._ai_services = HostAIServices()
+            return self._ai_services
+
+    def ai_capabilities(self) -> dict:
+        return self.ai_services().advertised()
+
+    def ai_request(self, op: str, header: dict, payload: bytes, device: dict,
+                   cancel_event: Optional[threading.Event] = None) -> dict:
+        return self.ai_services().handle(op, header, payload, device, cancel_event=cancel_event)
+
+    def register_meeting_ai_handler(
+        self,
+        handler: Optional[Callable[[str, dict, bytes, dict], dict]],
+        *,
+        capabilities: Optional[Callable[[], dict]] = None,
+    ) -> None:
+        """Attach or replace the Phase 2 meeting AI / speaker diarization handler."""
+        with self._lock:
+            self._meeting_ai_handler = handler
+            self._meeting_ai_capabilities = capabilities
+            host = self._host
+        if host is not None:
+            host.set_meeting_ai_handler(
+                handler,
+                enabled=remote_settings.host_meeting_ai,
+                capabilities=capabilities,
+            )
+        self._notify("state")
+
+    def register_file_decode_handler(
+        self,
+        handler: Optional[Callable[[str, dict, bytes, dict], dict]],
+    ) -> None:
+        """Attach or replace the Phase 2 remote audio file decode handler."""
+        with self._lock:
+            self._file_decode_handler = handler
+            host = self._host
+        if host is not None:
+            host.set_file_decode_handler(handler)
+        self._notify("state")
+
+    def register_record_kind(self, kind: str, handler) -> None:
+        """Register an additional remote record kind (e.g. ``"walkthrough"``)."""
+        with self._lock:
+            self._extra_record_kinds[kind] = handler
+            if self._records is not None:
+                self._records.kinds[kind] = handler
+        self._notify("state")
+
+    def register_invite_server(self, server) -> None:
+        """Attach an optional host invite server managed on shutdown."""
+        with self._lock:
+            self._invite_server = server
+        self._notify("state")
+
+    def record_kinds(self) -> Tuple[str, ...]:
+        """Record kind ids offered by this host, without forcing disk initialization."""
+        with self._lock:
+            if self._records is not None:
+                return tuple(self._records.kinds)
+            return tuple(dict.fromkeys(("dictation", "meeting", *self._extra_record_kinds)))
 
     # ---- records paired computers keep here ----
 
@@ -454,7 +543,11 @@ class RemoteEngineService:
 
                 self._records = HostRecordStore(
                     self._records_root or user_data_path("remote_records"),
-                    {"dictation": DictationRecords(), "meeting": MeetingRecords()},
+                    {
+                        "dictation": DictationRecords(),
+                        "meeting": MeetingRecords(),
+                        **self._extra_record_kinds,
+                    },
                 )
             return self._records
 
@@ -521,6 +614,54 @@ class RemoteEngineService:
         from services.settings import SettingsKey, settings_manager
 
         settings_manager.save_setting(SettingsKey.REMOTE_HOST_MANAGE_MCP, bool(enabled))
+        self._notify("state")
+
+    def set_text_cleanup(self, enabled: bool) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_TEXT_CLEANUP, bool(enabled))
+        self._notify("state")
+
+    def set_fast_judgments(self, enabled: bool) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_FAST_JUDGMENTS, bool(enabled))
+        self._notify("state")
+
+    def set_walkthrough_writeup(self, enabled: bool) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_WALKTHROUGH_WRITEUP, bool(enabled))
+        self._notify("state")
+
+    def set_meeting_ai(self, enabled: bool) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_MEETING_AI, bool(enabled))
+        self._notify("state")
+
+    def set_agent_ask(self, enabled: bool) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_AGENT_ASK, bool(enabled))
+        self._notify("state")
+
+    def set_invite_enabled(self, enabled: bool) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_INVITE_ENABLED, bool(enabled))
+        self._notify("state")
+
+    def set_invite_port(self, port: int) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_INVITE_PORT, int(port))
+        self._notify("state")
+
+    def set_invite_cache(self, enabled: bool) -> None:
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_HOST_INVITE_CACHE, bool(enabled))
         self._notify("state")
 
     def mcp_request(self, op: str, header: dict, device_name: str) -> dict:
@@ -718,6 +859,16 @@ class RemoteEngineService:
         if remote_settings.host_manages_mcp():
             grants.append("manage MCP here, including the access token that reads every "
                           "saved dictation and meeting")
+        if remote_settings.host_text_cleanup():
+            grants.append("use this computer's AI cleanup and text rewrites")
+        if remote_settings.host_fast_judgments():
+            grants.append("run fast judgments here")
+        if remote_settings.host_walkthrough_writeup():
+            grants.append("run walkthrough AI write-ups here")
+        if remote_settings.host_meeting_ai():
+            grants.append("use meeting AI and speaker identification here")
+        if remote_settings.host_agent_ask():
+            grants.append("ask this computer's coding agents quick questions")
         return grants
 
     def answer_pair_request(self, request_id: str, allow: bool) -> bool:
@@ -904,6 +1055,14 @@ class RemoteEngineService:
             "model_management": remote_settings.host_model_management(),
             "keep_records": remote_settings.host_keeps_records(),
             "manage_mcp": remote_settings.host_manages_mcp(),
+            "text_cleanup": remote_settings.host_text_cleanup(),
+            "fast_judgments": remote_settings.host_fast_judgments(),
+            "walkthrough_writeup": remote_settings.host_walkthrough_writeup(),
+            "meeting_ai": remote_settings.host_meeting_ai(),
+            "agent_ask": remote_settings.host_agent_ask(),
+            "invite_enabled": remote_settings.host_invite_enabled(),
+            "invite_port": remote_settings.host_invite_port(),
+            "invite_cache": remote_settings.host_invite_cache(),
             "pair_request": host.pending_request() if running else None,
             # Why other computers may not reach this one (reachability.Note).
             "notes": [],
@@ -927,9 +1086,21 @@ class RemoteEngineService:
         with self._apply_lock:
             with self._lock:
                 host = self._host
+                ai_services = self._ai_services
+                invite_server = self._invite_server
                 self._pending_pairing = None
             if host is not None:
                 host.stop()
+            if ai_services is not None:
+                try:
+                    ai_services.shutdown()
+                except Exception:
+                    logger.debug("Host AI services shutdown raised", exc_info=True)
+            if invite_server is not None and hasattr(invite_server, "stop"):
+                try:
+                    invite_server.stop()
+                except Exception:
+                    logger.debug("Host invite server shutdown raised", exc_info=True)
 
     def start_client_history(self):
         if self._history_client is None:
@@ -992,6 +1163,9 @@ class RemoteEngineService:
                 self._pending_pairing = None
         if self._history_client is not None:
             self._history_client.refresh()
+        from services.remote_asr.ai_client import reset_ai_connection_pool
+
+        reset_ai_connection_pool()
         logger.info("Paired with remote engine host %s at %s (%s)",
                     pairing.host_name, pairing.address, pairing.via)
         self._notify("client")
@@ -1117,6 +1291,9 @@ class RemoteEngineService:
             remote_settings.forget_client_pairing()
         if self._history_client is not None:
             self._history_client.refresh()
+        from services.remote_asr.ai_client import reset_ai_connection_pool
+
+        reset_ai_connection_pool()
         self._notify("client")
         if self.on_client_changed is not None:
             self.on_client_changed()

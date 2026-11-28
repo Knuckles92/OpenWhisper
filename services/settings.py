@@ -301,6 +301,8 @@ class TranscriptCleanupProvider:
     OPENCODE_CLI: Final[str] = "opencode_cli"
     INSTALLED: Final[Tuple[str, ...]] = (CLAUDE_CODE, CODEX, OPENCODE_CLI)
 
+    REMOTE_HOST: Final[str] = "remote_host"
+
     ALL: Final[Tuple[str, ...]] = (
         OPENAI, OPENROUTER, OLLAMA, LM_STUDIO, VLLM, LLAMA_CPP, LOCALAI,
         GROQ, OPENCODE_GO, OPENCODE_ZEN,
@@ -381,9 +383,10 @@ class MeetingAgentCore:
     CODEX: Final[str] = "codex"              # Installed Codex CLI, headless
     OPENCODE: Final[str] = "opencode"      # Packaged OpenCode SDK; preserves saved settings
     OPENCODE_CLI: Final[str] = "opencode_cli"  # Installed OpenCode, over ACP
+    REMOTE_HOST: Final[str] = "remote_host"    # Delegated to paired OpenWhisper host
 
     INSTALLED: Final[Tuple[str, ...]] = (CLAUDE_CODE, CODEX, OPENCODE_CLI)
-    ALL: Final[Tuple[str, ...]] = (PI, OPENCODE, *INSTALLED)
+    ALL: Final[Tuple[str, ...]] = (PI, OPENCODE, *INSTALLED, REMOTE_HOST)
 
 
 class TypeSafeProvider:
@@ -393,13 +396,17 @@ class TypeSafeProvider:
     pays for it and in whether OpenRouter sits between this computer and
     TypeSafe. The third asks the same questions of a text model the user
     already set up (``SettingsKey.TYPESAFE_TEXT_MODEL`` says which), which
-    may run on this computer.
+    may run on this computer. ``REMOTE_HOST`` delegates to a paired host.
     """
     TYPESAFE: Final[str] = "typesafe"      # api.typesafe.ai with TYPESAFE_API_KEY
     OPENROUTER: Final[str] = "openrouter"  # openrouter.ai with OPENROUTER_API_KEY
     TEXT_MODEL: Final[str] = "text_model"  # a services.text_llm profile and model
+    REMOTE_HOST: Final[str] = "remote_host"  # paired OpenWhisper host
 
+    #: Routes shown in the local Fast judgments segmented bar.
     ALL: Final[Tuple[str, ...]] = (TYPESAFE, OPENROUTER, TEXT_MODEL)
+    #: Every valid saved value for ``SettingsKey.TYPESAFE_PROVIDER``.
+    ALL_WITH_REMOTE: Final[Tuple[str, ...]] = (TYPESAFE, OPENROUTER, TEXT_MODEL, REMOTE_HOST)
 
 
 class TypeSafeTextModel:
@@ -415,8 +422,9 @@ class MeetingSpeakerIdBackend:
     OFF: Final[str] = "off"        # Me / Others channel labels only
     LOCAL: Final[str] = "local"    # On-device WeSpeaker clustering
     OPENAI: Final[str] = "openai"  # Post-meeting gpt-4o-transcribe-diarize, until 2027-02-26
+    REMOTE_HOST: Final[str] = "remote_host"  # Paired host WeSpeaker embeddings
 
-    ALL: Final[Tuple[str, ...]] = (OFF, LOCAL, OPENAI)
+    ALL: Final[Tuple[str, ...]] = (OFF, LOCAL, OPENAI, REMOTE_HOST)
 
 
 class MeetingLanguage:
@@ -503,6 +511,7 @@ _LEGACY_BACKENDS: Final[Dict[str, str]] = {name: "api" for name in LEGACY_API_MO
 #: The servers' own defaults, repeated here because their modules import this one.
 MCP_DEFAULT_PORT: Final[int] = 8767
 REMOTE_HOST_DEFAULT_PORT: Final[int] = 47821
+REMOTE_HOST_INVITE_DEFAULT_PORT: Final[int] = 47822
 WALKTHROUGH_CAPTURE_DELAYS: Final[Tuple[int, ...]] = (0, 1, 2, 3, 5, 10)
 
 
@@ -811,6 +820,35 @@ class SettingsKey:
     REMOTE_HOST_MANAGE_MCP: Final = BoolSetting(
         "remote_host_manage_mcp", False, in_table=False,
     )
+    # Host opt-ins for host-facilitated AI services (off by default).
+    REMOTE_HOST_TEXT_CLEANUP: Final = BoolSetting(
+        "remote_host_text_cleanup", False, in_table=False,
+    )
+    REMOTE_HOST_FAST_JUDGMENTS: Final = BoolSetting(
+        "remote_host_fast_judgments", False, in_table=False,
+    )
+    REMOTE_HOST_WALKTHROUGH_WRITEUP: Final = BoolSetting(
+        "remote_host_walkthrough_writeup", False, in_table=False,
+    )
+    REMOTE_HOST_MEETING_AI: Final = BoolSetting(
+        "remote_host_meeting_ai", False, in_table=False,
+    )
+    REMOTE_HOST_AGENT_ASK: Final = BoolSetting(
+        "remote_host_agent_ask", False, in_table=False,
+    )
+    # Host opt-ins for LAN client invite page and optional installer cache.
+    REMOTE_HOST_INVITE_ENABLED: Final = BoolSetting(
+        "remote_host_invite_enabled", False, in_table=False,
+    )
+    REMOTE_HOST_INVITE_PORT: Final = IntSetting(
+        "remote_host_invite_port",
+        REMOTE_HOST_INVITE_DEFAULT_PORT,
+        valid=(1, 65535),
+        in_table=False,
+    )
+    REMOTE_HOST_INVITE_CACHE: Final = BoolSetting(
+        "remote_host_invite_cache", False, in_table=False,
+    )
     # Client: where this computer's records are kept while paired:
     # "local" (default), "host" (moved there), or "both" (copied there).
     REMOTE_RECORDS_LOCATION: Final = ChoiceSetting(
@@ -828,7 +866,9 @@ class SettingsKey:
     # OpenRouter with the OpenRouter key, or one of the user's own text
     # models (see TypeSafeProvider).
     TYPESAFE_PROVIDER: Final = ChoiceSetting(
-        "typesafe_provider", TypeSafeProvider.TYPESAFE, TypeSafeProvider.ALL,
+        "typesafe_provider",
+        TypeSafeProvider.TYPESAFE,
+        TypeSafeProvider.ALL_WITH_REMOTE,
     )
     # Which text model answers on the text-model route (TypeSafeTextModel).
     TYPESAFE_TEXT_MODEL: Final = ChoiceSetting(
@@ -997,7 +1037,9 @@ class SettingsKey:
     # the default instructions; see services/walkthrough/write_up.py).
     WALKTHROUGH_WRITE_UP: Final = BoolSetting("walkthrough_write_up", False)
     WALKTHROUGH_WRITE_UP_AGENT: Final = ChoiceSetting(
-        "walkthrough_write_up_agent", MeetingAgentCore.CLAUDE_CODE, MeetingAgentCore.INSTALLED,
+        "walkthrough_write_up_agent",
+        MeetingAgentCore.CLAUDE_CODE,
+        (*MeetingAgentCore.INSTALLED, MeetingAgentCore.REMOTE_HOST),
     )
     WALKTHROUGH_WRITE_UP_INSTRUCTIONS: Final = StrSetting(
         "walkthrough_write_up_instructions", "", normalize=str.strip,
@@ -1771,7 +1813,7 @@ def _known_text_llm_profile_ids(
 
 def default_transcript_cleanup_model(provider: str) -> str:
     """Return the provider default; custom endpoints have no default."""
-    if provider in TranscriptCleanupProvider.INSTALLED:
+    if provider in (*TranscriptCleanupProvider.INSTALLED, TranscriptCleanupProvider.REMOTE_HOST):
         return ""
     try:
         from services.text_llm import default_model_for_profile, get_profile
@@ -1803,6 +1845,9 @@ def _resolve_text_llm_assignment(
 
     provider = SETTINGS_BY_KEY[provider_key].stored(settings)
     model = SETTINGS_BY_KEY[model_key].stored(settings)
+    if (provider_key == SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER
+            and provider == TranscriptCleanupProvider.REMOTE_HOST):
+        return TranscriptCleanupProvider.REMOTE_HOST, model.strip() if isinstance(model, str) else ""
     if (provider_key == SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER
             and provider in TranscriptCleanupProvider.INSTALLED
             and isinstance(model, str)):
