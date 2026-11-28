@@ -1,9 +1,10 @@
 """Speech-to-text servers the API backend can upload audio to.
 
-Every endpoint speaks OpenAI's ``POST /audio/transcriptions``. OpenAI stays
-the default and keeps its own model list, hint fields and retirement dates;
-the rest are presets for servers with a standard address (each one editable)
-plus one Custom slot for anything else.
+Most endpoints speak OpenAI's ``POST /audio/transcriptions``; AssemblyAI uses
+its Dictation API (``POST /v1/transcribe``). OpenAI stays the default and keeps
+its own model list, hint fields and retirement dates; the rest are presets for
+hosted or self-hosted servers (self-hosted ones editable) plus one Custom slot
+for anything else.
 
 The connection half of an endpoint is a ``TextLLMProfile``: the same named
 base URL and credential variable the text side uses, so the loopback test,
@@ -25,6 +26,7 @@ from config import config
 from services.settings import (
     SettingsKey,
     api_model_choices,
+    api_model_label,
     resolve_api_transcription_model,
     settings_manager,
 )
@@ -40,7 +42,14 @@ from services.text_llm import (
 logger = logging.getLogger(__name__)
 
 OPENAI_ENDPOINT_ID = "openai"
+ASSEMBLYAI_ENDPOINT_ID = "assemblyai"
 CUSTOM_ENDPOINT_ID = "custom"
+
+PROTOCOL_OPENAI = "openai"
+PROTOCOL_ASSEMBLYAI_DICTATION = "assemblyai_dictation"
+
+ASSEMBLYAI_CLEANED_MODEL = "cleaned"
+ASSEMBLYAI_VERBATIM_MODEL = "verbatim"
 
 #: Read timeout for one upload to a hosted service.
 HOSTED_TIMEOUT_S = 120.0
@@ -69,9 +78,13 @@ class SpeechEndpoint:
     #: when ``known_models`` already says what it serves.
     models_path: Optional[str] = "/models"
     known_models: Tuple[str, ...] = ()
+    #: Optional display labels for ``known_models`` as ``(id, label)`` pairs.
+    model_labels: Tuple[Tuple[str, str], ...] = ()
     #: ``language`` value that asks for detection, for a server that assumes
     #: one language when the field is absent.
     auto_language: str = ""
+    #: Wire protocol used to upload audio and parse responses.
+    protocol: str = PROTOCOL_OPENAI
 
     @property
     def id(self) -> str:
@@ -88,6 +101,10 @@ class SpeechEndpoint:
     @property
     def is_openai(self) -> bool:
         return self.id == OPENAI_ENDPOINT_ID
+
+    @property
+    def is_assemblyai(self) -> bool:
+        return self.protocol == PROTOCOL_ASSEMBLYAI_DICTATION
 
     @property
     def is_local(self) -> bool:
@@ -143,6 +160,22 @@ ENDPOINTS: Tuple[SpeechEndpoint, ...] = (
         "whisper-large-v3-turbo", hosted=True, models_path=None,
         known_models=("whisper-large-v3-turbo", "whisper-large-v3"),
         description="Open-weights Whisper models hosted by Groq. Needs a Groq API key.",
+    ),
+    _endpoint(
+        ASSEMBLYAI_ENDPOINT_ID, "AssemblyAI", "https://dictation.assemblyai.com/v1",
+        "ASSEMBLYAI_API_KEY", ASSEMBLYAI_CLEANED_MODEL,
+        hosted=True, models_path=None,
+        protocol=PROTOCOL_ASSEMBLYAI_DICTATION,
+        known_models=(ASSEMBLYAI_CLEANED_MODEL, ASSEMBLYAI_VERBATIM_MODEL),
+        model_labels=(
+            (ASSEMBLYAI_CLEANED_MODEL, "Cleaned (default)"),
+            (ASSEMBLYAI_VERBATIM_MODEL, "Verbatim"),
+        ),
+        description=(
+            "AssemblyAI's Dictation API: returns cleaned text (filler removed, "
+            "punctuation and self-corrections fixed) or the verbatim transcript. "
+            "Needs an AssemblyAI API key."
+        ),
     ),
     _endpoint(
         "speaches", "Speaches", "http://127.0.0.1:8000/v1", "",
@@ -239,7 +272,20 @@ def endpoint_model(
     if endpoint.is_openai:
         return resolve_api_transcription_model(settings)
     model = _overrides(settings, endpoint.id).get("model")
-    return model.strip() if isinstance(model, str) and model.strip() else endpoint.default_model
+    if isinstance(model, str) and model.strip():
+        chosen = model.strip()
+        if endpoint.configurable or not endpoint.known_models or chosen in endpoint.known_models:
+            return chosen
+    return endpoint.default_model
+
+
+def model_label(endpoint: SpeechEndpoint, model: str) -> str:
+    """Display label for ``model`` on ``endpoint``."""
+    if endpoint.is_openai:
+        return api_model_label(model)
+    if endpoint.model_labels:
+        return dict(endpoint.model_labels).get(model, model)
+    return model
 
 
 def selected_model(settings: Optional[Mapping[str, Any]] = None) -> str:
@@ -274,6 +320,14 @@ def save_model(endpoint_id: str, model: str) -> None:
             raise ValueError(f"OpenAI has no transcription model {model}.")
         settings_manager.save_setting(SettingsKey.API_TRANSCRIPTION_MODEL, model)
         return
+    endpoint = _BY_ID.get(endpoint_id)
+    if endpoint is None:
+        raise ValueError(f"{endpoint_id} has no server settings.")
+    if not endpoint.configurable:
+        if model not in endpoint.known_models:
+            raise ValueError(f"{endpoint.name} has no transcription model {model}.")
+        _write_server_entry(endpoint_id, {"model": model})
+        return
     _update_server(endpoint_id, {"model": model})
 
 
@@ -298,7 +352,10 @@ def save_server(endpoint_id: str, *, base_url: str, api_key_env: str, model: str
 def _update_server(endpoint_id: str, values: Dict[str, str]) -> None:
     if endpoint_id not in _BY_ID or not _BY_ID[endpoint_id].configurable:
         raise ValueError(f"{endpoint_id} has no server settings.")
+    _write_server_entry(endpoint_id, values)
 
+
+def _write_server_entry(endpoint_id: str, values: Dict[str, str]) -> None:
     def apply(settings: Dict[str, Any]) -> None:
         servers = dict(SettingsKey.API_TRANSCRIPTION_SERVERS.read(settings) or {})
         entry = servers.get(endpoint_id)

@@ -25,12 +25,18 @@ _HINT_REJECTIONS = frozenset({400, 422})
 def transcription_hints(endpoint: SpeechEndpoint, api_model: str, recognition) -> dict:
     """The hint fields ``api_model`` on ``endpoint`` takes for a RecognitionContext.
 
-    OpenAI's gpt-transcribe takes ``keywords`` and ``languages``; every other
+    OpenAI's gpt-transcribe takes ``keywords`` and ``languages``; AssemblyAI's
+    Dictation API takes ``keyterms_prompt`` and ``language_codes``; every other
     model, OpenAI's older ones and other servers' Whisper models alike, takes
     a ``prompt``, read as preceding text, and one ``language``. A server that
     assumes a language without the field is asked to detect it.
     """
-    from services.recognition_context import keywords, language_code, vocabulary_prompt
+    from services.recognition_context import (
+        assemblyai_keyterms,
+        keywords,
+        language_code,
+        vocabulary_prompt,
+    )
 
     phrases = recognition.phrases if recognition else ()
     language = language_code(recognition.language) if recognition else ""
@@ -41,6 +47,12 @@ def transcription_hints(endpoint: SpeechEndpoint, api_model: str, recognition) -
             hints["keywords"] = words
         if language:
             hints["languages"] = [language]
+    elif endpoint.is_assemblyai:
+        words = assemblyai_keyterms(phrases)
+        if words:
+            hints["keyterms_prompt"] = words
+        if language:
+            hints["language_codes"] = [language]
     else:
         prompt = vocabulary_prompt(phrases)
         if prompt:
@@ -100,13 +112,21 @@ class OpenAIBackend(TranscriptionBackend):
 
     @staticmethod
     def _connection(endpoint: SpeechEndpoint) -> tuple:
-        return (endpoint.base_url, speech_endpoints.api_key(endpoint), endpoint.timeout_s)
+        return (
+            endpoint.base_url,
+            speech_endpoints.api_key(endpoint),
+            endpoint.timeout_s,
+            endpoint.protocol,
+        )
 
     def _build_client(self, connection: tuple):
         from services.isolated import IsolatedOpenAIClient
 
-        base_url, api_key, timeout_s = connection
-        return IsolatedOpenAIClient(api_key=api_key, base_url=base_url, read_timeout=timeout_s)
+        base_url, api_key, timeout_s, protocol = connection
+        extra = {"protocol": protocol} if protocol != speech_endpoints.PROTOCOL_OPENAI else {}
+        return IsolatedOpenAIClient(
+            api_key=api_key, base_url=base_url, read_timeout=timeout_s, **extra,
+        )
 
     def prepare_client(self, endpoint: Optional[SpeechEndpoint] = None) -> None:
         """Build the client for ``endpoint`` (default: the selected one) if it isn't.
@@ -196,9 +216,10 @@ class OpenAIBackend(TranscriptionBackend):
             logger.warning(
                 "%s rejected a request with hints (HTTP %s: %d keywords, "
                 "%d prompt characters, language %s); retrying without them",
-                endpoint.name, status, len(hints.get("keywords", ())),
+                endpoint.name, status,
+                len(hints.get("keywords") or hints.get("keyterms_prompt") or ()),
                 len(hints.get("prompt", "")),
-                "set" if "language" in hints or "languages" in hints else "unset",
+                "set" if any(k in hints for k in ("language", "languages", "language_codes")) else "unset",
             )
             return self._request_transcript(audio_path, endpoint, api_model)
 

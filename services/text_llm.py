@@ -710,6 +710,29 @@ def verify_api_key(
     host = "api.openai.com"
     if profile.base_url:
         host = urlsplit(profile.base_url).hostname or "the endpoint"
+    if profile.kind == "assemblyai":
+        base = (profile.base_url or "https://dictation.assemblyai.com/v1").rstrip("/")
+        try:
+            # AssemblyAI Dictation authenticates with the raw key (no Bearer prefix)
+            # before validating the request body, so an empty POST distinguishes
+            # 401/403 auth failures from 400/415/422 missing-audio responses.
+            response = httpx.post(
+                f"{base}/transcribe",
+                headers={"Authorization": api_key},
+                timeout=timeout,
+            )
+        except httpx.RequestError:
+            return False, f"Couldn't reach {host}."
+        except Exception as exc:
+            logger.debug("Key verification failed: %s", type(exc).__name__)
+            return False, f"Verification failed ({type(exc).__name__})."
+        if response.status_code == 401:
+            return False, f"{host} rejected the key (HTTP 401)."
+        if response.status_code == 403:
+            return False, f"{host} accepted the key but denied access (HTTP 403)."
+        if response.status_code in (200, 400, 415, 422):
+            return True, f"{host} accepted the key."
+        return False, f"{host} answered HTTP {response.status_code}."
     try:
         client = create_openai_client(profile, timeout=timeout, api_key=api_key)
         try:

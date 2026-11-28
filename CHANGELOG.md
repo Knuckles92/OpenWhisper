@@ -7,6 +7,10 @@ Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2
 
 ## [Unreleased]
 
+### Added
+
+- **AssemblyAI Dictation API as a speech endpoint.** Choose **AssemblyAI** under the **API** engine to upload recordings to `https://dictation.assemblyai.com/v1/transcribe` using an `ASSEMBLYAI_API_KEY` (saved in **Settings → App → API keys** or via environment/`.env`). Pick **Cleaned (default)** to insert `llm_response` (falling back to `text` when null) or **Verbatim** to insert `text`. Dictionary terms and selected language are sent via the JSON `config` part (`keyterms_prompt` and `language_codes`). ([#129](https://github.com/Knuckles92/OpenWhisper/issues/129))
+
 ## [2.9.0] - 2026-11-25
 
 ### Added

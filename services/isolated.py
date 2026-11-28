@@ -183,10 +183,11 @@ class IsolatedOpenAIClient:
     one starts its own, as every upload used to.
     """
 
-    def __init__(self, api_key, base_url=None, read_timeout=120.):
+    def __init__(self, api_key, base_url=None, read_timeout=120., protocol="openai"):
         self._api_key = api_key
         self._base_url = base_url
         self._read_timeout = read_timeout
+        self._protocol = protocol
         self._lock = threading.Lock()
         self._closed = False
         self._workers = set()
@@ -207,6 +208,8 @@ class IsolatedOpenAIClient:
         and waits. One that no upload takes is closed after
         ``STANDBY_IDLE_S``.
         """
+        if self._protocol != "openai":
+            return
         with self._lock:
             if self._closed:
                 return
@@ -281,18 +284,27 @@ class IsolatedOpenAIClient:
         return worker
 
     def create(self, *, model, file, response_format, prompt=None, language=None,
-               languages=None, keywords=None):
-        hints = {name: value for name, value in (
-            ("prompt", prompt), ("language", language),
-            ("languages", languages), ("keywords", keywords),
-        ) if value}
+               languages=None, keywords=None, keyterms_prompt=None, language_codes=None):
+        if self._protocol == "assemblyai_dictation":
+            hints = {name: value for name, value in (
+                ("keyterms_prompt", keyterms_prompt),
+                ("language_codes", language_codes),
+            ) if value}
+            op = "assemblyai_transcribe"
+            extra = {}
+        else:
+            hints = {name: value for name, value in (
+                ("prompt", prompt), ("language", language),
+                ("languages", languages), ("keywords", keywords),
+            ) if value}
+            op = "openai_transcribe"
+            extra = {"response_format": response_format}
         worker = self._upload_worker()
         try:
-            return worker.request("openai_transcribe", api_key=self._api_key,
+            return worker.request(op, api_key=self._api_key,
                                   base_url=self._base_url, read_timeout=self._read_timeout,
                                   audio_path=os.path.abspath(file.name), model=model,
-                                  response_format=response_format,
-                                  timeout=self._read_timeout + 60., **hints)["text"]
+                                  timeout=self._read_timeout + 60., **extra, **hints)["text"]
         finally:
             worker.close()
             with self._lock:
