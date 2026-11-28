@@ -75,6 +75,7 @@ AGENT_ACTIVITY_MIN_INTERVAL_S = 1.0
 DIARIZATION_OFF = "Speaker identification is off in Settings."
 DIARIZATION_NO_MODEL = "No speaker model is installed."
 DIARIZATION_LOAD_FAILED = "The speaker model could not load on this computer."
+DIARIZATION_REMOTE_UNAVAILABLE = "Speaker identification on the paired host is unavailable."
 DIARIZATION_DEGRADED = "Speaker separation stopped working during the meeting."
 DIARIZATION_DEMO = "The demo meeting uses channel labels."
 
@@ -113,7 +114,7 @@ class MeetingEngineOptions:
     #: Resolve/download a missing embedding model on the processing worker.
     #: It raises with a sentence for the user when no model can be had.
     diarization_model_resolver: Optional[Callable[[], Optional[str]]] = None
-    speaker_id_backend: str = 'local'  # 'off' | 'local' | 'openai'
+    speaker_id_backend: str = 'local'  # 'off' | 'local' | 'openai' | 'remote_host'
     speaker_id_audio_consent: bool = False
     server_bind: str = 'localhost'    # 'localhost' | 'lan'
     server_port: int = 0
@@ -1088,6 +1089,7 @@ class MeetingEngine:
                 logger.exception("Scheduler stop failed")
             self._scheduler = None
         self._shutdown_agent_core()
+        self._close_diarizer_embedder(self._diarizer)
         if self.store and self.store.snapshot().get("insight_review", {}).get("enabled"):
             from meeting.insight_review import start_review
             start_review(self.store, self.repository)
@@ -1327,6 +1329,7 @@ class MeetingEngine:
             except Exception:
                 logger.exception("Meeting web server stop failed")
         self._shutdown_agent_core()
+        self._close_diarizer_embedder(self._diarizer)
         processing = self._processing_thread
         if (processing is not None and processing is not threading.current_thread()
                 and processing.is_alive()):
@@ -1779,6 +1782,33 @@ class MeetingEngine:
             self._disable_diarizer()
             return
         self._degraded_diarization = False
+
+        if self.options.speaker_id_backend == "remote_host":
+            diarizer, reason = self._create_remote_diarizer()
+            if self._processing_stop.is_set():
+                self._close_diarizer_embedder(diarizer)
+                return
+            available = self._prepare_diarizer(diarizer)
+            if not available:
+                self._close_diarizer_embedder(diarizer)
+                reason = reason or DIARIZATION_REMOTE_UNAVAILABLE
+            self._adopt_diarizer(diarizer if available else None, available, reason)
+            return
+
+        # Automatic fallback when onnxruntime is absent (e.g. Client-Only build)
+        # and a paired host advertises speaker_diarization.
+        if not self._has_onnxruntime():
+            remote_diarizer = self._try_remote_diarizer_fallback()
+            if remote_diarizer is not None:
+                if self._processing_stop.is_set():
+                    self._close_diarizer_embedder(remote_diarizer)
+                    return
+                available = self._prepare_diarizer(remote_diarizer)
+                if available:
+                    self._adopt_diarizer(remote_diarizer, True, "")
+                    return
+                self._close_diarizer_embedder(remote_diarizer)
+
         try:
             self._resolve_diarization_model()
         except Exception as exc:
@@ -1794,11 +1824,15 @@ class MeetingEngine:
             reason = (DIARIZATION_LOAD_FAILED
                       if self.options.diarization_model_path
                       else DIARIZATION_NO_MODEL)
+        self._adopt_diarizer(diarizer if available else None, available, reason)
+
+    def _adopt_diarizer(self, diarizer: Any, available: bool, reason: str) -> None:
         # Availability probes and callback registration can block. End may
         # have claimed the meeting while either ran; adoption and its status
         # write must be one guarded transition after those calls finish.
         with self._lifecycle_lock:
             if self._processing_stop.is_set():
+                self._close_diarizer_embedder(diarizer)
                 return
             self._diarizer = diarizer if available else None
             if not available:
@@ -1808,6 +1842,53 @@ class MeetingEngine:
                     diarization_available=available, diarization_reason=reason,
                 )
         self._emit_status()
+
+    @staticmethod
+    def _has_onnxruntime() -> bool:
+        try:
+            import onnxruntime  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    @staticmethod
+    def _close_diarizer_embedder(diarizer: Any) -> None:
+        embedder = getattr(diarizer, "_embedder", None) if diarizer is not None else None
+        close = getattr(embedder, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                logger.debug("Closing diarizer embedder raised", exc_info=True)
+
+    def _create_remote_diarizer(self) -> tuple[Any, str]:
+        try:
+            from meeting.diarize.clustering import OnlineDiarizer
+            from meeting.diarize.embedder import EmbedderUnavailable, RemoteSpeakerEmbedder
+
+            embedder = RemoteSpeakerEmbedder()
+            return OnlineDiarizer(
+                embedder, self.store, self.repository, self.meeting_id,
+            ), ""
+        except EmbedderUnavailable as exc:
+            logger.warning("Remote speaker diarizer unavailable: %s", exc)
+            return None, str(exc) or DIARIZATION_REMOTE_UNAVAILABLE
+        except Exception as exc:
+            logger.exception("Remote speaker diarizer failed to initialize")
+            return None, str(exc) or DIARIZATION_REMOTE_UNAVAILABLE
+
+    def _try_remote_diarizer_fallback(self) -> Any:
+        try:
+            from services.remote_asr.meeting_client import remote_speaker_diarization_available
+
+            if not remote_speaker_diarization_available():
+                return None
+        except Exception:
+            return None
+        diarizer, _reason = self._create_remote_diarizer()
+        if diarizer is not None:
+            logger.info("Using paired host speaker diarization (onnxruntime not installed locally)")
+        return diarizer
 
     def _create_diarizer(self) -> Any:
         try:
