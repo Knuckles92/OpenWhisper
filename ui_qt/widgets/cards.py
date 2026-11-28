@@ -1,7 +1,6 @@
 """Reusable card containers."""
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
 
 from ui_qt.widgets.collapsible_header import CollapsibleSectionToggle
 from ui_qt.utils.collapse_animation import (

@@ -79,14 +79,22 @@ class LocalSpeechBackend(TranscriptionBackend):
             self.model_name = model_name
         else:
             if initial_settings is None:
-                from services.settings import SettingsKey, settings_manager
-                initial_settings = settings_manager.load_settings((SettingsKey.LOCAL_ASR_MODELS,))
+                from services.settings import SettingsKey
+                initial_settings = self._read_settings((SettingsKey.LOCAL_ASR_MODELS,))
             self.model_name = selected_model(backend, initial_settings)
 
     @staticmethod
-    def _settings():
+    def _default_settings():
         from services.settings import settings_manager
         return settings_manager.load_all_settings()
+
+    _settings = _default_settings
+
+    def _read_settings(self, keys):
+        if self._settings is LocalSpeechBackend._default_settings:
+            from services.settings import settings_manager
+            return settings_manager.load_settings(keys)
+        return self._settings()
 
     @property
     def name(self):
@@ -351,12 +359,12 @@ class LocalSpeechBackend(TranscriptionBackend):
     def request_language(self) -> str:
         """The language a request made without one asks the worker for."""
         from services.local_asr.languages import selected_language
-        from services.settings import SettingsKey, settings_manager
+        from services.settings import SettingsKey
 
         return selected_language(
             self.backend_id,
             SettingsKey.LOCAL_ASR_LANGUAGE.read(
-                settings_manager.load_settings((SettingsKey.LOCAL_ASR_LANGUAGE,))
+                self._read_settings((SettingsKey.LOCAL_ASR_LANGUAGE,))
             ),
             model_name=self.model_name,
         )

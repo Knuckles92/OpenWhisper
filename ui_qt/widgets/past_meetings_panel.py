@@ -19,7 +19,7 @@ from services import annotations as record_annotations
 from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.file_reveal import open_folder_in_file_manager
 from ui_qt.utils.font_scale import apply_scaled_font
-from ui_qt.utils.list_reconcile import MeetingDelivery, reconcile_cards
+from ui_qt.utils.list_reconcile import reconcile_cards
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.widgets.context_menu import context_menu
 from ui_qt.widgets.history_calendar import CalendarGlyphButton

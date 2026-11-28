@@ -22,7 +22,7 @@ from PyQt6.QtCore import (
     QRectF,
     QTimer,
 )
-from PyQt6.QtGui import QFont, QPainter, QPen
+from PyQt6.QtGui import QPainter, QPen
 
 from ui_qt.utils.palette import token_color
 from ui_qt.utils.restyle import set_style_property

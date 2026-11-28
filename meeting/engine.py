@@ -32,7 +32,7 @@ from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 from meeting.capture_session import FailureLog, MeetingCapture, where_it_failed
 from meeting.clock import MeetingClock
 from meeting.end_run import EndRun
-from meeting.finalization import POLISH_TIMEOUT_S, speaker_pass_gate
+from meeting.finalization import speaker_pass_gate
 from meeting.interfaces import (
     CHANNEL_LOOPBACK,
     CHANNEL_MIC,

@@ -8,7 +8,6 @@ from PyQt6.QtWidgets import (
     QButtonGroup, QPushButton, QScrollArea, QLabel,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QFont
 
 from config import config
 from services.settings import (

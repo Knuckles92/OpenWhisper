@@ -10,7 +10,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
-import pytest
 
 
 def test_app_control_list_models_populates_whisper_models(monkeypatch):
@@ -304,7 +303,7 @@ def test_database_v20_indexes_on_fresh_and_migrated_db(tmp_path):
 
 
 def test_settings_save_repopulates_cache_and_hot_callers_avoid_load_all(tmp_path, monkeypatch):
-    from services.settings import SettingsKey, SettingsManager, settings_manager
+    from services.settings import SettingsManager, settings_manager
     from transcriber.optional_backend import LocalSpeechBackend
     from transcriber.openai_backend import OpenAIBackend
 

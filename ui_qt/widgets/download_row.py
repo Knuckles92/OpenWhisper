@@ -8,7 +8,6 @@ keeps its own object names, so the stylesheet is built per row from
 :func:`row_style`.
 """
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QAbstractButton, QFrame
 
 from ui_qt.widgets.buttons import Button

@@ -17,7 +17,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QRect, QRectF, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QImage, QImageReader, QPainter, QPainterPath, QPixmap
+from PyQt6.QtGui import QImage, QImageReader, QPainter, QPainterPath, QPixmap
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,

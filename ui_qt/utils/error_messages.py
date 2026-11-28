@@ -78,7 +78,8 @@ def friendly_error_message(
             return "Permission denied. Check file permissions and try again."
         if err_no == errno.ENOENT:
             return "The file or folder could not be found."
-        return fallback
+        if err_no is not None:
+            return fallback
 
     raw = str(exc).strip()
     if not raw:

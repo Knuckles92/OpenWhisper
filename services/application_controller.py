@@ -660,13 +660,16 @@ class ApplicationController(QObject):
                 # A remote engine's weights are on the host, so closing its
                 # connection would free nothing here.
                 if getattr(backend, "model", None) is not None and not getattr(backend, "is_remote", False):
+                    # Mark leased before cleanup() wakes any in-flight warmup
+                    # thread; otherwise _finish_speech_reload() can run first
+                    # and mistake the leased unload for a missing runtime.
+                    self._engine_released_for_lease = True
                     backend.cleanup()
                     released = True
             preview = getattr(self, "_streaming_backend", None)
             if preview is not None:
                 self.streaming_runtime.cleanup()
                 self._pending_streaming_setup = True
-            self._engine_released_for_lease = self._engine_released_for_lease or released
             if released:
                 self.device_info_update.emit("Released while Meeting Mode runs", False)
             return released
