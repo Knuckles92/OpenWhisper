@@ -1,7 +1,7 @@
-pkgname = openwhisper
-pkgbase = openwhisper
+pkgname = @PKGNAME@
+pkgbase = @PKGNAME@
 pkgver = @VERSION@-1
-pkgdesc = Private, local-first speech-to-text desktop application
+pkgdesc = @PKGDESC@
 url = https://openwhisper.fiorilabs.tech
 builddate = @BUILDDATE@
 packager = Fiori Labs <support@fiorilabs.tech>
@@ -10,7 +10,9 @@ arch = x86_64
 license = MIT
 license = GPL-3.0-only
 license = LGPL-3.0-only
-depend = glibc>=@GLIBC_MIN@
+conflict = @CONFLICT@
+replaces = @CONFLICT@
+@EXTRA_PKGINFO_FIELDS@depend = glibc>=@GLIBC_MIN@
 depend = libdrm
 depend = libegl
 depend = libgl

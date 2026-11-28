@@ -51,14 +51,19 @@ def candidate_identity(directory: Path):
     expected = {
         f"OpenWhisper-Setup-{version}.exe",
         f"OpenWhisper-AllInOne-Setup-{version}.exe",
+        f"OpenWhisper-Client-Setup-{version}.exe",
         f"OpenWhisper-{version}-linux-amd64.deb",
         f"OpenWhisper-AllInOne-{version}-linux-amd64.deb",
+        f"OpenWhisper-Client-{version}-linux-amd64.deb",
         f"OpenWhisper-{version}-linux-x86_64.pkg.tar.zst",
         f"OpenWhisper-AllInOne-{version}-linux-x86_64.pkg.tar.zst",
+        f"OpenWhisper-Client-{version}-linux-x86_64.pkg.tar.zst",
         f"OpenWhisper-{version}-macos-arm64.dmg",
+        f"OpenWhisper-Client-{version}-macos-arm64.dmg",
     }
     if not metadata["windows_setup_only"]:
         expected.add(f"OpenWhisper-{version}-win64.tar.xz")
+        expected.add(f"OpenWhisper-Client-{version}-win64.tar.xz")
     _require(set(hashes) == expected | {"BUILD-METADATA.json"}, "Candidate artifact inventory is incomplete or unexpected")
     _require({p.name for p in directory.iterdir()} == set(hashes) | {"SHA256SUMS.txt"},
              "Candidate directory contains unverified files")
@@ -88,8 +93,14 @@ def validate_draft_assets(directory: Path, release, *, uploaded=False):
             _require(actual[name] == "sha256:" + _sha256(path), f"Uploaded asset checksum mismatch: {name}")
     else:
         metadata = json.loads((directory / "BUILD-METADATA.json").read_text(encoding="utf-8"))
-        removable = ({f"OpenWhisper-{metadata['version']}-win64.tar.xz"}
-                     if metadata["windows_setup_only"] else set())
+        removable = (
+            {
+                f"OpenWhisper-{metadata['version']}-win64.tar.xz",
+                f"OpenWhisper-Client-{metadata['version']}-win64.tar.xz",
+            }
+            if metadata["windows_setup_only"]
+            else set()
+        )
         _require(set(actual) <= set(expected) | removable,
                  "Draft contains unrelated assets; clean up the draft before uploading this candidate")
 

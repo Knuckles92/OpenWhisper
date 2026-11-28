@@ -1,4 +1,4 @@
-Package: openwhisper
+Package: @PACKAGE@
 Version: @VERSION@
 Section: sound
 Priority: optional
@@ -7,8 +7,8 @@ Maintainer: Fiori Labs <support@fiorilabs.tech>
 Homepage: https://openwhisper.fiorilabs.tech
 Depends: libc6 (>= @GLIBC_MIN@), libdrm2, libegl1, libgl1, libportaudio2, libvulkan1, libwayland-client0, libwayland-cursor0, libwayland-egl1, libxcb-cursor0, libxcb-icccm4, libxcb-keysyms1, libxcb-shape0, libxcb-xkb1, libxkbcommon-x11-0
 Recommends: gnome-keyring, pulseaudio-utils
-Installed-Size: @INSTALLED_SIZE@
-Description: Private, local-first speech-to-text desktop application
- OpenWhisper records microphone audio and transcribes it with local Whisper
- models or configured cloud APIs. It includes global hotkeys, auto-paste,
- transcription history, and a PyQt6 desktop interface.
+Conflicts: @CONFLICTS@
+Replaces: @REPLACES@
+@EXTRA_CONTROL_FIELDS@Installed-Size: @INSTALLED_SIZE@
+Description: @DESCRIPTION_SUMMARY@
+@DESCRIPTION_BODY@

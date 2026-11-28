@@ -18,12 +18,17 @@ def candidate(tmp_path):
     names = [
         "OpenWhisper-Setup-2.6.15.exe",
         "OpenWhisper-AllInOne-Setup-2.6.15.exe",
+        "OpenWhisper-Client-Setup-2.6.15.exe",
         "OpenWhisper-2.6.15-linux-amd64.deb",
         "OpenWhisper-AllInOne-2.6.15-linux-amd64.deb",
+        "OpenWhisper-Client-2.6.15-linux-amd64.deb",
         "OpenWhisper-2.6.15-linux-x86_64.pkg.tar.zst",
         "OpenWhisper-AllInOne-2.6.15-linux-x86_64.pkg.tar.zst",
+        "OpenWhisper-Client-2.6.15-linux-x86_64.pkg.tar.zst",
         "OpenWhisper-2.6.15-macos-arm64.dmg",
+        "OpenWhisper-Client-2.6.15-macos-arm64.dmg",
         "OpenWhisper-2.6.15-win64.tar.xz",
+        "OpenWhisper-Client-2.6.15-win64.tar.xz",
     ]
     for name in names:
         (tmp_path / name).write_bytes(b"candidate fixture")
@@ -84,8 +89,12 @@ def test_setup_only_draft_allows_removing_only_its_current_native_archive(candid
     metadata["windows_setup_only"] = True
     (directory / "BUILD-METADATA.json").write_text(json.dumps(metadata), encoding="utf-8")
     archive = f"OpenWhisper-{metadata['version']}-win64.tar.xz"
+    client_archive = f"OpenWhisper-Client-{metadata['version']}-win64.tar.xz"
     (directory / archive).unlink()
-    validate_draft_assets(directory, {"assets": [{"name": archive}]})
+    (directory / client_archive).unlink()
+    validate_draft_assets(
+        directory, {"assets": [{"name": archive}, {"name": client_archive}]}
+    )
     with pytest.raises(ValueError, match="unrelated"):
         validate_draft_assets(directory, {"assets": [{"name": "OpenWhisper-2.6.14-win64.tar.xz"}]})
 

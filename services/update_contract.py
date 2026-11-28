@@ -29,8 +29,17 @@ TOPOLOGY_REVISION: Final[int] = 1
 ARCHITECTURE: Final[str] = "win-x64"
 MINIMUM_UPDATER_VERSION: Final[str] = "2.5.2"
 
+EDITION_FULL: Final[str] = "full"
+EDITION_CLIENT: Final[str] = "client"
+VALID_EDITIONS: Final[Tuple[str, ...]] = (EDITION_FULL, EDITION_CLIENT)
+EDITION_MANIFEST_NAME: Final[str] = "edition.json"
+EDITION_ENV_VAR: Final[str] = "OPENWHISPER_EDITION"
+
 SETUP_NAME_PREFIX: Final[str] = "OpenWhisper-Setup-"
+CLIENT_APP_PREFIX: Final[str] = "OpenWhisper-Client"
+CLIENT_SETUP_NAME_PREFIX: Final[str] = "OpenWhisper-Client-Setup-"
 ARCHIVE_NAME_SUFFIX: Final[str] = "-win64.tar.xz"
+MACOS_DMG_NAME_SUFFIX: Final[str] = "-macos-arm64.dmg"
 
 UPDATES_DIRNAME: Final[str] = "updates"
 TRANSACTIONS_DIRNAME: Final[str] = "tx"
@@ -126,14 +135,40 @@ def is_setup_bridge_release(version: str) -> bool:
     return parse_strict_version(version) <= parse_strict_version(MINIMUM_UPDATER_VERSION)
 
 
-def setup_asset_name(version: str) -> str:
-    """Return the exact GitHub setup exe filename for ``version``."""
-    return f"{SETUP_NAME_PREFIX}{normalize_version(version)}.exe"
+def normalize_edition(edition: Optional[str] = None) -> str:
+    """Return ``"full"`` or ``"client"``, defaulting ``None`` to ``"full"``."""
+    if edition is None:
+        return EDITION_FULL
+    if not isinstance(edition, str):
+        raise ValueError(f"Unsupported OpenWhisper edition: {edition!r}")
+    normalized = edition.strip().lower()
+    if normalized in VALID_EDITIONS:
+        return normalized
+    raise ValueError(f"Unsupported OpenWhisper edition: {edition!r}")
 
 
-def archive_asset_name(version: str) -> str:
-    """Return the exact GitHub native-archive filename for ``version``."""
-    return f"{APP_NAME}-{normalize_version(version)}{ARCHIVE_NAME_SUFFIX}"
+def setup_asset_name(version: str, edition: Optional[str] = None) -> str:
+    """Return the exact GitHub setup exe filename for ``version`` and ``edition``."""
+    ver = normalize_version(version)
+    if normalize_edition(edition) == EDITION_CLIENT:
+        return f"{CLIENT_SETUP_NAME_PREFIX}{ver}.exe"
+    return f"{SETUP_NAME_PREFIX}{ver}.exe"
+
+
+def archive_asset_name(version: str, edition: Optional[str] = None) -> str:
+    """Return the exact GitHub native-archive filename for ``version`` and ``edition``."""
+    ver = normalize_version(version)
+    if normalize_edition(edition) == EDITION_CLIENT:
+        return f"{CLIENT_APP_PREFIX}-{ver}{ARCHIVE_NAME_SUFFIX}"
+    return f"{APP_NAME}-{ver}{ARCHIVE_NAME_SUFFIX}"
+
+
+def macos_asset_name(version: str, edition: Optional[str] = None) -> str:
+    """Return the exact GitHub macOS DMG filename for ``version`` and ``edition``."""
+    ver = normalize_version(version)
+    if normalize_edition(edition) == EDITION_CLIENT:
+        return f"{CLIENT_APP_PREFIX}-{ver}{MACOS_DMG_NAME_SUFFIX}"
+    return f"{APP_NAME}-{ver}{MACOS_DMG_NAME_SUFFIX}"
 
 
 def validate_transaction_id(transaction_id: str) -> str:

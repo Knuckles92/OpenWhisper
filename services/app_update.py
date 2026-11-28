@@ -46,6 +46,7 @@ from services.app_update_apply import (
     resolve_apply_mode,
     running_app_dir,
 )
+from services.edition import current_edition
 from services.settings import (
     SettingsKey,
     resolve_update_beta_track_enabled,
@@ -57,6 +58,7 @@ from services.update_contract import (
     ApplyMode,
     archive_asset_name,
     encode_native_result,
+    macos_asset_name,
     normalize_version,
     setup_asset_name,
     updates_root,
@@ -494,7 +496,10 @@ def local_git_summary(repo_root: Optional[str] = None) -> Optional[str]:
 
 
 def parse_release_payload(
-    payload: Dict, *, allow_prerelease: bool = False
+    payload: Dict,
+    *,
+    allow_prerelease: bool = False,
+    edition: Optional[str] = None,
 ) -> ReleaseInfo:
     """Parse a GitHub release JSON object.
 
@@ -502,6 +507,7 @@ def parse_release_payload(
         payload: Decoded API body (``/releases/latest`` or one list entry).
         allow_prerelease: The beta track: a published prerelease's assets are
             installable. Drafts never are, on any track.
+        edition: ``"full"`` or ``"client"``. Defaults to :func:`current_edition`.
 
     Returns:
         Structured release metadata. ``asset.sha256`` is ``None`` when the
@@ -524,23 +530,24 @@ def parse_release_payload(
     installable = not bool(payload.get("draft")) and (
         allow_prerelease or not prerelease
     )
+    resolved_edition = edition if edition is not None else current_edition()
     setup_asset = None
     native_asset = None
     macos_asset = None
     if installable:
         setup_asset = _parse_named_asset(
             assets,
-            expected_name=setup_asset_name(version),
+            expected_name=setup_asset_name(version, edition=resolved_edition),
             tag_name=tag_name,
         )
         native_asset = _parse_named_asset(
             assets,
-            expected_name=archive_asset_name(version),
+            expected_name=archive_asset_name(version, edition=resolved_edition),
             tag_name=tag_name,
         )
         macos_asset = _parse_named_asset(
             assets,
-            expected_name=f"OpenWhisper-{version}-macos-arm64.dmg",
+            expected_name=macos_asset_name(version, edition=resolved_edition),
             tag_name=tag_name,
         )
     return ReleaseInfo(
@@ -555,7 +562,9 @@ def parse_release_payload(
     )
 
 
-def select_newest_release(payload: object) -> ReleaseInfo:
+def select_newest_release(
+    payload: object, *, edition: Optional[str] = None
+) -> ReleaseInfo:
     """Pick the beta track's offer from a GitHub ``/releases`` list.
 
     Drafts and tags that are not plain ``major.minor.patch`` are skipped. The
@@ -584,7 +593,9 @@ def select_newest_release(payload: object) -> ReleaseInfo:
             best = (*key, item)
     if best is None:
         raise AppUpdateError("The update server did not report a release version.")
-    return parse_release_payload(best[2], allow_prerelease=True)
+    return parse_release_payload(
+        best[2], allow_prerelease=True, edition=edition
+    )
 
 
 def _expected_asset_url(tag_name: str, filename: str) -> str:
@@ -723,7 +734,11 @@ def latest_release_url(track: str = ReleaseTrack.STABLE) -> str:
     return LATEST_RELEASE_URL
 
 
-def fetch_latest_release(track: Optional[str] = None) -> ReleaseInfo:
+def fetch_latest_release(
+    track: Optional[str] = None,
+    *,
+    edition: Optional[str] = None,
+) -> ReleaseInfo:
     """Fetch GitHub metadata, using the public release when the API is limited.
 
     The fallback gets the stable tag from GitHub's latest-release redirect,
@@ -739,6 +754,7 @@ def fetch_latest_release(track: Optional[str] = None) -> ReleaseInfo:
 
     Args:
         track: A :class:`ReleaseTrack`. Read from settings when omitted.
+        edition: ``"full"`` or ``"client"``. Defaults to :func:`current_edition`.
 
     Raises:
         AppUpdateError: Network, HTTP, or payload failure.
@@ -748,7 +764,7 @@ def fetch_latest_release(track: Optional[str] = None) -> ReleaseInfo:
     url = latest_release_url(track)
     github_api = url in (LATEST_RELEASE_URL, RELEASE_LIST_URL)
     if github_api and _api_retry_pending():
-        return _fetch_latest_release_from_web()
+        return _fetch_latest_release_from_web(edition=edition)
     try:
         with _open(
             url,
@@ -759,7 +775,7 @@ def fetch_latest_release(track: Optional[str] = None) -> ReleaseInfo:
         if github_api and _is_rate_limited(exc):
             _remember_api_rate_limit(exc)
             logger.info("GitHub API rate-limited; checking the public release instead")
-            return _fetch_latest_release_from_web()
+            return _fetch_latest_release_from_web(edition=edition)
         raise AppUpdateError(_describe_update_error(exc)) from exc
     try:
         payload = json.loads(raw.decode("utf-8"))
@@ -768,13 +784,13 @@ def fetch_latest_release(track: Optional[str] = None) -> ReleaseInfo:
             "The update server returned a response that could not be read."
         ) from exc
     if url == RELEASE_LIST_URL:
-        return select_newest_release(payload)
+        return select_newest_release(payload, edition=edition)
     if not isinstance(payload, dict):
         raise AppUpdateError("The update server returned a response that could not be read.")
     # The loopback soak feed serves one release; on the beta track its
     # prerelease assets are installable, as they would be from GitHub.
     return parse_release_payload(
-        payload, allow_prerelease=track == ReleaseTrack.BETA
+        payload, allow_prerelease=track == ReleaseTrack.BETA, edition=edition
     )
 
 
@@ -818,17 +834,23 @@ def _remember_api_rate_limit(exc: urllib.error.HTTPError) -> None:
     _save_check_timestamp(SettingsKey.UPDATE_API_RETRY_AT, retry_at)
 
 
-def _fetch_latest_release_from_web() -> ReleaseInfo:
+def _fetch_latest_release_from_web(
+    *, edition: Optional[str] = None
+) -> ReleaseInfo:
     """Use GitHub's API-free endpoints; missing hashes permit notification only."""
     tag, release_url = _latest_public_release_tag()
     version = normalize_version(tag)
-    assets = _public_release_assets(tag, version)
-    return parse_release_payload({
-        "tag_name": tag,
-        "html_url": release_url,
-        "body": f"[Read the release notes on GitHub]({release_url}).",
-        "assets": assets,
-    })
+    resolved_edition = edition if edition is not None else current_edition()
+    assets = _public_release_assets(tag, version, edition=resolved_edition)
+    return parse_release_payload(
+        {
+            "tag_name": tag,
+            "html_url": release_url,
+            "body": f"[Read the release notes on GitHub]({release_url}).",
+            "assets": assets,
+        },
+        edition=resolved_edition,
+    )
 
 
 def _latest_public_release_tag() -> Tuple[str, str]:
@@ -866,15 +888,18 @@ def _fetch_release_checksums(tag: str) -> Dict[str, str]:
     return hashes
 
 
-def _public_release_assets(tag: str, version: str) -> List[dict]:
+def _public_release_assets(
+    tag: str, version: str, *, edition: Optional[str] = None
+) -> List[dict]:
     """Return API-style asset entries for checksummed assets this app can install."""
     assets = []
+    resolved_edition = edition if edition is not None else current_edition()
     try:
         hashes = _fetch_release_checksums(tag)
         names = (
-            setup_asset_name(version),
-            archive_asset_name(version),
-            f"OpenWhisper-{version}-macos-arm64.dmg",
+            setup_asset_name(version, edition=resolved_edition),
+            archive_asset_name(version, edition=resolved_edition),
+            macos_asset_name(version, edition=resolved_edition),
         )
         for name in names:
             if name not in hashes:
@@ -1175,6 +1200,7 @@ def _apply_native_update(
             progress=progress,
             cancel=cancel,
             parent_pid=os.getpid(),
+            expected_edition=current_edition(),
         )
         return encode_native_result(journal.transaction_id)
     except UpdateRequiresSetup:

@@ -15,6 +15,7 @@ from services.app_update_apply import (  # noqa: E402
     UpdateApplyError,
     load_manifest,
     pack_tar_xz,
+    read_dist_edition,
     read_manifest_from_tar_xz,
     safe_extract_tar_xz,
     validate_manifest,
@@ -23,10 +24,13 @@ from services.app_update_apply import (  # noqa: E402
 )
 from services.update_contract import (  # noqa: E402
     APP_EXE_NAME,
+    EDITION_ENV_VAR,
     MANIFEST_NAME,
     MINIMUM_UPDATER_VERSION,
     UPDATER_EXE_NAME,
+    VALID_EDITIONS,
     archive_asset_name,
+    normalize_edition,
     parse_strict_version,
 )
 
@@ -36,6 +40,12 @@ def main() -> int:
     parser.add_argument("--dist", required=True, help="Path to dist/OpenWhisper")
     parser.add_argument("--output", required=True, help="Destination tar.xz path")
     parser.add_argument("--version", required=True)
+    parser.add_argument(
+        "--edition",
+        choices=VALID_EDITIONS,
+        default=None,
+        help="Edition to pack (defaults to OPENWHISPER_EDITION or dist edition.json)",
+    )
     args = parser.parse_args()
 
     version = args.version
@@ -51,8 +61,15 @@ def main() -> int:
     if not (dist / UPDATER_EXE_NAME).is_file():
         raise SystemExit(f"Missing {UPDATER_EXE_NAME} in {dist}")
 
-    write_manifest_file(str(dist), version)
-    expected = archive_asset_name(version)
+    if args.edition is not None:
+        edition = normalize_edition(args.edition)
+    elif os.environ.get(EDITION_ENV_VAR, "").strip():
+        edition = normalize_edition(os.environ.get(EDITION_ENV_VAR))
+    else:
+        edition = read_dist_edition(str(dist))
+
+    write_manifest_file(str(dist), version, edition=edition)
+    expected = archive_asset_name(version, edition=edition)
     output = Path(args.output)
     if output.name != expected:
         raise SystemExit(f"Output must be named {expected}, got {output.name}")
@@ -64,12 +81,16 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="ow-archive-check-") as tmp:
         packed_manifest = read_manifest_from_tar_xz(str(output))
-        validate_manifest(packed_manifest, expected_version=version)
+        validate_manifest(
+            packed_manifest, expected_version=version, expected_edition=edition
+        )
         safe_extract_tar_xz(str(output), tmp, manifest=packed_manifest)
         manifest = load_manifest(os.path.join(tmp, MANIFEST_NAME))
         if manifest != packed_manifest:
             raise UpdateApplyError("Packed manifest changed during extraction.")
-        validate_manifest(manifest, expected_version=version)
+        validate_manifest(
+            manifest, expected_version=version, expected_edition=edition
+        )
         verify_tree_against_manifest(tmp, manifest)
     print(output)
     return 0

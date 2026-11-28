@@ -57,6 +57,7 @@ TRUSTED_SIGNING_TIMESTAMP_URL = "http://timestamp.acs.microsoft.com"
 _SHA1_RE = re.compile(r"[0-9A-Fa-f]{40}")
 _SETUP_RE = re.compile(r"OpenWhisper-Setup-\d+\.\d+\.\d+\.exe")
 _ALLINONE_SETUP_RE = re.compile(r"OpenWhisper-AllInOne-Setup-\d+\.\d+\.\d+\.exe")
+_CLIENT_SETUP_RE = re.compile(r"OpenWhisper-Client-Setup-\d+\.\d+\.\d+\.exe")
 
 
 class SigningError(ValueError):
@@ -283,7 +284,12 @@ def release_metadata(report: Mapping, release_dir: Path) -> Dict:
     )
     if len(allinone_setups) > 1:
         raise SigningError("Release candidate has multiple all-in-one setup exes")
-    for setup in (*setups, *allinone_setups):
+    client_setups = sorted(
+        path for path in release_dir.iterdir() if _CLIENT_SETUP_RE.fullmatch(path.name)
+    )
+    if len(client_setups) > 1:
+        raise SigningError("Release candidate has multiple client setup exes")
+    for setup in (*setups, *allinone_setups, *client_setups):
         entry = next(
             (item for item in files if isinstance(item, Mapping) and item.get("name") == setup.name),
             None,

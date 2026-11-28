@@ -25,8 +25,27 @@ REPO_ROOT = Path(SPECPATH).resolve()
 sys.path.insert(0, str(REPO_ROOT))
 
 from _version import __version__  # noqa: E402
+from services.edition import (  # noqa: E402
+    EDITION_CLIENT,
+    EDITION_FULL,
+    VALID_EDITIONS,
+    edition_label,
+    normalize_edition,
+    write_edition_manifest,
+)
 
 APP_NAME = "OpenWhisper"
+_raw_edition = os.environ.get("OPENWHISPER_EDITION", EDITION_FULL)
+EDITION = normalize_edition(_raw_edition)
+if EDITION is None:
+    raise SystemExit(
+        f"Unsupported OPENWHISPER_EDITION={_raw_edition!r}; "
+        f"expected one of {sorted(VALID_EDITIONS)}"
+    )
+IS_CLIENT_ONLY = EDITION == EDITION_CLIENT
+_EDITION_MANIFEST_PATH = write_edition_manifest(
+    REPO_ROOT / "build" / "edition" / EDITION, EDITION
+)
 # Permanent reverse-DNS identity for the macOS app bundle and TCC grants.
 MACOS_BUNDLE_IDENTIFIER = "tech.fiorilabs.openwhisper"
 # Meeting Mode and the current arm64 wheel set establish Sonoma as the floor.
@@ -56,8 +75,7 @@ def _distribution_license(package, suffix, destination):
 # use different licenses and ship their texts in separate wheel metadata trees,
 # which PyInstaller does not otherwise retain.
 datas = [
-    ("services/local_asr", "services/local_asr"),
-    ("services/whisper_models.json", "services"),
+    (str(_EDITION_MANIFEST_PATH), "."),
     (str(REPO_ROOT / "ui_qt" / "styles" / "theme.qss"), "ui_qt/styles"),
     (str(REPO_ROOT / "ui_qt" / "assets"), "ui_qt/assets"),
     (str(REPO_ROOT / "integrations" / "omarchy"), "integrations/omarchy"),
@@ -68,14 +86,18 @@ datas = [
     _distribution_license("PyQt6", "licenses/LICENSE", "third_party_licenses/PyQt6"),
     _distribution_license("PyQt6-Qt6", ".dist-info/LICENSE", "third_party_licenses/Qt"),
 ]
+if not IS_CLIENT_ONLY:
+    datas = [
+        ("services/local_asr", "services/local_asr"),
+        ("services/whisper_models.json", "services"),
+        *datas,
+    ]
 binaries = []
 hiddenimports = [
     # SQLAlchemy resolves dialects by name at runtime, so static analysis
     # cannot see this one.
     "sqlalchemy.dialects.sqlite",
     "services.models",
-    # Imported inside function bodies in services/hf_access.py.
-    "huggingface_hub",
     # Knowledge-folder extractors (imported lazily from meeting/context_folder).
     "pypdf",
     "docx",
@@ -83,6 +105,9 @@ hiddenimports = [
     "openpyxl",
     "lxml",
 ]
+if not IS_CLIENT_ONLY:
+    # Imported inside function bodies in services/hf_access.py.
+    hiddenimports.append("huggingface_hub")
 # The public widget and dialog exports and Settings' page registry
 # (settings_dialog._PAGE_MODULES) use import_module(), so freeze analysis
 # cannot discover them from callers such as MainWindow. Keep inactive screens
@@ -125,12 +150,15 @@ else:
 #   av            - av/ and av.libs/ MUST stay siblings; av/__init__.py calls
 #                   os.add_dll_directory() on ../av.libs to find FFmpeg
 #   sounddevice   - _sounddevice_data/portaudio-binaries/libportaudio64bit.dll
-_COLLECT_PACKAGES = [
+_FULL_ONLY_COLLECT_PACKAGES = (
     "ctranslate2",
     "faster_whisper",
     "onnxruntime",
     "av",
     "tokenizers",
+)
+_COLLECT_PACKAGES = [
+    *([] if IS_CLIENT_ONLY else list(_FULL_ONLY_COLLECT_PACKAGES)),
     "sounddevice",
     "lxml",
     "uvicorn",
@@ -232,6 +260,17 @@ excludes = [
     "PyQt6.QtQml", "PyQt6.QtQuick", "PyQt6.QtQuick3D", "PyQt6.QtWebEngineCore",
     "PyQt6.QtMultimedia", "PyQt6.QtPdf", "PyQt6.QtDesigner", "PyQt6.QtBluetooth",
 ]
+CLIENT_ONLY_EXCLUDES = [
+    "ctranslate2",
+    "faster_whisper",
+    "onnxruntime",
+    "tokenizers",
+    "huggingface_hub",
+    "hf_xet",
+    "av",
+]
+if IS_CLIENT_ONLY:
+    excludes.extend(CLIENT_ONLY_EXCLUDES)
 
 # Qt binaries and data with no path into this app. Matched case-insensitively
 # against the destination name of each TOC entry.
@@ -356,7 +395,7 @@ def _version_resource():
         kids=[
             StringFileInfo([StringTable("040904B0", [
                 StringStruct("CompanyName", "Fiori Labs"),
-                StringStruct("FileDescription", "OpenWhisper speech-to-text"),
+                StringStruct("FileDescription", f"{edition_label(EDITION)} speech-to-text"),
                 StringStruct("FileVersion", __version__),
                 StringStruct("InternalName", APP_NAME),
                 StringStruct("LegalCopyright", "MIT License"),
@@ -456,6 +495,13 @@ if sys.platform == "darwin":
             "CFBundleShortVersionString": __version__,
             "CFBundleVersion": __version__,
             "CFBundlePackageType": "APPL",
+            "CFBundleURLTypes": [
+                {
+                    "CFBundleTypeRole": "Viewer",
+                    "CFBundleURLName": MACOS_BUNDLE_IDENTIFIER,
+                    "CFBundleURLSchemes": ["openwhisper"],
+                }
+            ],
             "LSMinimumSystemVersion": MACOS_MINIMUM_SYSTEM_VERSION,
             "NSHighResolutionCapable": True,
             "NSMicrophoneUsageDescription": (
