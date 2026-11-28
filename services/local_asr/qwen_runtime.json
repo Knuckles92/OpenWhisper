@@ -1,8 +1,8 @@
 {
-  "version": "2026-10-08.1",
+  "version": "2026-11-28.1",
   "component_api": 1,
   "platform": "win_amd64",
-  "install_bytes": 6519728806,
+  "install_bytes": 6531357704,
   "archives": [
     {
       "name": "python-3.12.10-embed-amd64.zip",
@@ -635,10 +635,10 @@
       "extract": "zip"
     },
     {
-      "name": "av-18.1.0-cp311-abi3-win_amd64.whl",
-      "url": "https://files.pythonhosted.org/packages/33/b4/76ba21e46704f632004276b85289a1582e95f5eff760436d6149875a1881/av-18.1.0-cp311-abi3-win_amd64.whl",
-      "sha256": "ea1480b7a8d5405cb5f382b344731bf125fd2c1c6fae3964f6c48595628387ff",
-      "size_bytes": 27595679,
+      "name": "av-18.1.1-cp311-abi3-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/a7/7a/0fbac30a189599d32a9cb8439b38b95521c091e041c3736d2a0c947c7f10/av-18.1.1-cp311-abi3-win_amd64.whl",
+      "sha256": "2f93f859e0705abe2958889ef08699db44a3ff11964e1bbe2a6beb95a680e248",
+      "size_bytes": 28970805,
       "extract": "zip"
     },
     {

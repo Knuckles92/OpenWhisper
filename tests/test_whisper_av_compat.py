@@ -4,7 +4,8 @@ faster-whisper 1.2.1 still calls ``av.open(..., metadata_errors="ignore")``.
 PyAV 19 removed that argument, and faster-whisper only declares ``av>=11``,
 so a README ``pip install -r requirements.txt`` was resolving to 19.x and
 every Local Whisper transcription failed. The packaged release pins
-``av==18.1.0``.
+``av==18.1.1``; PyPI yanked 18.1.0 for a double free when decoding audio
+with custom channel layouts.
 """
 from __future__ import annotations
 
@@ -33,11 +34,13 @@ def test_readme_and_release_installs_agree_on_pyav_below_19():
     source = _declared("requirements.txt", "av")
     release = _declared("requirements-release-constraints.txt", "av")
 
-    assert Version("18.1.0") in source.specifier
+    assert Version("18.1.1") in source.specifier
     assert Version("11.0.0") in source.specifier
     assert Version("19.0.0") not in source.specifier
     assert Version("19.0.2") not in source.specifier
-    assert Version("18.1.0") in release.specifier
+    assert Version("18.1.1") in release.specifier
+    # Yanked on PyPI: double free decoding custom channel layouts.
+    assert Version("18.1.0") not in release.specifier
     assert Version("19.0.0") not in release.specifier
 
 

@@ -1,10 +1,10 @@
 {
-  "version": "qwen-asr-0.0.6-a17ee7212674",
+  "version": "qwen-asr-0.0.6-f6c59f654cf4",
   "component_api": 1,
   "platform": "darwin_arm64",
   "python_abi": "cp312",
   "macos_min": "14.0",
-  "install_bytes": 956282952,
+  "install_bytes": 956781559,
   "archives": [
     {
       "name": "qwen_asr-0.0.6-py3-none-any.whl",
@@ -637,10 +637,10 @@
       "extract": "python-wheel"
     },
     {
-      "name": "av-19.0.1-cp312-abi3-macosx_14_0_arm64.whl",
-      "url": "https://files.pythonhosted.org/packages/ff/75/db37bb43a12a317cc0c0b96ddabc7896f582503b377e0803d4d721969522/av-19.0.1-cp312-abi3-macosx_14_0_arm64.whl",
-      "sha256": "29d85e4ee36bf8f475dad07d4f4417c07bba62535f6a7179429c357e0ca8fb0f",
-      "size_bytes": 18439188,
+      "name": "av-19.0.2-cp312-abi3-macosx_14_0_arm64.whl",
+      "url": "https://files.pythonhosted.org/packages/7c/42/067d0bcd2c07103f18cc23b510a8289dd80330e984c49d51ce0bafcee017/av-19.0.2-cp312-abi3-macosx_14_0_arm64.whl",
+      "sha256": "b0dff6dfcc6ff9944fbbff15bc4ee2d90a2c1695d493bdea96e86f48823e9feb",
+      "size_bytes": 18556422,
       "extract": "python-wheel"
     },
     {
