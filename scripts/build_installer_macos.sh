@@ -270,6 +270,8 @@ echo "    bundle id $actual_id, version $actual_short, min macOS $actual_min, sc
 step "Verifying required bundle assets ($EDITION)"
 for relative in \
     "Contents/Resources/edition.json" \
+    "Contents/Resources/services/whisper_models.json" \
+    "Contents/Resources/services/local_asr/models.json" \
     "Contents/Resources/ui_qt/styles/theme.qss" \
     "Contents/Resources/ui_qt/assets/openwhisper.ico" \
     "Contents/Resources/ui_qt/assets/openwhisper.png" \

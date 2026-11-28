@@ -170,6 +170,8 @@ step "Verifying the frozen bundle ($EDITION)"
 
 for path in \
     "$INTERNAL_DIR/edition.json" \
+    "$INTERNAL_DIR/services/whisper_models.json" \
+    "$INTERNAL_DIR/services/local_asr/models.json" \
     "$INTERNAL_DIR/ui_qt/styles/theme.qss" \
     "$INTERNAL_DIR/ui_qt/assets/openwhisper.ico" \
     "$INTERNAL_DIR/ui_qt/assets/openwhisper.png" \
@@ -214,7 +216,7 @@ if [[ "$EDITION" == "full" ]]; then
 else
     for client_forbidden in \
         ctranslate2 faster_whisper onnxruntime tokenizers huggingface_hub hf_xet \
-        av av.libs bundled_components/asr-transcribe services/whisper_models.json; do
+        av av.libs bundled_components/asr-transcribe; do
         [[ ! -e "$INTERNAL_DIR/$client_forbidden" ]] || \
             fail "client-excluded package/asset leaked into the bundle: $client_forbidden"
     done

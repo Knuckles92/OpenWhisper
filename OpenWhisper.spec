@@ -74,8 +74,15 @@ def _distribution_license(package, suffix, destination):
 # Keep the binding and toolkit terms beside every frozen binary. PyQt6 and Qt
 # use different licenses and ship their texts in separate wheel metadata trees,
 # which PyInstaller does not otherwise retain.
+#
+# services/whisper_models.json and services/local_asr/*.json are pure metadata
+# catalogs (~125 KB) read at import time by services/model_catalog.py and
+# services/components.py (including Remote Models host management in Client-Only
+# builds), so both editions ship those JSON catalogs while Client-Only omits
+# local ML worker files, runtimes, and PyAV.
 datas = [
     (str(_EDITION_MANIFEST_PATH), "."),
+    ("services/whisper_models.json", "services"),
     (str(REPO_ROOT / "ui_qt" / "styles" / "theme.qss"), "ui_qt/styles"),
     (str(REPO_ROOT / "ui_qt" / "assets"), "ui_qt/assets"),
     (str(REPO_ROOT / "integrations" / "omarchy"), "integrations/omarchy"),
@@ -86,10 +93,17 @@ datas = [
     _distribution_license("PyQt6", "licenses/LICENSE", "third_party_licenses/PyQt6"),
     _distribution_license("PyQt6-Qt6", ".dist-info/LICENSE", "third_party_licenses/Qt"),
 ]
-if not IS_CLIENT_ONLY:
+if IS_CLIENT_ONLY:
+    datas = [
+        *(
+            (str(path), "services/local_asr")
+            for path in sorted((REPO_ROOT / "services" / "local_asr").glob("*.json"))
+        ),
+        *datas,
+    ]
+else:
     datas = [
         ("services/local_asr", "services/local_asr"),
-        ("services/whisper_models.json", "services"),
         *datas,
     ]
 binaries = []

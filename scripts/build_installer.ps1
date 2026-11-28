@@ -225,8 +225,7 @@ try {
             $Forbidden += @(
                 'ctranslate2', 'faster_whisper', 'onnxruntime', 'tokenizers',
                 'huggingface_hub', 'hf_xet', 'av', 'av.libs',
-                'bundled_components\asr-transcribe',
-                'services\whisper_models.json'
+                'bundled_components\asr-transcribe'
             )
         }
         $Internal = Join-Path $DistDir '_internal'
@@ -248,6 +247,8 @@ try {
         # Assets the app resolves through config.bundle_root() at runtime.
         $RequiredAssets = @(
             '_internal\edition.json',
+            '_internal\services\whisper_models.json',
+            '_internal\services\local_asr\models.json',
             '_internal\ui_qt\styles\theme.qss',
             '_internal\ui_qt\assets\openwhisper.ico',
             '_internal\ui_qt\assets\check.svg',

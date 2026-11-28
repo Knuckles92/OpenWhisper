@@ -169,6 +169,10 @@ class TestBuildSpecContracts:
         assert "CLIENT_ONLY_EXCLUDES" in spec
         assert "if IS_CLIENT_ONLY:" in spec
         assert "if not IS_CLIENT_ONLY:" in spec
+        # Pure-JSON speech/runtime catalog metadata stays bundled in Client-Only
+        # so model_catalog/components imports and Remote Models management work.
+        assert '("services/whisper_models.json", "services")' in spec
+        assert '(REPO_ROOT / "services" / "local_asr").glob("*.json")' in spec
         # Core client UI, audio capture, walkthrough, and networking stay in _COLLECT_PACKAGES.
         for kept in ("sounddevice", "lxml", "uvicorn", "mcp", "soundcard", "pywebrtc_audio", "keyring", "pynput"):
             assert f'"{kept}"' in spec
@@ -200,6 +204,9 @@ class TestBuildSpecContracts:
         assert '"/DOutputPrefix=OpenWhisper-Client"' in script
         assert "'--edition', $CurrentEdition" in script
         assert "_internal\\edition.json" in script
+        assert "_internal\\services\\whisper_models.json" in script
+        assert "_internal\\services\\local_asr\\models.json" in script
+        assert "'services\\whisper_models.json'" not in script
         for absent in ("ctranslate2", "faster_whisper", "onnxruntime", "av.libs", "bundled_components\\asr-transcribe"):
             assert absent in script
 
@@ -231,7 +238,10 @@ class TestBuildSpecContracts:
         assert "Provides: openwhisper" in script
         assert "provides = openwhisper" in script
         assert "$INTERNAL_DIR/edition.json" in script
+        assert "$INTERNAL_DIR/services/whisper_models.json" in script
+        assert "$INTERNAL_DIR/services/local_asr/models.json" in script
         assert "bundled_components/asr-transcribe" in script
+        assert "av.libs bundled_components/asr-transcribe;" in script
 
         parser = configparser.ConfigParser(interpolation=None)
         parser.optionxform = str
@@ -260,6 +270,8 @@ class TestBuildSpecContracts:
         assert "client-excluded package leaked" in script
         assert "client-excluded native ML/FFmpeg library leaked" in script
         assert "Contents/Resources/edition.json" in script
+        assert "Contents/Resources/services/whisper_models.json" in script
+        assert "Contents/Resources/services/local_asr/models.json" in script
 
         bash = _bash()
         if bash:
