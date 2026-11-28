@@ -752,7 +752,8 @@ class SpoolWriter:
                  max_sec: float = DEFAULT_MAX_SEC,
                  quiet_window_s: float = QUIET_WINDOW_S,
                  queue_size: int = QUEUE_MAX_BLOCKS,
-                 initial_seq: int = 0) -> None:
+                 initial_seq: int = 0,
+                 chunk_transform: Optional[Callable[[np.ndarray, float], np.ndarray]] = None) -> None:
         """Args:
             meeting_id: Owning meeting session id.
             channel: ``mic`` or ``loopback``.
@@ -770,6 +771,9 @@ class SpoolWriter:
                 the writer thread before blocks are dropped.
             initial_seq: First per-channel sequence number, used after a
                 watchdog restart so files and database keys never collide.
+            chunk_transform: Optional writer-thread transform
+                ``(samples_16k, start_s) -> samples_16k`` applied to each
+                resampled 16 kHz chunk before writing its WAV (e.g. AEC).
         """
         self._meeting_id = meeting_id
         self._channel = channel
@@ -777,6 +781,7 @@ class SpoolWriter:
         self._clock = clock
         self._repository = repository
         self._on_chunk = on_chunk
+        self._chunk_transform = chunk_transform
         self._target_sec = float(target_sec)
         self._max_sec = float(max_sec)
         self._quiet_window_s = float(quiet_window_s)
@@ -822,6 +827,13 @@ class SpoolWriter:
             daemon=True,
         )
         self._thread.start()
+
+    def set_chunk_transform(
+        self,
+        transform: Optional[Callable[[np.ndarray, float], np.ndarray]],
+    ) -> None:
+        """Install or clear the writer-thread chunk transform (e.g. AEC)."""
+        self._chunk_transform = transform
 
     def feed(self, block: CaptureBlock) -> None:
         """Hand a captured block to the writer thread. Never blocks or raises.
@@ -1272,6 +1284,21 @@ class SpoolWriter:
         samples = resample_to_16k(native_samples, rate)
         if samples.size == 0:
             return None
+        transform = self._chunk_transform
+        if transform is not None:
+            try:
+                transformed = transform(samples, start_s)
+                if transformed is not None:
+                    arr = np.asarray(transformed, dtype=np.int16).reshape(-1)
+                    if arr.size > 0:
+                        samples = arr
+            except Exception:
+                logger.warning(
+                    "Spool chunk transform failed on %s at %.1fs; keeping raw audio",
+                    self._channel,
+                    start_s,
+                    exc_info=True,
+                )
         seq = self._seq
         self._seq += 1
         duration_s = samples.size / float(TARGET_RATE)

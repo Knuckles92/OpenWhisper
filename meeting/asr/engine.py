@@ -416,6 +416,7 @@ class MeetingAsrEngine:
         chunks: Optional[List[Dict[str, Any]]] = None,
         *,
         progress_cb: Optional[Callable[[str, int, int], None]] = None,
+        echo_cancellation: bool = True,
     ) -> List[TranscriptSegment]:
         """Re-decode the continuous session audio with offline silence cuts.
 
@@ -425,6 +426,8 @@ class MeetingAsrEngine:
             spool_dir: Meeting spool directory containing session WAVs.
             chunks: Optional registered chunk rows for the concat fallback.
             progress_cb: Optional callback for window decoding progress.
+            echo_cancellation: Whether to strip speaker bleed from the mic
+                session using loopback audio before decoding.
 
         Returns:
             Fresh segments for every channel that has session audio.
@@ -443,6 +446,7 @@ class MeetingAsrEngine:
             chunks,
             language=self.dominant_language(),
             progress_cb=progress_cb,
+            echo_cancellation=echo_cancellation,
         )
 
     def dominant_language(self) -> Optional[str]:

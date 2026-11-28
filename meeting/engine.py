@@ -130,6 +130,11 @@ class MeetingEngineOptions:
     #: ``required`` is Linux dual-channel readiness; ``disabled`` is an
     #: explicit microphone-only choice for the current meeting.
     system_audio_policy: str = 'auto'
+    #: Acoustic echo cancellation (GCC-PHAT lag alignment + headphone detection
+    #: + WebRTC AEC3) for speaker-mode meetings. Skips automatically when
+    #: headphones are detected or loopback audio is absent; fails open if
+    #: ``pywebrtc-audio`` is unavailable.
+    echo_cancellation: bool = True
 
 
 _INTELLIGENCE_OFFLINE_MESSAGE = (
@@ -1158,6 +1163,28 @@ class MeetingEngine:
         transcribe = getattr(asr, "transcribe_offline_session", None)
         if not callable(transcribe):
             return False
+        if not self.options.echo_cancellation:
+            raw_transcribe = transcribe
+
+            def _transcribe_without_aec(
+                spool_dir: str,
+                chunks: Any,
+                *,
+                progress_cb: Optional[Callable[[str, int, int], None]] = None,
+            ) -> Any:
+                try:
+                    return raw_transcribe(
+                        spool_dir,
+                        chunks,
+                        progress_cb=progress_cb,
+                        echo_cancellation=False,
+                    )
+                except TypeError:
+                    return raw_transcribe(
+                        spool_dir, chunks, progress_cb=progress_cb
+                    )
+
+            transcribe = _transcribe_without_aec
         from meeting.refinalize import rerun_redecode
 
         result = rerun_redecode(
