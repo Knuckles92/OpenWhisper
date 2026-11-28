@@ -349,6 +349,7 @@ def _sanitize_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "api_read_walkthroughs": False,
         "api_control_walkthroughs": False,
         "api_manage_personalization": False,
+        "api_manage_cleanup_rules": False,
         "api_control_app": False,
         "mcp_events_enabled": False,
     })

@@ -179,6 +179,7 @@ def test_state_and_actions_need_only_the_token(client, control, settings):
         "read_walkthroughs": False,
         "control_walkthroughs": False,
         "manage_personalization": False,
+        "manage_cleanup_rules": False,
         "control_app": False,
     }
     actions = call(client, "list_actions", modern=False)["structuredContent"]

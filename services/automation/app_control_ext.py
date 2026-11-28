@@ -1295,6 +1295,7 @@ def get_personalization_summary() -> dict[str, Any]:
     languages_data = list_languages()
     profiles_data = list_profiles()
     wt_styles = list_walkthrough_styles()
+    cleanup_rules_data = list_cleanup_rules()
     return {
         "dictionary": {
             **dictionary_data,
@@ -1306,6 +1307,7 @@ def get_personalization_summary() -> dict[str, Any]:
             "count": len(snippets_data["snippets"]),
             "max_snippets": config.MAX_SNIPPETS,
         },
+        "cleanup_rules": cleanup_rules_data,
         "app_styles": styles_data,
         "languages": languages_data,
         "profiles": profiles_data,
@@ -1700,6 +1702,157 @@ def set_quick_record_profile(controller, profile_id: str) -> dict[str, Any]:
     settings_manager.save_setting(SettingsKey.QUICK_RECORD_PROFILE, pid)
     _refresh_settings_ui(controller)
     return {"quick_record_profile": pid or None}
+
+
+# ---- Learned Cleanup Rules --------------------------------------------------
+
+_MAX_CLEANUP_RULE_LENGTH = 500
+
+
+def _normalize_cleanup_rule(rule: str) -> str:
+    if not isinstance(rule, str):
+        raise ControlError(REFUSED, "Cleanup rule must be a string.")
+    if any(ord(ch) < 32 and ch not in ("\t", "\n", "\r") or ord(ch) == 127 for ch in rule):
+        raise ControlError(REFUSED, "Cleanup rule cannot contain control characters.")
+    cleaned = " ".join(rule.split())
+    if not cleaned:
+        raise ControlError(REFUSED, "Cleanup rule cannot be empty.")
+    if len(cleaned) > _MAX_CLEANUP_RULE_LENGTH:
+        raise ControlError(
+            REFUSED,
+            f"Cleanup rule is too long (max {_MAX_CLEANUP_RULE_LENGTH} characters).",
+        )
+    return cleaned
+
+
+def list_cleanup_rules() -> dict[str, Any]:
+    from config import config
+    from services.settings import resolve_transcript_cleanup_rules
+
+    saved = settings_manager.load_all_settings()
+    rules = resolve_transcript_cleanup_rules(saved)
+    return {
+        "cleanup_enabled": SettingsKey.TRANSCRIPT_CLEANUP_ENABLED.read(saved),
+        "cleanup_level": SettingsKey.TRANSCRIPT_CLEANUP_LEVEL.read(saved),
+        "rules": [{"index": idx, "rule": text} for idx, text in enumerate(rules)],
+        "count": len(rules),
+        "max_rules": config.MAX_TRANSCRIPT_CLEANUP_RULES,
+    }
+
+
+def add_cleanup_rule(controller, rule: str, *, dry_run: bool = False) -> dict[str, Any]:
+    from config import config
+    from services.settings import resolve_transcript_cleanup_rules
+
+    cleaned = _normalize_cleanup_rule(rule)
+    max_rules = config.MAX_TRANSCRIPT_CLEANUP_RULES
+
+    def apply(saved: dict[str, Any]) -> dict[str, Any]:
+        rules = list(resolve_transcript_cleanup_rules(saved))
+        target = cleaned.casefold()
+        for idx, existing in enumerate(rules):
+            if existing.casefold() == target:
+                return {
+                    "added": False,
+                    "duplicate": True,
+                    "dry_run": bool(dry_run),
+                    "index": idx,
+                    "rule": existing,
+                    "count": len(rules),
+                    "max_rules": max_rules,
+                }
+        if len(rules) >= max_rules:
+            raise ControlError(REFUSED, f"Rule limit reached ({max_rules}).")
+        idx = len(rules)
+        rules.append(cleaned)
+        if not dry_run:
+            saved[SettingsKey.TRANSCRIPT_CLEANUP_RULES] = rules
+        return {
+            "added": True,
+            "duplicate": False,
+            "dry_run": bool(dry_run),
+            "index": idx,
+            "rule": cleaned,
+            "count": len(rules),
+            "max_rules": max_rules,
+        }
+
+    if dry_run:
+        return apply(dict(settings_manager.load_all_settings()))
+    result = settings_manager.mutate_settings(apply)
+    if result["added"]:
+        _refresh_settings_ui(controller)
+    return result
+
+
+def update_cleanup_rule(controller, index: int, rule: str) -> dict[str, Any]:
+    from services.settings import resolve_transcript_cleanup_rules
+
+    if type(index) is not int or index < 0:
+        raise ControlError(REFUSED, "Rule index must be a non-negative integer.")
+    cleaned = _normalize_cleanup_rule(rule)
+
+    def commit(saved: dict[str, Any]) -> dict[str, Any]:
+        rules = list(resolve_transcript_cleanup_rules(saved))
+        if index >= len(rules):
+            raise ControlError(NOT_FOUND, f"No cleanup rule at index {index}.")
+        target = cleaned.casefold()
+        for other_idx, existing in enumerate(rules):
+            if other_idx != index and existing.casefold() == target:
+                raise ControlError(REFUSED, "That rule already exists.")
+        previous = rules[index]
+        rules[index] = cleaned
+        saved[SettingsKey.TRANSCRIPT_CLEANUP_RULES] = rules
+        return {
+            "updated": True,
+            "index": index,
+            "rule": cleaned,
+            "previous": previous,
+            "count": len(rules),
+        }
+
+    result = settings_manager.mutate_settings(commit)
+    _refresh_settings_ui(controller)
+    return result
+
+
+def remove_cleanup_rule(
+    controller, *, index: Optional[int] = None, rule: str = ""
+) -> dict[str, Any]:
+    from services.settings import resolve_transcript_cleanup_rules
+
+    if index is None and not (rule or "").strip():
+        raise ControlError(REFUSED, "Provide either index or rule to remove.")
+    if index is not None and (type(index) is not int or index < 0):
+        raise ControlError(REFUSED, "Rule index must be a non-negative integer.")
+
+    def commit(saved: dict[str, Any]) -> dict[str, Any]:
+        rules = list(resolve_transcript_cleanup_rules(saved))
+        remove_idx: Optional[int] = None
+        if index is not None:
+            if index >= len(rules):
+                raise ControlError(NOT_FOUND, f"No cleanup rule at index {index}.")
+            remove_idx = index
+        else:
+            target = " ".join(rule.split()).casefold()
+            for idx, existing in enumerate(rules):
+                if existing.casefold() == target:
+                    remove_idx = idx
+                    break
+            if remove_idx is None:
+                raise ControlError(NOT_FOUND, "No matching cleanup rule was found.")
+        removed = rules.pop(remove_idx)
+        saved[SettingsKey.TRANSCRIPT_CLEANUP_RULES] = rules
+        return {
+            "removed": True,
+            "index": remove_idx,
+            "rule": removed,
+            "count": len(rules),
+        }
+
+    result = settings_manager.mutate_settings(commit)
+    _refresh_settings_ui(controller)
+    return result
 
 
 # ---- Engines, Models, Audio Devices, Remote & Window ------------------------

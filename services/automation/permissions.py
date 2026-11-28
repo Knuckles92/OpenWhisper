@@ -21,6 +21,8 @@ READ_WALKTHROUGHS = SettingsKey.API_READ_WALKTHROUGHS
 CONTROL_WALKTHROUGHS = SettingsKey.API_CONTROL_WALKTHROUGHS
 #: Manage personal dictionary terms, snippets, app styles, languages and quick-record profile.
 MANAGE_PERSONALIZATION = SettingsKey.API_MANAGE_PERSONALIZATION
+#: Add, edit or remove learned transcript cleanup rules.
+MANAGE_CLEANUP_RULES = SettingsKey.API_MANAGE_CLEANUP_RULES
 #: Switch models/engines, audio devices, remote engine, transcribe files, and control windows.
 CONTROL_APP = SettingsKey.API_CONTROL_APP
 
@@ -34,6 +36,7 @@ ALL: tuple[str, ...] = (
     READ_WALKTHROUGHS,
     CONTROL_WALKTHROUGHS,
     MANAGE_PERSONALIZATION,
+    MANAGE_CLEANUP_RULES,
     CONTROL_APP,
 )
 
@@ -48,6 +51,7 @@ PUBLIC_NAMES: dict[str, str] = {
     READ_WALKTHROUGHS: "read_walkthroughs",
     CONTROL_WALKTHROUGHS: "control_walkthroughs",
     MANAGE_PERSONALIZATION: "manage_personalization",
+    MANAGE_CLEANUP_RULES: "manage_cleanup_rules",
     CONTROL_APP: "control_app",
 }
 #: What a refusal tells the caller to do, without naming internals.
@@ -61,6 +65,7 @@ _DENIED: dict[str, str] = {
     READ_WALKTHROUGHS: "Allow reading saved walkthroughs in OpenWhisper Settings > API & MCP.",
     CONTROL_WALKTHROUGHS: "Allow controlling walkthroughs and screenshots in OpenWhisper Settings > API & MCP.",
     MANAGE_PERSONALIZATION: "Allow managing dictionary, snippets and styles in OpenWhisper Settings > API & MCP.",
+    MANAGE_CLEANUP_RULES: "Allow managing learned cleanup rules in OpenWhisper Settings > API & MCP.",
     CONTROL_APP: "Allow controlling models, devices, files and app windows in OpenWhisper Settings > API & MCP.",
 }
 

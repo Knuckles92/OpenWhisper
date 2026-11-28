@@ -465,6 +465,7 @@ WRITE_CAPABILITIES = (
     permissions.PUBLIC_NAMES[permissions.CONTROL_MEETINGS],
     permissions.PUBLIC_NAMES[permissions.CONTROL_WALKTHROUGHS],
     permissions.PUBLIC_NAMES[permissions.MANAGE_PERSONALIZATION],
+    permissions.PUBLIC_NAMES[permissions.MANAGE_CLEANUP_RULES],
     permissions.PUBLIC_NAMES[permissions.CONTROL_APP],
 )
 
