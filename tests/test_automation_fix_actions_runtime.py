@@ -110,6 +110,29 @@ def test_cancel_stops_running_and_waiting_runs_and_shows_nothing(h, blocked):
     assert h.rt.cancel() == 0
 
 
+def test_cancel_reaches_the_waiting_runs_before_it_frees_a_worker(h, blocked, monkeypatch):
+    """A run told to stop gives its worker back at once, and that worker takes
+    the next waiting run. Cancel reaches every waiting run first, so none of
+    them starts however long the rest of the cancel takes."""
+    stoppable = runtime._stoppable
+
+    def slow(action):
+        time.sleep(0.05)  # long enough for a freed worker to take a waiting run
+        return stoppable(action)
+
+    total = runtime.MAX_WORKERS + 2
+    for n in range(total):
+        h.rt.deliver(_job("q1"), f"question {n}", raw_text=None, html="")
+    _wait(lambda: blocked.started(runtime.MAX_WORKERS))
+    monkeypatch.setattr(runtime, "_stoppable", slow)
+
+    assert h.rt.cancel() == total
+
+    _wait(lambda: len(_ran(h)) == total)
+    assert len(blocked.calls) == runtime.MAX_WORKERS
+    assert {r["message"] for r in _ran(h)} == {runtime.CANCELED_MESSAGE}
+
+
 def test_a_try_it_run_is_canceled_and_told_so(h, blocked):
     results = []
     h.rt.test(ASK, "sample", results.append)

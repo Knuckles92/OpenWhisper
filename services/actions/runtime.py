@@ -610,7 +610,10 @@ class ActionRuntime:
         """
         cancel = _Cancel(quiet=tests_only)
         with self._lock:
-            canceled, earlier = [], 0
+            canceled, under_way, earlier = [], [], 0
+            # Every waiting run first. Telling a run under way to stop frees
+            # its worker, which would take the next waiting run before this
+            # got to it, and a run the user canceled would start.
             for token, pending in list(self._pending.items()):
                 if tests_only and pending.run.done is None:
                     continue
@@ -621,8 +624,10 @@ class ActionRuntime:
                 if pending.future is None or pending.future.cancel():
                     canceled.append((token, self._pending.pop(token)))
                     cancel.stopped.append(pending.run)
-                    continue
-                # Under way: its result says what this cancel did.
+                else:
+                    under_way.append(pending)
+            for pending in under_way:
+                # Its result says what this cancel did.
                 pending.canceled_by = cancel
                 if _stoppable(pending.run.action):
                     pending.run.cancel.set()
