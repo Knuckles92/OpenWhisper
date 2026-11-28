@@ -36,7 +36,6 @@ import threading
 import time
 import wave
 import zlib
-from fractions import Fraction
 from typing import Optional
 
 import numpy as np
@@ -46,6 +45,7 @@ from services.local_asr.audio import (
     MAX_SAMPLES,
     SAMPLE_RATE,
     WindowSplitter,
+    make_pcm_frame,
     resampler,
     windows,
 )
@@ -196,18 +196,11 @@ class DictationSession:
         return recording and not self._stop.is_set() and not self._invalid
 
     def _push(self, samples: np.ndarray) -> None:
-        import av
-
         if not len(samples):
             return
-        # Mirror the frames PyAV's WAV decoder hands windows(): timestamps
-        # cleared, source rate and time base set.
-        frame = av.AudioFrame.from_ndarray(
-            samples.reshape(1, -1), format="s16", layout="mono"
-        )
-        frame.sample_rate = self.recorder.rate
-        frame.time_base = Fraction(1, self.recorder.rate)
-        frame.pts = None
+        # Mirror the frames windows() hands the resampler (PyAV when installed,
+        # PcmFrame/NumpyAudioResampler otherwise).
+        frame = make_pcm_frame(samples, self.recorder.rate)
         self._ready.extend(self._splitter.push(self._resampler.resample(frame)))
 
     def _decode_ready(self) -> None:

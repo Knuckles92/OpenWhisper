@@ -127,11 +127,16 @@ def rms_dbfs(samples: np.ndarray) -> float:
 
 
 def resample_int16_mono(samples: np.ndarray, src_rate: int, dst_rate: int = AEC_SAMPLE_RATE) -> np.ndarray:
-    """Resample 1-D mono int16 PCM cleanly using PyAV (FFmpeg swresample)."""
+    """Resample 1-D mono int16 PCM using PyAV, or NumPy polyphase when PyAV is absent."""
     arr = np.ascontiguousarray(np.asarray(samples, dtype=np.int16).reshape(-1))
     if arr.size == 0 or int(src_rate) == int(dst_rate):
         return arr.copy()
-    import av
+    try:
+        import av
+    except ImportError:
+        from services.local_asr.audio import resample_int16_mono_numpy
+
+        return resample_int16_mono_numpy(arr, int(src_rate), int(dst_rate))
 
     resampler = av.AudioResampler(format="s16", layout="mono", rate=int(dst_rate))
     frame = av.AudioFrame.from_ndarray(arr.reshape(1, -1), format="s16", layout="mono")

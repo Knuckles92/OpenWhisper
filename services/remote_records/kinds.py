@@ -936,3 +936,9 @@ def _meeting_summary(meeting: dict) -> dict:
     return item
 
 
+from services.remote_records.walkthrough_kind import (  # noqa: E402
+    WalkthroughRecords as WalkthroughRecords,
+)
+
+
+

@@ -305,9 +305,14 @@ class AudioProcessor:
 
         Prefers the audio stream's own duration and falls back to the
         container's; a stream that reports neither is decoded, because a
-        preview with no duration is worse than a slow one.
+        preview with no duration is worse than a slow one. When PyAV is not
+        installed, reads WAV headers directly and delegates compressed files
+        to the paired host when available.
         """
-        import av
+        try:
+            import av
+        except ImportError:
+            return self._probe_audio_header_without_pyav(audio_path)
 
         with av.open(audio_path) as container:
             if not container.streams.audio:
@@ -335,14 +340,58 @@ class AudioProcessor:
             total_samples += len(samples)
         return total_samples / sample_rate, sample_rate, channels
 
+    def _probe_audio_header_without_pyav(self, audio_path: str) -> Tuple[float, int, int]:
+        """Header probe fallback for environments without PyAV/FFmpeg."""
+        from services.local_asr.audio import is_wav_file, probe_wav_header
+
+        if is_wav_file(audio_path):
+            duration_seconds, sample_rate, channels = probe_wav_header(audio_path)
+            if duration_seconds > 0 and sample_rate > 0:
+                return duration_seconds, sample_rate, channels
+            total_samples = 0
+            counted_rate = sample_rate
+            counted_channels = channels
+            for samples, block_rate, block_channels in self._iter_audio_blocks(audio_path):
+                total_samples += len(samples)
+                counted_rate = block_rate
+                counted_channels = block_channels
+            if total_samples <= 0 or counted_rate <= 0:
+                raise UnreadableAudioError("This file has no audio in it.")
+            return total_samples / counted_rate, counted_rate, counted_channels
+
+        try:
+            from services.remote_asr.meeting_client import probe_audio_remote
+        except ImportError as exc:
+            raise UnreadableAudioError(
+                "This build can only read WAV files locally. Connect to a "
+                "paired OpenWhisper host to decode compressed audio files."
+            ) from exc
+        try:
+            return probe_audio_remote(audio_path)
+        except UnreadableAudioError:
+            raise
+        except Exception as exc:
+            logger.info(
+                "Remote audio probe unavailable for %s: %s",
+                os.path.basename(audio_path),
+                exc,
+            )
+            raise UnreadableAudioError(NOT_AUDIO_MESSAGE) from exc
+
     def _iter_audio_blocks(self, audio_path: str, should_cancel=None):
         """Yield native-rate mono int16 PCM with the source's channel count.
 
         Explicit conversion handles packed/planar layouts and integer/float
         formats. Multiplying decoded integer PCM by 32767 corrupts samples;
-        flattening packed stereo doubles duration. FFmpeg handles both here.
+        flattening packed stereo doubles duration. FFmpeg handles both here,
+        with a pure-Python/NumPy WAV fallback and host-decode RPC when PyAV is
+        not installed.
         """
-        import av
+        try:
+            import av
+        except ImportError:
+            yield from self._iter_audio_blocks_without_pyav(audio_path, should_cancel)
+            return
 
         found_audio = False
         with av.open(audio_path) as container:
@@ -364,6 +413,46 @@ class AudioProcessor:
             for samples in _nonempty_samples(converter.resample(None), should_cancel):
                 found_audio = True
                 yield samples, sample_rate, channels
+        if not found_audio:
+            raise UnreadableAudioError("This file has no audio in it.")
+
+    def _iter_audio_blocks_without_pyav(self, audio_path: str, should_cancel=None):
+        """Stream mono int16 PCM from WAV locally or via paired host decode."""
+        from services.local_asr.audio import (
+            SAMPLE_RATE,
+            is_wav_file,
+            iter_wav_mono_int16,
+        )
+
+        found_audio = False
+        if is_wav_file(audio_path):
+            for samples, sample_rate, channels in iter_wav_mono_int16(audio_path):
+                _raise_if_canceled(should_cancel)
+                if samples.size:
+                    found_audio = True
+                    yield samples, sample_rate, channels
+            if not found_audio:
+                raise UnreadableAudioError("This file has no audio in it.")
+            return
+
+        try:
+            from services.remote_asr.meeting_client import decode_audio_windows_remote
+        except ImportError as exc:
+            raise UnreadableAudioError(
+                "This build can only read WAV files locally. Connect to a "
+                "paired OpenWhisper host to decode compressed audio files."
+            ) from exc
+
+        for _offset, window_f32 in decode_audio_windows_remote(
+            audio_path, should_cancel=should_cancel
+        ):
+            _raise_if_canceled(should_cancel)
+            samples = np.clip(np.rint(window_f32 * 32768.0), -32768.0, 32767.0).astype(
+                np.int16
+            )
+            if samples.size:
+                found_audio = True
+                yield samples, SAMPLE_RATE, 1
         if not found_audio:
             raise UnreadableAudioError("This file has no audio in it.")
 

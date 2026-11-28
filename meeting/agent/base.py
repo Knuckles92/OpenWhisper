@@ -91,6 +91,12 @@ def create_agent_core(kind: str, payload_dir: Optional[str] = None) -> AgentCore
     # Imported lazily to avoid import cycles.
     from services.settings import MeetingAgentCore
 
+    remote_host_kind = getattr(MeetingAgentCore, "REMOTE_HOST", "remote_host")
+    if kind == remote_host_kind:
+        from services.remote_asr.meeting_client import RemoteAgentCore
+
+        return RemoteAgentCore()
+
     if kind in MeetingAgentCore.INSTALLED:
         from meeting.agent.installed.core import InstalledAgentCore
 
