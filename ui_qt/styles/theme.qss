@@ -5669,6 +5669,78 @@ QToolButton#walkthroughReadyMore:pressed {
     background-color: @surface-hover;
 }
 
+/* Automatic call detection and auto-stop corner card (call_detection_toast.py). */
+QFrame#callDetectionSurface {
+    background-color: @surface;
+    border: 1px solid @border-strong;
+    border-radius: 14px;
+}
+
+QLabel#callDetectionIcon,
+QLabel#callDetectionTitle,
+QLabel#callDetectionSubtitle {
+    background-color: transparent;
+}
+
+QLabel#callDetectionTitle {
+    color: @text;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+QLabel#callDetectionSubtitle {
+    color: @text-secondary;
+    font-size: 12px;
+}
+
+QToolButton#callDetectionPrimaryBtn {
+    color: @accent-soft;
+    background-color: rgba(@accent-rgb, 0.14);
+    border: 1px solid @accent-tint-border;
+    border-radius: 7px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QToolButton#callDetectionPrimaryBtn:hover {
+    background-color: rgba(@accent-rgb, 0.24);
+}
+
+QToolButton#callDetectionSecondaryBtn {
+    color: @text-secondary;
+    background-color: transparent;
+    border: 1px solid @border;
+    border-radius: 7px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+QToolButton#callDetectionSecondaryBtn:hover {
+    color: @text;
+    background-color: @surface-hover;
+}
+
+QToolButton#callDetectionCloseBtn,
+QToolButton#callDetectionMoreBtn {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+QToolButton#callDetectionMoreBtn::menu-indicator {
+    image: none;
+    width: 0px;
+}
+
+QToolButton#callDetectionCloseBtn:hover,
+QToolButton#callDetectionMoreBtn:hover,
+QToolButton#callDetectionMoreBtn:pressed {
+    background-color: @surface-hover;
+}
+
 /* personalize:S9 begin (history, stats & playback) */
 /* Stats window: the Settings slate family, with a tinted glyph per number. */
 QDialog#statsDialog {

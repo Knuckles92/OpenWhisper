@@ -115,6 +115,7 @@ from ui_qt.dialogs.settings_destinations import (
     HOTKEYS,
     MCP,
     MEETING_AFTER,
+    MEETING_CALLS,
     MEETING_DASHBOARD,
     MEETING_FAST,
     MEETING_INTELLIGENCE,
@@ -134,6 +135,7 @@ from ui_qt.dialogs import (
     settings_cleanup_rules,
     settings_fast_judgments,
     settings_meeting_after,
+    settings_meeting_calls,
 )
 from ui_qt.dialogs.settings_backup import BackupSettingsPage
 from ui_qt.dialogs.settings_fields import (
@@ -328,6 +330,7 @@ _CHAPTERS = (
     )),
     ("Meeting Mode", "users-amber.svg", (
         (MEETING_VOICE, "Voice & speakers", "microphone-blue.svg"),
+        (MEETING_CALLS, "Call detection", "microphone-blue.svg"),
         (MEETING_INTELLIGENCE, "Intelligence", "stack-purple.svg"),
         (MEETING_FAST, "Fast judgments", "bolt-green.svg"),
         (MEETING_AFTER, "After the meeting", "check-green.svg"),
@@ -596,6 +599,13 @@ class SettingsDialog(QDialog):
             is_loading=lambda: self._loading,
             review_route=lambda: self.fast_judgments.selected_route(),
             ensure_built=lambda: self.ensure_page(MEETING_AFTER),
+        )
+        self.meeting_calls = settings_meeting_calls.MeetingCallsSection(
+            self,
+            persist=self._persist,
+            bindings=self._meeting_bindings,
+            is_loading=lambda: self._loading,
+            ensure_built=lambda: self.ensure_page(MEETING_CALLS),
         )
 
         self._build_steps = self._build()
@@ -935,6 +945,13 @@ class SettingsDialog(QDialog):
             "The speech engine for live captions and the optional end-of-meeting "
             "re-transcription: dictation's, or one of its own. Applies to your next meeting.",
             self.models.build_meeting_voice_page,
+        )
+        self._add_page(
+            MEETING_CALLS,
+            "Call detection",
+            "Detect when a call app or browser tab starts using your microphone, "
+            "and optionally stop Meeting Mode when the call ends.",
+            self._build_meeting_calls_page,
         )
         self._add_page(
             MEETING_INTELLIGENCE,
@@ -2401,6 +2418,11 @@ class SettingsDialog(QDialog):
         for name in settings_fast_judgments.CONTROLS:
             setattr(self, name, getattr(self.fast_judgments, name))
 
+    def _build_meeting_calls_page(self, layout: QVBoxLayout) -> None:
+        self.meeting_calls.build(layout, self._tile_group)
+        for name in settings_meeting_calls.CONTROLS:
+            setattr(self, name, getattr(self.meeting_calls, name))
+
     def _build_meeting_after_page(self, layout: QVBoxLayout) -> None:
         self.meeting_after.build(layout, self._tile_group)
         # The dialog names the section's controls too, for deep links,
@@ -3279,6 +3301,7 @@ class SettingsDialog(QDialog):
         else:
             rule_count = len(resolve_transcript_cleanup_rules(settings))
         self.rail.set_value(CLEANUP_RULES, settings_cleanup_rules.rule_count_label(rule_count))
+        self.rail.set_value(MEETING_CALLS, settings_meeting_calls.rail_value(settings))
         self.rail.set_value(MEETING_AFTER, _meeting_after_rail_value(settings))
         self.fast_judgments.render_key_state()
         self.rail.set_value(MEETING_FAST, self.fast_judgments.rail_value())
@@ -3915,6 +3938,8 @@ class SettingsDialog(QDialog):
 
     def _load_meeting_settings(self, settings: dict) -> None:
         self._meeting_bindings.load(settings, start=self._initial_meeting_binding_start)
+        if self._page_is_loading(MEETING_CALLS):
+            self.meeting_calls.load(settings)
         if self._page_is_loading(MEETING_AFTER):
             self.meeting_after.load(settings)
         if self._page_is_loading(MEETING_DASHBOARD):

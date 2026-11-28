@@ -371,6 +371,13 @@ class UIController(QObject):
         self.on_meeting_retry_step: Optional[Callable] = None  # (step_id: str)
         self.on_meeting_background: Optional[Callable] = None
         self.on_meeting_defer_insights: Optional[Callable] = None
+        self.on_meeting_call_offer_accept: Optional[Callable] = None
+        self.on_meeting_call_offer_dismiss: Optional[Callable] = None
+        self.on_meeting_call_offer_timeout: Optional[Callable] = None
+        self.on_meeting_call_provider_policy: Optional[Callable] = None
+        self.on_meeting_call_keep_recording: Optional[Callable] = None
+        self.on_meeting_call_stop_now: Optional[Callable] = None
+        self._call_detection_card = None
         self.get_meeting_active: Optional[Callable] = None  # Provider: meeting running?
         self._meeting_active = False
         self._meeting_cloud_enabled = False
@@ -2362,6 +2369,91 @@ class UIController(QObject):
         if not status:
             return
         self.set_status(status)
+
+    def _ensure_call_detection_card(self):
+        if self._call_detection_card is None:
+            from ui_qt.widgets.call_detection_toast import CallDetectionCard
+
+            card = CallDetectionCard()
+            card.start_requested.connect(
+                lambda cand, oid: self.on_meeting_call_offer_accept
+                and self.on_meeting_call_offer_accept(cand, oid)
+            )
+            card.not_now_requested.connect(
+                lambda oid: self.on_meeting_call_offer_dismiss
+                and self.on_meeting_call_offer_dismiss(oid)
+            )
+            card.always_record_requested.connect(
+                lambda cand, oid: self.on_meeting_call_provider_policy
+                and self.on_meeting_call_provider_policy(cand, "always_record", oid)
+            )
+            card.dont_offer_requested.connect(
+                lambda cand, oid: self.on_meeting_call_provider_policy
+                and self.on_meeting_call_provider_policy(cand, "dont_offer", oid)
+            )
+            card.offer_timed_out.connect(
+                lambda oid: self.on_meeting_call_offer_timeout
+                and self.on_meeting_call_offer_timeout(oid)
+            )
+            card.keep_recording_requested.connect(
+                lambda: self.on_meeting_call_keep_recording
+                and self.on_meeting_call_keep_recording()
+            )
+            card.stop_now_requested.connect(
+                lambda: self.on_meeting_call_stop_now
+                and self.on_meeting_call_stop_now()
+            )
+            self._call_detection_card = card
+        return self._call_detection_card
+
+    def on_meeting_call_detected(self, candidate: Any, offer_id: int) -> None:
+        """Show the non-intrusive offer toast for a detected call."""
+        from ui_qt.utils.desktop import compositor_managed
+
+        if compositor_managed():
+            self.set_meeting_status(candidate.offer_title())
+            if hasattr(self.tray_manager, "show_message"):
+                self.tray_manager.show_message(
+                    candidate.offer_title(), candidate.offer_subtitle()
+                )
+            return
+        self._ensure_call_detection_card().present_offer(candidate, offer_id)
+
+    def on_meeting_call_offer_withdrawn(self, offer_id: int) -> None:
+        if self._call_detection_card is not None:
+            self._call_detection_card.withdraw_offer(offer_id)
+
+    def on_meeting_call_auto_started(self, candidate: Any) -> None:
+        """Notify the user that Meeting Mode started automatically."""
+        from ui_qt.utils.desktop import compositor_managed
+
+        title = f"Recording {candidate.app_label()} call"
+        self.set_meeting_status(f"{title} — Meeting Mode started automatically")
+        if compositor_managed():
+            if hasattr(self.tray_manager, "show_message"):
+                self.tray_manager.show_message(
+                    title, "Meeting Mode started automatically"
+                )
+            return
+        self._ensure_call_detection_card().present_auto_started(candidate)
+
+    def on_meeting_call_end_grace_started(self, app_label: str, grace_s: int) -> None:
+        """Show the call-ended auto-stop grace countdown toast."""
+        from ui_qt.utils.desktop import compositor_managed
+
+        self.set_meeting_status(f"{app_label} call ended — stopping in {grace_s} s")
+        if compositor_managed():
+            if hasattr(self.tray_manager, "show_message"):
+                self.tray_manager.show_message(
+                    f"{app_label} call ended",
+                    f"Stopping Meeting Mode in {grace_s} s",
+                )
+            return
+        self._ensure_call_detection_card().present_call_ended(app_label, grace_s)
+
+    def on_meeting_call_end_grace_cancelled(self, _reason: str) -> None:
+        if self._call_detection_card is not None:
+            self._call_detection_card.cancel_call_ended()
 
     def on_meeting_error(self, message: str) -> None:
         """Surface a meeting error in status and a modal warning.

@@ -428,6 +428,24 @@ class ApplicationController(QObject):
         self.ui_controller.on_meeting_defer_insights = (
             self.meeting_runtime.defer_finalization_card
         )
+        self.ui_controller.on_meeting_call_offer_accept = (
+            self.meeting_runtime.accept_call_offer
+        )
+        self.ui_controller.on_meeting_call_offer_dismiss = (
+            self.meeting_runtime.dismiss_call_offer
+        )
+        self.ui_controller.on_meeting_call_offer_timeout = (
+            self.meeting_runtime.timeout_call_offer
+        )
+        self.ui_controller.on_meeting_call_provider_policy = (
+            self.meeting_runtime.set_call_provider_policy
+        )
+        self.ui_controller.on_meeting_call_keep_recording = (
+            self.meeting_runtime.keep_recording_after_call_end
+        )
+        self.ui_controller.on_meeting_call_stop_now = (
+            self.meeting_runtime.stop_now_after_call_end
+        )
         self.ui_controller.on_settings_changed = self.on_settings_changed
         self.ui_controller.on_try_action = self.action_runtime.test
         self.ui_controller.on_cancel_try_runs = (
