@@ -113,7 +113,7 @@ of an incorrect Running status.
 | `run_action`, `run_transform` | Run a saved action or text transform on text; needs **Run actions** |
 | `notify_user` | Show a short notice near the pointer; needs **Run actions** |
 | `start_dictation`, `stop_dictation`, `cancel_dictation` | Record for dictation, an action, a cleanup profile, or voice routing; needs **Start recordings** |
-| `get_meeting_live_state`, `start_meeting`, `pause_meeting`, `resume_meeting`, `end_meeting`, `background_meeting`, `retry_meeting_finalization`, `manage_recovered_meeting`, `open_meeting_view` | Inspect and control Meeting Mode lifecycle, recovery, and views; mutations need **Control Meeting Mode** |
+| `get_meeting_live_state`, `get_meeting_dashboard_state`, `start_meeting`, `pause_meeting`, `resume_meeting`, `end_meeting`, `background_meeting`, `retry_meeting_finalization`, `manage_recovered_meeting`, `open_meeting_view`, `update_live_meeting`, `manage_meeting_card_item`, `manage_meeting_question`, `update_meeting_transcript_or_speaker`, `request_meeting_note_adjustment`, `request_meeting_custom_report`, `undo_live_meeting_action` | Inspect live Meeting Mode status, duration, job progress (scheduler, finalization steps, background jobs, running reports), and full dashboard state; control lifecycle, live metadata/AI toggle, cards, Q&A, speakers/segments, note adjustments, custom reports, and undo; mutations need **Control Meeting Mode** |
 | `list_walkthroughs`, `get_walkthrough` | Browse and read saved walkthroughs by `#001` reference, `latest`, or folder ID (with optional screenshots); needs **Read saved walkthroughs** |
 | `start_walkthrough`, `finish_walkthrough`, `cancel_walkthrough`, `set_walkthrough_paused`, `snap_walkthrough`, `choose_walkthrough_snap_mode`, `edit_walkthrough_shots`, `run_walkthrough_writeup`, `take_screenshot` | Control walkthrough recording, screenshots, shot order, and AI write-ups; needs **Control walkthroughs & screenshots** |
 | `get_personalization_summary`, `list_dictionary`, `add_dictionary_term`, `bulk_add_dictionary_terms`, `remove_dictionary_term`, `list_snippets`, `upsert_snippet`, `bulk_upsert_snippets`, `delete_snippet`, `get_app_styles`, `set_app_style_tone`, `set_app_style_override`, `remove_app_style_override`, `list_walkthrough_styles`, `upsert_walkthrough_style`, `delete_walkthrough_style`, `list_languages`, `set_active_language`, `set_quick_record_profile` | Read a full personalization snapshot and manage dictionary terms (including bulk seed + `dry_run`), snippets, app style tones/overrides, walkthrough write-up styles, languages, and default Quick Record profile; mutations need **Manage dictionary, snippets & styles**. Built-in MCP prompts `personalize_from_context` and `personalize_from_history` guide assistants to seed personalization from past chats, projects, or dictation history. |
@@ -122,7 +122,7 @@ of an incorrect Running status.
 History retrieval tools remain read-only. They reuse the [History API](agent-api.md), including
 bounded cursor pagination, literal search, date filters, sanitized response
 schemas, and exclusion of paired-computer records unless `include_remote=true`.
-No tool deletes history, edits transcript text, or exposes audio files.
+No tool deletes history, edits transcript text, or exposes raw audio files.
 `recent_events` follows **Follow live events**, which is on by default like
 reading history: it returns recent dictations, actions and meeting lines.
 Running actions and showing notices need **Run actions**, recording needs

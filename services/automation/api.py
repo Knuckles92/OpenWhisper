@@ -750,6 +750,163 @@ def _register_extended_routes(router, live: _LiveRoutes) -> None:
 
         return await live.respond("meetings.end", work, status=202)
 
+    @router.get("/v1/meetings/live/state", operation_id="get_meeting_dashboard_state")
+    async def meeting_dashboard_state(meeting_id: str = Query(default="", max_length=200)):
+        return await live.respond(
+            "meetings.live.state",
+            lambda: require_app_control().get_meeting_dashboard_state(meeting_id=meeting_id or None),
+            status=200,
+        )
+
+    @router.post("/v1/meetings/live/update", operation_id="update_live_meeting")
+    async def meeting_live_update(request: Request):
+        try:
+            body = await read_json_body(request, MAX_SMALL_BODY)
+        except _Invalid as exc:
+            return live.failure("meetings.live.update", exc)
+
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_MEETINGS)
+            title = _string(body, "title", required=False, max_chars=200) if "title" in body else None
+            intent = _string(body, "intent", required=False, max_chars=2000) if "intent" in body else None
+            topic = _string(body, "topic", required=False, max_chars=200) if "topic" in body else None
+            cloud = body.get("cloud_enabled")
+            if cloud is not None and type(cloud) is not bool:
+                raise _Invalid("cloud_enabled must be true or false.")
+            return require_app_control().update_live_meeting(
+                title=title, intent=intent, topic=topic, cloud_enabled=cloud
+            )
+
+        return await live.respond("meetings.live.update", work, status=200)
+
+    @router.post("/v1/meetings/live/cards", operation_id="manage_meeting_card_item")
+    async def meeting_live_cards(request: Request):
+        try:
+            body = await read_json_body(request, MAX_SMALL_BODY)
+        except _Invalid as exc:
+            return live.failure("meetings.live.cards", exc)
+
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_MEETINGS)
+            action = _string(body, "action", required=True, max_chars=32)
+            card = _string(body, "card", required=False, max_chars=64) if "card" in body else None
+            item_id = _string(body, "item_id", required=False, max_chars=200) if "item_id" in body else None
+            text = _string(body, "text", required=False, max_chars=4000) if "text" in body else None
+            data = body.get("data")
+            if data is not None and not isinstance(data, dict):
+                raise _Invalid("data must be an object.")
+            evidence = body.get("evidence")
+            if evidence is not None and (not isinstance(evidence, list) or not all(isinstance(e, str) for e in evidence)):
+                raise _Invalid("evidence must be a list of segment IDs.")
+            return require_app_control().manage_meeting_card_item(
+                action=action, card=card, item_id=item_id, text=text, data=data, evidence=evidence
+            )
+
+        return await live.respond("meetings.live.cards", work, status=200)
+
+    @router.post("/v1/meetings/live/questions", operation_id="manage_meeting_question")
+    async def meeting_live_questions(request: Request):
+        try:
+            body = await read_json_body(request, MAX_SMALL_BODY)
+        except _Invalid as exc:
+            return live.failure("meetings.live.questions", exc)
+
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_MEETINGS)
+            action = _string(body, "action", required=True, max_chars=32)
+            text = _string(body, "text", required=False, max_chars=2000) if "text" in body else None
+            question_id = _string(body, "question_id", required=False, max_chars=200) if "question_id" in body else None
+            answer_text = _string(body, "answer_text", required=False, max_chars=4000) if "answer_text" in body else None
+            evidence = body.get("evidence")
+            if evidence is not None and (not isinstance(evidence, list) or not all(isinstance(e, str) for e in evidence)):
+                raise _Invalid("evidence must be a list of segment IDs.")
+            return require_app_control().manage_meeting_question(
+                action=action,
+                text=text,
+                question_id=question_id,
+                answer_text=answer_text,
+                evidence=evidence,
+            )
+
+        return await live.respond("meetings.live.questions", work, status=200)
+
+    @router.post("/v1/meetings/live/transcript", operation_id="update_meeting_transcript_or_speaker")
+    async def meeting_live_transcript(request: Request):
+        try:
+            body = await read_json_body(request, MAX_SMALL_BODY)
+        except _Invalid as exc:
+            return live.failure("meetings.live.transcript", exc)
+
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_MEETINGS)
+            action = _string(body, "action", required=True, max_chars=40)
+            participant_id = _string(body, "participant_id", required=False, max_chars=200) if "participant_id" in body else None
+            display_name = _string(body, "display_name", required=False, max_chars=200) if "display_name" in body else None
+            segment_id = _string(body, "segment_id", required=False, max_chars=200) if "segment_id" in body else None
+            return require_app_control().update_meeting_transcript_or_speaker(
+                action=action,
+                participant_id=participant_id,
+                display_name=display_name,
+                segment_id=segment_id,
+            )
+
+        return await live.respond("meetings.live.transcript", work, status=200)
+
+    @router.post("/v1/meetings/live/notes/request", operation_id="request_meeting_note_adjustment")
+    async def meeting_live_note_request(request: Request):
+        try:
+            body = await read_json_body(request, MAX_SMALL_BODY)
+        except _Invalid as exc:
+            return live.failure("meetings.live.notes.request", exc)
+
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_MEETINGS)
+            text = _string(body, "text", required=True, max_chars=1000)
+            wait = body.get("wait", True)
+            if type(wait) is not bool:
+                raise _Invalid("wait must be true or false.")
+            timeout_s = body.get("timeout_s", 60.0)
+            if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or timeout_s < 1 or timeout_s > 120:
+                raise _Invalid("timeout_s must be between 1 and 120.")
+            return require_app_control().request_meeting_note_adjustment(
+                text=text, wait=wait, timeout_s=float(timeout_s)
+            )
+
+        return await live.respond("meetings.live.notes.request", work, status=200)
+
+    @router.post("/v1/meetings/live/reports", status_code=202, operation_id="request_meeting_custom_report")
+    async def meeting_live_reports(request: Request):
+        try:
+            body = await read_json_body(request, MAX_SMALL_BODY)
+        except _Invalid as exc:
+            return live.failure("meetings.live.reports", exc)
+
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_MEETINGS)
+            request_text = _string(body, "request_text", required=True, max_chars=2000)
+            meeting_id = _string(body, "meeting_id", required=False, max_chars=200) if "meeting_id" in body else None
+            return require_app_control().request_meeting_custom_report(
+                request_text=request_text, meeting_id=meeting_id or None
+            )
+
+        return await live.respond("meetings.live.reports", work, status=202)
+
+    @router.post("/v1/meetings/live/undo", operation_id="undo_live_meeting_action")
+    async def meeting_live_undo(request: Request):
+        try:
+            body = await read_json_body(request, MAX_SMALL_BODY)
+        except _Invalid as exc:
+            return live.failure("meetings.live.undo", exc)
+
+        def work():
+            permissions.require(live.saved(), permissions.CONTROL_MEETINGS)
+            seq = body.get("event_seq")
+            if isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
+                raise _Invalid("event_seq must be a positive integer.")
+            return require_app_control().undo_live_meeting_action(event_seq=seq)
+
+        return await live.respond("meetings.live.undo", work, status=200)
+
     @router.get("/v1/walkthroughs", operation_id="list_walkthroughs")
     async def walkthroughs_list(q: str = Query(default="", max_length=200), limit: int = Query(default=20, ge=1, le=100)):
         def work():

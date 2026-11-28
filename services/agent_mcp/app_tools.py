@@ -82,8 +82,30 @@ def _register_profile_and_transform_tools(mcp, hints, live_call) -> None:
 def _register_meeting_control_tools(mcp, hints, live_call) -> None:
     @mcp.tool(annotations=hints["live_read"])
     async def get_meeting_live_state() -> dict[str, object]:
-        """Read live Meeting Mode state (active, paused, finalizing, meeting_id, elapsed_s)."""
+        """Read live Meeting Mode status, duration (elapsed_s), capture/AI health, counts, and job progress.
+
+        Includes step-by-step finalization progress, background finalization jobs,
+        live AI scheduler queue status, and any in-flight custom report jobs.
+        """
         return await live_call(None, lambda _saved: require_app_control().meeting_status())
+
+    @mcp.tool(annotations=hints["live_read"])
+    async def get_meeting_dashboard_state(
+        meeting_id: OptShortStr = None,
+    ) -> dict[str, object]:
+        """Read the full Meeting Mode dashboard state and job progress (active meeting by default, or a saved meeting_id).
+
+        Returns everything shown on the live dashboard: title, intent, topic, rolling_summary,
+        participants, all cards (with item IDs, pinned/confirmed status, evidence), questions,
+        live_highlights, voice_feedback, capture/speech health, cloud/diarization status,
+        custom_reports, and job progress (scheduler, finalization steps, running reports).
+        """
+        return await live_call(
+            None,
+            lambda _saved: require_app_control().get_meeting_dashboard_state(
+                meeting_id=meeting_id
+            ),
+        )
 
     @mcp.tool(annotations=hints["record"])
     async def start_meeting(
@@ -167,6 +189,137 @@ def _register_meeting_control_tools(mcp, hints, live_call) -> None:
             lambda _saved: require_app_control().open_meeting_view(
                 meeting_id=meeting_id or "", view=view
             ),
+        )
+
+    @mcp.tool(annotations=hints["write"])
+    async def update_live_meeting(
+        title: OptShortStr = None,
+        intent: Annotated[str | None, Field(max_length=2_000)] = None,
+        topic: OptShortStr = None,
+        cloud_enabled: bool | None = None,
+    ) -> dict[str, object]:
+        """Update the active meeting's title, standing intent/brief, current topic, or AI insights toggle; needs Control Meeting Mode."""
+        return await live_call(
+            permissions.CONTROL_MEETINGS,
+            lambda _saved: require_app_control().update_live_meeting(
+                title=title, intent=intent, topic=topic, cloud_enabled=cloud_enabled
+            ),
+        )
+
+    @mcp.tool(annotations=hints["write"])
+    async def manage_meeting_card_item(
+        action: Literal["add", "update", "remove", "pin", "unpin", "confirm"],
+        card: Literal[
+            "key_points",
+            "decisions",
+            "action_items",
+            "risks",
+            "timeline",
+            "live_notes",
+            "user_notes",
+        ] | None = None,
+        item_id: OptShortStr = None,
+        text: Annotated[str | None, Field(max_length=4_000)] = None,
+        data: dict[str, object] | None = None,
+        evidence: list[ShortStr] | None = None,
+    ) -> dict[str, object]:
+        """Add, update, remove, pin, unpin, or confirm a card item on the active meeting dashboard; needs Control Meeting Mode.
+
+        Returns the resulting item and its seq (usable with undo_live_meeting_action).
+        """
+        return await live_call(
+            permissions.CONTROL_MEETINGS,
+            lambda _saved: require_app_control().manage_meeting_card_item(
+                action=action,
+                card=card,
+                item_id=item_id,
+                text=text,
+                data=data,
+                evidence=evidence,
+            ),
+        )
+
+    @mcp.tool(annotations=hints["write"])
+    async def manage_meeting_question(
+        action: Literal["ask", "answer", "dismiss", "reopen"],
+        text: Annotated[str | None, Field(max_length=2_000)] = None,
+        question_id: OptShortStr = None,
+        answer_text: Annotated[str | None, Field(max_length=4_000)] = None,
+        evidence: list[ShortStr] | None = None,
+    ) -> dict[str, object]:
+        """Ask, answer, dismiss, or reopen a question in the active meeting Q&A inbox; needs Control Meeting Mode."""
+        return await live_call(
+            permissions.CONTROL_MEETINGS,
+            lambda _saved: require_app_control().manage_meeting_question(
+                action=action,
+                text=text,
+                question_id=question_id,
+                answer_text=answer_text,
+                evidence=evidence,
+            ),
+        )
+
+    @mcp.tool(annotations=hints["write"])
+    async def update_meeting_transcript_or_speaker(
+        action: Literal["rename_participant", "reassign_speaker"],
+        participant_id: OptShortStr = None,
+        display_name: OptShortStr = None,
+        segment_id: OptShortStr = None,
+    ) -> dict[str, object]:
+        """Rename a participant or reassign a transcript segment's speaker in the active meeting; needs Control Meeting Mode."""
+        return await live_call(
+            permissions.CONTROL_MEETINGS,
+            lambda _saved: require_app_control().update_meeting_transcript_or_speaker(
+                action=action,
+                participant_id=participant_id,
+                display_name=display_name,
+                segment_id=segment_id,
+            ),
+        )
+
+    @mcp.tool(annotations=hints["record"])
+    async def request_meeting_note_adjustment(
+        text: Annotated[str, Field(min_length=1, max_length=1_000)],
+        wait: bool = True,
+        timeout_s: Annotated[float, Field(ge=1.0, le=120.0)] = 60.0,
+    ) -> dict[str, object]:
+        """Send an instruction to the live meeting AI note-taker (requires AI insights enabled); needs Control Meeting Mode.
+
+        With wait=true (default), waits up to timeout_s for the pass to finish and returns applied/rejected counts;
+        with wait=false, queues the request immediately so you can poll get_meeting_live_state.
+        """
+        return await live_call(
+            permissions.CONTROL_MEETINGS,
+            lambda _saved: require_app_control().request_meeting_note_adjustment(
+                text=text, wait=wait, timeout_s=timeout_s
+            ),
+        )
+
+    @mcp.tool(annotations=hints["record"])
+    async def request_meeting_custom_report(
+        request_text: Annotated[str, Field(min_length=1, max_length=2_000)],
+        meeting_id: OptShortStr = None,
+    ) -> dict[str, object]:
+        """Start a tailored custom report job for the active meeting (or a saved meeting_id); needs Control Meeting Mode.
+
+        Returns report_id and status='running'. Poll get_meeting_live_state or get_meeting_dashboard_state
+        to track progress and read the finished markdown report.
+        """
+        return await live_call(
+            permissions.CONTROL_MEETINGS,
+            lambda _saved: require_app_control().request_meeting_custom_report(
+                request_text=request_text, meeting_id=meeting_id
+            ),
+        )
+
+    @mcp.tool(annotations=hints["stop"])
+    async def undo_live_meeting_action(
+        event_seq: Annotated[int, Field(ge=1)],
+    ) -> dict[str, object]:
+        """Undo a previous live meeting edit by its returned seq number; needs Control Meeting Mode."""
+        return await live_call(
+            permissions.CONTROL_MEETINGS,
+            lambda _saved: require_app_control().undo_live_meeting_action(event_seq=event_seq),
         )
 
 
