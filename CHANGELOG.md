@@ -3,7 +3,7 @@
 All notable changes to OpenWhisper will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Releases use major.minor.patch numbering. The 2.6 line used a two-digit patch (2.6.01 to 2.6.15); from 2.7.0 on, routine releases continue as 2.7.1, 2.7.2, and so on, and minor and major bumps are reserved for deliberate milestones. From 2.8.91 on, routine releases use a two-digit patch again: 2.8.92, 2.8.93, and so on (updates compare numerically, so 2.8.91 follows 2.8.9).
+Releases use `major.minor.patch` numbering. Normal routine releases use a zero-padded two-digit patch after each `major.minor.0` milestone (`X.Y.01`, `X.Y.02`, …, `X.Y.99`; continuing from `2.9.2` as `2.9.03`, `2.9.04`, and so on), with minor and major bumps reserved for deliberate milestones. Updates compare version segments numerically, so `2.9.03` follows `2.9.2` and `2.9.10` follows `2.9.09` (just as `2.8.91` followed `2.8.9` and the 2.6 line used `2.6.01` to `2.6.15`).
 
 ## [Unreleased]
 

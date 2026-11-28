@@ -13,6 +13,13 @@
 
 By contributing, you agree that your contribution is licensed under the project's [MIT License](LICENSE).
 
+## Release versioning and cadence
+
+- Normal routine releases use a **zero-padded two-digit patch** after each `X.Y.0` release: `X.Y.01`, `X.Y.02`, …, `X.Y.99` (for example, continuing from `2.9.2` as `2.9.03`, `2.9.04`, and so on).
+- Minor (`X.(Y+1).0`) and major bumps are reserved for deliberate milestones.
+- Version segments compare numerically in the app updater and native packages (`2.9.03 > 2.9.2`, `2.9.10 > 2.9.09`).
+- Cutting a release updates `_version.py`, `CHANGELOG.md`, and `ui_qt/whats_new.py`, tags `vX.Y.Z`, builds via **Build native installers**, and verifies/uploads via **Verify candidate and upload draft** (see [Release health](docs/release-health.md#verify-a-candidate-before-uploading-a-release-draft) and [Beta releases](docs/beta-releases.md)).
+
 ## Comments and Docstrings
 
 Code is the primary source of truth. Add prose only when it records information the code cannot express clearly.
