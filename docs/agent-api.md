@@ -112,7 +112,11 @@ The desktop MCP listener also accepts `include_clients=true` on list/search
 endpoints to query online paired clients that enabled history sharing in
 Settings → Remote engine. `device_id` selects one client and routes individual
 reads, meeting segments, and insights to it. Add `include_remote=true` to allow
-matching host-stored copies to answer when that client is offline. Live queries
+matching host-stored copies to answer when that client is offline.
+`device_name` selects the client by the name the host shows for it instead:
+case and spacing don't count, `device_id` and `device_name` together are an
+`invalid_query`, and so is a name that no paired computer or more than one
+goes by. Live queries
 read only the client's own records, preventing recursive queries between hosts.
 The standalone `--api` process has no connected-client broker; use the desktop
 MCP listener's `/v1` endpoints for live clients.

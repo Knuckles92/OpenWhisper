@@ -237,6 +237,112 @@ def test_direct_queries_and_mcp_citations_without_uploads(live_history, tmp_path
         server.stop(wait=True)
 
 
+def test_a_paired_client_can_be_named_instead_of_identified(live_history, tmp_path):
+    live = live_history
+    server = McpRuntime(
+        live.host_path,
+        credentials=CredentialStore(memory_backend),
+        settings=SettingsManager(str(tmp_path / "settings.json")),
+    )
+    server.configure_controls(client_history=live.host.history)
+    server.start(free_port())
+    wait_for(server, "running")
+
+    async def exercise():
+        async with httpx2.AsyncClient(
+            headers={"Authorization": f"Bearer {server.token()}"}, trust_env=False
+        ) as http:
+            async with Client(
+                streamable_http_client(server.status().url, http_client=http)
+            ) as client:
+                # Case and spacing don't count.
+                record = await client.call_tool(
+                    "get_transcription", {"record_id": "h0", "device_name": " LAPTOP "}
+                )
+                assert record.structured_content["text"] == "Launch 0"
+                assert record.structured_content["origin_device_id"] == live.device
+                page = await client.call_tool(
+                    "list_transcriptions", {"device_name": "laptop", "limit": 3}
+                )
+                assert [i["id"] for i in page.structured_content["items"]] == ["h0", "h1", "h2"]
+                rest = await client.call_tool(
+                    "list_transcriptions",
+                    {"device_name": "laptop", "limit": 3,
+                     "cursor": page.structured_content["next_cursor"]},
+                )
+                assert [i["id"] for i in rest.structured_content["items"]] == ["h3"]
+                for tool, params in [
+                    ("search_history", {"q": "Friday"}),
+                    ("list_meetings", {}),
+                    ("get_meeting", {"meeting_id": "meeting"}),
+                    ("list_meeting_segments", {"meeting_id": "meeting"}),
+                    ("get_meeting_segment", {"meeting_id": "meeting", "segment_id": "segment"}),
+                    ("get_meeting_insights", {"meeting_id": "meeting"}),
+                ]:
+                    result = await client.call_tool(tool, {**params, "device_name": "laptop"})
+                    assert not result.is_error, (tool, result)
+                    # The host's own database holds none of this: it came from the client.
+                    assert "Launch" in result.model_dump_json(), tool
+                # A rename is what the name means from then on.
+                live.host.rename_device(live.device, "Kitchen laptop")
+                renamed = await client.call_tool(
+                    "get_transcription", {"record_id": "h0", "device_name": "kitchen laptop"}
+                )
+                assert renamed.structured_content["origin_device_name"] == "Kitchen laptop"
+                for params in (
+                    {"device_name": "laptop"},
+                    {"device_name": "Kitchen laptop", "device_id": live.device},
+                ):
+                    refused = await client.call_tool(
+                        "get_transcription", {"record_id": "h0", **params}
+                    )
+                    assert refused.is_error and "invalid_query" in refused.content[0].text
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        server.stop(wait=True)
+
+
+def test_a_name_two_clients_share_is_refused_and_stored_copies_answer_by_name(live_history):
+    live = live_history
+    history = FederatedHistory(HistoryStore(live.host_path), live.host.history)
+    try:
+        assert history.resolve_device(None, "Laptop") == live.device
+        assert history.resolve_device(live.device, None) == live.device
+        assert history.resolve_device(None, None) is None
+        # A copy the host keeps answers for a named client that's offline.
+        with live.host_db.get_session() as session:
+            session.add(TranscriptionHistory(
+                id="kept", text="Kept on the host", timestamp=DATE, model="test",
+                origin_device_id=live.device, origin_device_name="laptop",
+            ))
+        live.client.stop()
+        wait_until(lambda: live.host.history.clients()[0]["status"] == "unavailable")
+        kept = history.transcription("kept", include_remote=True, device_name="laptop")
+        assert kept.text == "Kept on the host"
+        with pytest.raises(ClientUnavailable):
+            history.transcription("kept", device_name="laptop")
+        live.host.registry.add("LAPTOP")
+        with pytest.raises(InvalidQuery, match="2 paired computers"):
+            history.transcriptions(device_name="laptop")
+        with pytest.raises(InvalidQuery, match="No paired computer"):
+            history.transcriptions(device_name="desktop")
+    finally:
+        history.close()
+    # Without the desktop's broker there are no paired computers to name.
+    with TestClient(
+        create_app(live.host_path, TOKEN), base_url="http://127.0.0.1"
+    ) as api:
+        response = api.get(
+            "/v1/transcriptions",
+            params={"device_name": "laptop"},
+            headers={"Authorization": f"Bearer {TOKEN}"},
+        )
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "unsupported"
+
+
 def test_pagination_duplicates_filters_revocation_and_offline_copies(live_history):
     live = live_history
     with live.host_db.get_session() as session:

@@ -118,7 +118,7 @@ of an incorrect Running status.
 | `start_walkthrough`, `finish_walkthrough`, `cancel_walkthrough`, `set_walkthrough_paused`, `snap_walkthrough`, `choose_walkthrough_snap_mode`, `edit_walkthrough_shots`, `run_walkthrough_writeup`, `take_screenshot` | Control walkthrough recording, screenshots, shot order, and AI write-ups; needs **Control walkthroughs & screenshots** |
 | `get_personalization_summary`, `list_dictionary`, `add_dictionary_term`, `bulk_add_dictionary_terms`, `remove_dictionary_term`, `list_snippets`, `upsert_snippet`, `bulk_upsert_snippets`, `delete_snippet`, `get_app_styles`, `set_app_style_tone`, `set_app_style_override`, `remove_app_style_override`, `list_walkthrough_styles`, `upsert_walkthrough_style`, `delete_walkthrough_style`, `list_languages`, `set_active_language`, `set_quick_record_profile` | Read a full personalization snapshot and manage dictionary terms (including bulk seed + `dry_run`), snippets, app style tones/overrides, walkthrough write-up styles, languages, and default Quick Record profile; mutations need **Manage dictionary, snippets & styles**. Built-in MCP prompts `personalize_from_context` and `personalize_from_history` guide assistants to seed personalization from past chats, projects, or dictation history. |
 | `list_cleanup_rules`, `add_cleanup_rule`, `update_cleanup_rule`, `remove_cleanup_rule` | Read and manage learned transcript cleanup rules (`add_cleanup_rule` supports `dry_run=true`); mutations need **Manage learned cleanup rules** |
-| `get_engine_status`, `list_models`, `select_model`, `download_model`, `list_audio_devices`, `select_audio_device`, `get_remote_status`, `reconnect_remote`, `transcribe_audio_file`, `control_window` | Inspect and control speech engines/models, microphones, remote host connection, local audio file transcription, and desktop windows/Scratchpad; mutations need **Control models, devices, files & windows** |
+| `get_engine_status`, `list_models`, `select_model`, `download_model`, `list_audio_devices`, `select_audio_device`, `get_remote_status`, `reconnect_remote`, `rename_paired_computer`, `transcribe_audio_file`, `control_window` | Inspect and control speech engines/models, microphones, remote host connection, the names of paired computers, local audio file transcription, and desktop windows/Scratchpad; mutations need **Control models, devices, files & windows** |
 
 History retrieval tools remain read-only. They reuse the [History API](agent-api.md), including
 bounded cursor pagination, literal search, date filters, sanitized response
@@ -185,6 +185,20 @@ Use `include_clients: true` on `search_history`, `list_transcriptions`, or
 `include_remote: true` to search copies already stored on the host as well.
 The same record stored by **Both** and returned by its client appears once.
 An optional `device_id` restricts a list or search to one client.
+
+Wherever a tool takes `device_id`, it takes `device_name` instead: the name
+the host shows for that client now, as `clients` lists it. Case and spacing
+don't count. Pass one or the other, not both. Names aren't unique, so a name
+two paired computers share is refused with `invalid_query` rather than guessed;
+use the `device_id` for those. A name no paired computer goes by is refused the
+same way.
+
+`rename_paired_computer` changes the name the host shows for a client, picked
+by `device_id` or by its current `device_name`. It is the Rename button under
+**Settings → Remote engine**: the new name appears in `clients`, in History and
+on the records that client keeps on the host, and nothing changes on the client
+itself. An empty `name` goes back to the name the client paired with. It needs
+**Control models, devices, files & windows**, and runs on the host only.
 
 Live results include `device_id`; pass it to `get_transcription`, `get_meeting`,
 `list_meeting_segments`, `get_meeting_segment`, and `get_meeting_insights` when

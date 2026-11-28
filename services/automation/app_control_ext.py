@@ -2069,6 +2069,42 @@ def reconnect_remote(controller) -> dict[str, Any]:
     return {"reconnecting": True}
 
 
+def rename_paired_computer(
+    controller, name: str, *, device_id: str = "", device_name: str = ""
+) -> dict[str, Any]:
+    """Call a computer paired to this one ``name`` here; "" restores its paired name."""
+    service = getattr(controller, "remote_engine", None)
+    if service is None or not callable(getattr(service, "rename_device", None)):
+        raise ControlError(UNAVAILABLE, "Remote engine is not available.")
+    if device_id and device_name:
+        raise ControlError(REFUSED, "Pass device_id or device_name, not both.")
+    if not device_id and not device_name:
+        raise ControlError(REFUSED, "Pass the device_id or device_name of the computer to rename.")
+    if device_name:
+        matches = service.paired_devices(device_name)
+        if len(matches) > 1:
+            raise ControlError(
+                REFUSED,
+                f"{len(matches)} paired computers go by that device_name. "
+                "Pass the device_id of the one you mean.",
+            )
+    else:
+        matches = [d for d in service.paired_devices() if d.get("id") == device_id]
+    if not matches:
+        raise ControlError(NOT_FOUND, "No computer paired to this one matches.")
+    previous = str(matches[0].get("name") or "")
+    device = service.rename_device(matches[0]["id"], name)
+    if device is None:
+        raise ControlError(NOT_FOUND, "No computer paired to this one matches.")
+    return {
+        "device_id": device["id"],
+        "name": device["name"],
+        "previous_name": previous,
+        # The name it paired with, while it goes by another here.
+        "paired_name": device.get("paired_name"),
+    }
+
+
 def control_window(
     controller, action: str, *, text: str = "", tab: str = ""
 ) -> dict[str, Any]:

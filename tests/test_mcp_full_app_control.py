@@ -306,6 +306,11 @@ class FullFakeAppControl:
         self._rec("reconnect_remote")
         return {"reconnecting": True}
 
+    def rename_paired_computer(self, name, *, device_id="", device_name=""):
+        self._rec("rename_paired_computer", name, device_id, device_name)
+        return {"device_id": device_id or "d1", "name": name or "DESKTOP-LAPTOP",
+                "previous_name": device_name or "DESKTOP-LAPTOP", "paired_name": None}
+
     def control_window(self, action, *, text="", tab=""):
         self._rec("control_window", action, text, tab)
         return {"ok": True, "action": action, "tab": tab or None}
@@ -457,6 +462,7 @@ def test_default_deny_for_all_new_permission_domains(env):
         ("set_active_language", {"code": "es"}),
         ("select_model", {"engine": "local_whisper"}),
         ("select_audio_device", {"name": "USB Mic"}),
+        ("rename_paired_computer", {"name": "Kitchen laptop", "device_name": "DESKTOP-LAPTOP"}),
         ("transcribe_audio_file", {"path": "sample.wav"}),
         ("control_window", {"action": "show"}),
     ):
@@ -557,6 +563,13 @@ def test_full_app_control_tools_when_permitted(env):
     assert _data(_call(client, "download_model", {"model_name": "small"}))["started"] is True
     assert _data(_call(client, "select_audio_device", {"name": "USB Mic"}))["selected"]["name"] == "USB Mic"
     assert _data(_call(client, "reconnect_remote"))["reconnecting"] is True
+    renamed = _data(_call(client, "rename_paired_computer",
+                          {"name": "Kitchen laptop", "device_name": "DESKTOP-LAPTOP"}))
+    assert renamed["name"] == "Kitchen laptop" and renamed["previous_name"] == "DESKTOP-LAPTOP"
+    assert ("rename_paired_computer", "Kitchen laptop", "", "DESKTOP-LAPTOP") in fake.calls
+    # An empty name is how a computer goes back to the one it paired with.
+    assert _data(_call(client, "rename_paired_computer", {"name": "", "device_id": "d1"}))["device_id"] == "d1"
+    assert ("rename_paired_computer", "", "d1", "") in fake.calls
     assert _data(_call(client, "control_window", {"action": "switch_tab", "tab": "walkthrough"}))["tab"] == "walkthrough"
     assert _data(_call(client, "transcribe_audio_file", {"path": "clip.wav"}))["queued"] is True
 

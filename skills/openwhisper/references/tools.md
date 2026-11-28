@@ -30,6 +30,7 @@ text, or returns raw audio files.
 - `include_remote=true`: include copies stored on this host for paired computers.
 - `include_clients=true`: also query online paired clients that opted into history sharing.
 - `device_id`: scope a list/search to one client, or route a detail read (`get_transcription`, `get_meeting`, etc.) to that live client.
+- `device_name`: the same, by the client's current name in `get_status` `clients` instead of its ID (case and spacing don't count). Pass one or the other. A name two clients share is refused: use `device_id`.
 
 ## 2. Organizing History & Agent Notes
 
@@ -76,4 +77,4 @@ Read tools (`get_personalization_summary`, `list_dictionary`, `list_snippets`,
 - **Run actions** (`run_actions`): `run_action`, `run_transform`, `notify_user` (agent/channel actions also need `agent_prompts`)
 - **Start recordings** (`control_recording`): `start_dictation`, `stop_dictation`, `cancel_dictation`
 - **Control Meeting Mode** (`control_meetings`): `start_meeting`, `pause_meeting`, `resume_meeting`, `end_meeting`, `background_meeting`, `retry_meeting_finalization`, `manage_recovered_meeting`, `open_meeting_view`, `update_live_meeting`, `manage_meeting_card_item`, `manage_meeting_question`, `update_meeting_transcript_or_speaker`, `request_meeting_note_adjustment`, `request_meeting_custom_report`, `undo_live_meeting_action`
-- **Control app** (`control_app`): `select_model`, `download_model`, `select_audio_device`, `reconnect_remote`, `transcribe_audio_file`, `control_window`
+- **Control app** (`control_app`): `select_model`, `download_model`, `select_audio_device`, `reconnect_remote`, `rename_paired_computer` (host only: the name shown for a paired client, by `device_id` or `device_name`; empty `name` restores its paired name), `transcribe_audio_file`, `control_window`

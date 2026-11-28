@@ -32,7 +32,10 @@ INSTRUCTIONS = (
     "Use next_cursor with the same filters for more results. Remote records are "
     "excluded unless include_remote is true. Use include_clients to query online paired "
     "clients that allow history sharing, and report unavailable clients. Pass returned "
-    "device_id values when retrieving live records. Both storage keeps copies available "
+    "device_id values when retrieving live records, or name one paired client with "
+    "device_name (its current name in get_status clients) instead of device_id. "
+    "rename_paired_computer changes the name this computer shows for a paired client "
+    "(needs Control app). Both storage keeps copies available "
     "with include_remote when a client is offline. Live client records are read-only. "
     "Walkthroughs carry easy reference numbers such as #001 (shown in the ready popup "
     "and list_walkthroughs); pass ref='#001', 'latest', or a folder id to get_walkthrough. "
@@ -82,6 +85,8 @@ RecordId = Annotated[
     str, Field(min_length=1, max_length=200, pattern=r"^[^/\\?#\x00-\x1f]+$")
 ]
 Seconds = Annotated[float | None, Field(ge=0, allow_inf_nan=False)]
+#: A paired computer's current name on this one, in place of its device_id.
+DeviceName = Annotated[str | None, Field(min_length=1, max_length=120)]
 Title = Annotated[str, Field(min_length=1, max_length=MAX_TITLE_LENGTH)]
 AnnotationRecordId = Annotated[
     str, Field(min_length=1, max_length=200, pattern=r"^[^/\\?\x00-\x1f]+$")
@@ -624,6 +629,7 @@ def _register_status_and_search_tools(mcp, hints, controls, get):
         include_remote: bool = False,
         include_clients: bool = False,
         device_id: RecordId | None = None,
+        device_name: DeviceName = None,
         since: datetime | None = None,
         before: datetime | None = None,
     ) -> dict[str, object]:
@@ -641,6 +647,7 @@ def _register_status_and_search_tools(mcp, hints, controls, get):
             include_remote=include_remote,
             include_clients=include_clients,
             device_id=device_id,
+            device_name=device_name,
             since=since,
             before=before,
         )
@@ -655,6 +662,7 @@ def _register_transcription_tools(mcp, hints, get):
         include_remote: bool = False,
         include_clients: bool = False,
         device_id: RecordId | None = None,
+        device_name: DeviceName = None,
         since: datetime | None = None,
         before: datetime | None = None,
     ) -> dict[str, object]:
@@ -667,19 +675,24 @@ def _register_transcription_tools(mcp, hints, get):
             include_remote=include_remote,
             include_clients=include_clients,
             device_id=device_id,
+            device_name=device_name,
             since=since,
             before=before,
         )
 
     @mcp.tool(annotations=hints["read"])
     async def get_transcription(
-        record_id: RecordId, include_remote: bool = False, device_id: RecordId | None = None
+        record_id: RecordId,
+        include_remote: bool = False,
+        device_id: RecordId | None = None,
+        device_name: DeviceName = None,
     ) -> dict[str, object]:
         """Read a saved transcription's full cleaned/raw text and source metadata."""
         return await get(
             f"/v1/transcriptions/{quote(record_id, safe='')}",
             include_remote=include_remote,
             device_id=device_id,
+            device_name=device_name,
         )
 
 
@@ -692,6 +705,7 @@ def _register_meeting_tools(mcp, hints, get):
         include_remote: bool = False,
         include_clients: bool = False,
         device_id: RecordId | None = None,
+        device_name: DeviceName = None,
         since: datetime | None = None,
         before: datetime | None = None,
     ) -> dict[str, object]:
@@ -704,17 +718,24 @@ def _register_meeting_tools(mcp, hints, get):
             include_remote=include_remote,
             include_clients=include_clients,
             device_id=device_id,
+            device_name=device_name,
             since=since,
             before=before,
         )
 
     @mcp.tool(annotations=hints["read"])
     async def get_meeting(
-        meeting_id: RecordId, include_remote: bool = False, device_id: RecordId | None = None
+        meeting_id: RecordId,
+        include_remote: bool = False,
+        device_id: RecordId | None = None,
+        device_name: DeviceName = None,
     ) -> dict[str, object]:
         """Read a meeting's title, timestamps, lifecycle status, and origin."""
         return await get(
-            f"/v1/meetings/{quote(meeting_id, safe='')}", include_remote=include_remote, device_id=device_id
+            f"/v1/meetings/{quote(meeting_id, safe='')}",
+            include_remote=include_remote,
+            device_id=device_id,
+            device_name=device_name,
         )
 
     @mcp.tool(annotations=hints["read"])
@@ -724,6 +745,7 @@ def _register_meeting_tools(mcp, hints, get):
         cursor: Cursor = None,
         include_remote: bool = False,
         device_id: RecordId | None = None,
+        device_name: DeviceName = None,
         start_s: Seconds = None,
         end_s: Seconds = None,
     ) -> dict[str, object]:
@@ -738,6 +760,7 @@ def _register_meeting_tools(mcp, hints, get):
             cursor=cursor,
             include_remote=include_remote,
             device_id=device_id,
+            device_name=device_name,
             start_s=start_s,
             end_s=end_s,
         )
@@ -748,17 +771,22 @@ def _register_meeting_tools(mcp, hints, get):
         segment_id: RecordId,
         include_remote: bool = False,
         device_id: RecordId | None = None,
+        device_name: DeviceName = None,
     ) -> dict[str, object]:
         """Resolve an evidence segment ID to its original text, speaker, and timestamps."""
         return await get(
             f"/v1/meetings/{quote(meeting_id, safe='')}/segments/{quote(segment_id, safe='')}",
             include_remote=include_remote,
             device_id=device_id,
+            device_name=device_name,
         )
 
     @mcp.tool(annotations=hints["read"])
     async def get_meeting_insights(
-        meeting_id: RecordId, include_remote: bool = False, device_id: RecordId | None = None
+        meeting_id: RecordId,
+        include_remote: bool = False,
+        device_id: RecordId | None = None,
+        device_name: DeviceName = None,
     ) -> dict[str, object]:
         """Read saved summary, notes, decisions, actions, questions, reports, and evidence IDs.
 
@@ -768,6 +796,7 @@ def _register_meeting_tools(mcp, hints, get):
             f"/v1/meetings/{quote(meeting_id, safe='')}/insights",
             include_remote=include_remote,
             device_id=device_id,
+            device_name=device_name,
         )
 
 

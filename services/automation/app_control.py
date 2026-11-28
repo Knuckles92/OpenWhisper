@@ -766,6 +766,14 @@ class QtAppControl:
 
         return call_on_qt(partial(ext.reconnect_remote, self._require()))
 
+    def rename_paired_computer(self, name: str, *, device_id: str = "", device_name: str = "") -> dict:
+        from services.automation import app_control_ext as ext
+
+        # Not on the Qt thread: it rewrites the name on every record the computer keeps here.
+        return ext.rename_paired_computer(
+            self._require(), name, device_id=device_id, device_name=device_name
+        )
+
     def control_window(self, action: str, *, text: str = "", tab: str = "") -> dict:
         from services.automation import app_control_ext as ext
 

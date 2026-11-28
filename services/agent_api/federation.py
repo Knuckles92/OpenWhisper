@@ -24,6 +24,7 @@ from services.agent_api.models import (
     TranscriptionSummary,
 )
 from services.agent_api.store import InvalidQuery, NotFound
+from services.remote_asr.protocol import name_key
 from services.remote_history.channel import ClientUnavailable
 
 _MODELS = {
@@ -85,6 +86,33 @@ class FederatedHistory:
             else []
         )
 
+    def resolve_device(self, device_id=None, device_name=None):
+        """The device a request means: ``device_id``, or the paired computer named ``device_name``.
+
+        A name matches the one this computer shows for it now, whatever its
+        case or spacing. Names aren't unique, so one that several paired
+        computers go by is refused instead of guessed.
+        """
+        if device_name is None:
+            return device_id
+        if device_id is not None:
+            raise InvalidQuery("Pass device_id or device_name, not both.")
+        if self.remote is None:
+            raise ClientUnavailable("unsupported")
+        key = name_key(device_name)
+        matches = [c.device_id for c in self.clients() if key and name_key(c.name) == key]
+        if not matches:
+            raise InvalidQuery(
+                "No paired computer goes by that device_name. "
+                "Status lists each paired computer's current name and device_id."
+            )
+        if len(matches) > 1:
+            raise InvalidQuery(
+                f"{len(matches)} paired computers go by that device_name. "
+                "Pass the device_id of the one you mean."
+            )
+        return matches[0]
+
     def _remote(self, device, operation, params):
         if self.remote is None:
             raise ClientUnavailable()
@@ -124,7 +152,8 @@ class FederatedHistory:
         except (ValidationError, ValueError, TypeError) as exc:
             raise ClientUnavailable() from exc
 
-    def _read(self, operation, params, include_remote=False, device_id=None):
+    def _read(self, operation, params, include_remote=False, device_id=None, device_name=None):
+        device_id = self.resolve_device(device_id, device_name)
         if device_id is None:
             return getattr(self.store, operation)(
                 **params, include_remote=include_remote
@@ -159,9 +188,11 @@ class FederatedHistory:
     def meeting(self, meeting_id, **options):
         return self._read("meeting", {"meeting_id": meeting_id}, **options)
 
-    def segments(self, meeting_id, *, include_remote=False, device_id=None, **params):
+    def segments(
+        self, meeting_id, *, include_remote=False, device_id=None, device_name=None, **params
+    ):
         return self._read(
-            "segments", dict(meeting_id=meeting_id, **params), include_remote, device_id
+            "segments", dict(meeting_id=meeting_id, **params), include_remote, device_id, device_name
         )
 
     def segment(self, meeting_id, segment_id, **options):
@@ -187,10 +218,12 @@ class FederatedHistory:
         *,
         include_clients=False,
         device_id=None,
+        device_name=None,
         cursor=None,
         limit=20,
         **params,
     ):
+        device_id = self.resolve_device(device_id, device_name)
         if not include_clients and device_id is None:
             return getattr(self.store, operation)(**params, cursor=cursor, limit=limit)
         if self.remote is None and include_clients:

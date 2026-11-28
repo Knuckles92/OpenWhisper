@@ -104,6 +104,56 @@ def test_the_service_renames_a_paired_computer_on_what_it_keeps_too(tmp_path, mo
         service.shutdown()
 
 
+def test_an_agent_renames_a_paired_computer_by_its_id_or_its_name(tmp_path):
+    from types import SimpleNamespace
+
+    import pytest
+
+    from services.automation import app_control_ext
+    from services.automation.control import NOT_FOUND, REFUSED, UNAVAILABLE, ControlError
+
+    service = _service(tmp_path)
+    controller = SimpleNamespace(remote_engine=service)
+    rename = app_control_ext.rename_paired_computer
+    registry = service.history.registry
+    laptop, _ = registry.add("DESKTOP-LAPTOP")
+    tablet, _ = registry.add("Tablet")
+    try:
+        # By the name it goes by now, whatever the case or spacing.
+        assert rename(controller, "Kitchen laptop", device_name="  desktop-laptop ") == {
+            "device_id": laptop["id"], "name": "Kitchen laptop",
+            "previous_name": "DESKTOP-LAPTOP", "paired_name": "DESKTOP-LAPTOP",
+        }
+        assert service.paired_devices("KITCHEN  LAPTOP")[0]["id"] == laptop["id"]
+        # The name it paired with no longer finds it.
+        with pytest.raises(ControlError) as gone:
+            rename(controller, "Studio", device_name="DESKTOP-LAPTOP")
+        assert gone.value.code == NOT_FOUND
+        # By ID; an empty name goes back to the one it paired with.
+        back = rename(controller, "", device_id=laptop["id"])
+        assert back["name"] == "DESKTOP-LAPTOP" and back["paired_name"] is None
+        assert back["previous_name"] == "Kitchen laptop"
+        # Names aren't unique: two computers may share one, and then only an ID picks.
+        assert rename(controller, "Tablet", device_id=laptop["id"])["name"] == "Tablet"
+        with pytest.raises(ControlError) as shared:
+            rename(controller, "Studio", device_name="tablet")
+        assert shared.value.code == REFUSED and "2 paired computers" in shared.value.message
+        assert {d["name"] for d in service.paired_devices()} == {"Tablet"}
+        assert rename(controller, "Studio", device_id=tablet["id"])["name"] == "Studio"
+        for picked in ({}, {"device_id": laptop["id"], "device_name": "Tablet"}):
+            with pytest.raises(ControlError) as unclear:
+                rename(controller, "Den", **picked)
+            assert unclear.value.code == REFUSED
+        with pytest.raises(ControlError) as unknown:
+            rename(controller, "Den", device_id="not-paired")
+        assert unknown.value.code == NOT_FOUND
+        with pytest.raises(ControlError) as missing:
+            rename(SimpleNamespace(), "Den", device_id=laptop["id"])
+        assert missing.value.code == UNAVAILABLE
+    finally:
+        service.shutdown()
+
+
 # ---- this computer's name for its host ----
 
 def test_the_host_can_go_by_another_name_here_and_back():

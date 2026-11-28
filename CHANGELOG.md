@@ -7,6 +7,10 @@ Releases use `major.minor.patch` numbering. Normal routine releases use a zero-p
 
 ## [Unreleased]
 
+### Added
+
+- **Agents can name paired computers, and rename them.** Every MCP history tool and `/v1` endpoint that takes `device_id` now also takes `device_name`: the name the host shows for that paired computer, matched whatever its case or spacing. A name that no paired computer goes by, or that two share, is refused rather than guessed. The new `rename_paired_computer` MCP tool changes that name, as the Rename button under **Settings → Remote engine** does, and needs **Control models, devices, files & windows**.
+
 ### Fixed
 
 - **Packaged builds move off a yanked PyAV release.** The release pin moves from PyAV 18.1.0 to 18.1.1. PyPI yanked 18.1.0 for memory corruption (a double free) when decoding audio with custom channel layouts, and OpenWhisper decodes uploaded files and recordings through PyAV. Source installs keep the `av>=11,<19` range, which still resolves to PyAV 18.

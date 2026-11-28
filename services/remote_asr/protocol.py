@@ -278,6 +278,11 @@ def clean_name(name) -> str:
     return text[:MAX_NAME]
 
 
+def name_key(name) -> str:
+    """What two spellings of one computer's name share: case and spacing don't count."""
+    return " ".join(clean_name(name).split()).casefold()
+
+
 #: Bytes in each side's pairing nonce.
 PAIRING_NONCE_BYTES = 32
 SAS_DIGITS = 6

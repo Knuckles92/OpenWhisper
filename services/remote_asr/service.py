@@ -797,6 +797,13 @@ class RemoteEngineService:
             self._notify("devices")
         return removed
 
+    def paired_devices(self, name: Optional[str] = None) -> List[dict]:
+        """The paired computers as ``host_state()["devices"]`` lists them, sharing or not.
+
+        With ``name``, only those going by it now; case and spacing don't count.
+        """
+        return self._registry.list() if name is None else self._registry.named(name)
+
     def rename_device(self, device_id: str, name: str) -> Optional[dict]:
         """Call a paired computer ``name`` on this one, on what it keeps here too.
 

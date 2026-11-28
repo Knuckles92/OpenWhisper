@@ -117,6 +117,11 @@ class DeviceRegistry:
                 for entry in self._entries()
             ]
 
+    def named(self, name) -> List[dict]:
+        """The entries going by ``name`` now, as ``list`` shows them; names aren't unique."""
+        key = protocol.name_key(name)
+        return [entry for entry in self.list() if key and protocol.name_key(entry.get("name")) == key]
+
     def add(self, name: str, via: str = "code") -> tuple[dict, str]:
         token = secrets.token_urlsafe(32)
         entry = {

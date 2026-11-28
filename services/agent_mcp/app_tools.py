@@ -11,6 +11,8 @@ from services.automation.control import require_app_control
 
 ShortStr = Annotated[str, Field(min_length=1, max_length=200)]
 OptShortStr = Annotated[str | None, Field(max_length=200)]
+#: Empty goes back to the name the computer paired with; longer names are cut to fit.
+PairedComputerName = Annotated[str, Field(max_length=200)]
 CleanupRuleText = Annotated[str, Field(min_length=1, max_length=500)]
 OptCleanupRuleText = Annotated[str | None, Field(max_length=500)]
 RuleIndex = Annotated[int, Field(ge=0, le=500)]
@@ -747,6 +749,26 @@ def _register_device_model_and_window_tools(mcp, hints, live_call) -> None:
         return await live_call(
             permissions.CONTROL_APP,
             lambda _saved: require_app_control().reconnect_remote(),
+        )
+
+    @mcp.tool(annotations=hints["write"])
+    async def rename_paired_computer(
+        name: PairedComputerName,
+        device_id: OptShortStr = None,
+        device_name: OptShortStr = None,
+    ) -> dict[str, object]:
+        """Change the name this computer shows for a computer paired to it; needs Control app.
+
+        Pick the computer by device_id, or by device_name (its current name in
+        get_status clients). The new name appears in get_status, History and on
+        the records that computer keeps here; nothing changes on the computer
+        itself. An empty name goes back to the one it paired with.
+        """
+        return await live_call(
+            permissions.CONTROL_APP,
+            lambda _saved: require_app_control().rename_paired_computer(
+                name, device_id=device_id or "", device_name=device_name or ""
+            ),
         )
 
     @mcp.tool(annotations=hints["notice"])

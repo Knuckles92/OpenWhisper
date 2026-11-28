@@ -66,5 +66,8 @@
    `list_transcriptions`, or `list_meetings`.
 3. Pass any returned `device_id` when calling `get_transcription`, `get_meeting`,
    `list_meeting_segments`, `get_meeting_segment`, or `get_meeting_insights`.
+   When the user names a computer ("my laptop's dictations"), pass its name in
+   `clients` as `device_name` instead; if two clients share it, ask which one
+   and use its `device_id`.
 4. Always tell the user if any paired client was `unavailable` or
    `sharing_disabled` so they know the search may be partial.

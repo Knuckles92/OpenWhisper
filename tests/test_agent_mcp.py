@@ -264,6 +264,7 @@ def test_official_client_discovery_retrieval_and_validation(running_server, mode
                     "select_audio_device",
                     "get_remote_status",
                     "reconnect_remote",
+                    "rename_paired_computer",
                     "control_window",
                 }
                 writes = {
@@ -324,6 +325,7 @@ def test_official_client_discovery_retrieval_and_validation(running_server, mode
                     "download_model",
                     "select_audio_device",
                     "reconnect_remote",
+                    "rename_paired_computer",
                     "control_window",
                 }
                 assert all(

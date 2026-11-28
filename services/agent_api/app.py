@@ -34,6 +34,9 @@ from services.remote_history.channel import ClientUnavailable
 
 Limit = Annotated[int, Query(ge=1, le=100)]
 Cursor = Annotated[str | None, Query(max_length=2048)]
+DeviceId = Annotated[str | None, Query(min_length=1, max_length=64)]
+#: A paired computer's current name on this one, in place of its device_id.
+DeviceName = Annotated[str | None, Query(min_length=1, max_length=120)]
 SearchQuery = Annotated[str | None, Query(min_length=1, max_length=500)]
 
 _TOKEN_MIN_CHARS = 32
@@ -53,7 +56,8 @@ def _error(status, code, message, headers=None):
 def _filters(
     include_remote: bool = False,
     include_clients: bool = False,
-    device_id: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
+    device_id: DeviceId = None,
+    device_name: DeviceName = None,
     since: datetime | None = None,
     before: datetime | None = None,
 ):
@@ -70,7 +74,7 @@ def _filters(
     if since and before and since >= before:
         raise InvalidQuery("since must be earlier than before.")
     return dict(include_remote=include_remote, include_clients=include_clients, device_id=device_id,
-                since=since, before=before)
+                device_name=device_name, since=since, before=before)
 
 
 Filters = Annotated[dict, Depends(_filters)]
@@ -228,8 +232,13 @@ def _register_transcription_routes(app: FastAPI, store: FederatedHistory) -> Non
         response_model=Transcription,
         operation_id="get_transcription",
     )
-    def transcription(record_id: str, include_remote: bool = False, device_id: str | None = None):
-        return store.transcription(record_id, include_remote=include_remote, device_id=device_id)
+    def transcription(
+        record_id: str, include_remote: bool = False, device_id: str | None = None,
+        device_name: DeviceName = None,
+    ):
+        return store.transcription(
+            record_id, include_remote=include_remote, device_id=device_id, device_name=device_name
+        )
 
 
 def _register_meeting_routes(app: FastAPI, store: FederatedHistory) -> None:
@@ -246,8 +255,13 @@ def _register_meeting_routes(app: FastAPI, store: FederatedHistory) -> None:
     @app.get(
         "/v1/meetings/{meeting_id}", response_model=Meeting, operation_id="get_meeting"
     )
-    def meeting(meeting_id: str, include_remote: bool = False, device_id: str | None = None):
-        return store.meeting(meeting_id, include_remote=include_remote, device_id=device_id)
+    def meeting(
+        meeting_id: str, include_remote: bool = False, device_id: str | None = None,
+        device_name: DeviceName = None,
+    ):
+        return store.meeting(
+            meeting_id, include_remote=include_remote, device_id=device_id, device_name=device_name
+        )
 
     @app.get(
         "/v1/meetings/{meeting_id}/segments",
@@ -260,6 +274,7 @@ def _register_meeting_routes(app: FastAPI, store: FederatedHistory) -> None:
         cursor: Cursor = None,
         include_remote: bool = False,
         device_id: str | None = None,
+        device_name: DeviceName = None,
         start_s: Annotated[float | None, Query(ge=0, allow_inf_nan=False)] = None,
         end_s: Annotated[float | None, Query(ge=0, allow_inf_nan=False)] = None,
     ):
@@ -274,6 +289,7 @@ def _register_meeting_routes(app: FastAPI, store: FederatedHistory) -> None:
             cursor=cursor,
             include_remote=include_remote,
             device_id=device_id,
+            device_name=device_name,
         )
 
     @app.get(
@@ -281,17 +297,28 @@ def _register_meeting_routes(app: FastAPI, store: FederatedHistory) -> None:
         response_model=Segment,
         operation_id="get_meeting_segment",
     )
-    def segment(meeting_id: str, segment_id: str, include_remote: bool = False, device_id: str | None = None):
-        return store.segment(meeting_id, segment_id, include_remote=include_remote, device_id=device_id)
+    def segment(
+        meeting_id: str, segment_id: str, include_remote: bool = False, device_id: str | None = None,
+        device_name: DeviceName = None,
+    ):
+        return store.segment(
+            meeting_id, segment_id, include_remote=include_remote, device_id=device_id,
+            device_name=device_name,
+        )
 
     @app.get(
         "/v1/meetings/{meeting_id}/insights",
         response_model=MeetingInsights,
         operation_id="get_meeting_insights",
     )
-    def insights(meeting_id: str, include_remote: bool = False, device_id: str | None = None):
+    def insights(
+        meeting_id: str, include_remote: bool = False, device_id: str | None = None,
+        device_name: DeviceName = None,
+    ):
         """Saved summary, notes, decisions, actions, questions, reports, and evidence IDs."""
-        return store.insights(meeting_id, include_remote=include_remote, device_id=device_id)
+        return store.insights(
+            meeting_id, include_remote=include_remote, device_id=device_id, device_name=device_name
+        )
 
 
 def _register_search_routes(app: FastAPI, store: FederatedHistory) -> None:
