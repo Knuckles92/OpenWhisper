@@ -95,6 +95,50 @@ class AppControl(Protocol):
     def retry_meeting_finalization(self, *, step: str = "failed", meeting_id: Optional[str] = None) -> dict: ...
     def manage_recovered_meeting(self, meeting_id: str, action: str) -> dict: ...
     def open_meeting_view(self, *, meeting_id: str = "", view: str = "dashboard") -> dict: ...
+    def get_meeting_dashboard_state(self, *, meeting_id: Optional[str] = None) -> dict: ...
+    def update_live_meeting(
+        self,
+        *,
+        title: Optional[str] = None,
+        intent: Optional[str] = None,
+        topic: Optional[str] = None,
+        cloud_enabled: Optional[bool] = None,
+    ) -> dict: ...
+    def manage_meeting_card_item(
+        self,
+        *,
+        action: str,
+        card: Optional[str] = None,
+        item_id: Optional[str] = None,
+        text: Optional[str] = None,
+        data: Optional[dict] = None,
+        evidence: Optional[list[str]] = None,
+    ) -> dict: ...
+    def manage_meeting_question(
+        self,
+        *,
+        action: str,
+        text: Optional[str] = None,
+        question_id: Optional[str] = None,
+        answer_text: Optional[str] = None,
+        evidence: Optional[list[str]] = None,
+    ) -> dict: ...
+    def update_meeting_transcript_or_speaker(
+        self,
+        *,
+        action: str,
+        participant_id: Optional[str] = None,
+        display_name: Optional[str] = None,
+        segment_id: Optional[str] = None,
+        text: Optional[str] = None,
+    ) -> dict: ...
+    def request_meeting_note_adjustment(
+        self, *, text: str, wait: bool = True, timeout_s: float = 60.0
+    ) -> dict: ...
+    def request_meeting_custom_report(
+        self, *, request_text: str, meeting_id: Optional[str] = None
+    ) -> dict: ...
+    def undo_live_meeting_action(self, *, event_seq: int) -> dict: ...
 
     # ---- Walkthroughs & screenshots ----
     def walkthrough_status(self) -> dict: ...

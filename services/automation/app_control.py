@@ -397,6 +397,114 @@ class QtAppControl:
 
         return call_on_qt(partial(ext.open_meeting_view, self._require(), meeting_id=meeting_id, view=view))
 
+    def get_meeting_dashboard_state(self, *, meeting_id: Optional[str] = None) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.get_meeting_dashboard_state(self._require(), meeting_id=meeting_id)
+
+    def update_live_meeting(
+        self,
+        *,
+        title: Optional[str] = None,
+        intent: Optional[str] = None,
+        topic: Optional[str] = None,
+        cloud_enabled: Optional[bool] = None,
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.update_live_meeting(
+            self._require(),
+            title=title,
+            intent=intent,
+            topic=topic,
+            cloud_enabled=cloud_enabled,
+        )
+
+    def manage_meeting_card_item(
+        self,
+        *,
+        action: str,
+        card: Optional[str] = None,
+        item_id: Optional[str] = None,
+        text: Optional[str] = None,
+        data: Optional[dict] = None,
+        evidence: Optional[list[str]] = None,
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.manage_meeting_card_item(
+            self._require(),
+            action=action,
+            card=card,
+            item_id=item_id,
+            text=text,
+            data=data,
+            evidence=evidence,
+        )
+
+    def manage_meeting_question(
+        self,
+        *,
+        action: str,
+        text: Optional[str] = None,
+        question_id: Optional[str] = None,
+        answer_text: Optional[str] = None,
+        evidence: Optional[list[str]] = None,
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.manage_meeting_question(
+            self._require(),
+            action=action,
+            text=text,
+            question_id=question_id,
+            answer_text=answer_text,
+            evidence=evidence,
+        )
+
+    def update_meeting_transcript_or_speaker(
+        self,
+        *,
+        action: str,
+        participant_id: Optional[str] = None,
+        display_name: Optional[str] = None,
+        segment_id: Optional[str] = None,
+        text: Optional[str] = None,
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.update_meeting_transcript_or_speaker(
+            self._require(),
+            action=action,
+            participant_id=participant_id,
+            display_name=display_name,
+            segment_id=segment_id,
+            text=text,
+        )
+
+    def request_meeting_note_adjustment(
+        self, *, text: str, wait: bool = True, timeout_s: float = 60.0
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.request_meeting_note_adjustment(
+            self._require(), text=text, wait=wait, timeout_s=timeout_s
+        )
+
+    def request_meeting_custom_report(
+        self, *, request_text: str, meeting_id: Optional[str] = None
+    ) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.request_meeting_custom_report(
+            self._require(), request_text=request_text, meeting_id=meeting_id
+        )
+
+    def undo_live_meeting_action(self, *, event_seq: int) -> dict:
+        from services.automation import app_control_ext as ext
+
+        return ext.undo_live_meeting_action(self._require(), event_seq=event_seq)
+
     # ---- Walkthroughs & screenshots ----
 
     def walkthrough_status(self) -> dict:

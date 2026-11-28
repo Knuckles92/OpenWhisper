@@ -40,6 +40,132 @@ def _refresh_settings_ui(controller) -> None:
 # ---- Meeting Mode -----------------------------------------------------------
 
 
+def _finalization_payload(fin: Any) -> Optional[dict[str, Any]]:
+    """Serialize a FinalizationState or mapping with full step-by-step progress."""
+    if fin is None:
+        return None
+    if hasattr(fin, "to_dict") and callable(fin.to_dict):
+        try:
+            fin = fin.to_dict()
+        except Exception:
+            return None
+    if not isinstance(fin, Mapping):
+        return None
+    steps_raw = fin.get("steps")
+    steps = [dict(s) for s in steps_raw if isinstance(s, Mapping)] if isinstance(steps_raw, (list, tuple)) else []
+    stats_raw = fin.get("summary_stats")
+    summary_stats = dict(stats_raw) if isinstance(stats_raw, Mapping) else {}
+    return {
+        "status": str(fin.get("status") or ""),
+        "message": str(fin.get("message") or ""),
+        "stage": str(fin.get("stage") or ""),
+        "current_step": int(fin.get("current_step") or 0),
+        "total_steps": int(fin.get("total_steps") or 0),
+        "step_details": str(fin.get("step_details") or ""),
+        "steps": steps,
+        "summary_stats": summary_stats,
+    }
+
+
+def _running_reports_from_snapshot(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
+    reports = snapshot.get("custom_reports")
+    if not isinstance(reports, list):
+        return []
+    running: list[dict[str, Any]] = []
+    for rep in reports:
+        if not isinstance(rep, Mapping) or rep.get("status") != "running":
+            continue
+        running.append({
+            "id": str(rep.get("id") or ""),
+            "request": str(rep.get("request") or ""),
+            "title": str(rep.get("title") or ""),
+            "status": "running",
+            "message": str(rep.get("message") or ""),
+            "created_at": str(rep.get("created_at") or ""),
+        })
+    return running
+
+
+def _scheduler_job_status(engine: Any) -> Optional[dict[str, Any]]:
+    scheduler = getattr(engine, "_scheduler", None)
+    if scheduler is None:
+        return None
+    thread = getattr(scheduler, "_thread", None)
+    active = bool(thread.is_alive()) if thread is not None and hasattr(thread, "is_alive") else True
+    note_requests = getattr(scheduler, "_note_requests", None)
+    try:
+        note_requests_pending = len(note_requests) if note_requests is not None else 0
+    except Exception:
+        note_requests_pending = 0
+    return {
+        "active": active,
+        "pending_segments": int(getattr(scheduler, "_pending_segments", 0) or 0),
+        "guidance_pending": bool(getattr(scheduler, "_guidance_pending", False)),
+        "notes_guidance_pending": bool(getattr(scheduler, "_notes_guidance_pending", False)),
+        "notes_resume_pending": bool(getattr(scheduler, "_notes_resume_pending", False)),
+        "note_requests_pending": note_requests_pending,
+    }
+
+
+def _snapshot_counts(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    cards_raw = snapshot.get("cards")
+    card_counts: dict[str, int] = {}
+    if isinstance(cards_raw, Mapping):
+        for card_key, items in cards_raw.items():
+            if isinstance(items, list):
+                card_counts[str(card_key)] = sum(
+                    1 for item in items if isinstance(item, Mapping) and item.get("status") != "removed"
+                )
+    participants = snapshot.get("participants")
+    participant_count = len(participants) if isinstance(participants, Mapping) else 0
+    questions = snapshot.get("questions")
+    if isinstance(questions, Mapping):
+        questions = list(questions.values())
+    open_questions = sum(
+        1 for q in (questions if isinstance(questions, list) else [])
+        if isinstance(q, Mapping) and q.get("status") == "open"
+    )
+    reports = snapshot.get("custom_reports")
+    report_count = len(reports) if isinstance(reports, list) else 0
+    highlights = snapshot.get("live_highlights")
+    highlight_count = len(highlights) if isinstance(highlights, list) else 0
+    return {
+        "participants": participant_count,
+        "open_questions": open_questions,
+        "cards": card_counts,
+        "custom_reports": report_count,
+        "live_highlights": highlight_count,
+    }
+
+
+def _engine_snapshot(engine: Any) -> Optional[dict[str, Any]]:
+    store = getattr(engine, "store", None)
+    if store is None or not callable(getattr(store, "snapshot", None)):
+        return None
+    try:
+        snap = store.snapshot()
+        return dict(snap) if isinstance(snap, Mapping) else None
+    except Exception:
+        return None
+
+
+def _background_jobs(runtime: Any) -> list[dict[str, Any]]:
+    bg = getattr(runtime, "_background_engines", None)
+    if not isinstance(bg, Mapping):
+        return []
+    jobs: list[dict[str, Any]] = []
+    for bg_id, bg_engine in list(bg.items()):
+        snap = _engine_snapshot(bg_engine)
+        jobs.append({
+            "meeting_id": str(getattr(bg_engine, "meeting_id", None) or bg_id),
+            "title": str((snap or {}).get("title") or ""),
+            "status": str((snap or {}).get("status") or "finalizing"),
+            "finalization": _finalization_payload((snap or {}).get("finalization")),
+            "running_reports": _running_reports_from_snapshot(snap or {}),
+        })
+    return jobs
+
+
 def meeting_status(controller) -> dict[str, Any]:
     runtime = getattr(controller, "meeting_runtime", None)
     if runtime is None:
@@ -52,6 +178,7 @@ def meeting_status(controller) -> dict[str, Any]:
             "status": "idle",
             "elapsed_s": 0.0,
             "background_count": 0,
+            "background_jobs": [],
         }
     engine = getattr(runtime, "_engine", None)
     active = bool(runtime.is_active)
@@ -77,16 +204,12 @@ def meeting_status(controller) -> dict[str, Any]:
         status = "starting"
     elif finalizing:
         status = "finalizing"
-    bg = getattr(runtime, "_background_engines", None)
-    bg_count = len(bg) if isinstance(bg, Mapping) else 0
-    fin = getattr(runtime, "_finalization", None)
-    fin_summary = None
-    if isinstance(fin, Mapping):
-        fin_summary = {
-            "status": str(fin.get("status") or ""),
-            "message": str(fin.get("message") or ""),
-        }
-    return {
+    bg_jobs = _background_jobs(runtime)
+    snap = _engine_snapshot(engine) if engine is not None else None
+    fin_summary = _finalization_payload((snap or {}).get("finalization")) or _finalization_payload(
+        getattr(runtime, "_finalization", None)
+    )
+    payload: dict[str, Any] = {
         "active": active,
         "starting": starting,
         "paused": paused,
@@ -94,9 +217,28 @@ def meeting_status(controller) -> dict[str, Any]:
         "meeting_id": meeting_id or getattr(runtime, "_card_meeting_id", None),
         "status": status,
         "elapsed_s": elapsed_s,
-        "background_count": bg_count,
+        "background_count": len(bg_jobs),
+        "background_jobs": bg_jobs,
         "finalization": fin_summary,
     }
+    if snap is not None:
+        payload.update({
+            "title": str(snap.get("title") or ""),
+            "cloud_enabled": bool(snap.get("cloud_enabled", False)),
+            "intelligence_online": bool(snap.get("intelligence_online", False)),
+            "diarization_available": bool(snap.get("diarization_available", False)),
+            "diarization_reason": str(snap.get("diarization_reason") or ""),
+            "topic": snap.get("topic") if isinstance(snap.get("topic"), Mapping) else {},
+            "intent": snap.get("intent") if isinstance(snap.get("intent"), Mapping) else {},
+            "capture": snap.get("capture") if isinstance(snap.get("capture"), Mapping) else {},
+            "speech": snap.get("speech") if isinstance(snap.get("speech"), Mapping) else {},
+            "live_highlights_status": str(snap.get("live_highlights_status") or "unknown"),
+            "counts": _snapshot_counts(snap),
+            "running_reports": _running_reports_from_snapshot(snap),
+            "scheduler": _scheduler_job_status(engine),
+        })
+    return payload
+
 
 
 def start_meeting(controller, *, title: str = "", cloud: Optional[bool] = None) -> dict[str, Any]:
@@ -226,6 +368,471 @@ def open_meeting_view(controller, *, meeting_id: str = "", view: str = "dashboar
     else:
         runtime.open_dashboard()
     return {"opened": True, "view": view, "meeting_id": meeting_id or None}
+
+
+def _require_live_meeting_engine(controller):
+    runtime = getattr(controller, "meeting_runtime", None)
+    if runtime is None:
+        raise ControlError(UNAVAILABLE, "Meeting Mode is not available in this build.")
+    engine = getattr(runtime, "_engine", None)
+    if not runtime.is_active or engine is None or getattr(engine, "store", None) is None:
+        raise ControlError(REFUSED, "No meeting is currently active.")
+    return runtime, engine
+
+
+def _meeting_repository(controller, runtime):
+    repo_fn = getattr(runtime, "_repository", None)
+    if callable(repo_fn):
+        return repo_fn()
+    db = getattr(controller, "database", None)
+    if db is not None:
+        from meeting.persist.repository import SqlMeetingRepository
+
+        return SqlMeetingRepository(db)
+    return None
+
+
+def _apply_live_op(engine, op: dict[str, Any]):
+    me_id = getattr(engine, "_me_participant_id", None)
+    results = engine.apply_client_action("host", me_id, op)
+    if not results or not results[0].ok:
+        reason = results[0].reason if results else "rejected"
+        raise ControlError(REFUSED, f"Meeting action rejected: {reason}")
+    return results[0]
+
+
+def get_meeting_dashboard_state(
+    controller, *, meeting_id: Optional[str] = None
+) -> dict[str, Any]:
+    """Return the full MeetingState dashboard snapshot and live job progress."""
+    runtime = getattr(controller, "meeting_runtime", None)
+    if runtime is None:
+        raise ControlError(UNAVAILABLE, "Meeting Mode is not available in this build.")
+    engine = getattr(runtime, "_engine", None)
+    engine_mid = str(getattr(engine, "meeting_id", "") or "") or None
+    target_id = (meeting_id or "").strip() or engine_mid or getattr(runtime, "_card_meeting_id", None)
+    if not target_id:
+        raise ControlError(REFUSED, "No active meeting; pass meeting_id to read a saved meeting.")
+
+    bg_jobs = _background_jobs(runtime)
+    if engine is not None and engine_mid == target_id:
+        snap = _engine_snapshot(engine)
+        if snap is not None:
+            elapsed_s = 0.0
+            if bool(runtime.is_active):
+                try:
+                    clock = getattr(engine, "clock", None)
+                    if clock is not None:
+                        elapsed_s = round(float(clock.now_s()), 1)
+                except Exception:
+                    elapsed_s = 0.0
+            return {
+                "meeting_id": target_id,
+                "is_live": bool(runtime.is_active),
+                "finalizing": bool(runtime.is_finalizing),
+                "elapsed_s": elapsed_s,
+                "state": snap,
+                "jobs": {
+                    "scheduler": _scheduler_job_status(engine),
+                    "finalization": _finalization_payload(snap.get("finalization")),
+                    "running_reports": _running_reports_from_snapshot(snap),
+                    "background_jobs": bg_jobs,
+                },
+            }
+
+    bg = getattr(runtime, "_background_engines", None)
+    if isinstance(bg, Mapping) and target_id in bg:
+        bg_engine = bg[target_id]
+        snap = _engine_snapshot(bg_engine)
+        if snap is not None:
+            return {
+                "meeting_id": target_id,
+                "is_live": False,
+                "finalizing": True,
+                "elapsed_s": 0.0,
+                "state": snap,
+                "jobs": {
+                    "scheduler": None,
+                    "finalization": _finalization_payload(snap.get("finalization")),
+                    "running_reports": _running_reports_from_snapshot(snap),
+                    "background_jobs": bg_jobs,
+                },
+            }
+
+    repo = _meeting_repository(controller, runtime)
+    if repo is None:
+        raise ControlError(UNAVAILABLE, "Meeting history repository is unavailable.")
+    meeting = repo.get_meeting(target_id)
+    if not meeting:
+        raise ControlError(NOT_FOUND, f"Meeting {target_id!r} was not found.")
+
+    from meeting.state.schema import FinalizationState, parse_state_json
+
+    snap = parse_state_json(meeting.get("state_json"))
+    if snap is None:
+        raise ControlError(NOT_FOUND, f"No dashboard state snapshot is available for meeting {target_id!r}.")
+    fin = FinalizationState.normalize_historical(
+        snap.get("finalization"),
+        cloud_enabled=bool(snap.get("cloud_enabled", False)),
+        meeting_status=str(meeting.get("status") or snap.get("status") or "ended"),
+    )
+    snap["finalization"] = fin.to_dict()
+    return {
+        "meeting_id": target_id,
+        "is_live": False,
+        "finalizing": False,
+        "elapsed_s": 0.0,
+        "state": snap,
+        "jobs": {
+            "scheduler": None,
+            "finalization": _finalization_payload(fin),
+            "running_reports": _running_reports_from_snapshot(snap),
+            "background_jobs": bg_jobs,
+        },
+    }
+
+
+def update_live_meeting(
+    controller,
+    *,
+    title: Optional[str] = None,
+    intent: Optional[str] = None,
+    topic: Optional[str] = None,
+    cloud_enabled: Optional[bool] = None,
+) -> dict[str, Any]:
+    """Update live meeting title, standing intent/brief, current topic, or AI insights toggle."""
+    _runtime, engine = _require_live_meeting_engine(controller)
+    if title is None and intent is None and topic is None and cloud_enabled is None:
+        raise ControlError(REFUSED, "Provide at least one field to update (title, intent, topic, or cloud_enabled).")
+
+    updated: list[str] = []
+    seqs: list[int] = []
+    if title is not None:
+        res = _apply_live_op(engine, {"op": "set_title", "text": title})
+        updated.append("title")
+        if res.seq is not None:
+            seqs.append(int(res.seq))
+    if intent is not None:
+        res = _apply_live_op(engine, {"op": "set_meeting_intent", "text": intent})
+        updated.append("intent")
+        if res.seq is not None:
+            seqs.append(int(res.seq))
+    if topic is not None:
+        res = _apply_live_op(engine, {"op": "set_topic", "text": topic})
+        updated.append("topic")
+        if res.seq is not None:
+            seqs.append(int(res.seq))
+    if cloud_enabled is not None:
+        want_cloud = bool(cloud_enabled)
+        if want_cloud:
+            saved = settings_manager.load_all_settings()
+            if not SettingsKey.MEETING_CLOUD_CONSENT_GIVEN.read(saved):
+                raise ControlError(
+                    REFUSED,
+                    "Turn on AI insights once from the desktop app first; it asks for consent "
+                    "before meeting text is sent to the AI provider.",
+                )
+        try:
+            engine.set_cloud_enabled(want_cloud)
+        except RuntimeError as exc:
+            raise ControlError(REFUSED, str(exc)) from exc
+        try:
+            settings_manager.save_setting(SettingsKey.MEETING_CLOUD_LAST_ENABLED, want_cloud)
+        except Exception:
+            logger.warning("Could not persist MEETING_CLOUD_LAST_ENABLED", exc_info=True)
+        updated.append("cloud_enabled")
+
+    return {
+        "ok": True,
+        "meeting_id": str(getattr(engine, "meeting_id", "") or ""),
+        "updated": updated,
+        "seqs": seqs,
+        "meeting_state": meeting_status(controller),
+    }
+
+
+def manage_meeting_card_item(
+    controller,
+    *,
+    action: str,
+    card: Optional[str] = None,
+    item_id: Optional[str] = None,
+    text: Optional[str] = None,
+    data: Optional[dict[str, Any]] = None,
+    evidence: Optional[Sequence[str]] = None,
+) -> dict[str, Any]:
+    """Add, update, remove, pin, unpin, or confirm a live meeting dashboard card item."""
+    _runtime, engine = _require_live_meeting_engine(controller)
+    from meeting.state.schema import CARD_KEYS
+
+    act = (action or "").strip().lower()
+    if act == "add":
+        if card not in CARD_KEYS:
+            raise ControlError(REFUSED, f"card must be one of: {', '.join(CARD_KEYS)}.")
+        if not text or not text.strip():
+            raise ControlError(REFUSED, "text is required when adding a card item.")
+        op: dict[str, Any] = {
+            "op": "add_item",
+            "card": card,
+            "text": text.strip(),
+            "data": dict(data or {}),
+            "evidence": list(evidence or []),
+        }
+    elif act == "update":
+        if not item_id:
+            raise ControlError(REFUSED, "item_id is required when updating a card item.")
+        changes: dict[str, Any] = {}
+        if text is not None:
+            changes["text"] = text.strip()
+        if data is not None:
+            changes["data"] = dict(data)
+        if not changes and not evidence:
+            raise ControlError(REFUSED, "Provide text, data, or evidence to update.")
+        op = {"op": "update_item", "id": item_id, "set": changes}
+        if evidence is not None:
+            op["evidence"] = list(evidence)
+    elif act in {"remove", "pin", "unpin", "confirm"}:
+        if not item_id:
+            raise ControlError(REFUSED, f"item_id is required for action {act!r}.")
+        op_name = {
+            "remove": "remove_item",
+            "pin": "pin_item",
+            "unpin": "unpin_item",
+            "confirm": "confirm_item",
+        }[act]
+        op = {"op": op_name, "id": item_id}
+    else:
+        raise ControlError(
+            REFUSED, "action must be one of: add, update, remove, pin, unpin, confirm."
+        )
+
+    res = _apply_live_op(engine, op)
+    return {
+        "ok": True,
+        "meeting_id": str(getattr(engine, "meeting_id", "") or ""),
+        "action": act,
+        "seq": res.seq,
+        "item_id": res.target_id,
+        "item": (res.effect or {}).get("item") if isinstance(res.effect, Mapping) else None,
+    }
+
+
+def manage_meeting_question(
+    controller,
+    *,
+    action: str,
+    text: Optional[str] = None,
+    question_id: Optional[str] = None,
+    answer_text: Optional[str] = None,
+    evidence: Optional[Sequence[str]] = None,
+) -> dict[str, Any]:
+    """Ask, answer, dismiss, or reopen a question in the active meeting inbox."""
+    _runtime, engine = _require_live_meeting_engine(controller)
+    act = (action or "").strip().lower()
+    if act == "ask":
+        if not text or not text.strip():
+            raise ControlError(REFUSED, "text is required when asking a question.")
+        op: dict[str, Any] = {
+            "op": "ask_question",
+            "text": text.strip(),
+            "evidence": list(evidence or []),
+        }
+    elif act == "answer":
+        if not question_id:
+            raise ControlError(REFUSED, "question_id is required when answering a question.")
+        if not answer_text or not answer_text.strip():
+            raise ControlError(REFUSED, "answer_text is required when answering a question.")
+        op = {
+            "op": "answer_question",
+            "question_id": question_id,
+            "answer_text": answer_text.strip(),
+        }
+    elif act == "dismiss":
+        if not question_id:
+            raise ControlError(REFUSED, "question_id is required when dismissing a question.")
+        op = {"op": "dismiss_question", "question_id": question_id}
+    elif act == "reopen":
+        if not question_id:
+            raise ControlError(REFUSED, "question_id is required when reopening a question.")
+        op = {"op": "reopen_question", "question_id": question_id}
+    else:
+        raise ControlError(REFUSED, "action must be one of: ask, answer, dismiss, reopen.")
+
+    res = _apply_live_op(engine, op)
+    return {
+        "ok": True,
+        "meeting_id": str(getattr(engine, "meeting_id", "") or ""),
+        "action": act,
+        "seq": res.seq,
+        "question_id": res.target_id,
+        "question": (res.effect or {}).get("question") if isinstance(res.effect, Mapping) else None,
+    }
+
+
+def update_meeting_transcript_or_speaker(
+    controller,
+    *,
+    action: str,
+    participant_id: Optional[str] = None,
+    display_name: Optional[str] = None,
+    segment_id: Optional[str] = None,
+    text: Optional[str] = None,
+) -> dict[str, Any]:
+    """Rename a live meeting participant or reassign a transcript segment's speaker."""
+    _runtime, engine = _require_live_meeting_engine(controller)
+    act = (action or "").strip().lower()
+    if act == "rename_participant":
+        if not participant_id or not display_name or not display_name.strip():
+            raise ControlError(REFUSED, "participant_id and display_name are required.")
+        op: dict[str, Any] = {
+            "op": "rename_participant",
+            "participant_id": participant_id,
+            "display_name": display_name.strip(),
+        }
+    elif act == "reassign_speaker":
+        if not segment_id or not participant_id:
+            raise ControlError(REFUSED, "segment_id and participant_id are required.")
+        op = {
+            "op": "reassign_segment_speaker",
+            "segment_id": segment_id,
+            "participant_id": participant_id,
+        }
+    else:
+        raise ControlError(
+            REFUSED,
+            "action must be one of: rename_participant, reassign_speaker.",
+        )
+
+    res = _apply_live_op(engine, op)
+    return {
+        "ok": True,
+        "meeting_id": str(getattr(engine, "meeting_id", "") or ""),
+        "action": act,
+        "seq": res.seq,
+        "target_id": res.target_id,
+        "effect": res.effect,
+    }
+
+
+def request_meeting_note_adjustment(
+    controller,
+    *,
+    text: str,
+    wait: bool = True,
+    timeout_s: float = 60.0,
+) -> dict[str, Any]:
+    """Submit a live note adjustment request to the meeting AI note-taker."""
+    _runtime, engine = _require_live_meeting_engine(controller)
+    cleaned = (text or "").strip()
+    if not cleaned or len(cleaned) > 1000:
+        raise ControlError(REFUSED, "Enter a note request of 1 to 1000 characters.")
+    try:
+        future = engine.request_note_adjustment(cleaned)
+    except (ValueError, RuntimeError) as exc:
+        raise ControlError(REFUSED, str(exc)) from exc
+
+    meeting_id = str(getattr(engine, "meeting_id", "") or "")
+    if not wait:
+        return {"ok": True, "status": "queued", "meeting_id": meeting_id}
+    try:
+        result = future.result(timeout=max(1.0, min(float(timeout_s), 120.0)))
+    except TimeoutError:
+        return {
+            "ok": True,
+            "status": "running",
+            "meeting_id": meeting_id,
+            "message": "Note adjustment is still running; poll get_meeting_live_state to track progress.",
+        }
+    return {
+        "ok": bool(getattr(result, "ok", False)),
+        "status": "completed",
+        "meeting_id": meeting_id,
+        "applied": sum(1 for op in (getattr(result, "op_results", None) or []) if getattr(op, "ok", False)),
+        "rejected": sum(1 for op in (getattr(result, "op_results", None) or []) if not getattr(op, "ok", False)),
+        "error": getattr(result, "error", None),
+    }
+
+
+def request_meeting_custom_report(
+    controller,
+    *,
+    request_text: str,
+    meeting_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Start a tailored custom report job on the active or an archived meeting."""
+    runtime = getattr(controller, "meeting_runtime", None)
+    if runtime is None:
+        raise ControlError(UNAVAILABLE, "Meeting Mode is not available in this build.")
+    from meeting.custom_report import MAX_REQUEST_CHARS, start_custom_report
+    from meeting.stored import open_store
+    from meeting.web.api import _REPORT_REJECTIONS, _report_endpoint
+
+    cleaned = (request_text or "").strip()
+    if not cleaned or len(cleaned) > MAX_REQUEST_CHARS:
+        raise ControlError(
+            REFUSED, f"Describe the report you want, in 1 to {MAX_REQUEST_CHARS} characters."
+        )
+
+    engine = getattr(runtime, "_engine", None)
+    engine_mid = str(getattr(engine, "meeting_id", "") or "") or None
+    target_id = (meeting_id or "").strip() or engine_mid
+    if not target_id:
+        raise ControlError(REFUSED, "No active meeting; pass meeting_id to generate a report for a saved meeting.")
+
+    repo = _meeting_repository(controller, runtime)
+    if repo is None:
+        raise ControlError(UNAVAILABLE, "Meeting history repository is unavailable.")
+    meeting = repo.get_meeting(target_id)
+    if not meeting:
+        raise ControlError(NOT_FOUND, f"Meeting {target_id!r} was not found.")
+
+    store = None
+    if engine is not None and engine_mid == target_id and getattr(engine, "store", None) is not None:
+        store = engine.store
+    else:
+        bg = getattr(runtime, "_background_engines", None)
+        if isinstance(bg, Mapping) and target_id in bg:
+            store = getattr(bg[target_id], "store", None)
+    if store is None:
+        store = open_store(repo, target_id, meeting, historical=True)
+
+    endpoint = _report_endpoint(engine, meeting)
+    result = start_custom_report(
+        store,
+        repo,
+        cleaned,
+        provider=endpoint["provider"],
+        model=endpoint["model"],
+        endpoint=endpoint["endpoint"],
+    )
+    if not result.get("ok"):
+        err_key = str(result.get("error") or "")
+        raise ControlError(
+            REFUSED,
+            _REPORT_REJECTIONS.get(err_key, "The report could not be started."),
+        )
+    return {
+        "ok": True,
+        "meeting_id": target_id,
+        "report_id": result.get("report_id"),
+        "run_id": result.get("run_id"),
+        "status": "running",
+    }
+
+
+def undo_live_meeting_action(controller, *, event_seq: int) -> dict[str, Any]:
+    """Undo a previous live meeting dashboard action by its sequence number."""
+    _runtime, engine = _require_live_meeting_engine(controller)
+    me_id = getattr(engine, "_me_participant_id", None)
+    results = engine.undo(int(event_seq), me_id)
+    if not results or not any(getattr(r, "ok", False) for r in results):
+        raise ControlError(REFUSED, f"Action seq {event_seq} could not be undone.")
+    return {
+        "ok": True,
+        "meeting_id": str(getattr(engine, "meeting_id", "") or ""),
+        "undone_seq": int(event_seq),
+        "applied": sum(1 for r in results if getattr(r, "ok", False)),
+    }
 
 
 # ---- Walkthroughs & Screenshots ---------------------------------------------
