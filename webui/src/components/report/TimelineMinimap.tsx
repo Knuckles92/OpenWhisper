@@ -1,5 +1,5 @@
-import { useMemo, type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
-import { speakerColor } from '../../people';
+import { memo, useCallback, useMemo, type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
+import { speakerColorMap, UNKNOWN_SPEAKER } from '../../people';
 import { clock, speakerName } from '../../report';
 import { useAudioClock } from '../../playback';
 import type { Participant, Segment } from '../../types';
@@ -44,6 +44,100 @@ function clip(text: string, max = 110): string {
   return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
 }
 
+const SegmentBars = memo(function SegmentBars({
+  segments,
+  participants,
+  colorMap,
+  duration,
+  playingId,
+}: {
+  segments: Segment[];
+  participants: Record<string, Participant>;
+  colorMap: Map<string, string>;
+  duration: number;
+  playingId: string | null;
+}) {
+  return (
+    <>
+      {segments.map((segment) => {
+        const span = Math.max(0, segment.end_s - segment.start_s);
+        const who = speakerName(participants, segment.speaker_participant_id, segment.channel);
+        return (
+          <i
+            key={segment.id}
+            className={`mm-seg${segment.id === playingId ? ' is-playing' : ''}`}
+            data-start={segment.start_s}
+            title={`${clock(segment.start_s)} · ${who}: ${clip(segment.text)}`}
+            style={{
+              left: `${(segment.start_s / duration) * 100}%`,
+              width: `${Math.max(0.35, (span / duration) * 100)}%`,
+              height: `${18 + Math.min(40, span * 1.9)}px`,
+              background: (segment.speaker_participant_id && colorMap.get(segment.speaker_participant_id)) || UNKNOWN_SPEAKER,
+            }}
+          />
+        );
+      })}
+    </>
+  );
+});
+
+const PlayheadOverlay = memo(function PlayheadOverlay({
+  at,
+  duration,
+  playing,
+  started,
+}: {
+  at: number;
+  duration: number;
+  playing: boolean;
+  started: boolean;
+}) {
+  if (!started) return null;
+  const pct = `${(at / duration) * 100}%`;
+  return (
+    <>
+      <span className="mm-played" style={{ width: pct }} aria-hidden="true" />
+      <span
+        className={`mm-playhead${playing ? ' is-playing' : ''}`}
+        style={{ left: pct }}
+        aria-hidden="true"
+      />
+    </>
+  );
+});
+
+const MarkersLayer = memo(function MarkersLayer({
+  markers,
+  duration,
+  interactive,
+  onSeek,
+}: {
+  markers: MinimapMarker[];
+  duration: number;
+  interactive: boolean;
+  onSeek: (seconds: number) => void;
+}) {
+  return (
+    <div className="mm-markers">
+      {markers.map((marker) => (
+        <button
+          key={`${marker.card}-${marker.id}`}
+          type="button"
+          className={`mm-marker ${marker.card}`}
+          style={{ left: `${(marker.time / duration) * 100}%` }}
+          title={marker.text}
+          aria-label={`${MARKER_LABELS[marker.card]} at ${clock(marker.time)}: ${marker.text}`}
+          disabled={!interactive}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSeek(marker.time);
+          }}
+        />
+      ))}
+    </div>
+  );
+});
+
 /**
  * The Ribbon minimap: proportional bars for every turn, markers for what was
  * captured, and a playhead tracking the recording. Clicking a bar plays that
@@ -60,13 +154,15 @@ export default function TimelineMinimap({
 }: TimelineMinimapProps) {
   const { time, playing } = useAudioClock(audioRef, audioKey);
   const at = Math.min(Math.max(time, 0), duration);
-  const pct = (seconds: number) => `${(seconds / duration) * 100}%`;
   const interactive = Boolean(onSeek);
-  const people = useMemo(() => Object.values(participants), [participants]);
+  const colorMap = useMemo(() => speakerColorMap(Object.values(participants)), [participants]);
   // Before the first play there is no position worth drawing a line through.
   const started = playing || at > 0;
 
-  const seekTo = (seconds: number) => onSeek?.(Math.min(duration, Math.max(0, seconds)));
+  const seekTo = useCallback(
+    (seconds: number) => onSeek?.(Math.min(duration, Math.max(0, seconds))),
+    [duration, onSeek],
+  );
 
   const seekFromPointer = (event: MouseEvent<HTMLDivElement>) => {
     if (!onSeek) return;
@@ -93,6 +189,7 @@ export default function TimelineMinimap({
   const playingNow = segments.find(
     (segment) => at >= segment.start_s && at < Math.max(segment.end_s, segment.start_s + MIN_SPAN_S),
   );
+  const playingId = started ? (playingNow?.id ?? null) : null;
 
   return (
     <div className="minimap">
@@ -109,51 +206,17 @@ export default function TimelineMinimap({
           onClick={interactive ? seekFromPointer : undefined}
           onKeyDown={interactive ? scrub : undefined}
         >
-          {segments.map((segment) => {
-            const span = Math.max(0, segment.end_s - segment.start_s);
-            const who = speakerName(participants, segment.speaker_participant_id, segment.channel);
-            return (
-              <i
-                key={segment.id}
-                className={`mm-seg${segment === playingNow ? ' is-playing' : ''}`}
-                data-start={segment.start_s}
-                title={`${clock(segment.start_s)} · ${who}: ${clip(segment.text)}`}
-                style={{
-                  left: pct(segment.start_s),
-                  width: `${Math.max(0.35, (span / duration) * 100)}%`,
-                  height: `${18 + Math.min(40, span * 1.9)}px`,
-                  background: speakerColor(segment.speaker_participant_id, people),
-                }}
-              />
-            );
-          })}
-          {started && <span className="mm-played" style={{ width: pct(at) }} aria-hidden="true" />}
-          {started && (
-            <span
-              className={`mm-playhead${playing ? ' is-playing' : ''}`}
-              style={{ left: pct(at) }}
-              aria-hidden="true"
-            />
-          )}
+          <SegmentBars
+            segments={segments}
+            participants={participants}
+            colorMap={colorMap}
+            duration={duration}
+            playingId={playingId}
+          />
+          <PlayheadOverlay at={at} duration={duration} playing={playing} started={started} />
         </div>
         {/* Markers sit outside the slider so they stay their own tab stops. */}
-        <div className="mm-markers">
-          {markers.map((marker) => (
-            <button
-              key={`${marker.card}-${marker.id}`}
-              type="button"
-              className={`mm-marker ${marker.card}`}
-              style={{ left: pct(marker.time) }}
-              title={marker.text}
-              aria-label={`${MARKER_LABELS[marker.card]} at ${clock(marker.time)}: ${marker.text}`}
-              disabled={!interactive}
-              onClick={(event) => {
-                event.stopPropagation();
-                seekTo(marker.time);
-              }}
-            />
-          ))}
-        </div>
+        <MarkersLayer markers={markers} duration={duration} interactive={interactive} onSeek={seekTo} />
       </div>
       <div className="mm-axis">
         {TICKS.map((fraction) => (

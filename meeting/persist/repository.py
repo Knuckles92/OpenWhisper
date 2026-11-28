@@ -6,6 +6,7 @@ context manager. All public methods accept and return plain dicts /
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 import json
 import logging
 import os
@@ -115,28 +116,74 @@ def _segment_to_dict(row: MeetingSegment) -> Dict[str, Any]:
     }
 
 
+def _build_channel_interval_index(
+    new_items: Sequence[TranscriptSegment],
+) -> Dict[str, Tuple[List[TranscriptSegment], List[float]]]:
+    """Group ``new_items`` by channel, sorted by ``start_s``, with prefix max ``end_s``."""
+    by_channel: Dict[str, List[TranscriptSegment]] = {}
+    for seg in new_items:
+        by_channel.setdefault(seg.channel, []).append(seg)
+    index: Dict[str, Tuple[List[TranscriptSegment], List[float]]] = {}
+    for channel, items in by_channel.items():
+        items.sort(key=lambda seg: float(seg.start_s))
+        prefix_max: List[float] = []
+        running_max = float("-inf")
+        for seg in items:
+            end_s = float(seg.end_s)
+            if end_s > running_max:
+                running_max = end_s
+            prefix_max.append(running_max)
+        index[channel] = (items, prefix_max)
+    return index
+
+
 def _best_evidence_match(
     old_id: str,
     old_items: Sequence[Dict[str, Any]],
     new_items: Sequence[TranscriptSegment],
     id_map: Dict[str, str],
     retained_ids: frozenset = frozenset(),
+    *,
+    old_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+    new_index: Optional[Dict[str, Tuple[List[TranscriptSegment], List[float]]]] = None,
 ) -> Optional[str]:
     """Map one evidence id onto a unique overlapping new segment."""
     if old_id in id_map:
         return id_map[old_id]
     if old_id in retained_ids:
         return old_id
-    old = next((item for item in old_items if item["id"] == old_id), None)
+    if old_by_id is not None:
+        old = old_by_id.get(old_id)
+    else:
+        old = next((item for item in old_items if item["id"] == old_id), None)
     if old is None:
         return None
+    old_start = float(old["start_s"])
+    old_end = float(old["end_s"])
     matches: List[Tuple[float, str]] = []
-    for new in new_items:
-        if old["channel"] != new.channel:
-            continue
-        score = interval_iou(old["start_s"], old["end_s"], new.start_s, new.end_s)
-        if score >= MIN_MATCH_IOU:
-            matches.append((score, new.segment_id))
+    if new_index is not None:
+        entry = new_index.get(old["channel"])
+        if entry is None:
+            return None
+        chan_new, prefix_max = entry
+        j = bisect_right(prefix_max, old_start)
+        while j < len(chan_new) and float(chan_new[j].start_s) < old_end:
+            new = chan_new[j]
+            score = interval_iou(old_start, old_end, new.start_s, new.end_s)
+            if score >= MIN_MATCH_IOU:
+                matches.append((score, new.segment_id))
+                if len(matches) > 1:
+                    return None
+            j += 1
+    else:
+        for new in new_items:
+            if old["channel"] != new.channel:
+                continue
+            score = interval_iou(old_start, old_end, new.start_s, new.end_s)
+            if score >= MIN_MATCH_IOU:
+                matches.append((score, new.segment_id))
+                if len(matches) > 1:
+                    return None
     if len(matches) != 1:
         return None
     return matches[0][1]
@@ -158,8 +205,14 @@ def _remap_state_evidence(
     which the engine's post-redecode strip uses to drop them. Ids in
     ``retained_ids`` (unmatched pinned rows kept as-is) stay valid anchors.
     """
+    old_by_id = {item["id"]: item for item in old_items}
+    new_index = _build_channel_interval_index(new_items)
+
     def remap_list(values: Any) -> List[str]:
-        return _remap_evidence_list(values, old_items, new_items, id_map, retained_ids)
+        return _remap_evidence_list(
+            values, old_items, new_items, id_map, retained_ids,
+            old_by_id=old_by_id, new_index=new_index,
+        )
 
     cards = state.get("cards") or {}
     if isinstance(cards, dict):
@@ -187,6 +240,9 @@ def _remap_evidence_list(
     new_items: Sequence[TranscriptSegment],
     id_map: Dict[str, str],
     retained_ids: frozenset,
+    *,
+    old_by_id: Optional[Dict[str, Dict[str, Any]]] = None,
+    new_index: Optional[Dict[str, Tuple[List[TranscriptSegment], List[float]]]] = None,
 ) -> List[str]:
     """Remapped ``sg_`` ids of ``values``, deduplicated in order; others drop."""
     remapped: List[str] = []
@@ -198,6 +254,7 @@ def _remap_evidence_list(
             continue
         mapped = _best_evidence_match(
             item, old_items, new_items, id_map, retained_ids,
+            old_by_id=old_by_id, new_index=new_index,
         )
         if mapped and mapped not in seen:
             remapped.append(mapped)
@@ -343,19 +400,47 @@ def _match_live_to_offline(
 ) -> Tuple[Dict[str, str], set]:
     """Pair old and new rows one-to-one by best time IoU on the same channel.
 
-    Matched new rows inherit the old speaker label where it should win.
-    Returns ``old_id -> new_id`` and the matched old row indices.
+    Uses a sorted per-channel sweep-line so matching is O((M + N) log N + K)
+    instead of O(M * N). Matched new rows inherit the old speaker label where
+    it should win. Returns ``old_id -> new_id`` and the matched old row indices.
     """
-    pairs: List[Tuple[float, int, int]] = []
+    old_by_channel: Dict[str, List[Tuple[int, Dict[str, Any]]]] = {}
     for oi, old in enumerate(old_items):
-        for ni, new in enumerate(new_items):
-            if old["channel"] != new.channel:
-                continue
-            score = interval_iou(
-                old["start_s"], old["end_s"], new.start_s, new.end_s,
-            )
-            if score >= MIN_MATCH_IOU:
-                pairs.append((score, oi, ni))
+        old_by_channel.setdefault(old["channel"], []).append((oi, old))
+    new_by_channel: Dict[str, List[Tuple[int, TranscriptSegment]]] = {}
+    for ni, new in enumerate(new_items):
+        new_by_channel.setdefault(new.channel, []).append((ni, new))
+
+    pairs: List[Tuple[float, int, int]] = []
+    for channel, chan_old in old_by_channel.items():
+        chan_new = new_by_channel.get(channel)
+        if not chan_new:
+            continue
+        chan_old.sort(key=lambda item: float(item[1]["start_s"]))
+        chan_new.sort(key=lambda item: float(item[1].start_s))
+        prefix_max: List[float] = []
+        running_max = float("-inf")
+        for _ni, new in chan_new:
+            end_s = float(new.end_s)
+            if end_s > running_max:
+                running_max = end_s
+            prefix_max.append(running_max)
+
+        j_start = 0
+        n_new = len(chan_new)
+        for oi, old in chan_old:
+            old_start = float(old["start_s"])
+            old_end = float(old["end_s"])
+            while j_start < n_new and prefix_max[j_start] <= old_start:
+                j_start += 1
+            j = j_start
+            while j < n_new and float(chan_new[j][1].start_s) < old_end:
+                ni, new = chan_new[j]
+                score = interval_iou(old_start, old_end, new.start_s, new.end_s)
+                if score >= MIN_MATCH_IOU:
+                    pairs.append((score, oi, ni))
+                j += 1
+
     pairs.sort(reverse=True)
     used_old: set = set()
     used_new: set = set()
@@ -398,57 +483,96 @@ def _delete_replaced_rows(
     session: Any, old_items: Sequence[Dict[str, Any]], used_old: set,
 ) -> List[str]:
     """Delete every live row except pinned rows no offline row matched."""
-    deleted: List[str] = []
-    for oi, old in enumerate(old_items):
-        if old["pinned"] and oi not in used_old:
-            continue
-        row = session.get(MeetingSegment, old["id"])
-        if row is None:
-            continue
-        session.delete(row)
-        deleted.append(old["id"])
+    deleted = [
+        old["id"] for oi, old in enumerate(old_items)
+        if not (old["pinned"] and oi not in used_old)
+    ]
+    for start in range(0, len(deleted), 500):
+        session.query(MeetingSegment).filter(
+            MeetingSegment.id.in_(deleted[start:start + 500])
+        ).delete(synchronize_session=False)
     return deleted
 
 
 def _store_offline_segments(
     session: Any, meeting_id: str, new_items: Sequence[TranscriptSegment], created: str,
 ) -> List[str]:
-    stored_ids: List[str] = []
+    if not new_items:
+        return []
     for seg in new_items:
         if seg.meeting_id != meeting_id:
             raise ValueError("segment does not belong to meeting")
-        existing = session.get(MeetingSegment, seg.segment_id)
-        if existing is not None and existing.meeting_id != meeting_id:
-            raise ValueError("segment id already belongs to another meeting")
-        created_at = created
+    ids = [seg.segment_id for seg in new_items]
+    existing_by_id: Dict[str, MeetingSegment] = {}
+    for start in range(0, len(ids), 500):
+        for row in session.query(MeetingSegment).filter(
+            MeetingSegment.id.in_(ids[start:start + 500])
+        ).all():
+            existing_by_id[row.id] = row
+
+    stored_ids: List[str] = []
+    to_insert: List[MeetingSegment] = []
+    seen_new: Dict[str, MeetingSegment] = {}
+    for seg in new_items:
+        existing = existing_by_id.get(seg.segment_id)
         if existing is not None:
-            created_at = existing.created_at
-        session.merge(MeetingSegment(
-            id=seg.segment_id,
-            meeting_id=seg.meeting_id,
-            chunk_id=seg.chunk_id,
-            channel=seg.channel,
-            start_s=seg.start_s,
-            end_s=seg.end_s,
-            text=seg.text,
-            speaker_participant_id=seg.speaker_participant_id,
-            speaker_source=seg.speaker_source,
-            speaker_pinned=bool(seg.speaker_pinned),
-            embedding=seg.embedding,
-            created_at=created_at,
-        ))
+            if existing.meeting_id != meeting_id:
+                raise ValueError("segment id already belongs to another meeting")
+            existing.chunk_id = seg.chunk_id
+            existing.channel = seg.channel
+            existing.start_s = seg.start_s
+            existing.end_s = seg.end_s
+            existing.text = seg.text
+            existing.speaker_participant_id = seg.speaker_participant_id
+            existing.speaker_source = seg.speaker_source
+            existing.speaker_pinned = bool(seg.speaker_pinned)
+            existing.embedding = seg.embedding
+        elif seg.segment_id in seen_new:
+            row = seen_new[seg.segment_id]
+            row.chunk_id = seg.chunk_id
+            row.channel = seg.channel
+            row.start_s = seg.start_s
+            row.end_s = seg.end_s
+            row.text = seg.text
+            row.speaker_participant_id = seg.speaker_participant_id
+            row.speaker_source = seg.speaker_source
+            row.speaker_pinned = bool(seg.speaker_pinned)
+            row.embedding = seg.embedding
+        else:
+            row = MeetingSegment(
+                id=seg.segment_id,
+                meeting_id=seg.meeting_id,
+                chunk_id=seg.chunk_id,
+                channel=seg.channel,
+                start_s=seg.start_s,
+                end_s=seg.end_s,
+                text=seg.text,
+                speaker_participant_id=seg.speaker_participant_id,
+                speaker_source=seg.speaker_source,
+                speaker_pinned=bool(seg.speaker_pinned),
+                embedding=seg.embedding,
+                created_at=created,
+            )
+            to_insert.append(row)
+            seen_new[seg.segment_id] = row
         stored_ids.append(seg.segment_id)
+    if to_insert:
+        session.add_all(to_insert)
     return stored_ids
 
 
 def _segment_dicts(session: Any, segment_ids: Iterable[str]) -> List[Dict[str, Any]]:
     """Stored rows for ``segment_ids``, skipping any that no longer exist."""
-    rows = []
-    for seg_id in segment_ids:
-        row = session.get(MeetingSegment, seg_id)
-        if row is not None:
-            rows.append(_segment_to_dict(row))
-    return rows
+    ids = list(segment_ids)
+    if not ids:
+        return []
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for start in range(0, len(ids), 500):
+        for row in session.query(MeetingSegment).filter(
+            MeetingSegment.id.in_(ids[start:start + 500])
+        ).all():
+            by_id[row.id] = _segment_to_dict(row)
+    return [by_id[seg_id] for seg_id in ids if seg_id in by_id]
 
 
 def _mirror_item(session: Any, meeting_id: str, item: Dict[str, Any]) -> None:
@@ -820,6 +944,45 @@ class SqlMeetingRepository:
         self.update_meeting(
             meeting_id, app_pid=os.getpid(), app_heartbeat_at=utc_now_iso()
         )
+
+    def list_meetings_for_reconcile(self) -> List[Dict[str, Any]]:
+        """Lightweight local-meeting inventory for startup spool reconciliation.
+
+        Omits ``state_json`` and paired-computer meetings (which have no local
+        crash spool).
+        """
+        with self._db.get_session() as session:
+            rows = session.query(
+                MeetingSession.id,
+                MeetingSession.status,
+                MeetingSession.spool_dir,
+                MeetingSession.app_pid,
+                MeetingSession.app_heartbeat_at,
+            ).filter(
+                MeetingSession.origin_device_id.is_(None),
+                MeetingSession.spool_dir.is_not(None),
+                MeetingSession.spool_dir != "",
+            ).all()
+            return [
+                {
+                    "id": row_id,
+                    "status": status,
+                    "spool_dir": spool_dir,
+                    "app_pid": app_pid,
+                    "app_heartbeat_at": heartbeat,
+                }
+                for row_id, status, spool_dir, app_pid, heartbeat in rows
+            ]
+
+    def list_meetings_with_interrupted_work(self) -> List[Dict[str, Any]]:
+        """Local ended/failed meetings whose state JSON still mentions ``running``."""
+        with self._db.get_session() as session:
+            rows = session.query(MeetingSession).filter(
+                MeetingSession.status.in_(("ended", "failed")),
+                MeetingSession.origin_device_id.is_(None),
+                MeetingSession.state_json.like('%"running"%'),
+            ).all()
+            return [_session_to_dict(r) for r in rows]
 
     def find_interrupted_meetings(self) -> List[Dict[str, Any]]:
         """Return live/recovery sessions and terminal sessions with pending ASR."""

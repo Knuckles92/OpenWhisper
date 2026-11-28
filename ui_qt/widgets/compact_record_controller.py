@@ -1,8 +1,8 @@
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QLabel, QHBoxLayout, QVBoxLayout, QWidget
 
 from ui_qt.widgets.buttons import DangerButton, SuccessButton, WarningButton
+from ui_qt.utils.font_scale import apply_scaled_font
 
 
 class CompactRecordController(QWidget):
@@ -22,7 +22,7 @@ class CompactRecordController(QWidget):
         self.status_label = QLabel("Ready to record")
         self.status_label.setObjectName("statusLabel")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setFont(QFont("Segoe UI", 13))
+        apply_scaled_font(self.status_label, 13)
         layout.addWidget(self.status_label)
 
         button_layout = QHBoxLayout()

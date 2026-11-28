@@ -31,12 +31,12 @@ class WhatsNew:
 
 WHATS_NEW: Final[WhatsNew] = WhatsNew(
     release_line="2.9",
-    updated="2026-11-25",
+    updated="2026-11-27",
     text=(
-        "Fourier 2B is now available in Downloads as an optional Qwen3-ASR "
-        "model on Windows and Linux. Send walkthroughs directly to your coding "
-        "agent, browse models by family, and enjoy leak-free Linux/X11 "
-        "shortcut refreshes."
+        "AssemblyAI Dictation API is now available under the API engine, "
+        "alongside expanded MCP skills and history annotations, beta echo "
+        "cancellation, and performance and scaling improvements across the "
+        "desktop and web UI."
     ),
 )
 

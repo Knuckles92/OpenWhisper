@@ -25,7 +25,55 @@ _FONT_SIZE_RE = re.compile(
 )
 _SOURCE_PROP = "unscaledStyleSheet"
 _RESOLVED_PROP = "scaledStyleSheet"
+_SCALED_FONT_PROP = "scaledFontSpec"
 _BASE_APP_POINT_SIZE = 10
+
+
+def ui_font_family(app: Optional[QApplication] = None) -> str:
+    """Return the active UI font family, respecting platform/Omarchy setup."""
+    instance = app or QApplication.instance()
+    if instance is not None:
+        family = instance.font().family()
+        if family:
+            return family
+    from services.desktop_session import use_omarchy_ui
+
+    return "Noto Sans" if use_omarchy_ui() else "Segoe UI"
+
+
+def scaled_font(
+    point_size: float,
+    weight: Optional[QFont.Weight | int] = None,
+    *,
+    family: Optional[str] = None,
+    scale: Optional[float] = None,
+) -> QFont:
+    """Build a ``QFont`` scaled by the active UI font scale.
+
+    Uses the application's configured font family rather than hardcoding
+    ``"Segoe UI"``, so macOS, Linux/Omarchy, and Windows stay consistent and
+    respond to Settings → Text Size.
+    """
+    factor = current_ui_font_scale() if scale is None else float(scale)
+    font = QFont(family or ui_font_family())
+    font.setPointSizeF(max(6.0, round(float(point_size) * factor * 2.0) / 2.0))
+    if weight is not None:
+        font.setWeight(weight)
+    return font
+
+
+def apply_scaled_font(
+    widget: QWidget,
+    point_size: float,
+    weight: Optional[QFont.Weight | int] = None,
+    *,
+    family: Optional[str] = None,
+) -> QFont:
+    """Apply a scaled font to ``widget`` and remember its base spec for live rescaling."""
+    widget.setProperty(_SCALED_FONT_PROP, (float(point_size), weight, family))
+    font = scaled_font(point_size, weight, family=family)
+    widget.setFont(font)
+    return font
 
 _current_percent: int = 100
 _theme_preference: str = UiTheme.DARK
@@ -188,6 +236,10 @@ def apply_ui_theme(
 def _resolve_widget_stylesheets(app: QApplication, scale: float) -> None:
     global _resolving
     for widget in app.allWidgets():
+        font_spec = widget.property(_SCALED_FONT_PROP)
+        if isinstance(font_spec, tuple) and len(font_spec) == 3:
+            base_pt, weight, family = font_spec
+            widget.setFont(scaled_font(base_pt, weight, family=family, scale=scale))
         source = widget.property(_SOURCE_PROP)
         if not source:
             sheet = widget.styleSheet()

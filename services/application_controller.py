@@ -289,9 +289,13 @@ class ApplicationController(QObject):
         self.transcription_backends["api"] = api
 
         from services.local_asr.catalog import BACKENDS
+        from services.settings import SettingsKey
         from transcriber.optional_backend import LocalSpeechBackend
+        local_asr_settings = settings_manager.load_settings((SettingsKey.LOCAL_ASR_MODELS,))
         for key in BACKENDS:
-            self.transcription_backends[key] = LocalSpeechBackend(key)
+            self.transcription_backends[key] = LocalSpeechBackend(
+                key, initial_settings=local_asr_settings
+            )
         from transcriber.remote_backend import REMOTE_BACKEND, RemoteSpeechBackend
         remote = RemoteSpeechBackend()
         remote.on_link_changed = self.remote.remote_link_poke.emit
@@ -656,13 +660,16 @@ class ApplicationController(QObject):
                 # A remote engine's weights are on the host, so closing its
                 # connection would free nothing here.
                 if getattr(backend, "model", None) is not None and not getattr(backend, "is_remote", False):
+                    # Mark leased before cleanup() wakes any in-flight warmup
+                    # thread; otherwise _finish_speech_reload() can run first
+                    # and mistake the leased unload for a missing runtime.
+                    self._engine_released_for_lease = True
                     backend.cleanup()
                     released = True
             preview = getattr(self, "_streaming_backend", None)
             if preview is not None:
                 self.streaming_runtime.cleanup()
                 self._pending_streaming_setup = True
-            self._engine_released_for_lease = self._engine_released_for_lease or released
             if released:
                 self.device_info_update.emit("Released while Meeting Mode runs", False)
             return released
@@ -1349,6 +1356,7 @@ class ApplicationController(QObject):
         self.persistence_executor.shutdown(wait=True, cancel_futures=False)
 
         _attempt(self._cleanup_backends, "Error during transcription backends cleanup")
+        _attempt(lambda: self.transcription_runtime.close(), "Error closing transcription runtime")
         _attempt(lambda: self.ui_controller.cleanup(), "Error during UI controller cleanup")
         _attempt(lambda: db.close(), "Error closing database")
 

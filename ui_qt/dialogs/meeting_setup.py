@@ -23,6 +23,7 @@ from services.meeting_setup import check_audio, inspect_models, prepare_models
 from services.settings import SettingsKey, settings_manager
 from ui_qt.widgets.buttons import Button, SuccessButton
 from ui_qt.widgets.wrapped_label import WrappedLabel
+from ui_qt.utils.error_messages import friendly_error_message
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +162,9 @@ class MeetingSetupDialog(QDialog):
             self._done(future.result())
         except Exception as exc:
             logger.warning("Meeting setup step failed", exc_info=True)
-            self._status_label.setText(f"Couldn't complete this step. {exc}")
+            self._status_label.setText(
+            f"Couldn't complete this step. {friendly_error_message(exc)}"
+        )
         self._update_buttons()
 
     def _prepare(self):

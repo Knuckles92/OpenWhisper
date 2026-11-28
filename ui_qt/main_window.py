@@ -500,8 +500,14 @@ class MainWindow(QMainWindow):
         self._resize_edge = None
         self._resize_start_pos = None
         self._resize_start_geometry = None
+        self._last_cursor_edge = None
 
         self._geometry_save_timer = None
+        self._status_reset_timer = QTimer(self)
+        self._status_reset_timer.setSingleShot(True)
+        self._status_reset_timer.timeout.connect(
+            lambda: self.set_status("Ready to record")
+        )
         self._tab_history_refresh_timer = QTimer(self)
         self._tab_history_refresh_timer.setSingleShot(True)
         self._tab_history_refresh_timer.timeout.connect(
@@ -1192,8 +1198,13 @@ class MainWindow(QMainWindow):
             self.tabbed_content.set_current_index(TabbedContentWidget.TAB_WALKTHROUGH)
 
     def set_status(self, status_text: str):
+        if hasattr(self, "_status_reset_timer") and self._status_reset_timer.isActive():
+            self._status_reset_timer.stop()
         self.quick_record_tab.set_status(status_text)
         self.compact_controller.set_status(status_text)
+
+    def _schedule_status_reset(self, delay_ms: int = 2000) -> None:
+        self._status_reset_timer.start(delay_ms)
 
     def set_device_info(self, device_info: str, ready: Optional[bool] = None):
         self.update_transcription_tabs("set_device_info", device_info, ready)
@@ -2067,12 +2078,15 @@ class MainWindow(QMainWindow):
         # An edit or a restored version changes the text both lists show.
         dialog.version_changed.connect(lambda _entry_id: self.refresh_history())
         dialog.annotation_changed.connect(lambda _entry_id: self.refresh_history())
-        dialog.exec()
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
         logger.info(f"Opened history entry dialog: {entry.id[:8]}...")
 
     def _on_history_entry_copied_from_dialog(self):
         self.set_status("Copied to clipboard")
-        QTimer.singleShot(2000, lambda: self.set_status("Ready to record"))
+        self._schedule_status_reset(2000)
         if self.on_show_copied_animation:
             self.on_show_copied_animation()
 
@@ -2088,12 +2102,12 @@ class MainWindow(QMainWindow):
 
     def _on_history_entry_copied(self, entry_id: str):
         self.set_status("Copied to clipboard")
-        QTimer.singleShot(2000, lambda: self.set_status("Ready to record"))
+        self._schedule_status_reset(2000)
 
     def _on_history_entry_deleted(self, entry_id: str):
         self._refresh_history_calendar()
         self.set_status("Entry deleted")
-        QTimer.singleShot(2000, lambda: self.set_status("Ready to record"))
+        self._schedule_status_reset(2000)
 
     def _on_retranscribe_requested(self, audio_path: str):
         logger.info("Re-transcribe requested: %s", audio_path)
@@ -2182,7 +2196,9 @@ class MainWindow(QMainWindow):
         return (horizontal, vertical)
 
     def _update_cursor_for_edge(self, edge: tuple):
-
+        if edge == self._last_cursor_edge:
+            return
+        self._last_cursor_edge = edge
         h, v = edge
 
         if h == 0 and v == 0:
@@ -2476,7 +2492,12 @@ class MainWindow(QMainWindow):
         self._refit_page(animate=False)
 
     def eventFilter(self, obj, event):
-        if event.type() == QEvent.Type.MouseMove and not self._resizing:
+        if (
+            event.type() == QEvent.Type.MouseMove
+            and not self._resizing
+            and self.isVisible()
+            and (obj is self or (isinstance(obj, QWidget) and obj.window() is self))
+        ):
             if hasattr(event, 'globalPosition'):
                 global_pos = event.globalPosition().toPoint()
                 local_pos = self.mapFromGlobal(global_pos)

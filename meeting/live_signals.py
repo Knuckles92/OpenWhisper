@@ -326,6 +326,8 @@ class LiveSignals:
             logger.info("Live signal window meeting_id=%s minute=%s produced no usable result",
                         self.store.meeting_id, minute)
             return
+        if not self._transcript_unchanged(window):
+            return
         self.store.with_state(functools.partial(self._publish, window))
 
     def _window_rows(self, minute):
@@ -338,8 +340,11 @@ class LiveSignals:
         return self.judge.ask(state, questions, timeout_s=timeout_s)
 
     def _transcript_unchanged(self, window):
+        by_id = {r["id"]: r for r in self._window_rows(window.minute)}
         for sid, passage in window.state["passages"].items():
-            source = self.repository.get_segment(self.store.meeting_id, sid)
+            source = by_id.get(sid)
+            if source is None:
+                source = self.repository.get_segment(self.store.meeting_id, sid)
             if source is None or source.get("text", "").strip() != passage["text"]:
                 logger.info("Live signal window meeting_id=%s minute=%s discarded changed transcript",
                             self.store.meeting_id, window.minute)
@@ -350,8 +355,6 @@ class LiveSignals:
         if self.closed or current.status not in window.statuses or not self.allowed():
             return
         if not window.consents_hold():
-            return
-        if not self._transcript_unchanged(window):
             return
         minute, answers = window.minute, window.answers
         ops = window_ops(minute, window.state, answers, current.to_dict())

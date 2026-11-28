@@ -28,6 +28,7 @@ from PyQt6.QtGui import (
 
 from ui_qt.utils.palette import token_color
 from ui_qt.waveform_styles import Particle, round_pen
+from ui_qt.utils.font_scale import scaled_font
 
 RADIUS = 13.0
 POP_S = 0.24
@@ -391,7 +392,7 @@ def draw_label(painter: QPainter, rect: QRectF, text: str, now: float, start: fl
     rise = phase(now, start, LABEL_S)
     if rise <= 0.0:
         return
-    font = QFont("Segoe UI", 10, QFont.Weight.Bold)
+    font = scaled_font(10, QFont.Weight.Bold)
     metrics = QFontMetrics(font)
     text = metrics.elidedText(text, Qt.TextElideMode.ElideRight, int(rect.width()))
     offset = QPointF(0.0, 6.0) if slide is None else slide

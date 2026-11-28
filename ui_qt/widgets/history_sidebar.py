@@ -40,7 +40,9 @@ from ui_qt.utils.collapse_animation import (
     SECTION_COLLAPSE_DURATION_MS,
     SECTION_COLLAPSE_EASING,
 )
+from ui_qt.utils.error_messages import format_action_error, friendly_error_message
 from ui_qt.utils.file_reveal import reveal_in_file_manager
+from ui_qt.utils.font_scale import apply_scaled_font
 from ui_qt.utils.list_reconcile import reconcile_cards
 from ui_qt.widgets.context_menu import context_menu
 from ui_qt.widgets.eliding_label import ElidingLabel
@@ -184,11 +186,13 @@ class _RemoteRelay(QObject):
     #: The asking sidebar's token, the entry id, error.
     deleted = pyqtSignal(int, str, str)
     loaded = pyqtSignal(int, str, object, str)
+    cleared = pyqtSignal(int, str)
 
 
 _relay: _RemoteRelay | None = None
 #: Tokens, unique across cards and sidebars because they share the relay.
 _tokens = itertools.count(1)
+_UNSET = object()
 
 
 def _remote_relay() -> _RemoteRelay:
@@ -198,29 +202,61 @@ def _remote_relay() -> _RemoteRelay:
     return _relay
 
 
+def _history_cleanup_settings() -> dict:
+    """Load only the settings keys needed to format cleanup labels."""
+    try:
+        return settings_manager.load_settings([SettingsKey.TEXT_LLM_PROFILES])
+    except Exception:
+        logger.debug("Could not load cleanup profile names for History", exc_info=True)
+        return {}
+
+
 def _read_local_history(query: str, limit: int):
-    """This computer's entries, newest first; returns ``(entries, error)``."""
+    """This computer's entries, newest first, with preloaded annotations & audio paths."""
     entries = []
     error = ""
+    annotations_by_id: dict = {}
+    audio_paths: dict = {}
+    settings: dict = {}
     try:
         if query:
             entries = history_manager.search_history(query, limit=limit)
         else:
             entries = history_manager.get_history(limit=limit)
+        shown = _unique_entries(entries[:HistorySidebar.MAX_HISTORY_ITEMS])
+        local_ids = [entry.id for entry in shown if is_local_entry(entry)]
+        if local_ids:
+            annotations_by_id = record_annotations.annotation_summaries_for_kind(
+                "transcription", local_ids
+            )
+        for entry in shown:
+            if entry.audio_file and not getattr(entry, "stored_on", None):
+                audio_paths[entry.id] = history_manager.get_recording_path(entry.audio_file)
+        settings = _history_cleanup_settings()
     except Exception as exc:
         logger.error("Failed to load transcription history: %s", exc, exc_info=True)
         error = str(exc)
-    return entries, error
+    return {
+        "entries": entries,
+        "annotations": annotations_by_id,
+        "audio_paths": audio_paths,
+        "settings": settings,
+    }, error
 
 
-def _unpack_history(entries) -> tuple[list, str]:
-    """The entries as a list, and the host's note when merged with its own."""
+def _unpack_history(entries) -> tuple[list, str, dict, dict, dict]:
+    """The entries as a list, host notice, annotations, audio paths, and cleanup settings."""
     notice = ""
+    annotations = {}
+    audio_paths = {}
+    settings = None
     if isinstance(entries, dict):
-        # Merged with the host's: see HistorySidebar._start_remote_listing.
         notice = str(entries.get("notice") or "")
+        annotations = entries.get("annotations") or {}
+        audio_paths = entries.get("audio_paths") or {}
+        settings = entries.get("settings")
         entries = entries.get("entries")
-    return list(entries or []), notice
+    return list(entries or []), notice, annotations, audio_paths, settings
 
 
 def _unique_entries(entries) -> list:
@@ -235,13 +271,16 @@ def _unique_entries(entries) -> list:
     return shown
 
 
-def _card_fingerprint(entry, settings, annotation=None) -> dict:
+def _card_fingerprint(entry, settings, annotation=None, *, audio_path=_UNSET) -> dict:
     """What a card shows, so an unchanged entry keeps its card."""
     value = {name: value for name, value in vars(entry).items() if not name.startswith("_")}
     value["cleanup_display"] = _format_cleanup_info(entry, settings)
     value["annotation"] = annotation
     if entry.audio_file and not getattr(entry, "stored_on", None):
-        value["audio_available"] = bool(history_manager.get_recording_path(entry.audio_file))
+        if audio_path is _UNSET:
+            value["audio_available"] = bool(history_manager.get_recording_path(entry.audio_file))
+        else:
+            value["audio_available"] = bool(audio_path)
     return value
 
 
@@ -360,7 +399,15 @@ class HistoryItemWidget(QFrame):
     #: Open the Agent Notes dialog for this entry.
     notes_requested = pyqtSignal(str)
 
-    def __init__(self, entry: HistoryEntry, parent=None, *, settings=None, annotation=None):
+    def __init__(
+        self,
+        entry: HistoryEntry,
+        parent=None,
+        *,
+        settings=None,
+        annotation=None,
+        audio_path=_UNSET,
+    ):
         super().__init__(parent)
         self.entry = entry
         self._annotation = annotation
@@ -375,14 +422,16 @@ class HistoryItemWidget(QFrame):
         if self._stored_on:
             _remote_relay().audio_ready.connect(self._on_remote_audio_ready)
         if self.entry.audio_file and not self._stored_on:
-            self._audio_path = history_manager.get_recording_path(self.entry.audio_file)
+            if audio_path is _UNSET:
+                self._audio_path = history_manager.get_recording_path(self.entry.audio_file)
+            else:
+                self._audio_path = audio_path
         self.setObjectName("historyItem")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
 
         self._setup_ui()
-        self._apply_style()
 
     @property
     def _has_audio(self) -> bool:
@@ -405,7 +454,7 @@ class HistoryItemWidget(QFrame):
 
         self.timestamp_label = QLabel(self.entry.formatted_timestamp)
         self.timestamp_label.setObjectName("historyTimestamp")
-        self.timestamp_label.setFont(QFont("Segoe UI", 10))
+        apply_scaled_font(self.timestamp_label, 10)
         self.timestamp_label.setAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
@@ -421,7 +470,7 @@ class HistoryItemWidget(QFrame):
             )
             audio_chip = QLabel(chip_text)
             audio_chip.setObjectName("historyAudioChip")
-            audio_chip.setFont(QFont("Segoe UI", 9))
+            apply_scaled_font(audio_chip, 9)
             audio_chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
             audio_chip.setToolTip("Recording available — play it or transcribe it again")
             audio_chip.setFixedHeight(20)
@@ -465,7 +514,7 @@ class HistoryItemWidget(QFrame):
         if title:
             self.title_label = WrappedLabel(title)
             self.title_label.setObjectName("historyTitle")
-            self.title_label.setFont(QFont("Segoe UI", 12, QFont.Weight.DemiBold))
+            apply_scaled_font(self.title_label, 12, QFont.Weight.DemiBold)
             self.title_label.setAlignment(
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
             )
@@ -477,7 +526,7 @@ class HistoryItemWidget(QFrame):
         preview = _failed_recording_hint(self._has_audio) if self._failed_recording else self.entry.preview_text
         self.preview_label = WrappedLabel(preview)
         self.preview_label.setObjectName("historyPreview")
-        self.preview_label.setFont(QFont("Segoe UI", 11))
+        apply_scaled_font(self.preview_label, 11)
         self.preview_label.setAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
         )
@@ -517,7 +566,7 @@ class HistoryItemWidget(QFrame):
             label = f"✦ Note · {tag_count}" if tag_count else "✦ Note"
             note_btn = QPushButton(label)
             note_btn.setObjectName("historyNoteChipBtn")
-            note_btn.setFont(QFont("Segoe UI", 9))
+            apply_scaled_font(note_btn, 9)
             note_btn.setFixedHeight(20)
             note_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             note_btn.setToolTip(self._annotation.tooltip())
@@ -557,7 +606,7 @@ class HistoryItemWidget(QFrame):
     def _chip(self, name: str, text: str) -> ElidingLabel:
         chip = ElidingLabel(text)
         chip.setObjectName(name)
-        chip.setFont(QFont("Segoe UI", 9))
+        apply_scaled_font(chip, 9)
         chip.setFixedHeight(20)
         return chip
 
@@ -599,134 +648,9 @@ class HistoryItemWidget(QFrame):
             self.retranscribe_requested.emit(path)
 
     def _apply_style(self):
-        self.setStyleSheet("""
-            QFrame#historyItem {
-                background-color: rgba(@surface-rgb, 0.5);
-                border-radius: 12px;
-                border: 1px solid rgba(@overlay-rgb, 0.05);
-            }
-            QFrame#historyItem:hover {
-                background-color: rgba(@surface-hover-rgb, 0.6);
-                border: 1px solid rgba(@accent-rgb, 0.35);
-            }
-            QLabel#historyTimestamp {
-                color: @text-secondary-strong;
-                background-color: transparent;
-            }
-            QLabel#historyAudioChip {
-                background-color: rgba(@overlay-rgb, 0.06);
-                color: @text-tertiary;
-                border: 1px solid rgba(@overlay-rgb, 0.08);
-                border-radius: 6px;
-                padding: 0px 8px;
-                font-size: 10px;
-                font-weight: 500;
-            }
-            QLabel#historyLocationChip {
-                background-color: rgba(@success-rgb, 0.10);
-                color: @success-text;
-                border: 1px solid rgba(@success-rgb, 0.24);
-                border-radius: 6px;
-                padding: 0px 8px;
-                font-size: 10px;
-                font-weight: 600;
-            }
-            QLabel#historyModelBadge {
-                background-color: rgba(@accent-rgb, 0.14);
-                color: @accent-soft;
-                border: 1px solid rgba(@accent-rgb, 0.25);
-                border-radius: 6px;
-                padding: 0px 8px;
-                font-size: 10px;
-                font-weight: 600;
-            }
-            QLabel#historyCleanupChip {
-                background-color: rgba(@purple-rgb, 0.12);
-                color: @purple-text;
-                border: 1px solid rgba(@purple-rgb, 0.25);
-                border-radius: 6px;
-                padding: 0px 8px;
-                font-size: 10px;
-                font-weight: 600;
-            }
-            QPushButton#historyNoteChipBtn {
-                background-color: rgba(@purple-rgb, 0.14);
-                color: @purple-text;
-                border: 1px solid rgba(@purple-rgb, 0.30);
-                border-radius: 6px;
-                padding: 0px 8px;
-                font-size: 10px;
-                font-weight: 600;
-            }
-            QPushButton#historyNoteChipBtn:hover {
-                background-color: rgba(@purple-rgb, 0.24);
-                border: 1px solid rgba(@purple-rgb, 0.48);
-            }
-            QLabel#historyOriginalChip,
-            QLabel#historyAppChip {
-                background-color: rgba(@overlay-rgb, 0.06);
-                color: @text-secondary-strong;
-                border: 1px solid rgba(@overlay-rgb, 0.10);
-                border-radius: 6px;
-                padding: 0px 8px;
-                font-size: 10px;
-                font-weight: 600;
-            }
-            QLabel#historyKindChip {
-                background-color: rgba(@warning-rgb, 0.12);
-                color: @warning-text;
-                border: 1px solid rgba(@warning-rgb, 0.28);
-                border-radius: 6px;
-                padding: 0px 8px;
-                font-size: 10px;
-                font-weight: 600;
-            }
-            QPushButton#historyPlayBtn {
-                background-color: rgba(@overlay-rgb, 0.06);
-                color: @text-body;
-                border: 1px solid rgba(@overlay-rgb, 0.10);
-                border-radius: 7px;
-                padding: 4px 12px 4px 8px;
-                font-size: 11px;
-                font-weight: 600;
-            }
-            QPushButton#historyPlayBtn:hover {
-                background-color: rgba(@accent-rgb, 0.14);
-                border: 1px solid rgba(@accent-rgb, 0.35);
-            }
-            QPushButton#historyPlayBtn:disabled {
-                color: @text-muted;
-            }
-            QLabel#historyPlayTime {
-                color: @text-tertiary;
-                background-color: transparent;
-                font-size: 10px;
-            }
-            QLabel#historyTitle {
-                color: @text;
-                background-color: transparent;
-            }
-            QLabel#historyPreview {
-                color: @text-body;
-                background-color: transparent;
-            }
-            QPushButton#retranscribeBtn {
-                background-color: rgba(@success-rgb, 0.12);
-                color: @success-text-strong;
-                border: 1px solid rgba(@success-rgb, 0.28);
-                border-radius: 7px;
-                padding: 4px 12px;
-                font-size: 11px;
-                font-weight: 600;
-            }
-            QPushButton#retranscribeBtn:hover {
-                background-color: rgba(@success-rgb, 0.22);
-                border: 1px solid rgba(@success-rgb, 0.45);
-            }
-            QPushButton#retranscribeBtn:pressed {
-                background-color: rgba(@success-rgb, 0.32);
-            }
-        """)
+        # Card styles are hoisted onto HistorySidebar._apply_style() so each
+        # card doesn't trigger per-widget QSS parsing and repolishing.
+        pass
 
     def _show_context_menu(self, pos):
         menu = context_menu(self)
@@ -861,6 +785,7 @@ class HistorySidebar(QWidget):
         self._apply_style()
         _remote_relay().deleted.connect(self._on_remote_deleted)
         _remote_relay().loaded.connect(self._apply_history_results)
+        _remote_relay().cleared.connect(self._on_history_cleared)
 
         self.setMinimumWidth(self.COLLAPSED_WIDTH)
         self.setMaximumWidth(self.COLLAPSED_WIDTH)
@@ -893,7 +818,7 @@ class HistorySidebar(QWidget):
 
         self.header_label = QLabel("History")
         self.header_label.setObjectName("sidebarHeader")
-        self.header_label.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        apply_scaled_font(self.header_label, 16, QFont.Weight.Bold)
         header_layout.addWidget(self.header_label)
 
         header_layout.addStretch()
@@ -909,7 +834,7 @@ class HistorySidebar(QWidget):
         self.search_input.setObjectName("historySearchInput")
         self.search_input.setPlaceholderText("Search history...")
         self.search_input.setClearButtonEnabled(True)
-        self.search_input.setFixedHeight(32)
+        self.search_input.setMinimumHeight(32)
         self.search_input.textChanged.connect(self._on_search_text_changed)
         content_layout.addWidget(self.search_input)
 
@@ -941,7 +866,7 @@ class HistorySidebar(QWidget):
         self.history_header = QLabel("")
         self.history_header.setObjectName("sectionHeader")
         self.history_header.hide()
-        self.history_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+        apply_scaled_font(self.history_header, 11, QFont.Weight.DemiBold)
         self.history_header.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
@@ -1057,6 +982,132 @@ class HistorySidebar(QWidget):
             }
             QLineEdit#historySearchInput::placeholder {
                 color: @text-muted;
+            }
+            QFrame#historyItem {
+                background-color: rgba(@surface-rgb, 0.5);
+                border-radius: 12px;
+                border: 1px solid rgba(@overlay-rgb, 0.05);
+            }
+            QFrame#historyItem:hover {
+                background-color: rgba(@surface-hover-rgb, 0.6);
+                border: 1px solid rgba(@accent-rgb, 0.35);
+            }
+            QLabel#historyTimestamp {
+                color: @text-secondary-strong;
+                background-color: transparent;
+            }
+            QLabel#historyAudioChip {
+                background-color: rgba(@overlay-rgb, 0.06);
+                color: @text-tertiary;
+                border: 1px solid rgba(@overlay-rgb, 0.08);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 500;
+            }
+            QLabel#historyLocationChip {
+                background-color: rgba(@success-rgb, 0.10);
+                color: @success-text;
+                border: 1px solid rgba(@success-rgb, 0.24);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QLabel#historyModelBadge {
+                background-color: rgba(@accent-rgb, 0.14);
+                color: @accent-soft;
+                border: 1px solid rgba(@accent-rgb, 0.25);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QLabel#historyCleanupChip {
+                background-color: rgba(@purple-rgb, 0.12);
+                color: @purple-text;
+                border: 1px solid rgba(@purple-rgb, 0.25);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QPushButton#historyNoteChipBtn {
+                background-color: rgba(@purple-rgb, 0.14);
+                color: @purple-text;
+                border: 1px solid rgba(@purple-rgb, 0.30);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QPushButton#historyNoteChipBtn:hover {
+                background-color: rgba(@purple-rgb, 0.24);
+                border: 1px solid rgba(@purple-rgb, 0.48);
+            }
+            QLabel#historyOriginalChip,
+            QLabel#historyAppChip {
+                background-color: rgba(@overlay-rgb, 0.06);
+                color: @text-secondary-strong;
+                border: 1px solid rgba(@overlay-rgb, 0.10);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QLabel#historyKindChip {
+                background-color: rgba(@warning-rgb, 0.12);
+                color: @warning-text;
+                border: 1px solid rgba(@warning-rgb, 0.28);
+                border-radius: 6px;
+                padding: 0px 8px;
+                font-size: 10px;
+                font-weight: 600;
+            }
+            QPushButton#historyPlayBtn {
+                background-color: rgba(@overlay-rgb, 0.06);
+                color: @text-body;
+                border: 1px solid rgba(@overlay-rgb, 0.10);
+                border-radius: 7px;
+                padding: 4px 12px 4px 8px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton#historyPlayBtn:hover {
+                background-color: rgba(@accent-rgb, 0.14);
+                border: 1px solid rgba(@accent-rgb, 0.35);
+            }
+            QPushButton#historyPlayBtn:disabled {
+                color: @text-muted;
+            }
+            QLabel#historyPlayTime {
+                color: @text-tertiary;
+                background-color: transparent;
+                font-size: 10px;
+            }
+            QLabel#historyTitle {
+                color: @text;
+                background-color: transparent;
+            }
+            QLabel#historyPreview {
+                color: @text-body;
+                background-color: transparent;
+            }
+            QPushButton#retranscribeBtn {
+                background-color: rgba(@success-rgb, 0.12);
+                color: @success-text-strong;
+                border: 1px solid rgba(@success-rgb, 0.28);
+                border-radius: 7px;
+                padding: 4px 12px;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton#retranscribeBtn:hover {
+                background-color: rgba(@success-rgb, 0.22);
+                border: 1px solid rgba(@success-rgb, 0.45);
+            }
+            QPushButton#retranscribeBtn:pressed {
+                background-color: rgba(@success-rgb, 0.32);
             }
             QScrollArea#historyScrollArea {
                 background-color: transparent;
@@ -1227,25 +1278,30 @@ class HistorySidebar(QWidget):
         merge_wait_s = self.REMOTE_MERGE_WAIT_S
 
         def load() -> None:
-            entries, error = _read_local_history(query, limit)
+            payload, error = _read_local_history(query, limit)
             if canceled.is_set() or closed.is_set():
                 return
             if error:
-                loaded.emit(generation, query, entries, error)
+                loaded.emit(generation, query, payload, error)
                 return
-            remote = start_remote_listing(query, limit, entries)
+            local_entries = payload["entries"]
+            remote = start_remote_listing(query, limit, local_entries)
             if remote is None:
-                loaded.emit(generation, query, entries, "")
+                loaded.emit(generation, query, payload, "")
                 return
             done, merged = remote
             if not done.wait(merge_wait_s):
                 # Show this computer's entries now rather than wait on the host.
-                loaded.emit(generation, query, entries, "")
+                loaded.emit(generation, query, payload, "")
                 while not done.wait(0.1):
                     if canceled.is_set() or closed.is_set():
                         return
             if not (canceled.is_set() or closed.is_set()):
-                loaded.emit(generation, query, merged(), "")
+                combined_payload = merged()
+                combined_payload["annotations"] = payload["annotations"]
+                combined_payload["audio_paths"] = payload["audio_paths"]
+                combined_payload["settings"] = payload["settings"]
+                loaded.emit(generation, query, combined_payload, "")
 
         threading.Thread(
             target=load,
@@ -1318,7 +1374,7 @@ class HistorySidebar(QWidget):
             self._show_history_message("History could not be loaded")
             return
 
-        entries, notice = _unpack_history(entries)
+        entries, notice, annotations_by_id, audio_paths, settings = _unpack_history(entries)
         self._remote_entries = {
             entry.id: entry for entry in entries if getattr(entry, "stored_on", None)
         }
@@ -1334,20 +1390,23 @@ class HistorySidebar(QWidget):
                 self._add_remote_notice(notice)
             return
 
-        settings = settings_manager.load_all_settings()
-        local_ids = [entry.id for entry in shown if is_local_entry(entry)]
-        annotations_by_id = record_annotations.annotation_summaries_for_kind(
-            "transcription", local_ids
-        )
+        if settings is None:
+            settings = _history_cleanup_settings()
         self._history_cards = reconcile_cards(
             self.history_list_layout,
             shown,
             self._history_cards,
             lambda entry: self._create_card(
-                entry, settings, annotation=annotations_by_id.get(entry.id)
+                entry,
+                settings,
+                annotation=annotations_by_id.get(entry.id),
+                audio_path=audio_paths.get(entry.id, _UNSET),
             ),
             lambda entry: _card_fingerprint(
-                entry, settings, annotation=annotations_by_id.get(entry.id)
+                entry,
+                settings,
+                annotation=annotations_by_id.get(entry.id),
+                audio_path=audio_paths.get(entry.id, _UNSET),
             ),
         )
         # Counted from the cards on screen, after they are built: set first,
@@ -1376,8 +1435,12 @@ class HistorySidebar(QWidget):
         self.history_header.hide()
         self.history_list_layout.addWidget(self._make_empty_label(message))
 
-    def _create_card(self, entry, settings, *, annotation=None) -> HistoryItemWidget:
-        item = HistoryItemWidget(entry, settings=settings, annotation=annotation)
+    def _create_card(
+        self, entry, settings, *, annotation=None, audio_path=_UNSET
+    ) -> HistoryItemWidget:
+        item = HistoryItemWidget(
+            entry, settings=settings, annotation=annotation, audio_path=audio_path
+        )
         replaced = self._history_cards.get(entry.id)
         old_playback = replaced[1].playback if replaced is not None else None
         if item.playback is not None and old_playback is not None:
@@ -1408,9 +1471,12 @@ class HistorySidebar(QWidget):
             record_title=title,
             parent=self.window(),
         )
-        dialog.exec()
-        if dialog.changed:
-            self.refresh()
+        try:
+            dialog.exec()
+            if dialog.changed:
+                self.refresh()
+        finally:
+            dialog.deleteLater()
 
     def _add_remote_notice(self, notice: str) -> None:
         """Say above the list why the host's entries are missing."""
@@ -1601,7 +1667,9 @@ class HistorySidebar(QWidget):
             return
         if error:
             QMessageBox.warning(
-                self, "Delete History Entry", f"The entry couldn't be deleted: {error}"
+                self,
+                "Delete History Entry",
+                format_action_error("The entry couldn't be deleted", error),
             )
             return
         self._remote_entries.pop(entry_id, None)
@@ -1653,8 +1721,10 @@ class HistorySidebar(QWidget):
             return
 
         history_playback.stop_all()
-        history_manager.clear_history()
-        self.refresh()
+        self._run_clear_in_background(
+            history_manager.clear_history,
+            "Clearing history…",
+        )
 
     def _on_clear_history_and_recordings(self):
         reply = QMessageBox.question(
@@ -1670,14 +1740,42 @@ class HistorySidebar(QWidget):
             return
 
         history_playback.stop_all()
-        history_manager.clear_history_and_recordings()
+        self._run_clear_in_background(
+            history_manager.clear_history_and_recordings,
+            "Clearing history and recordings…",
+        )
+
+    def _run_clear_in_background(self, action, message: str) -> None:
+        self._show_history_message(message)
+        token = self._token
+        cleared = _remote_relay().cleared
+
+        def work() -> None:
+            try:
+                action()
+                error = ""
+            except Exception as exc:
+                logger.error("Failed to clear history: %s", exc, exc_info=True)
+                error = friendly_error_message(exc, fallback="Could not clear history. Please try again.")
+            cleared.emit(token, error)
+
+        threading.Thread(target=work, name="history-clear", daemon=True).start()
+
+    def _on_history_cleared(self, token: int, error: str) -> None:
+        if token != self._token:
+            return
+        if error:
+            QMessageBox.warning(self, "Clear History", error)
         self.refresh()
 
     def _on_export_history(self):
         from ui_qt.dialogs.history_export_dialog import HistoryExportDialog
 
         dialog = HistoryExportDialog(self)
-        dialog.exec()
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
 
     def _on_open_recordings_folder(self):
         folder = os.path.abspath(history_manager.recordings_folder)

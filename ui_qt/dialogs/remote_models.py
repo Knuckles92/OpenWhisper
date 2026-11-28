@@ -275,8 +275,10 @@ class _HostModelRow(DownloadRow):
         ).casefold()
 
     def set_engine_badge(self, label: str, rgb: str, *, visible: bool) -> None:
-        self.engine_badge.setText(label)
-        if visible:
+        if self.engine_badge.text() != label:
+            self.engine_badge.setText(label)
+        if visible and getattr(self, "_engine_badge_rgb", None) != rgb:
+            self._engine_badge_rgb = rgb
             self.engine_badge.setStyleSheet(
                 f"QLabel#hostModelRowEngine {{"
                 f" background-color: rgba({rgb}, 0.14);"
@@ -286,7 +288,8 @@ class _HostModelRow(DownloadRow):
                 f" font-size: 10px; font-weight: 600;"
                 f"}}"
             )
-        self.engine_badge.setVisible(visible)
+        if self.engine_badge.isVisible() != visible:
+            self.engine_badge.setVisible(visible)
 
     def matches_filter(self, needle: str) -> bool:
         return not needle or needle in self._search_blob
@@ -1205,7 +1208,8 @@ class RemoteModelsPane(QWidget):
             key=lambda r: (not r.is_active, not r.is_cached),
         )
         for index, row in enumerate(ordered_rows):
-            self.rows_layout.insertWidget(index, row)
+            if self.rows_layout.indexOf(row) != index:
+                self.rows_layout.insertWidget(index, row)
             meta = _engine_meta(row.family)
             row.set_engine_badge(meta.short, meta.rgb, visible=show_engine_badges)
             visible = row.matches_filter(needle)

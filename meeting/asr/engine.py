@@ -401,6 +401,15 @@ class MeetingAsrEngine:
             with self._idle_cond:
                 self._idle_cond.wait(min(REFILL_RETRY_S, remaining))
 
+    @property
+    def supports_offline_redecode(self) -> bool:
+        """Whether the loaded backend exposes a Whisper model for offline re-decode."""
+        return bool(
+            self.is_available
+            and self._backend is not None
+            and getattr(self._backend, "model", None) is not None
+        )
+
     def transcribe_offline_session(
         self,
         spool_dir: str,

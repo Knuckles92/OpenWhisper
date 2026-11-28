@@ -82,11 +82,24 @@ def test_saving_an_edited_write_up_rebuilds_its_documents(capture):
 
 # ---- the storyboard ----
 
+def _wait_previews(widget):
+    for _ in range(500):
+        if all(
+            row.preview is not None
+            for row in widget.rows
+            if row.image_path is not None and row.image_path.is_file()
+        ):
+            return
+        QTest.qWait(10)
+    pytest.fail("Walkthrough preview decoder did not finish")
+
+
 @pytest.fixture
 def review(capture):
     widget = WalkthroughReview(copy_files=Mock(return_value=True))
     widget.changed.connect(widget.show_folder)
     widget.show_folder(capture.folder)
+    _wait_previews(widget)
     yield widget
     widget._dirty = False
     widget.close()
@@ -778,6 +791,7 @@ def test_a_screenshot_grows_with_its_row_and_keeps_its_shape(tmp_path):
 
     widget = WalkthroughReview()
     widget.show_folder(_large_capture(tmp_path).folder)
+    _wait_previews(widget)
     widget.show()
     sizes = []
     for width in (560, 900):

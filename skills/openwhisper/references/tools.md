@@ -71,9 +71,9 @@ Read tools (`get_personalization_summary`, `list_dictionary`, `list_snippets`,
 
 ## 6. Live Recording, Actions, Meetings, Events & App Control
 
-- **Live read**: `get_live_state`, `get_meeting_live_state`, `list_actions`, `get_engine_status`, `list_models`, `list_audio_devices`, `get_remote_status`
+- **Live read**: `get_live_state`, `get_meeting_live_state`, `get_meeting_dashboard_state`, `list_actions`, `get_engine_status`, `list_models`, `list_audio_devices`, `get_remote_status`
 - **Live events** (`live_events`, on by default): `recent_events` (and optional MCP Events webhook subscriptions via `events/list`, `events/subscribe`, `events/unsubscribe` when MCP Events is enabled)
 - **Run actions** (`run_actions`): `run_action`, `run_transform`, `notify_user` (agent/channel actions also need `agent_prompts`)
 - **Start recordings** (`control_recording`): `start_dictation`, `stop_dictation`, `cancel_dictation`
-- **Control Meeting Mode** (`control_meetings`): `start_meeting`, `pause_meeting`, `resume_meeting`, `end_meeting`, `background_meeting`, `retry_meeting_finalization`, `manage_recovered_meeting`, `open_meeting_view`
+- **Control Meeting Mode** (`control_meetings`): `start_meeting`, `pause_meeting`, `resume_meeting`, `end_meeting`, `background_meeting`, `retry_meeting_finalization`, `manage_recovered_meeting`, `open_meeting_view`, `update_live_meeting`, `manage_meeting_card_item`, `manage_meeting_question`, `update_meeting_transcript_or_speaker`, `request_meeting_note_adjustment`, `request_meeting_custom_report`, `undo_live_meeting_action`
 - **Control app** (`control_app`): `select_model`, `download_model`, `select_audio_device`, `reconnect_remote`, `transcribe_audio_file`, `control_window`

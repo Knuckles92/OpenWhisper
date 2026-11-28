@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode, type RefObject } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode, type RefObject } from 'react';
 import { usePlayingSpanId } from '../playback';
 import { scrollChildIntoView } from '../scroll';
 import { useTranscriptWindow } from '../useTranscriptWindow';
@@ -43,7 +43,7 @@ function speakerLabel(participants: Participant[], participantId: string | null,
   return channel === 'mic' ? 'Me' : 'Others';
 }
 
-export default function TranscriptPane({
+const TranscriptPane = memo(function TranscriptPane({
   segments,
   previews = [],
   participants,
@@ -218,4 +218,6 @@ export default function TranscriptPane({
       </div>
     </section>
   );
-}
+});
+
+export default TranscriptPane;

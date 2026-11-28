@@ -54,11 +54,12 @@ class HistoryExportDialog(ExportDialogBase):
         parent=None,
         entry_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
     ):
+        async_load = entry_provider is None
         if entry_provider is None:
             from services.history_export import list_export_entries
 
             entry_provider = list_export_entries
-        super().__init__(parent, entry_provider)
+        super().__init__(parent, entry_provider, async_load=async_load)
 
     def _build_criteria_check(self) -> QCheckBox:
         self.audio_only_check = QCheckBox("Only entries with saved audio")

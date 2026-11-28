@@ -1128,6 +1128,7 @@ class SettingsManager:
         prefix = f".{os.path.basename(absolute_path)}."
         temp_fd = -1
         temp_path = ""
+        payload = json.dumps(settings, indent=2)
         try:
             temp_fd, temp_path = tempfile.mkstemp(
                 prefix=prefix,
@@ -1136,15 +1137,22 @@ class SettingsManager:
             )
             with os.fdopen(temp_fd, 'w', encoding='utf-8') as handle:
                 temp_fd = -1
-                json.dump(settings, handle, indent=2)
+                handle.write(payload)
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp_path, absolute_path)
-            # Never label the caller's mutable mapping with a signature from
-            # a concurrent external writer. The next read owns its snapshot.
-            self._forget_cached_unlocked()
             temp_path = ""
+            # Cache an isolated JSON-roundtripped snapshot keyed by the file's
+            # new stat signature so the next read does not re-parse from disk,
+            # while still detecting any subsequent external replacement.
+            signature = self._file_signature()
+            if signature is not None:
+                self._cached_signature = signature
+                self._cached_settings = json.loads(payload)
+                self._cached_pickle = None
+            else:
+                self._forget_cached_unlocked()
         finally:
             if temp_fd >= 0:
                 os.close(temp_fd)
@@ -1327,7 +1335,7 @@ class SettingsManager:
     def load_hotkey_settings(self) -> Dict[str, str]:
         """Load saved hotkeys or platform defaults."""
         try:
-            settings = self.load_all_settings()
+            settings = self.load_settings((SettingsKey.HOTKEYS,))
             hotkeys: Dict[str, str] = settings.get(
                 SettingsKey.HOTKEYS, config.DEFAULT_HOTKEYS.copy())
             return hotkeys
@@ -1348,7 +1356,10 @@ class SettingsManager:
     def load_model_selection(self) -> str:
         """Load a valid backend selection or the default."""
         try:
-            settings = self.load_all_settings()
+            settings = self.load_settings((
+                SettingsKey.SELECTED_MODEL,
+                SettingsKey.API_TRANSCRIPTION_MODEL,
+            ))
             selected_model = settings.get(SettingsKey.SELECTED_MODEL)
             if isinstance(selected_model, str) and selected_model in LEGACY_API_MODELS:
                 self.update_settings({
@@ -1391,7 +1402,10 @@ class SettingsManager:
         Returns:
             One of ``HuggingFaceAccessPolicy.ALL`` (defaults to ``ask``).
         """
-        settings = self.load_all_settings()
+        settings = self.load_settings((
+            SettingsKey.HF_ACCESS_POLICY,
+            SettingsKey.HF_HUB_OFFLINE,
+        ))
         # Raw, not typed: an invalid stored policy is rewritten below.
         policy = settings.get(SettingsKey.HF_ACCESS_POLICY)
         if isinstance(policy, str) and policy in HuggingFaceAccessPolicy.ALL:

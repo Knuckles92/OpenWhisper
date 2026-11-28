@@ -1,7 +1,6 @@
 """Reusable card containers."""
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
 
 from ui_qt.widgets.collapsible_header import CollapsibleSectionToggle
 from ui_qt.utils.collapse_animation import (
@@ -9,6 +8,7 @@ from ui_qt.utils.collapse_animation import (
     create_max_height_animation,
     run_max_height_animation,
 )
+from ui_qt.utils.font_scale import scaled_font
 
 
 class Card(QWidget):
@@ -77,7 +77,7 @@ class HeaderCard(Card):
         else:
             self.title_label = QLabel(title)
             self.title_label.setObjectName("headerLabel")
-            self.title_font = QFont("Segoe UI", 14)
+            self.title_font = scaled_font(14)
             self.title_font.setBold(True)
             self.title_label.setFont(self.title_font)
             self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)

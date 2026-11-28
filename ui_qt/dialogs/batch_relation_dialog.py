@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 
 from config import config
 from ui_qt.widgets import Button, ElidingLabel, PrimaryButton, WrappedLabel
+from ui_qt.utils.font_scale import apply_scaled_font
 
 #: File names listed in the dialog before the rest collapse into a count.
 _MAX_LISTED_FILES = 6
@@ -51,7 +52,7 @@ class BatchRelationDialog(QDialog):
 
         title = QLabel("Describe these files")
         title.setObjectName("batchRelationTitle")
-        title.setFont(QFont("Segoe UI", 15, QFont.Weight.DemiBold))
+        apply_scaled_font(title, 15, QFont.Weight.DemiBold)
         layout.addWidget(title)
 
         info = WrappedLabel(
@@ -94,7 +95,7 @@ class BatchRelationDialog(QDialog):
         self.instructions_edit = QTextEdit()
         self.instructions_edit.setObjectName("batchRelationEditor")
         self.instructions_edit.setAcceptRichText(False)
-        self.instructions_edit.setFont(QFont("Segoe UI", 12))
+        apply_scaled_font(self.instructions_edit, 12)
         self.instructions_edit.setPlainText(instructions or "")
         self.instructions_edit.setPlaceholderText(
             "e.g. Three interviews with the same client, recorded on different "

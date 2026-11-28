@@ -5,6 +5,7 @@ from typing import Callable, Dict, Any, List, Optional
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont
 from PyQt6.QtCore import QRect, QRectF, Qt
 from ui_qt.utils.palette import current_palette, token_color
+from ui_qt.utils.font_scale import scaled_font
 
 
 def round_pen(color: QColor, width: float) -> QPen:
@@ -337,7 +338,7 @@ class ParticleStyle:
 
     def _draw_text(self, painter: QPainter, rect: QRect, message: str):
         painter.setPen(token_color("overlay-text"))
-        font = QFont("Segoe UI", 10, QFont.Weight.Bold)
+        font = scaled_font(10, QFont.Weight.Bold)
         painter.setFont(font)
         text_rect = QRect(0, rect.height() - 25, rect.width(), 20)
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, message)

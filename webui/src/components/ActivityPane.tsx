@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import type { AgentActivityRecord, AuditEvent } from '../types';
 
@@ -166,6 +166,8 @@ export default function ActivityPane({
   const [hasMore, setHasMore] = useState(true);
   const [undoingSeq, setUndoingSeq] = useState<number | null>(null);
   const [, setClock] = useState(0);
+  const fetchControllerRef = useRef<AbortController | null>(null);
+  const loadedRefreshKeyRef = useRef<number | null>(null);
 
   // ``paged`` is false for the quiet refresh of the newest page, which must
   // keep the older pages already loaded and what is known about more.
@@ -179,28 +181,42 @@ export default function ActivityPane({
   }, []);
 
   const loadLatest = useCallback(async (quiet = false) => {
+    fetchControllerRef.current?.abort();
+    const controller = new AbortController();
+    fetchControllerRef.current = controller;
     if (!quiet) setLoading(true);
     setError(null);
     try {
-      mergeEvents(await api.events(token), !quiet, !quiet);
+      const rows = await api.events(token, undefined, controller.signal);
+      if (controller.signal.aborted) return;
+      mergeEvents(rows, !quiet, !quiet);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load agent activity');
+      if (!controller.signal.aborted) {
+        setError(err instanceof Error ? err.message : 'Failed to load agent activity');
+      }
     } finally {
-      if (!quiet) setLoading(false);
+      if (!controller.signal.aborted && !quiet) setLoading(false);
     }
   }, [mergeEvents, token]);
 
   const loadOlder = async () => {
     const beforeSeq = events[events.length - 1]?.seq;
     if (beforeSeq == null) return;
+    fetchControllerRef.current?.abort();
+    const controller = new AbortController();
+    fetchControllerRef.current = controller;
     setLoading(true);
     setError(null);
     try {
-      mergeEvents(await api.events(token, beforeSeq), false);
+      const rows = await api.events(token, beforeSeq, controller.signal);
+      if (controller.signal.aborted) return;
+      mergeEvents(rows, false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load older activity');
+      if (!controller.signal.aborted) {
+        setError(err instanceof Error ? err.message : 'Failed to load older activity');
+      }
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
   };
 
@@ -220,15 +236,28 @@ export default function ActivityPane({
     }
   };
 
+  // Defer /api/events until the drawer is actually opened; abort on collapse/unmount.
   useEffect(() => {
+    if (!expanded) {
+      fetchControllerRef.current?.abort();
+      loadedRefreshKeyRef.current = null;
+      return undefined;
+    }
+    loadedRefreshKeyRef.current = refreshKey;
     void loadLatest();
-  }, [loadLatest]);
+    return () => {
+      fetchControllerRef.current?.abort();
+    };
+  }, [expanded, loadLatest]);
 
   useEffect(() => {
-    if (refreshKey <= 0) return undefined;
-    const timer = window.setTimeout(() => void loadLatest(true), 450);
+    if (!expanded || refreshKey <= 0 || loadedRefreshKeyRef.current === refreshKey) return undefined;
+    const timer = window.setTimeout(() => {
+      loadedRefreshKeyRef.current = refreshKey;
+      void loadLatest(true);
+    }, 450);
     return () => window.clearTimeout(timer);
-  }, [loadLatest, refreshKey]);
+  }, [expanded, loadLatest, refreshKey]);
 
   const agentEvents = useMemo(
     () => events.filter((event) => event.actor_type === 'agent'),

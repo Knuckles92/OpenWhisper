@@ -160,10 +160,11 @@ class TestSettingsManager:
             for _ in range(5):
                 assert self.settings_manager.load_settings(("auto_paste",)) == {"auto_paste": True}
                 assert self.settings_manager.get("auto_paste") is True
-            assert len(reads) == 1
+            assert len(reads) == 0
 
             self.settings_manager.save_setting("auto_paste", False)
             assert self.settings_manager.load_settings(("auto_paste",)) == {"auto_paste": False}
+            assert len(reads) == 1  # save_setting reads strict once; subsequent load hits cache
 
             replacement = os.path.join(self.temp_dir, "replacement.json")
             with native_open(replacement, "w", encoding="utf-8") as handle:

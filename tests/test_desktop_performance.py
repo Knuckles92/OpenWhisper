@@ -41,6 +41,11 @@ def test_settings_read_cache_isolated_nested_values_and_external_changes(tmp_pat
         loaded = manager.load_all_settings()
         loaded["nested"]["items"].append(2)
         assert manager.load_all_settings() == {"nested": {"items": [1]}}
+        assert len(reads) == 0
+        cold_manager = SettingsManager(str(target))
+        cold_loaded = cold_manager.load_all_settings()
+        cold_loaded["nested"]["items"].append(3)
+        assert cold_manager.load_all_settings() == {"nested": {"items": [1]}}
         assert len(reads) == 1
         other = tmp_path / "replacement.json"
         other.write_text(json.dumps({"external": True}), encoding="utf-8")

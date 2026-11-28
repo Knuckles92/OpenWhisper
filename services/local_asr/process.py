@@ -73,7 +73,9 @@ class SpeechProcess:
         try:
             self.process = subprocess.Popen(
                 command,
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL if isolated else subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True, encoding="utf-8", errors="replace", bufsize=1,
                 env=environment,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -263,8 +265,14 @@ class SpeechProcess:
         try:
             self.process.wait(timeout=1.5)
         except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(timeout=.5)
+            try:
+                self.process.kill()
+            except OSError:
+                pass
+            try:
+                self.process.wait(timeout=.5)
+            except subprocess.TimeoutExpired:
+                logger.warning("Speech worker did not exit after kill")
         # Wake a request waiting for a response even if native code never wrote one.
         self._replies.put(None)
         for reader in self._readers:
@@ -276,19 +284,36 @@ class SpeechProcess:
     def _interrupt(self) -> None:
         """Stop accepting the worker, cut its connection and ask it to exit."""
         if self._listener is not None:
-            self._listener.close()
+            try:
+                self._listener.close()
+            except OSError:
+                pass
         if self._connection is not None:
             try:
                 self._connection.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
         if self.process.poll() is None:
-            self.process.terminate()
+            try:
+                self.process.terminate()
+            except OSError:
+                pass
 
     def _close_pipes(self) -> None:
         for pipe in (self.process.stdin, self.process.stdout, self.process.stderr):
-            pipe.close()
+            if pipe is not None:
+                try:
+                    pipe.close()
+                except (OSError, ValueError):
+                    pass
         if self._connection is not None:
             for pipe in (self._input, self._output):
-                pipe.close()
-            self._connection.close()
+                if pipe is not None:
+                    try:
+                        pipe.close()
+                    except (OSError, ValueError):
+                        pass
+            try:
+                self._connection.close()
+            except OSError:
+                pass

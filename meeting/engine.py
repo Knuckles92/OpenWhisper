@@ -32,7 +32,7 @@ from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 from meeting.capture_session import FailureLog, MeetingCapture, where_it_failed
 from meeting.clock import MeetingClock
 from meeting.end_run import EndRun
-from meeting.finalization import POLISH_TIMEOUT_S, speaker_pass_gate
+from meeting.finalization import speaker_pass_gate
 from meeting.interfaces import (
     CHANNEL_LOOPBACK,
     CHANNEL_MIC,
@@ -53,6 +53,9 @@ HEARTBEAT_INTERVAL_S = 10.0
 END_DRAIN_TIMEOUT_S = 300.0
 #: Shorter drain budget when the whole app is shutting down.
 SHUTDOWN_DRAIN_TIMEOUT_S = 30.0
+#: Maximum time ``shutdown()`` waits for ``_end_thread`` after canceling
+#: in-flight post-meeting work, so app exit cannot hang for minutes.
+SHUTDOWN_JOIN_TIMEOUT_S = 15.0
 #: Worst-case wait for the post-end consolidation pass (hard wall). The
 #: sidecar fails earlier if Pi emits no ``subscribe`` progress for
 #: ``CONSOLIDATION_STALL_S``. Used for shutdown join, not the live stall.
@@ -200,6 +203,7 @@ class MeetingEngine:
         self._asr_ready = False
         self._asr_release_emitted = False
         self._end_thread: Optional[threading.Thread] = None
+        self._shutting_down = False
         self._spool_dir: Optional[str] = None
         self._me_participant_id: Optional[str] = None
 
@@ -962,12 +966,23 @@ class MeetingEngine:
             })
             ended_emitted = True
 
+            if self._shutting_down:
+                self._stop_asr("shutdown")
+                self._wrap_up_end(end)
+                return
+
             end.redecode()
             # The remaining passes use saved audio/text. Free Whisper before
             # cloud work so another meeting can own the local model.
             if self._stop_asr("end"):
                 self._emit("background_ready", {"meeting_id": self.meeting_id})
+            if self._shutting_down:
+                self._wrap_up_end(end)
+                return
             end.identify_speakers()
+            if self._shutting_down:
+                self._wrap_up_end(end)
+                return
             end.insights()
             self._wrap_up_end(end)
         except Exception as exc:
@@ -1012,11 +1027,11 @@ class MeetingEngine:
 
     def _will_redecode_at_end(self) -> bool:
         asr = self._asr
-        return bool(
-            self.options.end_redecode
-            and asr is not None
-            and callable(getattr(asr, "transcribe_offline_session", None))
-        )
+        if not self.options.end_redecode or asr is None:
+            return False
+        if not callable(getattr(asr, "transcribe_offline_session", None)):
+            return False
+        return bool(getattr(asr, "supports_offline_redecode", True))
 
     def _will_identify_speakers_at_end(self) -> bool:
         return bool(
@@ -1252,10 +1267,19 @@ class MeetingEngine:
     def shutdown(self) -> None:
         """Full teardown for app exit, including the web server.
 
-        Ends the meeting (short drain budget) when still active, waits for
-        finalization, then stops the server and the agent core.
+        Ends the meeting (short drain budget) when still active, cancels any
+        in-flight post-meeting agent pass so exit stays bounded, then stops
+        the server and the agent core.
         """
+        self._shutting_down = True
         self._processing_stop.set()
+        self.revoke_agent_writes()
+        core = self._agent_core
+        if core is not None:
+            try:
+                core.cancel()
+            except Exception:
+                logger.debug("Agent cancel during shutdown failed", exc_info=True)
         thread = None
         if self._active:
             thread = self._begin_end(SHUTDOWN_DRAIN_TIMEOUT_S)
@@ -1263,14 +1287,7 @@ class MeetingEngine:
             with self._lifecycle_lock:
                 thread = self._end_thread
         if thread is not None and thread is not threading.current_thread():
-            thread.join(
-                timeout=(
-                    SHUTDOWN_DRAIN_TIMEOUT_S
-                    + POLISH_TIMEOUT_S
-                    + CONSOLIDATION_TIMEOUT_S
-                    + 60.0
-                )
-            )
+            thread.join(timeout=SHUTDOWN_JOIN_TIMEOUT_S)
         # Best-effort: never leave a durable finalization=running across exit.
         self._shutdown_fast_features()
         self._interrupt_finalization_on_shutdown()

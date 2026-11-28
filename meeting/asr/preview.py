@@ -66,31 +66,37 @@ class MeetingSpeechPreview:
         finally:
             for channel, state in sessions.items():
                 try:
-                    samples = np.concatenate(state["pending"]) if state["pending"] else np.empty(0, np.float32)
+                    if state["pending"]:
+                        native = np.concatenate(state["pending"])
+                        samples = prepare_for_whisper(native, state["sample_rate"])
+                    else:
+                        samples = np.empty(0, np.float32)
                     self.backend.stream_audio(channel, samples, self.language, finish=True)
                 except Exception:
                     logger.debug("Preview final flush failed", exc_info=True)
 
     def _handle_block(self, sessions, block, start_s):
         channel = block.channel
-        end_s = start_s + len(block.frames) / block.sample_rate
+        rate = max(1, int(block.sample_rate))
+        end_s = start_s + len(block.frames) / rate
         state = self._channel_session(sessions, block, start_s, end_s)
-        audio = prepare_for_whisper(block.frames, block.sample_rate)
-        state["pending"].append(audio)
-        state["samples"] += len(audio)
+        state["pending"].append(block.frames)
+        state["native_samples"] += len(block.frames)
         state["end"] = end_s
-        state["wall_end"] = block.t_mono + len(block.frames) / block.sample_rate
-        if state["samples"] < _MIN_STREAM_SAMPLES:
+        state["wall_end"] = block.t_mono + len(block.frames) / rate
+        est_16k = int(state["native_samples"] * 16000 / rate)
+        if est_16k < _MIN_STREAM_SAMPLES:
             return
         if self.busy():
             # Do not let speculative text delay a durable decode.
-            if state["samples"] > _BUSY_CANCEL_SAMPLES:
+            if est_16k > _BUSY_CANCEL_SAMPLES:
                 self.backend.cancel_stream(channel)
                 sessions.pop(channel)
             return
-        samples = np.concatenate(state["pending"])
+        native = np.concatenate(state["pending"])
         state["pending"].clear()
-        state["samples"] = 0
+        state["native_samples"] = 0
+        samples = prepare_for_whisper(native, rate)
         events = self.backend.stream_audio(channel, samples, self.language)
         state["sent"] = True
         if events and not self._stop.is_set():
@@ -99,15 +105,17 @@ class MeetingSpeechPreview:
     def _channel_session(self, sessions, block, start_s, end_s):
         """The channel's stream session, restarted after a gap or at the length cap."""
         channel = block.channel
+        rate = max(1, int(block.sample_rate))
         state = sessions.get(channel)
-        if state and _session_broken(state, block, start_s, end_s):
+        if state and (_session_broken(state, block, start_s, end_s)
+                      or state["sample_rate"] != rate):
             if state.get("sent"):
                 self.backend.stream_audio(channel, np.empty(0, np.float32), self.language, finish=True)
             sessions.pop(channel)
             state = None
         if state is None:
             state = dict(start=start_s, end=start_s, wall_end=block.t_mono,
-                         pending=deque(), samples=0)
+                         sample_rate=rate, pending=deque(), native_samples=0)
             sessions[channel] = state
         return state
 
@@ -162,16 +170,24 @@ class WindowSpeechPreview:
         self._thread.join(timeout=2)
 
     def _accept(self, block, start_s):
-        end_s = start_s + len(block.frames) / block.sample_rate
+        rate = max(1, int(block.sample_rate))
+        end_s = start_s + len(block.frames) / rate
         state = self._sessions.get(block.channel)
-        if (state is None or abs(start_s - state["end"]) > _MEDIA_GAP_S
+        if (state is None or state["sample_rate"] != rate
+                or abs(start_s - state["end"]) > _MEDIA_GAP_S
                 or abs(block.t_mono - state["wall_end"]) > _WALL_GAP_S):
-            state = dict(audio=np.empty(0, np.float32), end=start_s, decoded=start_s)
+            state = dict(blocks=deque(), native_samples=0, sample_rate=rate,
+                         end=start_s, decoded=start_s)
             self._sessions[block.channel] = state
-        audio = prepare_for_whisper(block.frames, block.sample_rate)
-        state["audio"] = np.concatenate((state["audio"], audio))[-int(self.WINDOW_S * 16000):]
+        state["blocks"].append(block.frames)
+        state["native_samples"] += len(block.frames)
+        max_native = int(round(self.WINDOW_S * rate))
+        while (len(state["blocks"]) > 1
+               and state["native_samples"] - len(state["blocks"][0]) >= max_native):
+            dropped = state["blocks"].popleft()
+            state["native_samples"] -= len(dropped)
         state["end"] = end_s
-        state["wall_end"] = block.t_mono + len(block.frames) / block.sample_rate
+        state["wall_end"] = block.t_mono + len(block.frames) / rate
 
     def _decode(self):
         if self.busy() or time.monotonic() < self._next_decode:
@@ -180,8 +196,16 @@ class WindowSpeechPreview:
         for channel, state in sorted(self._sessions.items(), key=lambda pair: pair[1]["decoded"]):
             if state["end"] - state["decoded"] < self.INTERVAL_S:
                 continue
-            samples = state["audio"]
             state["decoded"] = state["end"]
+            if not state["blocks"]:
+                continue
+            rate = state["sample_rate"]
+            max_native = int(round(self.WINDOW_S * rate))
+            native = (np.concatenate(state["blocks"])
+                      if len(state["blocks"]) > 1 else state["blocks"][0])
+            if len(native) > max_native:
+                native = native[-max_native:]
+            samples = prepare_for_whisper(native, rate)[-int(self.WINDOW_S * 16000):]
             if not samples.size or np.max(np.abs(samples)) <= .00025:
                 continue
             began = time.monotonic()

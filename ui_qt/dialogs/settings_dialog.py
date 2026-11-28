@@ -96,6 +96,7 @@ from ui_qt.dialogs.settings_metadata import (
     PAGE_SEARCH_FIELDS,
     merge_page_module,
 )
+from ui_qt.utils.error_messages import format_action_error
 from ui_qt.utils.list_reconcile import HistoryDelivery
 from ui_qt.dialogs.settings_destinations import (
     ACTIONS,
@@ -3226,7 +3227,7 @@ class SettingsDialog(QDialog):
             settings_manager.save_setting(key, value)
         except Exception as exc:
             logger.error("Couldn't save setting %s: %s", key, exc, exc_info=True)
-            self.message_label.setText(f"Couldn't save setting: {exc}")
+            self.message_label.setText(format_action_error("Couldn't save setting", exc))
             return False
         self.message_label.setText(message)
         self._refresh_rail_values()
@@ -3239,7 +3240,7 @@ class SettingsDialog(QDialog):
             settings_manager.update_settings(updates, remove=tuple(drops))
         except Exception as exc:
             logger.error("Couldn't save settings: %s", exc, exc_info=True)
-            self.message_label.setText(f"Couldn't save settings: {exc}")
+            self.message_label.setText(format_action_error("Couldn't save settings", exc))
             return False
         self.message_label.setText("")
         self._refresh_rail_values()
@@ -3511,7 +3512,7 @@ class SettingsDialog(QDialog):
             )
         except Exception as exc:
             logger.error("Couldn't preview recording retention: %s", exc, exc_info=True)
-            self.message_label.setText(f"Couldn't check saved recordings: {exc}")
+            self.message_label.setText(format_action_error("Couldn't check saved recordings", exc))
             return False
         if not removed:
             return True

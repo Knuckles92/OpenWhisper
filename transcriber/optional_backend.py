@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
 import tempfile
@@ -10,6 +11,7 @@ import threading
 import time
 from types import SimpleNamespace
 from typing import Any, Optional
+import weakref
 
 import numpy as np
 
@@ -49,7 +51,14 @@ class LocalSpeechBackend(TranscriptionBackend):
     #: True for RemoteSpeechBackend, whose worker runs on another computer.
     is_remote = False
 
-    def __init__(self, backend: str, model_name: str | None = None, device: str | None = None):
+    def __init__(
+        self,
+        backend: str,
+        model_name: str | None = None,
+        device: str | None = None,
+        *,
+        initial_settings=None,
+    ):
         super().__init__()
         self.backend_id = backend
         self._model_override = model_name
@@ -58,18 +67,34 @@ class LocalSpeechBackend(TranscriptionBackend):
         self._generation = 0
         self._state_lock = threading.RLock()
         self._decode_lock = threading.Lock()
+        self._scratch_dir: Optional[str] = None
+        self._scratch_finalizer: Any = None
         self.model: Any = None
         self.last_error = ""
         # Why an Auto device runs on the CPU although a GPU is present.
         self.cpu_fallback_note = ""
         self.runtime_component: Optional[str] = None
         self.device = "cpu"
-        self.model_name = model_name or selected_model(backend, self._settings())
+        if model_name:
+            self.model_name = model_name
+        else:
+            if initial_settings is None:
+                from services.settings import SettingsKey
+                initial_settings = self._read_settings((SettingsKey.LOCAL_ASR_MODELS,))
+            self.model_name = selected_model(backend, initial_settings)
 
     @staticmethod
-    def _settings():
+    def _default_settings():
         from services.settings import settings_manager
         return settings_manager.load_all_settings()
+
+    _settings = _default_settings
+
+    def _read_settings(self, keys):
+        if self._settings is LocalSpeechBackend._default_settings:
+            from services.settings import settings_manager
+            return settings_manager.load_settings(keys)
+        return self._settings()
 
     @property
     def name(self):
@@ -237,8 +262,16 @@ class LocalSpeechBackend(TranscriptionBackend):
             self._generation += 1
             process, self._process = self._process, None
             self.model = None
+            scratch_dir = getattr(self, "_scratch_dir", None)
+            self._scratch_dir = None
+            finalizer = getattr(self, "_scratch_finalizer", None)
+            self._scratch_finalizer = None
         if process:
             process.close()
+        if finalizer is not None:
+            finalizer.detach()
+        if scratch_dir is not None:
+            shutil.rmtree(scratch_dir, ignore_errors=True)
 
     def cancel_transcription(self):
         super().cancel_transcription()
@@ -330,7 +363,9 @@ class LocalSpeechBackend(TranscriptionBackend):
 
         return selected_language(
             self.backend_id,
-            SettingsKey.LOCAL_ASR_LANGUAGE.read(self._settings()),
+            SettingsKey.LOCAL_ASR_LANGUAGE.read(
+                self._read_settings((SettingsKey.LOCAL_ASR_LANGUAGE,))
+            ),
             model_name=self.model_name,
         )
 
@@ -372,6 +407,18 @@ class LocalSpeechBackend(TranscriptionBackend):
         phrases = tuple(recognition.phrases) if recognition and self._phrases_reach_model() else ()
         return language, phrases
 
+    def _scratch_audio_path(self) -> str:
+        """Reusable per-backend scratch file, cleaned up on close or GC."""
+        with self._state_lock:
+            scratch_dir = getattr(self, "_scratch_dir", None)
+            if scratch_dir is None or not os.path.isdir(scratch_dir):
+                scratch_dir = tempfile.mkdtemp(prefix="openwhisper-asr-")
+                self._scratch_dir = scratch_dir
+                self._scratch_finalizer = weakref.finalize(
+                    self, shutil.rmtree, scratch_dir, ignore_errors=True
+                )
+            return os.path.join(scratch_dir, "audio.f32")
+
     def _request_audio(self, op, audio, language=None, **options) -> dict:
         if self.should_cancel:
             raise RuntimeError("Transcription canceled")
@@ -381,11 +428,10 @@ class LocalSpeechBackend(TranscriptionBackend):
             raise RuntimeError(self.last_error or "Speech engine is not loaded")
         if self._uses_vad_gate() and op == "transcribe" and not self._qwen_has_speech(audio):
             return dict(text="", segments=[])
-        with tempfile.TemporaryDirectory(prefix="openwhisper-asr-") as directory:
-            path = os.path.join(directory, "audio.f32")
-            np.asarray(audio, dtype=np.float32).tofile(path)
-            language = language or self.request_language()
-            result = process.request(op, audio_path=path, language=language, timeout=300, **options)
+        path = self._scratch_audio_path()
+        np.asarray(audio, dtype=np.float32).tofile(path)
+        language = language or self.request_language()
+        result = process.request(op, audio_path=path, language=language, timeout=300, **options)
         if self.should_cancel:
             raise RuntimeError("Transcription canceled")
         return result

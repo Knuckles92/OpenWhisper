@@ -1,5 +1,6 @@
 import { useRef } from 'react';
 import { REPORT_VIEW_META, type ReportViewId } from '../../report';
+import { useDetailsDismiss } from '../../useDetailsDismiss';
 
 interface ReportViewSelectProps {
   views: ReportViewId[];
@@ -9,6 +10,7 @@ interface ReportViewSelectProps {
 
 export default function ReportViewSelect({ views, active, onSelect }: ReportViewSelectProps) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
+  useDetailsDismiss(detailsRef);
 
   const pick = (view: ReportViewId) => {
     detailsRef.current?.removeAttribute('open');

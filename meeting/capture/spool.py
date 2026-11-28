@@ -556,19 +556,68 @@ def pcm_slice_to_wav(
 
 def pcm16k_to_wav(pcm_path: str, wav_path: str) -> None:
     """Wrap packed 16 kHz int16 PCM as a mono WAV (atomic replace)."""
+    write_session_wav_from_pcm(wav_path, prefix_16k_pcm=pcm_path)
+
+
+def write_session_wav_from_pcm(
+    wav_path: str,
+    *,
+    prefix_16k_pcm: Optional[str] = None,
+    native_pcm: Optional[str] = None,
+    native_rate: int = TARGET_RATE,
+    window_s: float = SESSION_RESAMPLE_WINDOW_S,
+) -> int:
+    """Stream optional 16 kHz prefix and native PCM directly into one atomic WAV.
+
+    Eliminates the redundant intermediate ``*.16k.pcm`` full-file copy on the
+    normal flush path while still supporting mid-meeting sample-rate changes
+    that spilled an earlier 16 kHz prefix.
+
+    Returns:
+        Total number of 16 kHz samples written.
+    """
     tmp_path = wav_path + ".tmp"
     os.makedirs(os.path.dirname(os.path.abspath(wav_path)) or ".", exist_ok=True)
-    with wave.open(tmp_path, "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(TARGET_RATE)
-        with open(pcm_path, "rb") as src:
-            while True:
-                raw = src.read(TARGET_RATE * 2 * 10)
-                if not raw:
-                    break
-                wav_file.writeframes(raw)
-    os.replace(tmp_path, wav_path)
+    written = 0
+    try:
+        with wave.open(tmp_path, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(TARGET_RATE)
+            if prefix_16k_pcm and os.path.isfile(prefix_16k_pcm):
+                with open(prefix_16k_pcm, "rb") as src:
+                    while True:
+                        raw = src.read(TARGET_RATE * 2 * 10)
+                        if not raw:
+                            break
+                        wav_file.writeframesraw(raw)
+                        written += len(raw) // 2
+            if native_pcm and os.path.isfile(native_pcm):
+                rate = max(1, int(native_rate))
+                window_n = max(1, int(round(float(window_s) * rate)))
+                with open(native_pcm, "rb") as src:
+                    while True:
+                        raw = src.read(window_n * 2)
+                        if not raw:
+                            break
+                        frames = np.frombuffer(raw, dtype="<i2")
+                        if frames.size == 0:
+                            break
+                        out = resample_to_16k(frames, rate)
+                        wav_file.writeframesraw(
+                            np.ascontiguousarray(out, dtype=np.int16).tobytes()
+                        )
+                        written += int(out.size)
+        with open(tmp_path, "r+b") as handle:
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, wav_path)
+        return written
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def concat_channel_chunks_to_wav(
@@ -606,6 +655,8 @@ def concat_channel_chunks_to_wav(
     tmp_path = output_path + ".tmp"
     os.makedirs(os.path.dirname(os.path.abspath(output_path)) or ".", exist_ok=True)
     cursor_s = origin_s
+    silence_chunk_n = max(1, int(round(GAP_FILL_CHUNK_S * TARGET_RATE)))
+    silence_block = np.zeros(silence_chunk_n, dtype=np.int16).tobytes()
     with wave.open(tmp_path, "wb") as wav_file:
         wav_file.setnchannels(1)
         wav_file.setsampwidth(2)
@@ -614,9 +665,16 @@ def concat_channel_chunks_to_wav(
             start_s = float(chunk.get("start_s") or 0.0)
             gap_s = start_s - cursor_s
             if gap_s > 1.0 / TARGET_RATE:
-                zeros = np.zeros(int(round(gap_s * TARGET_RATE)), dtype=np.int16)
-                wav_file.writeframes(zeros.tobytes())
-                cursor_s += zeros.size / float(TARGET_RATE)
+                remaining_gap = int(round(gap_s * TARGET_RATE))
+                written_gap = 0
+                while remaining_gap > 0:
+                    n = min(remaining_gap, silence_chunk_n)
+                    wav_file.writeframes(
+                        silence_block if n == silence_chunk_n else silence_block[: n * 2]
+                    )
+                    written_gap += n
+                    remaining_gap -= n
+                cursor_s += written_gap / float(TARGET_RATE)
             try:
                 with wave.open(str(chunk["file_path"]), "rb") as source:
                     if (
@@ -1158,34 +1216,41 @@ class SpoolWriter:
         self._write_session_meta()
 
     def _finalize_session(self) -> None:
-        self._spill_session_pcm()
-        wav_path = session_wav_path(self._spool_dir, self._channel)
-        if not os.path.isfile(self._session_16k_pcm):
+        pcm_path = self._close_session_pcm()
+        rate = self._session_rate or TARGET_RATE
+        has_prefix = os.path.isfile(self._session_16k_pcm)
+        if pcm_path is None and not has_prefix:
+            self._session_samples = 0
+            self._session_rate = None
             return
+        wav_path = session_wav_path(self._spool_dir, self._channel)
         try:
-            pcm16k_to_wav(self._session_16k_pcm, wav_path)
+            written = write_session_wav_from_pcm(
+                wav_path,
+                prefix_16k_pcm=self._session_16k_pcm if has_prefix else None,
+                native_pcm=pcm_path,
+                native_rate=rate,
+            )
         except Exception:
             self._record_health_error(
                 f"{self._channel} session audio could not be written. "
                 "Partial meeting audio was kept for recovery."
             )
-            logger.exception("Session WAV wrap failed (%s)", self._channel)
+            logger.exception("Session WAV finalization failed (%s)", self._channel)
             return
-        try:
-            if self._session_16k_samples <= 0:
-                self._session_16k_samples = (
-                    os.path.getsize(self._session_16k_pcm) // 2
-                )
-        except OSError:
-            pass
         # Final meta describes the concatenated 16 kHz session WAV origin.
+        self._session_16k_samples = int(written)
         self._session_rate = TARGET_RATE
-        self._session_samples = int(self._session_16k_samples)
+        self._session_samples = int(written)
         self._write_session_meta()
-        try:
-            os.remove(self._session_16k_pcm)
-        except OSError:
-            pass
+        for temp_pcm in (pcm_path, self._session_16k_pcm if has_prefix else None):
+            if not temp_pcm:
+                continue
+            try:
+                os.remove(temp_pcm)
+            except OSError:
+                logger.debug("Could not remove finalized session PCM %s",
+                             temp_pcm, exc_info=True)
 
     def _emit_chunk(self, native_samples: np.ndarray, start_s: float,
                     rate: int) -> Optional[SpooledChunk]:

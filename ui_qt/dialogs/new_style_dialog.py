@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 from services.settings import settings_manager
 from services.walkthrough.styles import MAX_NAME, WriteUpStyle, save_style
 from ui_qt.widgets import Button, PrimaryButton
+from ui_qt.utils.font_scale import apply_scaled_font
 
 
 class NewStyleDialog(QDialog):
@@ -36,7 +37,7 @@ class NewStyleDialog(QDialog):
 
         title = QLabel("New write-up style")
         title.setObjectName("headerLabel")
-        title.setFont(QFont("Segoe UI", 14, QFont.Weight.DemiBold))
+        apply_scaled_font(title, 14, QFont.Weight.DemiBold)
         layout.addWidget(title)
         info = QLabel("Say what the AI write-up should be. The style shows under "
                       "Start from here and in a storyboard's Redo as.")

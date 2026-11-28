@@ -22,11 +22,12 @@ from PyQt6.QtCore import (
     QRectF,
     QTimer,
 )
-from PyQt6.QtGui import QFont, QPainter, QPen
+from PyQt6.QtGui import QPainter, QPen
 
 from ui_qt.utils.palette import token_color
 from ui_qt.utils.restyle import set_style_property
 from ui_qt.utils.desktop import compositor_managed
+from ui_qt.utils.font_scale import apply_scaled_font
 
 
 class HotkeyHoverHint(QWidget):
@@ -196,7 +197,7 @@ class Button(QPushButton):
     def __init__(self, text: str = "", parent=None):
         super().__init__(text, parent)
         self.setMinimumHeight(44)
-        self.setFont(QFont("Segoe UI", 12))
+        apply_scaled_font(self, 12)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 

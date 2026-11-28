@@ -11,6 +11,7 @@ from PyQt6.QtGui import (
 
 from ui_qt.utils.palette import current_palette
 from ui_qt.utils.desktop import compositor_managed
+from ui_qt.utils.font_scale import scaled_font
 
 logger = logging.getLogger(__name__)
 
@@ -175,15 +176,15 @@ class LoadingScreen(QWidget):
             painter.drawRoundedRect(mic_rect.adjusted(2, 2, -2, -2), 6, 6)
 
         painter.setPen(self.text_color)
-        painter.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        painter.setFont(scaled_font(16, QFont.Weight.Bold))
         painter.drawText(QRectF(0, h - 90, w, 30), Qt.AlignmentFlag.AlignCenter, "OpenWhisper")
 
         painter.setPen(self.accent_color)
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
+        painter.setFont(scaled_font(10, QFont.Weight.DemiBold))
         painter.drawText(QRectF(0, h - 55, w, 20), Qt.AlignmentFlag.AlignCenter, self.status_text)
 
         painter.setPen(self.subtext_color)
-        painter.setFont(QFont("Segoe UI", 9))
+        painter.setFont(scaled_font(9))
         painter.drawText(QRectF(0, h - 35, w, 20), Qt.AlignmentFlag.AlignCenter, self.progress_text)
 
     def mousePressEvent(self, event):

@@ -9,7 +9,6 @@ import logging
 from typing import Optional
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -33,6 +32,7 @@ from ui_qt.widgets.buttons import Button, DangerButton, PrimaryButton
 from ui_qt.widgets.download_row import DownloadRow, row_style
 from ui_qt.widgets.eliding_label import ElidingLabel
 from ui_qt.widgets.speech_backend_picker import speech_model_picker_label
+from ui_qt.utils.font_scale import apply_scaled_font, scaled_font
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +194,7 @@ class ModelRowWidget(DownloadRow):
         name_label = ElidingLabel(label)
         name_label.setToolTip(self.model_name)
         name_label.setObjectName("modelRowName")
-        name_font = QFont("Segoe UI", 10)
+        name_font = scaled_font(10)
         name_font.setBold(True)
         name_label.setFont(name_font)
         # A fixed floor: an ElidingLabel's minimum follows the text it shows,
@@ -216,7 +216,7 @@ class ModelRowWidget(DownloadRow):
         # raise the whole window's minimum width past the list column.
         self.repo_label = ElidingLabel(self._model_summary())
         self.repo_label.setObjectName("modelRowSummary")
-        self.repo_label.setFont(QFont("Segoe UI", 8))
+        apply_scaled_font(self.repo_label, 8)
         self.repo_label.setToolTip(self.repo_id)
         identity.addWidget(self.repo_label)
 
@@ -224,7 +224,7 @@ class ModelRowWidget(DownloadRow):
 
         self.size_label = QLabel("")
         self.size_label.setObjectName("modelRowSize")
-        self.size_label.setFont(QFont("Segoe UI", 9))
+        apply_scaled_font(self.size_label, 9)
         self.size_label.setMinimumWidth(56)
         self.size_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -443,10 +443,13 @@ class ModelRowWidget(DownloadRow):
     ) -> None:
         """Show a compact engine pill in cross-engine views (All / Installed)."""
         if not visible or not label:
-            self.engine_badge.setVisible(False)
+            if self.engine_badge.isVisible():
+                self.engine_badge.setVisible(False)
             return
-        self.engine_badge.setText(label)
-        if rgb:
+        if self.engine_badge.text() != label:
+            self.engine_badge.setText(label)
+        if rgb and getattr(self, "_engine_badge_rgb", None) != rgb:
+            self._engine_badge_rgb = rgb
             self.engine_badge.setStyleSheet(
                 f"QLabel#modelRowEngine {{"
                 f" background-color: rgba({rgb}, 0.14);"
@@ -456,7 +459,8 @@ class ModelRowWidget(DownloadRow):
                 f" font-size: 10px; font-weight: 600;"
                 f"}}"
             )
-        self.engine_badge.setVisible(True)
+        if not self.engine_badge.isVisible():
+            self.engine_badge.setVisible(True)
 
     def matches_filter(self, text: str) -> bool:
         from services.local_asr.catalog import BACKENDS, MODELS

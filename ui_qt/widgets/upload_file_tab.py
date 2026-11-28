@@ -54,6 +54,7 @@ from ui_qt.widgets.transcription_progress import (
 )
 from ui_qt.widgets.transcription_tab_base import TranscriptionTabBase
 from ui_qt.widgets.wrapped_label import WrappedLabel
+from ui_qt.utils.font_scale import apply_scaled_font
 
 logger = logging.getLogger(__name__)
 
@@ -224,13 +225,13 @@ class DropZoneWidget(QFrame):
         layout.addSpacing(8)
 
         title = QLabel("Drop audio files here")
-        title.setFont(QFont("Segoe UI", 13, QFont.Weight.DemiBold))
+        apply_scaled_font(title, 13, QFont.Weight.DemiBold)
         title.setStyleSheet("color: @text;")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
         subtitle = QLabel("or click to browse  ·  several files become a queue")
-        subtitle.setFont(QFont("Segoe UI", 11))
+        apply_scaled_font(subtitle, 11)
         subtitle.setStyleSheet("color: @text-secondary;")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
@@ -238,7 +239,7 @@ class DropZoneWidget(QFrame):
         layout.addSpacing(8)
 
         formats = QLabel("WAV  ·  MP3  ·  M4A  ·  OGG  ·  FLAC  ·  WMA")
-        formats.setFont(QFont("Segoe UI", 10))
+        apply_scaled_font(formats, 10)
         formats.setStyleSheet("color: @text-muted;")
         formats.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(formats)
@@ -248,7 +249,7 @@ class DropZoneWidget(QFrame):
         self.notice = WrappedLabel(break_long_words=True)
         self.notice.setObjectName("dropZoneNotice")
         self.notice.setTextFormat(Qt.TextFormat.PlainText)
-        self.notice.setFont(QFont("Segoe UI", 11))
+        apply_scaled_font(self.notice, 11)
         self.notice.setStyleSheet("color: @danger-text;")
         self.notice.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self.notice.hide()

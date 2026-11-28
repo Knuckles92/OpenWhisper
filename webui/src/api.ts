@@ -164,8 +164,13 @@ export const api = {
     });
   },
 
-  searchHistory(token: string, query: string, mode: 'keyword' | 'semantic'): Promise<{results: SearchRow[]; mode: string; message: string}> {
-    return request(`/api/search?${qs({token, q: query, mode})}`);
+  searchHistory(
+    token: string,
+    query: string,
+    mode: 'keyword' | 'semantic',
+    signal?: AbortSignal,
+  ): Promise<{results: SearchRow[]; mode: string; message: string}> {
+    return request(`/api/search?${qs({token, q: query, mode})}`, { signal });
   },
 
   exportUrl(token: string, fmt: ExportFormat, meetingId: string): string {
@@ -201,9 +206,10 @@ export const api = {
     return `/api/meetings/${encodeURIComponent(meetingId)}/audio?${qs({ token, revision })}`;
   },
 
-  async events(token: string, beforeSeq?: number): Promise<AuditEvent[]> {
+  async events(token: string, beforeSeq?: number, signal?: AbortSignal): Promise<AuditEvent[]> {
     const data = await request<unknown>(
       `/api/events?${qs({ token, before_seq: beforeSeq })}`,
+      { signal },
     );
     return asArray<AuditEvent>(data, 'events', 'items');
   },

@@ -119,6 +119,40 @@ class FullFakeAppControl:
         self._rec("open_meeting_view", meeting_id, view)
         return {"opened": True, "view": view, "meeting_id": meeting_id or None}
 
+    def get_meeting_dashboard_state(self, *, meeting_id=None):
+        self._rec("get_meeting_dashboard_state", meeting_id)
+        return {"meeting_id": meeting_id or "m_live", "is_live": True, "elapsed_s": 12.5, "state": {}, "jobs": {}}
+
+    def update_live_meeting(self, *, title=None, intent=None, topic=None, cloud_enabled=None):
+        self._rec("update_live_meeting", title, intent, topic, cloud_enabled)
+        return {"ok": True, "meeting_id": "m_live", "updated": ["title"]}
+
+    def manage_meeting_card_item(self, *, action, card=None, item_id=None, text=None, data=None, evidence=None):
+        self._rec("manage_meeting_card_item", action, card, item_id, text, data, evidence)
+        return {"ok": True, "action": action, "seq": 1, "item_id": item_id or "it_1"}
+
+    def manage_meeting_question(self, *, action, text=None, question_id=None, answer_text=None, evidence=None):
+        self._rec("manage_meeting_question", action, text, question_id, answer_text, evidence)
+        return {"ok": True, "action": action, "seq": 2, "question_id": question_id or "q_1"}
+
+    def update_meeting_transcript_or_speaker(
+        self, *, action, participant_id=None, display_name=None, segment_id=None, text=None
+    ):
+        self._rec("update_meeting_transcript_or_speaker", action, participant_id, display_name, segment_id, text)
+        return {"ok": True, "action": action, "seq": 3, "target_id": participant_id or segment_id}
+
+    def request_meeting_note_adjustment(self, *, text, wait=True, timeout_s=60.0):
+        self._rec("request_meeting_note_adjustment", text, wait, timeout_s)
+        return {"ok": True, "status": "completed" if wait else "queued", "meeting_id": "m_live"}
+
+    def request_meeting_custom_report(self, *, request_text, meeting_id=None):
+        self._rec("request_meeting_custom_report", request_text, meeting_id)
+        return {"ok": True, "meeting_id": meeting_id or "m_live", "report_id": "rep_1", "status": "running"}
+
+    def undo_live_meeting_action(self, *, event_seq):
+        self._rec("undo_live_meeting_action", event_seq)
+        return {"ok": True, "meeting_id": "m_live", "undone_seq": event_seq, "applied": 1}
+
     def walkthrough_status(self):
         return {"active": True, "paused": False, "shot_count": 2}
 

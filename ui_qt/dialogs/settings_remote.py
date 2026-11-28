@@ -48,6 +48,7 @@ from ui_qt.widgets import (
 from ui_qt.widgets.buttons import compact_primary_button, neutral_button
 from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.segmented_bar import SegmentedBar
+from ui_qt.utils.error_messages import show_warning_dialog
 
 logger = logging.getLogger(__name__)
 
@@ -1657,7 +1658,7 @@ class RemoteEngineSection(QObject):
             renamed = self._service.rename_host(name)
         except Exception as exc:
             logger.warning("Could not rename the remote host", exc_info=True)
-            QMessageBox.warning(self.client_tile.window(), "Could not rename host", str(exc))
+            show_warning_dialog(self.client_tile.window(), "Could not rename host", exc)
             return
         if renamed is not None:
             self._say(f"This computer now calls the host {renamed.host_name}.")
@@ -1860,7 +1861,7 @@ class RemoteEngineSection(QObject):
             self._service.rename_device(device_id, name)
         except Exception as exc:
             logger.warning("Could not rename a paired computer", exc_info=True)
-            QMessageBox.warning(self.devices_tile.window(), "Could not rename computer", str(exc))
+            show_warning_dialog(self.devices_tile.window(), "Could not rename computer", exc)
         self.refresh()
 
     def _remove_device(self, device_id: str) -> None:
@@ -1893,7 +1894,7 @@ class RemoteEngineSection(QObject):
             self._service.remove_device(device_id, delete_records=delete_records)
         except Exception as exc:
             logger.warning("Could not remove a paired computer", exc_info=True)
-            QMessageBox.warning(self.devices_tile.window(), "Could not remove computer", str(exc))
+            show_warning_dialog(self.devices_tile.window(), "Could not remove computer", exc)
         self.refresh()
 
     def _recover_records(self) -> None:
@@ -1905,7 +1906,7 @@ class RemoteEngineSection(QObject):
             devices = service.host_state()["devices"]
         except Exception as exc:
             logger.warning("Could not load stored records to recover", exc_info=True)
-            QMessageBox.warning(self.devices_tile.window(), "Could not load stored records", str(exc))
+            show_warning_dialog(self.devices_tile.window(), "Could not load stored records", exc)
             return
         if not owners or not devices:
             QMessageBox.information(

@@ -72,11 +72,12 @@ class MeetingExportDialog(ExportDialogBase):
         meeting_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         entry_loader: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
     ):
+        async_load = meeting_provider is None
         if meeting_provider is None:
             from meeting.export.bulk import list_export_meetings
 
             meeting_provider = list_export_meetings
-        super().__init__(parent, meeting_provider)
+        super().__init__(parent, meeting_provider, async_load=async_load)
         self._entry_loader = entry_loader
 
     def _build_criteria_check(self) -> QCheckBox:

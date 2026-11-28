@@ -1604,7 +1604,7 @@ class KindChip(QPushButton):
         self.setObjectName("calendarKindChip")
         self.setCheckable(True)
         self.setChecked(True)
-        self.setFixedHeight(30)
+        self.setMinimumHeight(30)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(f"Show or hide {KIND_PLURALS[kind]}")
         self.set_count(None)

@@ -279,8 +279,8 @@ class MeetingStateStore:
             return None
         return candidate
 
-    def update_runtime_fields(self, **fields: Any) -> bool:
-        """Persist lifecycle/status fields before making them observable."""
+    def update_runtime_fields(self, *, persist: bool = True, **fields: Any) -> bool:
+        """Update lifecycle/status fields; persist before publishing unless ``persist=False``."""
         with self._lock:
             candidate = copy(self._state)
             for key, value in fields.items():
@@ -302,7 +302,7 @@ class MeetingStateStore:
                         candidate.insight_review = deepcopy(candidate.insight_review)
                         invalidate_checks(candidate)
                 setattr(candidate, key, deepcopy(value))
-            if self._repository is not None:
+            if persist and self._repository is not None:
                 try:
                     persisted = self._repository.persist_state(
                         self._state.meeting_id, candidate.to_dict()

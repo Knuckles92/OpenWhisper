@@ -17,7 +17,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QRect, QRectF, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QImage, QImageReader, QPainter, QPainterPath, QPixmap
+from PyQt6.QtGui import QImage, QImageReader, QPainter, QPainterPath, QPixmap
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -237,7 +237,7 @@ class WalkthroughCard(QFrame):
             tag_count = len(summary.annotation.tags)
             note_btn = QPushButton(f"✦ Note · {tag_count}" if tag_count else "✦ Note")
             note_btn.setObjectName("walkthroughCardNotePill")
-            note_btn.setFixedHeight(20)
+            note_btn.setMinimumHeight(20)
             note_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             note_btn.setToolTip(summary.annotation.tooltip())
             note_btn.clicked.connect(lambda: self.notes_requested.emit(self.summary))
@@ -330,7 +330,6 @@ class PastWalkthroughsPanel(QWidget):
         head.setSpacing(8)
         title = QLabel("Walkthroughs")
         title.setObjectName("sidebarHeader")
-        title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         head.addWidget(title)
         head.addStretch(1)
         self.library_button = QPushButton("Open library")
@@ -345,7 +344,7 @@ class PastWalkthroughsPanel(QWidget):
         self.search_input.setObjectName("historySearchInput")
         self.search_input.setPlaceholderText("Search walkthroughs...")
         self.search_input.setClearButtonEnabled(True)
-        self.search_input.setFixedHeight(32)
+        self.search_input.setMinimumHeight(32)
         self.search_input.textChanged.connect(self._filter)
         layout.addWidget(self.search_input)
 
@@ -363,7 +362,6 @@ class PastWalkthroughsPanel(QWidget):
         self.count_header = QLabel("")
         self.count_header.setObjectName("sectionHeader")
         self.count_header.hide()
-        self.count_header.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
         column.addWidget(self.count_header)
         self.card_layout = QVBoxLayout()
         self.card_layout.setSpacing(12)
@@ -381,6 +379,17 @@ class PastWalkthroughsPanel(QWidget):
             QWidget#walkthroughsContent {
                 background-color: @bg;
                 border-left: 1px solid rgba(@overlay-rgb, 0.08);
+            }
+            QLabel#sidebarHeader {
+                color: @text-heading;
+                font-size: 21px;
+                font-weight: 700;
+            }
+            QLabel#sectionHeader {
+                color: @text-secondary-strong;
+                padding-top: 4px;
+                font-size: 14px;
+                font-weight: 600;
             }
             QPushButton#walkthroughsLibraryLink {
                 color: @accent;
@@ -517,9 +526,12 @@ class PastWalkthroughsPanel(QWidget):
             record_title=heading,
             parent=self.window(),
         )
-        dialog.exec()
-        if dialog.changed:
-            self.refresh()
+        try:
+            dialog.exec()
+            if dialog.changed:
+                self.refresh()
+        finally:
+            dialog.deleteLater()
 
     def _filter(self, *_args) -> None:
         """Show the cards whose title or words hold every word searched for."""

@@ -7,6 +7,7 @@ import { ops } from '../types';
 import type { SocketStatus } from '../ws';
 import { enabledReportViews, type ReportViewId } from '../report';
 import { initials, speakerColor } from '../people';
+import { useDetailsDismiss } from '../useDetailsDismiss';
 import ThemePicker from './ThemePicker';
 import ConfirmDialog from './ConfirmDialog';
 import AudioCheck from './AudioCheck';
@@ -105,6 +106,17 @@ function clockTime(seconds: number): string {
   return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
 }
 
+/** Leaf clock component so the 1s interval never re-renders the whole HeaderBar. */
+function ElapsedClock({ meeting, status }: { meeting: MeetingInfo | null; status: string }) {
+  const elapsed = useElapsed(meeting, status);
+  if (elapsed === null) return null;
+  return (
+    <span className="cb-timer" aria-label={`Elapsed ${clockTime(elapsed)}`}>
+      {clockTime(elapsed)}
+    </span>
+  );
+}
+
 function ShareIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
@@ -177,7 +189,6 @@ export default function HeaderBar({
     : meetingPaused || meetingEnding
       ? 'paused'
       : 'ended';
-  const elapsed = useElapsed(meeting, displayStatus);
 
   const fullGuestUrl = guestUrl
     ? guestUrl.startsWith('http')
@@ -223,27 +234,7 @@ export default function HeaderBar({
   };
 
   const closeMore = () => moreRef.current?.removeAttribute('open');
-
-  // The overflow menu is a <details>; close it on outside clicks and Escape.
-  useEffect(() => {
-    const onPointer = (event: PointerEvent) => {
-      const menu = moreRef.current;
-      if (menu?.open && !menu.contains(event.target as Node)) menu.removeAttribute('open');
-    };
-    const onKey = (event: KeyboardEvent) => {
-      const menu = moreRef.current;
-      if (event.key === 'Escape' && menu?.open) {
-        menu.removeAttribute('open');
-        menu.querySelector('summary')?.focus();
-      }
-    };
-    document.addEventListener('pointerdown', onPointer);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointer);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, []);
+  useDetailsDismiss(moreRef);
 
   const finalization = state.finalization ?? null;
   const finalizationStatus = finalization?.status ?? null;
@@ -300,11 +291,7 @@ export default function HeaderBar({
             <div className={`cb-status ${statusClass}`} role="status" aria-live="polite">
               <span className="cb-dot" aria-hidden="true" />
               <span className="cb-status-label">{statusLabel(displayStatus)}</span>
-              {elapsed !== null && (
-                <span className="cb-timer" aria-label={`Elapsed ${clockTime(elapsed)}`}>
-                  {clockTime(elapsed)}
-                </span>
-              )}
+              <ElapsedClock meeting={meeting} status={displayStatus} />
               {meetingLive && (
                 <span
                   className={`cb-meter${listening ? ' hearing' : ''}`}

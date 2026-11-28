@@ -127,7 +127,7 @@ def test_v18_database_migrates_to_v19_with_record_annotations(tmp_path):
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )
             }
-        assert version == SCHEMA_VERSION == 19
+        assert version == SCHEMA_VERSION == 20
         assert "record_annotations" in tables
     finally:
         manager.close()

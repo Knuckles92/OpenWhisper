@@ -5,6 +5,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from services.format_utils import format_audio_duration, format_file_size, format_short_duration
+from ui_qt.utils.font_scale import apply_scaled_font
 
 
 def remote_timing_text(remote) -> str:
@@ -45,7 +46,7 @@ class TranscriptionStatsWidget(QWidget):
         # Which computer did the work, under the time, for a remote engine.
         detail = QLabel()
         detail.setObjectName("statsRemoteDetail")
-        detail.setFont(QFont("Segoe UI", 9))
+        apply_scaled_font(detail, 9)
         detail.setStyleSheet("color: @accent;")
         detail.hide()
         self.transcription_time_widget.layout().addWidget(detail)
@@ -80,13 +81,13 @@ class TranscriptionStatsWidget(QWidget):
 
         label = QLabel(label_text)
         label.setObjectName("statsLabel")
-        label.setFont(QFont("Segoe UI", 10))
+        apply_scaled_font(label, 10)
         label.setStyleSheet("color: @text-secondary;")
         layout.addWidget(label)
 
         value = QLabel(value_text)
         value.setObjectName("statsValue")
-        value.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        apply_scaled_font(value, 13, QFont.Weight.Bold)
         value.setStyleSheet("color: @text;")
         layout.addWidget(value)
 

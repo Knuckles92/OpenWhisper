@@ -287,6 +287,10 @@ class TranscriptionRuntime:
         self._discard_echo_capture()
         self._incremental.discard()
 
+    def close(self) -> None:
+        """Release long-lived HTTP clients after worker threads have stopped."""
+        self._transcript_cleanup.close()
+
     def _claim_job(self, job: Optional[dictation_pipeline.DictationJob] = None, *, require_idle_recorder: bool = False) -> bool:
         """Atomically reserve the single transcription workflow slot for ``job``."""
         with self._capture_lock, self._job_lock:
@@ -711,11 +715,16 @@ class TranscriptionRuntime:
         # paste; it is queued to the Qt thread and never delays this start.
         # Command Mode reads the selection through the clipboard first,
         # so its snapshot would no longer be the user's.
-        if mode == JobMode.DICTATION and all(
-            key.read(settings_manager.load_all_settings())
-            for key in (SettingsKey.AUTO_PASTE, SettingsKey.RESTORE_CLIPBOARD)
-        ):
-            self.controller.ui_controller.prefetch_clipboard_snapshot()
+        if mode == JobMode.DICTATION:
+            paste_settings = settings_manager.load_settings((
+                SettingsKey.AUTO_PASTE,
+                SettingsKey.RESTORE_CLIPBOARD,
+            ))
+            if (
+                SettingsKey.AUTO_PASTE.read(paste_settings)
+                and SettingsKey.RESTORE_CLIPBOARD.read(paste_settings)
+            ):
+                self.controller.ui_controller.prefetch_clipboard_snapshot()
         return True
 
     @staticmethod

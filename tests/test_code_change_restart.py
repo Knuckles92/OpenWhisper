@@ -113,7 +113,7 @@ def test_dont_show_again_mutes_the_unprompted_offer(answers):
 
     with patch("ui_qt.ui_controller.changed_since_launch", return_value=True), \
             patch("ui_qt.ui_controller.settings_manager") as manager:
-        manager.load_all_settings.return_value = {
+        manager.load_settings.return_value = {
             "update_restart_prompt_enabled": False
         }
         controller._code_change_timer.start(60_000)

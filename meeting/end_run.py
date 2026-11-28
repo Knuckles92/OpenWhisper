@@ -388,7 +388,10 @@ class EndRun:
         if self.will_speaker_id:
             self._finish_after_speakers()
         elif not self.cloud_enabled:
-            self._set_finalization("disabled", INSIGHTS_OFF_MESSAGE)
+            if self.will_offline:
+                self._finish_after_redecode("disabled", INSIGHTS_OFF_MESSAGE)
+            else:
+                self._set_finalization("disabled", INSIGHTS_OFF_MESSAGE)
         elif not self.complete:
             # Cloud passes wait for recovery even when the re-decode worked;
             # without a terminal state here the dashboard would keep showing
@@ -396,26 +399,42 @@ class EndRun:
             if not self.will_offline:
                 self._set_finalization("unavailable", RECOVERY_PENDING_MESSAGE)
                 return
-            self.update_step(
-                "finalize", "completed",
-                "Saved meeting state after re-transcription.", emit=False,
-            )
-            self._set_finalization(
-                "unavailable",
-                RECOVERY_PENDING_MESSAGE,
-                stage="unavailable",
-                current_step=self.total_steps,
-                total_steps=self.total_steps,
-                step_details=RECOVERY_PENDING_MESSAGE,
-                steps=self.steps,
-            )
+            self._finish_after_redecode("unavailable", RECOVERY_PENDING_MESSAGE)
         elif not self.want_polish and not self.want_report:
-            self._set_finalization(
-                "completed",
-                "Post-meeting cleanup and report are off.",
-            )
+            if self.will_offline:
+                redecode_failed = any(s.get("status") == "failed" for s in self.steps)
+                self._finish_after_redecode(
+                    "failed" if redecode_failed else "completed",
+                    failed_steps_message(self.steps)
+                    if redecode_failed else "Post-meeting cleanup and report are off.",
+                )
+            else:
+                self._set_finalization(
+                    "completed",
+                    "Post-meeting cleanup and report are off.",
+                )
         elif self.scheduler is None or not self._core_is_healthy():
-            self._set_finalization("unavailable", self._offline_message())
+            if self.will_offline:
+                self._finish_after_redecode("unavailable", self._offline_message())
+            else:
+                self._set_finalization("unavailable", self._offline_message())
+
+    def _finish_after_redecode(self, status: str, message: str) -> None:
+        self.update_step(
+            "finalize",
+            "completed",
+            "Saved meeting state after re-transcription.",
+            emit=False,
+        )
+        self._set_finalization(
+            status,
+            message,
+            stage="complete" if status == "completed" else status,
+            current_step=self.total_steps,
+            total_steps=self.total_steps,
+            step_details=message,
+            steps=self.steps,
+        )
 
     def _finish_after_speakers(self) -> None:
         self.update_step(
