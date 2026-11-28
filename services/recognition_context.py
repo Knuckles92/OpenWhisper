@@ -27,6 +27,9 @@ WHISPER_HOTWORDS_MAX_CHARS: Final[int] = 300
 #: OpenAI's keyword list, which the SDK documents without limits; a longer
 #: list risks a rejected request.
 OPENAI_MAX_KEYWORDS: Final[int] = 50
+#: AssemblyAI Dictation API's documented keyterms_prompt limits.
+ASSEMBLYAI_MAX_KEYTERMS: Final[int] = 100
+ASSEMBLYAI_KEYTERMS_MAX_CHARS: Final[int] = 8000
 MAX_PHRASE_CHARS: Final[int] = 64
 #: Whisper-style prompts are read as preceding text and kept to the last
 #: 224 tokens.
@@ -105,6 +108,12 @@ def hotwords(phrases: Sequence[str], max_chars: int = WHISPER_HOTWORDS_MAX_CHARS
 def keywords(phrases: Sequence[str]) -> list[str]:
     """gpt-transcribe ``keywords``: at most 50 phrases of at most 64 characters."""
     return _bounded(phrases, count=OPENAI_MAX_KEYWORDS, chars=OPENAI_MAX_KEYWORDS * MAX_PHRASE_CHARS,
+                    separator="")
+
+
+def assemblyai_keyterms(phrases: Sequence[str]) -> list[str]:
+    """AssemblyAI ``keyterms_prompt``: at most 100 phrases and 8000 characters total."""
+    return _bounded(phrases, count=ASSEMBLYAI_MAX_KEYTERMS, chars=ASSEMBLYAI_KEYTERMS_MAX_CHARS,
                     separator="")
 
 

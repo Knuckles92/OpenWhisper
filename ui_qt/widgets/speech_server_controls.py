@@ -18,7 +18,7 @@ from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QWidget
 
 from services import speech_endpoints
-from services.settings import api_model_label, settings_manager
+from services.settings import settings_manager
 from services.speech_endpoints import CUSTOM_ENDPOINT_ID, ENDPOINTS, SpeechEndpoint
 from ui_qt.widgets.engine_field import engine_combo, engine_field
 
@@ -72,15 +72,15 @@ class SpeechServerControls(QWidget):
         self.model_combo = engine_combo(())
         self.server_field = engine_field(
             "Server", self.server_combo,
-            "Choose where the API backend sends your audio: OpenAI, Groq, or a "
-            "speech server you run, such as Speaches, LocalAI, vLLM or "
-            "whisper.cpp. Audio sent to a server on this computer stays on it. "
-            "Hosted services need an API key.",
+            "Choose where the API backend sends your audio: OpenAI, Groq, "
+            "AssemblyAI, or a speech server you run, such as Speaches, LocalAI, "
+            "vLLM or whisper.cpp. Audio sent to a server on this computer stays "
+            "on it. Hosted services need an API key.",
             [("Open Settings → App → API keys", "api_keys")], self.help_requested.emit,
         )
         self.model_field = engine_field(
             "Model", self.model_combo,
-            "The speech model the server turns your audio into text with. "
+            "The speech model or output mode the server uses. "
             "A server you run lists the models it has; choose Edit server… "
             "to enter another model id.",
             [("Open Settings → App → API keys", "api_keys")], self.help_requested.emit,
@@ -137,8 +137,7 @@ class SpeechServerControls(QWidget):
         blocked = combo.blockSignals(True)
         combo.clear()
         for model in models:
-            # Only OpenAI's ids carry its retirement dates.
-            combo.addItem(api_model_label(model) if endpoint.is_openai else model, model)
+            combo.addItem(speech_endpoints.model_label(endpoint, model), model)
         combo.setCurrentIndex(max(0, combo.findData(current)))
         combo.blockSignals(blocked)
         combo.setToolTip(

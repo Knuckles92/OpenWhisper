@@ -61,13 +61,29 @@ def choose(combo, data):
 def test_openai_is_shown_with_its_models():
     controls = SpeechServerControls()
     assert controls.server_combo.currentData() == "openai"
-    assert items(controls.server_combo)[:7] == list(speech_endpoints.ENDPOINT_IDS)
+    assert items(controls.server_combo)[:len(speech_endpoints.ENDPOINT_IDS)] == list(speech_endpoints.ENDPOINT_IDS)
     assert controls.server_combo.itemText(controls.server_combo.findData("custom")) == "Custom…"
     assert controls.model_combo.currentData() == "gpt-transcribe"
     assert "whisper-1 (retiring" in controls.model_combo.itemText(controls.model_combo.findData("whisper-1"))
     edit = controls.server_combo.model().item(controls.server_combo.findData("__edit__"))
     assert not edit.isEnabled()
     assert "uploaded to OpenAI (api.openai.com)" in controls.server_combo.toolTip()
+
+
+def test_picking_assemblyai_shows_cleaned_and_verbatim_modes():
+    controls = SpeechServerControls()
+    choose(controls.server_combo, "assemblyai")
+    assert settings_manager.get(SettingsKey.API_TRANSCRIPTION_ENDPOINT) == "assemblyai"
+    assert items(controls.model_combo) == ["cleaned", "verbatim"]
+    assert controls.model_combo.currentData() == "cleaned"
+    assert controls.model_combo.currentText() == "Cleaned (default)"
+    assert controls.model_combo.itemText(controls.model_combo.findData("verbatim")) == "Verbatim"
+    assert "uploaded to AssemblyAI (dictation.assemblyai.com)" in controls.server_combo.toolTip()
+    edit = controls.server_combo.model().item(controls.server_combo.findData("__edit__"))
+    assert not edit.isEnabled()
+
+    choose(controls.model_combo, "verbatim")
+    assert speech_endpoints.selected_model() == "verbatim"
 
 
 def test_picking_a_local_server_saves_it_and_lists_its_models(catalog):

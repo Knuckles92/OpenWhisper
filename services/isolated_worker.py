@@ -16,6 +16,54 @@ import traceback
 
 #: Optional transcription fields, sent only when the request carries them.
 _OPENAI_HINTS = ("prompt", "language", "languages", "keywords")
+_ASSEMBLYAI_HINTS = ("keyterms_prompt", "language_codes")
+_ASSEMBLYAI_DEFAULT_BASE_URL = "https://dictation.assemblyai.com/v1"
+_AUDIO_CONTENT_TYPES = {
+    ".wav": "audio/wav",
+    ".pcm": "audio/pcm",
+    ".aac": "audio/aac",
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".mp4": "audio/mp4",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".flac": "audio/flac",
+    ".webm": "audio/webm",
+}
+
+
+class _AssemblyAIStatusError(RuntimeError):
+    """HTTP error from AssemblyAI carrying status_code/code for retry handling."""
+
+    def __init__(self, message: str, *, status_code: int, code: str | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+
+
+def _audio_content_type(audio_path: str) -> str:
+    import mimetypes
+
+    ext = os.path.splitext(audio_path)[1].lower()
+    if ext in _AUDIO_CONTENT_TYPES:
+        return _AUDIO_CONTENT_TYPES[ext]
+    guessed, _ = mimetypes.guess_type(audio_path)
+    return guessed or "audio/wav"
+
+
+def _extract_assemblyai_error(response) -> tuple[str, str | None]:
+    """Read both AssemblyAI Dictation error shapes: {status, title, detail} and {error, error_code}."""
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        message = payload.get("detail") or payload.get("error") or payload.get("title")
+        code = payload.get("error_code")
+        if isinstance(message, str) and message.strip():
+            return message.strip(), code if isinstance(code, str) else None
+    return f"HTTP {response.status_code}", None
 
 
 def _openai_client(request: dict):
@@ -72,6 +120,49 @@ def openai_transcribe(request: dict, client=None) -> dict:
                 file=audio, model=request["model"], response_format=request["response_format"],
                 **hints)
     return {"text": response if isinstance(response, str) else response.text}
+
+
+def assemblyai_transcribe(request: dict) -> dict:
+    """Upload one file to AssemblyAI's Dictation API (POST /v1/transcribe)."""
+    import httpx
+
+    base_url = (request.get("base_url") or _ASSEMBLYAI_DEFAULT_BASE_URL).rstrip("/")
+    url = f"{base_url}/transcribe"
+    audio_path = request["audio_path"]
+    filename = os.path.basename(audio_path) or "audio.wav"
+    content_type = _audio_content_type(audio_path)
+    config_payload = {name: request[name] for name in _ASSEMBLYAI_HINTS if request.get(name)}
+    timeout = httpx.Timeout(request["read_timeout"], connect=10.)
+
+    with httpx.Client(timeout=timeout) as client:
+        with open(audio_path, "rb") as audio:
+            files = []
+            if config_payload:
+                # Send config before audio so the multipart layout also matches /v1/transcribe/live.
+                files.append(("config", (None, json.dumps(config_payload), "application/json")))
+            files.append(("audio", (filename, audio, content_type)))
+            response = client.post(
+                url,
+                headers={"Authorization": request["api_key"]},
+                files=files,
+            )
+
+    if response.status_code >= 400:
+        detail, code = _extract_assemblyai_error(response)
+        raise _AssemblyAIStatusError(
+            f"AssemblyAI Dictation API error (HTTP {response.status_code}): {detail}",
+            status_code=response.status_code,
+            code=code,
+        )
+
+    payload = response.json()
+    raw_text = payload.get("text") if isinstance(payload.get("text"), str) else ""
+    if request.get("model") == "verbatim":
+        chosen = raw_text
+    else:
+        llm_text = payload.get("llm_response")
+        chosen = llm_text if isinstance(llm_text, str) and llm_text.strip() else raw_text
+    return {"text": chosen}
 
 
 def _redirect_stdout_to_stderr() -> None:
@@ -151,6 +242,8 @@ def _run_operation(op, request: dict, model, protocol, prepared: PreparedUpload)
         return prepared.prepare(request)
     if op == "openai_transcribe":
         return openai_transcribe(request, prepared.take(request))
+    if op == "assemblyai_transcribe":
+        return assemblyai_transcribe(request)
     if op == "ping":
         return {"ready": True}
     raise ValueError("Unknown isolated worker operation")
