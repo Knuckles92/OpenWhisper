@@ -10,6 +10,7 @@ Releases use `major.minor.patch` numbering. Normal routine releases use a zero-p
 ### Fixed
 
 - **Packaged builds move off a yanked PyAV release.** The release pin moves from PyAV 18.1.0 to 18.1.1. PyPI yanked 18.1.0 for memory corruption (a double free) when decoding audio with custom channel layouts, and OpenWhisper decodes uploaded files and recordings through PyAV. Source installs keep the `av>=11,<19` range, which still resolves to PyAV 18.
+- **The downloadable Qwen3-ASR runtimes move off yanked PyAV releases too.** The Windows runtime goes from PyAV 18.1.0 to 18.1.1 and the Apple Silicon runtime from 19.0.1 to 19.0.2; PyPI yanked both older builds for the same double free. No other package in either runtime changes. Installed copies of these runtimes are offered an update.
 
 ## [2.9.2] - 2026-11-28
 
