@@ -7,6 +7,10 @@ Releases use `major.minor.patch` numbering. Normal routine releases use a zero-p
 
 ## [Unreleased]
 
+### Fixed
+
+- **Packaged builds move off a yanked PyAV release.** The release pin moves from PyAV 18.1.0 to 18.1.1. PyPI yanked 18.1.0 for memory corruption (a double free) when decoding audio with custom channel layouts, and OpenWhisper decodes uploaded files and recordings through PyAV. Source installs keep the `av>=11,<19` range, which still resolves to PyAV 18.
+
 ## [2.9.2] - 2026-11-28
 
 ### Added
