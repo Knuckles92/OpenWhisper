@@ -15,9 +15,10 @@ import time
 from datetime import datetime
 from typing import Callable, Optional
 
-from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import QByteArray, QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QIcon, QImage, QPixmap
 from PyQt6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QDialog,
     QDialogButtonBox,
@@ -31,7 +32,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from services.remote_asr import invite as remote_invite
 from services.remote_asr import protocol
+from services.remote_asr.qr import render_invite_qr_svg_bytes
+from services.settings import SettingsKey, settings_manager
 from ui_qt.utils.palette import current_palette
 from ui_qt.widgets import (
     AnimatedProgressBar,
@@ -48,6 +52,7 @@ from ui_qt.widgets import (
 from ui_qt.widgets.buttons import compact_primary_button, neutral_button
 from ui_qt.widgets.button_row import ButtonRow
 from ui_qt.widgets.segmented_bar import SegmentedBar
+from ui_qt.widgets.settings_switch import SettingsSwitch
 from ui_qt.utils.error_messages import show_warning_dialog
 
 logger = logging.getLogger(__name__)
@@ -281,6 +286,7 @@ class _SectionRelay(QObject):
     records_event = pyqtSignal(int, str)
     records_job_done = pyqtSignal(int, str)
     recovery_job_done = pyqtSignal(int, str)
+    capabilities_loaded = pyqtSignal(int, object)
 
 
 _relay: Optional[_SectionRelay] = None
@@ -323,6 +329,12 @@ class RemoteEngineSection(QObject):
         self._manual = False
         #: While a pairing request waits on the host: {"name", "sas", "canceled"}.
         self._request = None
+        self._invite_server: Optional[remote_invite.HostInviteServer] = None
+        self._active_invite_url = ""
+        self._host_caps: dict = {}
+        self._host_ai_meta: dict = {}
+        self._caps_busy = False
+        self._caps_loaded_for = ""
         #: Marks what the shared relay brings back for this page.
         self._token = token = next(_tokens)
         relay = _section_relay()
@@ -337,6 +349,7 @@ class RemoteEngineSection(QObject):
         relay.pair_finished.connect(self._on_pair_finished)
         relay.pair_code.connect(self._on_pair_code)
         relay.scan_finished.connect(self._on_scan_finished)
+        relay.capabilities_loaded.connect(self._on_capabilities_loaded)
         self._countdown = QTimer(self)
         self._countdown.setInterval(1000)
         self._countdown.timeout.connect(self._refresh_pairing_code)
@@ -451,6 +464,26 @@ class RemoteEngineSection(QObject):
         pair_layout.addWidget(self.pair_button)
         self.pair_row.hide()
         self.find_tile.add_body(self.pair_row)
+
+        # Paste an openwhisper://pair?... invite link or .openwhisper-invite JSON.
+        self.invite_link_row = QWidget()
+        self.invite_link_row.setObjectName("remoteInviteLinkRow")
+        invite_link_layout = QHBoxLayout(self.invite_link_row)
+        invite_link_layout.setContentsMargins(0, 4, 0, 0)
+        invite_link_layout.setSpacing(8)
+        self.invite_link_edit = QLineEdit()
+        self.invite_link_edit.setObjectName("remoteInviteLinkEdit")
+        self.invite_link_edit.setPlaceholderText("Paste invite link (openwhisper://pair?...)")
+        self.invite_link_edit.setAccessibleName("Paste host invite link")
+        self.invite_link_edit.setMinimumHeight(36)
+        self.invite_link_edit.returnPressed.connect(self._pair_invite_link)
+        self.invite_link_button = Button("Use invite link")
+        self.invite_link_button.setObjectName("remoteInviteLinkButton")
+        self.invite_link_button.clicked.connect(self._pair_invite_link)
+        invite_link_layout.addWidget(self.invite_link_edit, stretch=1)
+        invite_link_layout.addWidget(self.invite_link_button)
+        self.find_tile.add_body(self.invite_link_row)
+
         self.find_message = WrappedLabel("")
         self.find_message.setObjectName("remoteFindMessage")
         self.find_tile.add_body(self.find_message)
@@ -604,10 +637,64 @@ class RemoteEngineSection(QObject):
         storage_actions.addStretch(1)
         self.storage_tile.add_body_layout(storage_actions)
 
+        # Client: live capabilities advertised by the paired host (ready.capabilities) + quick toggles.
+        self.capabilities_tile = InfoTile(
+            "Host services & AI capabilities",
+            "Features offered by your paired host. Using host services needs no API keys on this computer.",
+            icon("wand-purple.svg"),
+        )
+        _set_tile_id(self.capabilities_tile, "remoteCapabilitiesTile")
+        self.capabilities_status_label = WrappedLabel("")
+        self.capabilities_status_label.setObjectName("remoteCapabilitiesStatus")
+        self.capabilities_tile.add_body(self.capabilities_status_label)
+        self._client_cap_rows: dict = {}
+        self.client_use_host_switches: dict = {}
+        for cap_id, label_text, toggleable in (
+            ("speech", "Speech transcription", False),
+            ("text_cleanup", "AI Cleanup & Rewrites", True),
+            ("fast_judgments", "Fast Judgments", True),
+            ("walkthrough_writeup", "Walkthrough Write-Ups", True),
+            ("meeting_ai", "Meeting AI & Speaker ID", True),
+            ("agent_ask", "Agent Ask", False),
+            ("records", "Record Storage", False),
+        ):
+            cap_row = QWidget()
+            cap_row.setObjectName(f"remoteCapRow_{cap_id}")
+            cap_layout = QHBoxLayout(cap_row)
+            cap_layout.setContentsMargins(0, 2, 0, 2)
+            cap_layout.setSpacing(10)
+            name_lbl = QLabel(label_text)
+            name_lbl.setObjectName("remoteCapName")
+            state_lbl = WrappedLabel("Checking…")
+            state_lbl.setObjectName("remoteCapState")
+            cap_layout.addWidget(name_lbl)
+            cap_layout.addWidget(state_lbl, stretch=1)
+            sw = None
+            if toggleable:
+                sw = SettingsSwitch()
+                sw.setObjectName(f"remoteUseHost_{cap_id}")
+                sw.setAccessibleName(f"Use host for {label_text}")
+                sw.toggled.connect(
+                    lambda checked, cid=cap_id: self._on_client_use_host_toggled(cid, checked)
+                )
+                cap_layout.addWidget(sw)
+                self.client_use_host_switches[cap_id] = sw
+            self._client_cap_rows[cap_id] = (cap_row, state_lbl, sw)
+            self.capabilities_tile.add_body(cap_row)
+        cap_actions = QHBoxLayout()
+        cap_actions.setContentsMargins(0, 4, 0, 0)
+        self.refresh_caps_button = Button("Refresh host capabilities")
+        self.refresh_caps_button.setObjectName("remoteRefreshCapsButton")
+        self.refresh_caps_button.clicked.connect(lambda: self._fetch_capabilities(force=True))
+        cap_actions.addWidget(self.refresh_caps_button)
+        cap_actions.addStretch(1)
+        self.capabilities_tile.add_body_layout(cap_actions)
+        self.capabilities_tile.hide()
+
         dialog._tile_group(
             self.client_container.column,
             "",
-            [self.find_tile, self.client_tile, self.storage_tile],
+            [self.find_tile, self.client_tile, self.capabilities_tile, self.storage_tile],
             columns=1,
             intro=(
                 "Dictate or record meetings here while a faster computer does the transcription. "
@@ -683,6 +770,76 @@ class RemoteEngineSection(QObject):
         )
         _set_tile_id(self.manage_mcp_tile, "remoteManageMcpTile")
         self.manage_mcp_tile.checkbox.toggled.connect(self._on_manage_mcp_toggled)
+
+        # Opt-in Host AI service toggles (Phase 1 contracts).
+        self.host_ai_tiles: dict = {}
+        _ai_icons = {
+            "text_cleanup": "wand-purple.svg",
+            "fast_judgments": "bolt-green.svg",
+            "walkthrough_writeup": "file-text-blue.svg",
+            "meeting_ai": "users-amber.svg",
+            "agent_ask": "cpu-blue.svg",
+        }
+        for cap_id, attr_name, fallback_key, title, desc in remote_invite.HOST_CAPABILITY_SPECS:
+            tile = SettingTile(title, desc, icon(_ai_icons.get(cap_id, "wand-purple.svg")))
+            _set_tile_id(tile, f"remoteHostAi_{cap_id}")
+            tile.checkbox.toggled.connect(
+                lambda checked, c=cap_id, a=attr_name, fk=fallback_key: self._on_host_ai_toggled(
+                    c, a, fk, checked
+                )
+            )
+            self.host_ai_tiles[cap_id] = tile
+        self.text_cleanup_tile = self.host_ai_tiles["text_cleanup"]
+        self.fast_judgments_tile = self.host_ai_tiles["fast_judgments"]
+        self.walkthrough_writeup_tile = self.host_ai_tiles["walkthrough_writeup"]
+        self.meeting_ai_tile = self.host_ai_tiles["meeting_ai"]
+        self.agent_ask_tile = self.host_ai_tiles["agent_ask"]
+
+        # Share Client Invite Link card (HostInviteServer + QR + optional LAN cache).
+        self.invite_tile = InfoTile(
+            "Share Client Invite Link",
+            "Create a temporary 15-minute link on your LAN or Tailscale that downloads "
+            "OpenWhisper Client and pairs with this computer's verified certificate in one click.",
+            icon("world-blue.svg"),
+        )
+        _set_tile_id(self.invite_tile, "remoteInviteTile")
+        self.invite_url_label = WrappedLabel("No active invite link.")
+        self.invite_url_label.setObjectName("remoteInviteUrlLabel")
+        self.invite_url_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.invite_tile.add_body(self.invite_url_label)
+        invite_actions = QHBoxLayout()
+        invite_actions.setContentsMargins(0, 0, 0, 0)
+        invite_actions.setSpacing(8)
+        self.invite_generate_button = PrimaryButton("Generate invite link")
+        self.invite_generate_button.setObjectName("remoteInviteGenerateButton")
+        self.invite_generate_button.clicked.connect(self._generate_invite)
+        self.invite_copy_button = Button("Copy link")
+        self.invite_copy_button.setObjectName("remoteInviteCopyButton")
+        self.invite_copy_button.clicked.connect(self._copy_invite_link)
+        self.invite_copy_button.setEnabled(False)
+        self.invite_qr_button = Button("Show QR")
+        self.invite_qr_button.setObjectName("remoteInviteQrButton")
+        self.invite_qr_button.clicked.connect(self._show_invite_qr)
+        self.invite_qr_button.setEnabled(False)
+        self.invite_revoke_button = Button("Revoke")
+        self.invite_revoke_button.setObjectName("remoteInviteRevokeButton")
+        self.invite_revoke_button.clicked.connect(self._revoke_invite)
+        self.invite_revoke_button.setEnabled(False)
+        invite_actions.addWidget(self.invite_generate_button)
+        invite_actions.addWidget(self.invite_copy_button)
+        invite_actions.addWidget(self.invite_qr_button)
+        invite_actions.addWidget(self.invite_revoke_button)
+        invite_actions.addStretch(1)
+        self.invite_tile.add_body_layout(invite_actions)
+
+        self.invite_cache_tile = SettingTile(
+            "Cache Client installers on LAN",
+            "Serve SHA-256-verified Client installers directly from this host instead of "
+            "linking to GitHub Releases. Useful for offline or bandwidth-limited networks.",
+            icon("download-blue.svg"),
+        )
+        _set_tile_id(self.invite_cache_tile, "remoteInviteCacheTile")
+        self.invite_cache_tile.checkbox.toggled.connect(self._on_invite_cache_toggled)
 
         self.port_spin = NoWheelSpinBox()
         self.port_spin.setObjectName("remotePortSpin")
@@ -770,19 +927,39 @@ class RemoteEngineSection(QObject):
         dialog._tile_group(
             self.host_container.column,
             "",
-            [self.share_tile, self.management_tile, self.keep_records_tile,
-             self.manage_mcp_tile, self.tailscale_tile, self.port_tile, self.devices_tile],
+            [
+                self.share_tile,
+                self.invite_tile,
+                self.invite_cache_tile,
+                self.text_cleanup_tile,
+                self.fast_judgments_tile,
+                self.walkthrough_writeup_tile,
+                self.meeting_ai_tile,
+                self.agent_ask_tile,
+                self.management_tile,
+                self.keep_records_tile,
+                self.manage_mcp_tile,
+                self.tailscale_tile,
+                self.port_tile,
+                self.devices_tile,
+            ],
             columns=1,
         )
-        for button in (self.pair_button, self.use_button, self.pair_device_button):
+        for button in (self.pair_button, self.use_button, self.pair_device_button, self.invite_generate_button):
             compact_primary_button(button)
         for button in (
             self.manage_button, self.rename_host_button, self.forget_button, self.meeting_use_button,
             self.send_existing_button, self.bring_back_button, self.retry_records_button,
             self.search_button, self.sweep_button, self.manual_button, self.wait_cancel_button,
             self.cancel_pairing_button, self.recover_records_button,
+            self.invite_link_button, self.refresh_caps_button,
+            self.invite_copy_button, self.invite_qr_button, self.invite_revoke_button,
         ):
             neutral_button(button)
+        if remote_invite.is_client_only_edition():
+            self.tabs.hide()
+            self.host_container.hide()
+            self.client_container.show()
         self._built = True
         self.refresh()
 
@@ -852,6 +1029,14 @@ class RemoteEngineSection(QObject):
 
     _UI_ATTRIBUTES |= frozenset({
         'credential_recovery', 'credential_help', 'retry_key_button', 'open_keychain_button',
+        'invite_link_row', 'invite_link_edit', 'invite_link_button',
+        'capabilities_tile', 'capabilities_status_label', 'client_use_host_switches',
+        'refresh_caps_button',
+        'host_ai_tiles', 'text_cleanup_tile', 'fast_judgments_tile',
+        'walkthrough_writeup_tile', 'meeting_ai_tile', 'agent_ask_tile',
+        'invite_tile', 'invite_url_label', 'invite_generate_button',
+        'invite_copy_button', 'invite_qr_button', 'invite_revoke_button',
+        'invite_cache_tile',
     })
 
     def __getattr__(self, name):
@@ -884,13 +1069,24 @@ class RemoteEngineSection(QObject):
         if self._built and self.client_container.isVisible():
             self.on_shown()
 
+    def bind_invite_server(self, server: Optional[remote_invite.HostInviteServer]) -> None:
+        """Attach an externally-managed ``HostInviteServer`` for the Invite card."""
+        self._invite_server = server
+        if self._built:
+            self._refresh_invite_card()
+
     def on_shown(self) -> None:
         """The page came into view: ask the host what it keeps, or look for hosts."""
         if self._service is None:
             return
+        pending = remote_invite.consume_pending_startup_invite()
+        if pending is not None:
+            self.handle_invite_link(pending)
+            return
         if self._service.client_pairing() is not None:
             threading.Thread(target=self._records.refresh_summary,
                              name="remote-records-summary", daemon=True).start()
+            self._fetch_capabilities()
             return
         if time.monotonic() - self._scan_at > TAILNET_RESCAN_S:
             self.scan_nearby()
@@ -900,10 +1096,27 @@ class RemoteEngineSection(QObject):
     def refresh(self) -> None:
         if not self._built:
             return
+        client_only = remote_invite.is_client_only_edition()
+        self.tabs.setVisible(not client_only)
+        if client_only:
+            self.client_container.show()
+            self.host_container.hide()
         service = self._service
-        for widget in (self.client_tile, self.find_tile, self.share_tile,
-                       self.management_tile, self.keep_records_tile, self.manage_mcp_tile,
-                       self.tailscale_tile, self.port_tile, self.devices_tile):
+        for widget in (
+            self.client_tile,
+            self.find_tile,
+            self.capabilities_tile,
+            self.share_tile,
+            self.invite_tile,
+            self.invite_cache_tile,
+            *self.host_ai_tiles.values(),
+            self.management_tile,
+            self.keep_records_tile,
+            self.manage_mcp_tile,
+            self.tailscale_tile,
+            self.port_tile,
+            self.devices_tile,
+        ):
             widget.setEnabled(service is not None)
         if service is None:
             self.client_tile.show()
@@ -911,10 +1124,12 @@ class RemoteEngineSection(QObject):
             self.paired_row.hide()
             self.pairing_box.hide()
             self.find_tile.hide()
+            self.capabilities_tile.hide()
             self.tailscale_tile.hide()
             self.storage_tile.hide()
             return
         self._refresh_client(service)
+        self._refresh_capabilities(service)
         self._refresh_records()
         self._refresh_find(service)
         self._refresh_host(service)
@@ -1251,7 +1466,9 @@ class RemoteEngineSection(QObject):
         )
 
         pairing = service.client_pairing()
-        if running:
+        if remote_invite.is_client_only_edition():
+            rail = f"Paired · {pairing.host_name}" if pairing is not None else "Not paired"
+        elif running:
             rail = f"Sharing · {len(state['devices'])} paired"
         elif pairing is not None:
             rail = f"Paired · {pairing.host_name}"
@@ -1259,6 +1476,7 @@ class RemoteEngineSection(QObject):
             rail = "Off"
         if self._set_rail_value is not None:
             self._set_rail_value(rail)
+        self._refresh_invite_card(state)
         self._refresh_tabs(pairing, state, running)
 
     def _sync_host_switches(self, state: dict) -> None:
@@ -1286,6 +1504,35 @@ class RemoteEngineSection(QObject):
             tile._sync_checked_property(checkbox.isChecked())
             checkbox.blockSignals(blocked)
 
+        settings_snap = settings_manager.load_all_settings()
+        for cap_id, attr_name, fallback_key, _title, _desc in remote_invite.HOST_CAPABILITY_SPECS:
+            tile = self.host_ai_tiles[cap_id]
+            checked = (
+                state.get(cap_id) is True
+                if cap_id in state
+                else bool(remote_invite.read_setting_compat(attr_name, fallback_key, False, settings_snap))
+            )
+            cb = tile.checkbox
+            blk = cb.blockSignals(True)
+            cb.setChecked(checked)
+            tile._sync_checked_property(checked)
+            cb.blockSignals(blk)
+
+        cache_checked = (
+            state.get("invite_cache") is True
+            if "invite_cache" in state
+            else bool(
+                remote_invite.read_setting_compat(
+                    *remote_invite.HOST_INVITE_CACHE_SPEC, False, settings_snap
+                )
+            )
+        )
+        cb_cache = self.invite_cache_tile.checkbox
+        blk = cb_cache.blockSignals(True)
+        cb_cache.setChecked(cache_checked)
+        self.invite_cache_tile._sync_checked_property(cache_checked)
+        cb_cache.blockSignals(blk)
+
     def _show_tailscale_trust(self, state: dict, tailnet, on_tailnet: bool) -> None:
         # Only offered where it can work: Tailscale running under a person's
         # account (tagged servers have no owner to compare against).
@@ -1305,6 +1552,11 @@ class RemoteEngineSection(QObject):
 
     def _refresh_tabs(self, pairing, state, running: bool) -> None:
         """Say on each tab what is going on there, and open on the one in use."""
+        if remote_invite.is_client_only_edition():
+            self.tabs.hide()
+            self.client_container.show()
+            self.host_container.hide()
+            return
         self.tabs.set_detail(0, f"Paired · {pairing.host_name}" if pairing else "Not paired")
         self.tabs.set_detail(1, (
             f"Sharing · {len(state['devices'])} paired" if running
@@ -1315,12 +1567,22 @@ class RemoteEngineSection(QObject):
             self.tabs.setCurrentIndex(1)
 
     def reveal_target(self, target: QWidget) -> None:
+        if remote_invite.is_client_only_edition():
+            self.client_container.show()
+            self.host_container.hide()
+            if target is self.client_tile and target.isHidden():
+                self._show_manual()
+            return
         self._tab_chosen = True
         self.tabs.setCurrentIndex(int(self.host_container.isAncestorOf(target)))
         if target is self.client_tile and target.isHidden():
             self._show_manual()
 
     def _show_section(self, index: int) -> None:
+        if remote_invite.is_client_only_edition():
+            self.client_container.show()
+            self.host_container.hide()
+            return
         self.client_container.setVisible(index == 0)
         self.host_container.setVisible(index == 1)
         if index == 0 and self._service is not None and self._service.client_pairing() is None:
@@ -1602,26 +1864,33 @@ class RemoteEngineSection(QObject):
         self._request = None
         self.wait_box.hide()
         self.pair_button.setEnabled(True)
+        self.invite_link_button.setEnabled(True)
         if error is not None:
             self._say(self._pair_error(error, host))
         elif pairing.via == "tailscale":
+            self.invite_link_edit.clear()
             self._say(
                 f"Paired with {pairing.host_name} through your Tailscale account. "
                 "Click \"Use for dictation\" to start using it."
             )
+            self._fetch_capabilities(force=True)
         elif pairing.via == "approval":
             self._manual = False
+            self.invite_link_edit.clear()
             self._say(
                 f"Paired with {pairing.host_name}. Click \"Use for dictation\" to start using it."
             )
+            self._fetch_capabilities(force=True)
         else:
             self._manual = False
             self.code_edit.clear()
+            self.invite_link_edit.clear()
             self._say(
                 f"Paired with {pairing.host_name}. Check that its identity, "
                 f"{protocol.short_fingerprint(pairing.fingerprint)}, matches the one "
                 "shown there."
             )
+            self._fetch_capabilities(force=True)
         self.refresh()
 
     def _use_engine(self) -> None:
@@ -1723,6 +1992,341 @@ class RemoteEngineSection(QObject):
     def _on_manage_mcp_toggled(self, checked: bool) -> None:
         if self._service is not None:
             self._service.set_manage_mcp(checked)
+
+    # ---- host AI services, invite server & client capabilities ----
+
+    def _on_host_ai_toggled(
+        self, cap_id: str, attr_name: str, fallback_key: str, checked: bool
+    ) -> None:
+        setter = getattr(self._service, f"set_{cap_id}", None) if self._service is not None else None
+        if callable(setter):
+            setter(checked)
+        else:
+            remote_invite.save_setting_compat(
+                attr_name, fallback_key, checked, manager=settings_manager
+            )
+            if self._service is not None and hasattr(self._service, "_notify"):
+                self._service._notify("state")
+
+    def _on_invite_cache_toggled(self, checked: bool) -> None:
+        setter = getattr(self._service, "set_invite_cache", None) if self._service is not None else None
+        if callable(setter):
+            setter(checked)
+        else:
+            remote_invite.save_setting_compat(
+                *remote_invite.HOST_INVITE_CACHE_SPEC, checked, manager=settings_manager
+            )
+
+    def _ensure_invite_server(self) -> remote_invite.HostInviteServer:
+        if self._invite_server is None:
+            service = self._service
+            self._invite_server = remote_invite.HostInviteServer(
+                host_info_provider=lambda: remote_invite.build_host_info_for_service(
+                    service, settings_manager.load_all_settings()
+                ),
+                pairing_code_provider=(
+                    service.open_pairing if service is not None and hasattr(service, "open_pairing") else None
+                ),
+                cache_enabled_provider=lambda: bool(
+                    remote_invite.read_setting_compat(
+                        *remote_invite.HOST_INVITE_CACHE_SPEC, False, manager=settings_manager
+                    )
+                ),
+            )
+            if service is not None and hasattr(service, "register_invite_server"):
+                try:
+                    service.register_invite_server(self._invite_server)
+                except Exception:
+                    logger.debug("Could not register HostInviteServer on service", exc_info=True)
+        return self._invite_server
+
+    def _refresh_invite_card(self, state: Optional[dict] = None) -> None:
+        if not self._built:
+            return
+        running = bool(state.get("running")) if isinstance(state, dict) else False
+        self.invite_generate_button.setEnabled(self._service is not None and running)
+        session = self._invite_server.active_invite() if self._invite_server is not None else None
+        has_active = session is not None and bool(self._active_invite_url)
+        self.invite_copy_button.setEnabled(has_active)
+        self.invite_qr_button.setEnabled(has_active)
+        self.invite_revoke_button.setEnabled(has_active)
+        if has_active and session is not None:
+            mins = max(1, int((session.remaining_seconds(time.monotonic()) + 59) // 60))
+            self.invite_url_label.setText(
+                f"{self._active_invite_url}\nExpires in ~{mins} min."
+            )
+        elif not running:
+            self.invite_url_label.setText("Turn on sharing above to generate a client invite link.")
+        else:
+            self.invite_url_label.setText("No active invite link. Click Generate invite link to share.")
+
+    def _generate_invite(self) -> None:
+        if self._service is None:
+            return
+        server = self._ensure_invite_server()
+        port = int(
+            remote_invite.read_setting_compat(
+                *remote_invite.HOST_INVITE_PORT_SPEC,
+                remote_invite.DEFAULT_INVITE_PORT,
+                manager=settings_manager,
+            )
+        )
+        try:
+            if not server.running:
+                server.start(port=port)
+            session = server.create_invite()
+            info = remote_invite.build_host_info_for_service(
+                self._service, settings_manager.load_all_settings()
+            )
+            addr = info.get("address") or "127.0.0.1"
+            self._active_invite_url = server.invite_url(str(addr), session.token)
+            setter = getattr(self._service, "set_invite_enabled", None)
+            if callable(setter):
+                setter(True)
+            else:
+                remote_invite.save_setting_compat(
+                    *remote_invite.HOST_INVITE_ENABLED_SPEC, True, manager=settings_manager
+                )
+        except Exception as exc:
+            logger.warning("Could not generate client invite link", exc_info=True)
+            self.invite_url_label.setText(f"Could not start invite server: {exc}")
+            return
+        self._copy_invite_link()
+        self._refresh_invite_card(self._service.host_state())
+
+    def _copy_invite_link(self) -> None:
+        if not self._active_invite_url:
+            return
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(self._active_invite_url)
+        self.invite_url_label.setText(f"{self._active_invite_url}\nCopied to clipboard.")
+
+    def _show_invite_qr(self) -> None:
+        if not self._active_invite_url:
+            return
+        dialog = QDialog(self.invite_tile.window())
+        dialog.setObjectName("remoteInviteQrDialog")
+        dialog.setWindowTitle("Client Invite QR Code")
+        dialog.setMinimumWidth(340)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 18)
+        layout.setSpacing(12)
+        layout.addWidget(
+            WrappedLabel("Scan with a phone or laptop camera, or open this URL in a browser on the same network:")
+        )
+        qr_holder = QFrame()
+        qr_holder.setObjectName("remoteInviteQrFrame")
+        qr_holder.setStyleSheet("QFrame#remoteInviteQrFrame { background: #ffffff; border-radius: 10px; }")
+        qr_layout = QVBoxLayout(qr_holder)
+        qr_layout.setContentsMargins(12, 12, 12, 12)
+        qr_label = QLabel()
+        qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        svg_bytes = render_invite_qr_svg_bytes(self._active_invite_url, module_size=6, quiet_zone=4)
+        img = QImage()
+        if img.loadFromData(QByteArray(svg_bytes), "SVG"):
+            qr_label.setPixmap(
+                QPixmap.fromImage(img).scaled(
+                    240, 240, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation
+                )
+            )
+        qr_layout.addWidget(qr_label)
+        layout.addWidget(qr_holder, alignment=Qt.AlignmentFlag.AlignHCenter)
+        url_lbl = WrappedLabel(self._active_invite_url)
+        url_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(url_lbl)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        copy_btn = buttons.addButton("Copy link", QDialogButtonBox.ButtonRole.ActionRole)
+        copy_btn.clicked.connect(self._copy_invite_link)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
+
+    def _revoke_invite(self) -> None:
+        if self._invite_server is not None:
+            self._invite_server.revoke_invite()
+        self._active_invite_url = ""
+        setter = getattr(self._service, "set_invite_enabled", None) if self._service is not None else None
+        if callable(setter):
+            setter(False)
+        else:
+            remote_invite.save_setting_compat(
+                *remote_invite.HOST_INVITE_ENABLED_SPEC, False, manager=settings_manager
+            )
+        self._refresh_invite_card(self._service.host_state() if self._service is not None else None)
+
+    def _pair_invite_link(self) -> None:
+        raw = self.invite_link_edit.text().strip()
+        try:
+            invite = remote_invite.parse_invite_input(raw)
+        except remote_invite.InviteValidationError as exc:
+            self._say(str(exc))
+            return
+        self.handle_invite_link(invite)
+
+    def handle_invite_link(self, invite: remote_invite.InviteLink) -> None:
+        """Pair with a validated ``InviteLink`` (confirming before replacing a different host)."""
+        if self._service is None or self._pairing_busy:
+            return
+        existing = self._service.client_pairing()
+        if existing is not None:
+            existing_fp = str(getattr(existing, "fingerprint", "") or "").upper()
+            if existing_fp and existing_fp != invite.fingerprint.upper():
+                if not remote_invite._qt_confirm_replace_host(self.client_tile.window(), existing, invite):
+                    self._say(f"Kept existing pairing with {existing.host_name}.")
+                    return
+
+        self._pairing_busy = True
+        self.pair_button.setEnabled(False)
+        self.invite_link_button.setEnabled(False)
+        self._say(f"Verifying {invite.name} ({invite.short_fingerprint}) and pairing...")
+        service, token = self._service, self._token
+        finished = _section_relay().pair_finished
+
+        def work():
+            try:
+                pairing = remote_invite.pair_with_invite(
+                    service,
+                    invite,
+                    confirm_replace=lambda _old, _new: True,
+                )
+            except Exception as exc:
+                logger.warning("Invite pairing failed", exc_info=True)
+                finished.emit(token, None, exc, None)
+            else:
+                finished.emit(token, pairing, None, None)
+
+        threading.Thread(target=work, name="remote-engine-invite-pair", daemon=True).start()
+        self.refresh()
+
+    def _fetch_capabilities(self, *, force: bool = False) -> None:
+        service = self._service
+        if service is None or self._caps_busy:
+            return
+        pairing = service.client_pairing()
+        if pairing is None:
+            return
+        fp = pairing.fingerprint
+        if not force and self._caps_loaded_for == fp and self._host_caps:
+            return
+        self._caps_busy = True
+        token = self._token
+        loaded = _section_relay().capabilities_loaded
+
+        def work():
+            try:
+                info = remote_invite.fetch_host_capabilities(service)
+            except Exception as exc:
+                logger.debug("Could not fetch paired host capabilities: %s", exc)
+                info = {"error": str(exc), "fingerprint": fp}
+            else:
+                info["fingerprint"] = fp
+            loaded.emit(token, info)
+
+        threading.Thread(target=work, name="remote-host-caps", daemon=True).start()
+        self._refresh_capabilities(service)
+
+    def _on_capabilities_loaded(self, token: int, info) -> None:
+        if token != self._token:
+            return
+        self._caps_busy = False
+        if isinstance(info, dict) and "error" not in info:
+            self._host_caps = dict(info.get("capabilities") or {})
+            self._host_ai_meta = dict(info.get("ai") or {})
+            self._caps_loaded_for = str(info.get("fingerprint") or "")
+        if self._service is not None:
+            self._refresh_capabilities(self._service)
+
+    def _refresh_capabilities(self, service) -> None:
+        if not self._built:
+            return
+        pairing = service.client_pairing()
+        self.capabilities_tile.setVisible(pairing is not None)
+        if pairing is None:
+            return
+        self.refresh_caps_button.setEnabled(not self._caps_busy)
+        if self._caps_busy:
+            self.capabilities_status_label.setText(f"Checking services offered by {pairing.host_name}…")
+        elif self._host_caps:
+            self.capabilities_status_label.setText(
+                f"Services reported by {pairing.host_name}. Toggle any enabled capability to route it through the host."
+            )
+        else:
+            self.capabilities_status_label.setText(
+                f"Click Refresh host capabilities to check which AI services {pairing.host_name} offers."
+            )
+        settings_snap = settings_manager.load_all_settings()
+        active_checks = {
+            "text_cleanup": (
+                settings_snap.get(SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER) == remote_invite.REMOTE_HOST_PROVIDER
+                and bool(settings_snap.get(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED))
+            ),
+            "fast_judgments": settings_snap.get(SettingsKey.TYPESAFE_PROVIDER) == remote_invite.REMOTE_HOST_PROVIDER,
+            "walkthrough_writeup": (
+                settings_snap.get(SettingsKey.WALKTHROUGH_WRITE_UP_AGENT) == remote_invite.REMOTE_HOST_PROVIDER
+                and bool(settings_snap.get(SettingsKey.WALKTHROUGH_WRITE_UP))
+            ),
+            "meeting_ai": (
+                settings_snap.get(SettingsKey.MEETING_AGENT_CORE) == remote_invite.REMOTE_HOST_PROVIDER
+                or settings_snap.get(SettingsKey.MEETING_SPEAKER_ID_BACKEND) == remote_invite.REMOTE_HOST_PROVIDER
+            ),
+        }
+        for cap_id, (_row, state_lbl, sw) in self._client_cap_rows.items():
+            if cap_id == "speech":
+                offered = True
+            elif cap_id == "meeting_ai":
+                offered = bool(self._host_caps.get("meeting_ai") or self._host_caps.get("speaker_diarization"))
+            else:
+                offered = bool(self._host_caps.get(cap_id))
+            ai_info = self._host_ai_meta.get(cap_id) if isinstance(self._host_ai_meta.get(cap_id), dict) else {}
+            provider_label = str(ai_info.get("label") or "")
+            if offered:
+                state_lbl.setText(f"Available on host ({provider_label})" if provider_label else "Available on host")
+            elif self._host_caps:
+                state_lbl.setText("Off on host")
+            else:
+                state_lbl.setText("Not checked yet")
+            if sw is not None:
+                blk = sw.blockSignals(True)
+                sw.setChecked(bool(active_checks.get(cap_id)))
+                sw.setEnabled(offered or bool(active_checks.get(cap_id)))
+                sw.blockSignals(blk)
+
+    def _on_client_use_host_toggled(self, cap_id: str, checked: bool) -> None:
+        if cap_id == "text_cleanup":
+            if checked:
+                settings_manager.update_settings({
+                    SettingsKey.TRANSCRIPT_CLEANUP_ENABLED: True,
+                    SettingsKey.TRANSCRIPT_CLEANUP_PROVIDER: remote_invite.REMOTE_HOST_PROVIDER,
+                })
+            else:
+                settings_manager.save_setting(SettingsKey.TRANSCRIPT_CLEANUP_ENABLED, False)
+        elif cap_id == "fast_judgments":
+            settings_manager.save_setting(
+                SettingsKey.TYPESAFE_PROVIDER,
+                remote_invite.REMOTE_HOST_PROVIDER if checked else "typesafe",
+            )
+        elif cap_id == "walkthrough_writeup":
+            if checked:
+                settings_manager.update_settings({
+                    SettingsKey.WALKTHROUGH_WRITE_UP: True,
+                    SettingsKey.WALKTHROUGH_WRITE_UP_AGENT: remote_invite.REMOTE_HOST_PROVIDER,
+                })
+            else:
+                settings_manager.save_setting(SettingsKey.WALKTHROUGH_WRITE_UP, False)
+        elif cap_id == "meeting_ai":
+            if checked:
+                settings_manager.update_settings({
+                    SettingsKey.MEETING_AGENT_CORE: remote_invite.REMOTE_HOST_PROVIDER,
+                    SettingsKey.MEETING_SPEAKER_ID_BACKEND: remote_invite.REMOTE_HOST_PROVIDER,
+                })
+            else:
+                settings_manager.update_settings({
+                    SettingsKey.MEETING_AGENT_CORE: "pi",
+                    SettingsKey.MEETING_SPEAKER_ID_BACKEND: "off",
+                })
+        if self._service is not None:
+            self._refresh_capabilities(self._service)
 
     # ---- where records are kept ----
 

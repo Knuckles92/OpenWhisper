@@ -39,6 +39,7 @@ from services.components import (
     speaker_model_path,
 )
 from services import installed_agents, openai_retirement
+from services.remote_asr import invite as remote_invite
 from services.hf_access import (
     CachedModelInfo,
     custom_model_cache_info,
@@ -172,6 +173,8 @@ def _display_name_for_backend(model_value: str) -> str:
 
 def agent_core_label(core: str) -> str:
     """Short display name for a ``MeetingAgentCore`` value."""
+    if core == remote_invite.REMOTE_HOST_PROVIDER:
+        return "Paired host"
     if core in (MeetingAgentCore.PI, MeetingAgentCore.DIRECT):
         return "Pi (sidecar)"
     if core == MeetingAgentCore.OPENCODE:
@@ -189,6 +192,8 @@ def _opencode_in_downloads() -> bool:
 
 def speaker_id_label(backend: str) -> str:
     """Short display name for a ``MeetingSpeakerIdBackend`` value."""
+    if backend == remote_invite.REMOTE_HOST_PROVIDER:
+        return "Paired host speaker labels"
     if backend == MeetingSpeakerIdBackend.OFF:
         return "Me / Others labels"
     if backend == MeetingSpeakerIdBackend.OPENAI:
@@ -392,12 +397,44 @@ class ModelAssignments(QObject):
 
     def build_voice_page(self, layout: QVBoxLayout) -> None:
         """Dictation → Voice model: engine, model, and what is downloaded."""
+        client_only = remote_invite.is_client_only_edition()
+
+        self.client_host_card = InfoTile(
+            "Powered by your OpenWhisper Host",
+            "Speech recognition runs on your paired host. Cloud API fallback remains available below.",
+            _design_icon("server-blue.svg"),
+        )
+        self.client_host_card.setProperty("tileId", "clientOnlyHostCard")
+        client_actions = QHBoxLayout()
+        client_actions.setContentsMargins(0, 0, 0, 0)
+        client_actions.setSpacing(8)
+        self.client_manage_host_button = neutral_button(Button("Manage host models"))
+        self.client_manage_host_button.setObjectName("clientManageHostModelsButton")
+        self.client_manage_host_button.clicked.connect(self._open_host_models_or_remote)
+        client_actions.addWidget(self.client_manage_host_button)
+        client_actions.addStretch(1)
+        self.client_host_card.add_body_layout(client_actions)
+        self.client_full_edition_link = WrappedLabel(
+            f'Want local models on this PC? <a href="{remote_invite.GITHUB_RELEASES_URL}">'
+            "Get Full OpenWhisper</a>."
+        )
+        self.client_full_edition_link.setObjectName("clientFullEditionLink")
+        self.client_full_edition_link.setTextFormat(Qt.TextFormat.RichText)
+        self.client_full_edition_link.setOpenExternalLinks(True)
+        self.client_host_card.add_body(self.client_full_edition_link)
+        self.client_host_card.setVisible(client_only)
+        layout.addWidget(self.client_host_card)
+
         self._group_title(layout, "Engine")
         card = self._card(layout)
         self.engine_combo = ElidingComboBox()
         self.engine_combo.setObjectName("ondemandEngineCombo")
         self.engine_combo.setMinimumHeight(40)
-        populate_backend_combo(self.engine_combo)
+        if client_only:
+            self.engine_combo.addItem("Remote computer", "remote")
+            self.engine_combo.addItem("API", "api")
+        else:
+            populate_backend_combo(self.engine_combo)
         self.engine_combo.currentIndexChanged.connect(self._on_engine_changed)
         card.addWidget(self._field("Recording engine", self.engine_combo))
 
@@ -433,7 +470,9 @@ class ModelAssignments(QObject):
         self.dictation_languages = DictationLanguagesField()
         self.dictation_languages.changed.connect(self._on_dictation_languages_changed)
         self.dictation_languages.engine_requested.connect(self.choose_backend)
-        card.addWidget(self._field("Languages I dictate in", self.dictation_languages))
+        self.dictation_languages_field = self._field("Languages I dictate in", self.dictation_languages)
+        self.dictation_languages_field.setVisible(not client_only)
+        card.addWidget(self.dictation_languages_field)
 
         self.engine_inventory_title = self._group_title(layout, "On this computer")
         self.engine_inventory_row = QWidget()
@@ -452,16 +491,22 @@ class ModelAssignments(QObject):
         row.addWidget(self.speech_download_button)
         layout.addWidget(self.engine_inventory_row)
 
-        layout.addWidget(
-            self._footnote(
-                "For dictation previews, Nemotron uses native streaming; Parakeet "
-                "transcribes short audio chunks with the loaded model; Local "
-                "Whisper uses a separate tiny.en model. The final transcript uses "
-                "your selected model. Nemotron and Moonshine provide native live "
-                "previews in Meeting Mode."
-            )
+        self.voice_local_footnote = self._footnote(
+            "For dictation previews, Nemotron uses native streaming; Parakeet "
+            "transcribes short audio chunks with the loaded model; Local "
+            "Whisper uses a separate tiny.en model. The final transcript uses "
+            "your selected model. Nemotron and Moonshine provide native live "
+            "previews in Meeting Mode."
         )
+        self.voice_local_footnote.setVisible(not client_only)
+        layout.addWidget(self.voice_local_footnote)
         self._built.add(VOICE_MODEL)
+
+    def _open_host_models_or_remote(self) -> None:
+        if hasattr(self._host, "show_host_models"):
+            self._host.show_host_models()
+        else:
+            self._open_meeting_remote_settings()
 
     def build_cleanup_model_section(self, layout: QVBoxLayout) -> InfoTile:
         """The language model AI cleanup runs, embedded in the AI cleanup page."""
@@ -521,7 +566,8 @@ class ModelAssignments(QObject):
         self.meeting_source_combo = ElidingComboBox()
         self.meeting_source_combo.setObjectName("meetingSpeechSourceCombo")
         self.meeting_source_combo.setMinimumHeight(40)
-        self.meeting_source_combo.addItem("This computer", "local")
+        if not remote_invite.is_client_only_edition():
+            self.meeting_source_combo.addItem("This computer", "local")
         self.meeting_source_combo.addItem("Remote computer", "remote")
         self.meeting_source_combo.currentIndexChanged.connect(self._on_meeting_source_changed)
         self.meeting_source_field = self._field("Runs on", self.meeting_source_combo)
@@ -578,10 +624,23 @@ class ModelAssignments(QObject):
             "Off (Me / Others channel labels only)",
             MeetingSpeakerIdBackend.OFF,
         )
-        self.meeting_speaker_id_combo.addItem(
-            "On-device (WeSpeaker · Speaker 1, Speaker 2, …)",
-            MeetingSpeakerIdBackend.LOCAL,
+        client_only = remote_invite.is_client_only_edition()
+        show_remote_speaker = (
+            client_only
+            or self._remote_pairing() is not None
+            or resolve_meeting_speaker_id_backend(self._settings_snapshot())
+            == remote_invite.REMOTE_HOST_PROVIDER
         )
+        if not client_only:
+            self.meeting_speaker_id_combo.addItem(
+                "On-device (WeSpeaker · Speaker 1, Speaker 2, …)",
+                MeetingSpeakerIdBackend.LOCAL,
+            )
+        if show_remote_speaker:
+            self.meeting_speaker_id_combo.addItem(
+                "Paired host (Speaker 1, Speaker 2, … on host)",
+                remote_invite.REMOTE_HOST_PROVIDER,
+            )
         if not openai_retirement.retired():
             self.meeting_speaker_id_combo.addItem(
                 "OpenAI (system audio after End · ends "
@@ -700,8 +759,35 @@ class ModelAssignments(QObject):
 
     def build_runtime_page(self, layout: QVBoxLayout) -> None:
         """Models & storage → Runtime: device and quantization."""
-        self._group_title(layout, "Local Whisper")
-        card = self._card(layout)
+        client_only = remote_invite.is_client_only_edition()
+        self.runtime_client_card = InfoTile(
+            "Powered by your OpenWhisper Host",
+            "GPU and speech runtime settings live on your paired host. Open Manage host models "
+            "to change the host's active model or hardware.",
+            _design_icon("server-blue.svg"),
+        )
+        rt_btn = neutral_button(Button("Manage host models"))
+        rt_btn.clicked.connect(self._open_host_models_or_remote)
+        rt_row = QHBoxLayout()
+        rt_row.addWidget(rt_btn)
+        rt_row.addStretch(1)
+        self.runtime_client_card.add_body_layout(rt_row)
+        rt_link = WrappedLabel(
+            f'Want local models on this PC? <a href="{remote_invite.GITHUB_RELEASES_URL}">'
+            "Get Full OpenWhisper</a>."
+        )
+        rt_link.setTextFormat(Qt.TextFormat.RichText)
+        rt_link.setOpenExternalLinks(True)
+        self.runtime_client_card.add_body(rt_link)
+        self.runtime_client_card.setVisible(client_only)
+        layout.addWidget(self.runtime_client_card)
+
+        self.runtime_local_section = QWidget()
+        local_layout = QVBoxLayout(self.runtime_local_section)
+        local_layout.setContentsMargins(0, 0, 0, 0)
+        local_layout.setSpacing(10)
+        self._group_title(local_layout, "Local Whisper")
+        card = self._card(local_layout)
         runtime_row = QHBoxLayout()
         runtime_row.setSpacing(12)
         device_choices = (
@@ -727,13 +813,15 @@ class ModelAssignments(QObject):
                 "engine."
             )
         )
-        layout.addWidget(
+        local_layout.addWidget(
             self._footnote(
                 "Parakeet, Nemotron, Moonshine, and Qwen3-ASR set their device on "
                 "Dictation → Voice model. Downloaded models and optional "
                 "components are managed in Models & engines."
             )
         )
+        self.runtime_local_section.setVisible(not client_only)
+        layout.addWidget(self.runtime_local_section)
         self._built.add(RUNTIME)
 
     def _pi_label(self) -> str:
@@ -1751,11 +1839,17 @@ class ModelAssignments(QObject):
                                exc_info=True)
                 model_value = config.DEFAULT_BACKEND
             blocker = self.engine_combo.blockSignals(True)
-            index = ensure_backend_item(self.engine_combo, model_value)
-            if index < 0:
-                index = ensure_backend_item(self.engine_combo, config.DEFAULT_BACKEND)
-            self.engine_combo.setCurrentIndex(max(0, index))
+            if remote_invite.is_client_only_edition():
+                effective = model_value if model_value in ("remote", "api") else "remote"
+                index = self.engine_combo.findData(effective)
+                self.engine_combo.setCurrentIndex(max(0, index))
+            else:
+                index = ensure_backend_item(self.engine_combo, model_value)
+                if index < 0:
+                    index = ensure_backend_item(self.engine_combo, config.DEFAULT_BACKEND)
+                self.engine_combo.setCurrentIndex(max(0, index))
             self.engine_combo.blockSignals(blocker)
+            self._refresh_client_host_card()
             self._update_engine_caption()
             self._update_ondemand_whisper_enabled()
             self.api_server.refresh()
@@ -1787,12 +1881,50 @@ class ModelAssignments(QObject):
             caption += " " + tip
         self.engine_caption.setText(caption)
 
+    def _refresh_client_host_card(self) -> None:
+        if VOICE_MODEL not in self._built:
+            return
+        client_only = remote_invite.is_client_only_edition()
+        self.client_host_card.setVisible(client_only)
+        if not client_only:
+            return
+        service = getattr(self._host, "_remote_service", None)
+        pairing = service.client_pairing() if service is not None and hasattr(service, "client_pairing") else None
+        if pairing is None:
+            pairing = self._remote_pairing()
+        if pairing is not None:
+            self.client_host_card.title_label.setText(f"Powered by {pairing.host_name}")
+            self.client_host_card.set_description(
+                f"Speech recognition runs on {pairing.host_name} ({pairing.address}). "
+                "Cloud API fallback remains available below."
+            )
+            self.client_manage_host_button.setText("Manage host models")
+        else:
+            self.client_host_card.title_label.setText("Powered by your OpenWhisper Host")
+            self.client_host_card.set_description(
+                "Pair with an OpenWhisper Host in Remote engine to use its GPU and speech models, "
+                "or choose API below for a cloud speech endpoint."
+            )
+            self.client_manage_host_button.setText("Connect to a Host")
+
     def _update_ondemand_whisper_enabled(self) -> None:
-        is_local = self.engine_combo.currentData() == "local_whisper"
+        client_only = remote_invite.is_client_only_edition()
+        backend = self.engine_combo.currentData()
+        if client_only:
+            self.ondemand_whisper_picker.setEnabled(False)
+            self.ondemand_whisper_field.setVisible(False)
+            self.speech_controls.setVisible(False)
+            self.speech_download_button.setVisible(False)
+            self.api_server.setVisible(backend == "api")
+            self.dictation_languages_field.setVisible(False)
+            self.engine_inventory_title.setVisible(False)
+            self.engine_inventory_row.setVisible(False)
+            self.voice_local_footnote.setVisible(False)
+            return
+        is_local = backend == "local_whisper"
         self.ondemand_whisper_picker.setEnabled(is_local)
         self.ondemand_whisper_field.setVisible(is_local)
         from services.local_asr.catalog import BACKENDS
-        backend = self.engine_combo.currentData()
         is_speech = backend in BACKENDS
         self.speech_controls.setVisible(is_speech)
         self.speech_download_button.setVisible(is_speech)
@@ -1930,6 +2062,14 @@ class ModelAssignments(QObject):
         backend = self.meeting_speaker_id_combo.currentData()
         if backend != MeetingSpeakerIdBackend.LOCAL:
             self.speaker_model_download.setVisible(False)
+        if backend == remote_invite.REMOTE_HOST_PROVIDER:
+            pairing = self._remote_pairing()
+            host = pairing.host_name if pairing else "your paired host"
+            self.speaker_id_status.setText(
+                f"Speaker embeddings run on {host} when Meeting AI & Speaker ID is enabled there. "
+                "No local ONNX runtime or speaker model is downloaded on this computer."
+            )
+            return
         if backend == MeetingSpeakerIdBackend.OFF:
             self.speaker_id_status.setText(
                 "Channel labels only: microphone is Me, system audio is "
@@ -2054,6 +2194,9 @@ class ModelAssignments(QObject):
         self._load_text_settings()
         self._load_meeting_settings()
         self._load_engine_and_runtime()
+        if remote_invite.is_client_only_edition():
+            self._refresh_rail_values()
+            return
         if not self._background_cache_scan:
             self._refresh_cached_model_state(
                 scan_cached_models(max_age_seconds=30.0)

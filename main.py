@@ -18,6 +18,16 @@ from pathlib import Path
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 
 
+def _is_client_only_edition() -> bool:
+    """Return True when running the Client-Only OpenWhisper edition."""
+    try:
+        from services.edition import is_client_only  # type: ignore[import-not-found]
+
+        return bool(is_client_only())
+    except ImportError:
+        return os.environ.get("OPENWHISPER_EDITION", "").strip().lower() == "client"
+
+
 def _run_package_self_test() -> None:
     """Import release-critical modules and initialize Qt without starting UI."""
     import importlib
@@ -37,12 +47,8 @@ def _run_package_self_test() -> None:
             check=True, timeout=35,
         )
 
-    modules = [ 
-        "av",
-        "ctranslate2",
-        "faster_whisper",
+    modules = [
         "lxml",
-        "onnxruntime",
         "openpyxl",
         "pypdf",
         "sounddevice",
@@ -51,6 +57,14 @@ def _run_package_self_test() -> None:
         "services.agent_mcp.app",
         "services.isolated_worker",
     ]
+    if not _is_client_only_edition():
+        modules = [
+            "av",
+            "ctranslate2",
+            "faster_whisper",
+            "onnxruntime",
+            *modules,
+        ]
     if sys.platform == "win32":
         modules.extend(("keyring.backends.Windows", "keyboard", "soundcard"))
     elif sys.platform == "darwin":
@@ -120,9 +134,11 @@ def _run_package_self_test() -> None:
 
 
 _USAGE = """\
-Usage: openwhisper [OPTION]
+Usage: openwhisper [OPTION | openwhisper://pair?... | FILE.openwhisper-invite]
 
-With no option, opens OpenWhisper.
+With no option, opens OpenWhisper. Passing an openwhisper://pair URI or a
+.openwhisper-invite file pairs with that host (forwarding to an already-running
+OpenWhisper window when open).
 
 Options:
   -h, --help              Show this help and exit.
@@ -268,6 +284,52 @@ def _activate_downloadable_components() -> None:
         )
 
 
+def _handle_invite_cli_argument(argv=None, *, data_dir=None):
+    """Validate and forward or stage an ``openwhisper://pair`` or ``.openwhisper-invite`` arg.
+
+    Returns an exit code (0 when forwarded to a running instance, 2 on invalid
+    invite input), or ``None`` when startup should continue normally.
+    """
+    args = sys.argv[1:] if argv is None else list(argv)
+    # Fast check without importing services on ordinary launches.
+    has_candidate = any(
+        isinstance(a, str)
+        and not a.strip().startswith("-")
+        and (
+            a.strip().lower().startswith("openwhisper://")
+            or a.strip().lower().endswith(".openwhisper-invite")
+        )
+        for a in args
+    )
+    if not has_candidate:
+        return None
+
+    from config import data_root as _data_root
+    from services.remote_asr.invite import (
+        InviteValidationError,
+        extract_invite_arg,
+        forward_invite_to_running_instance,
+        resolve_invite_arg,
+        set_pending_startup_invite,
+    )
+
+    raw_arg = extract_invite_arg(args)
+    if not raw_arg:
+        return None
+    try:
+        invite = resolve_invite_arg(raw_arg)
+    except InviteValidationError as exc:
+        print(f"OpenWhisper: invalid invite link: {exc}", file=sys.stderr)
+        return 2
+
+    target_dir = data_dir if data_dir is not None else _data_root()
+    if forward_invite_to_running_instance(target_dir, invite):
+        return 0
+
+    set_pending_startup_invite(invite)
+    return None
+
+
 def _early_update_gate() -> None:
     """Wait out a running setup, and refuse a launch the updater owns."""
     if sys.argv[1:2] in (["--isolated-worker"], ["--self-test"], ["--workflow-smoke"]):
@@ -285,6 +347,10 @@ def _early_update_gate() -> None:
         raise SystemExit(0)
     acquire_application_mutex_or_exit()
 
+
+_invite_exit = _handle_invite_cli_argument()
+if _invite_exit is not None:
+    raise SystemExit(_invite_exit)
 
 _early_update_gate()
 native_libraries.register_cuda_dll_directories()
@@ -380,7 +446,156 @@ except Exception as exc:
     )
     raise SystemExit(1) from exc
 
-from ui_qt.bootstrap import main
+from ui_qt.bootstrap import main as _bootstrap_main
+
+
+def dispatch_incoming_invite(invite) -> bool:
+    """Route a validated ``InviteLink`` to Guided Setup or Remote Settings on the Qt thread.
+
+    Never silently pairs over a different host: always shows host name, address,
+    and TLS fingerprint confirmation in Guided Setup or Settings -> Remote engine.
+    """
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return False
+
+    from ui_qt.dialogs.guided_setup import GuidedSetupDialog
+    from ui_qt.dialogs.settings_dialog import SettingsDialog
+    from ui_qt.dialogs.settings_destinations import REMOTE_ENGINE
+
+    # Prefer an already-open Guided Setup dialog.
+    for widget in app.topLevelWidgets():
+        if isinstance(widget, GuidedSetupDialog) and widget.isVisible():
+            widget.begin_with_invite(invite)
+            widget.raise_()
+            widget.activateWindow()
+            return True
+
+    # Next, an already-open Settings dialog.
+    for widget in app.topLevelWidgets():
+        if isinstance(widget, SettingsDialog) and widget.isVisible():
+            widget.select_destination(REMOTE_ENGINE)
+            widget.handle_invite_link(invite)
+            widget.raise_()
+            widget.activateWindow()
+            return True
+
+    # Otherwise bring the main window forward and open Remote engine settings (or Guided Setup).
+    from services.remote_asr.invite import set_pending_startup_invite
+
+    set_pending_startup_invite(invite)
+    for widget in app.topLevelWidgets():
+        if widget.objectName() == "mainWindow" or hasattr(widget, "restore_from_tray"):
+            if hasattr(widget, "restore_from_tray"):
+                widget.restore_from_tray()
+            if hasattr(widget, "settings_destination_requested"):
+                widget.settings_destination_requested.emit(REMOTE_ENGINE)
+                return True
+            if hasattr(widget, "guided_setup_requested"):
+                widget.guided_setup_requested.emit()
+                return True
+    return False
+
+
+_QT_INVOKE_EVENT_TYPE = None
+
+
+def _run_on_qt_thread(callback) -> bool:
+    """Invoke ``callback`` on the Qt GUI thread if a QApplication is active."""
+    global _QT_INVOKE_EVENT_TYPE
+    try:
+        from PyQt6.QtCore import QCoreApplication, QEvent, QObject
+        from PyQt6.QtWidgets import QApplication
+    except ImportError:
+        return False
+
+    app = QApplication.instance()
+    if app is None:
+        return False
+
+    if _QT_INVOKE_EVENT_TYPE is None:
+        _QT_INVOKE_EVENT_TYPE = QEvent.Type(QEvent.registerEventType())
+    event_type = _QT_INVOKE_EVENT_TYPE
+
+    class _InvokeEvent(QEvent):
+        def __init__(self, fn):
+            super().__init__(event_type)
+            self.fn = fn
+
+    class _Receiver(QObject):
+        def customEvent(self, event):  # noqa: N802
+            try:
+                fn = getattr(event, "fn", None)
+                if callable(fn):
+                    fn()
+            finally:
+                self._keepalive = None  # type: ignore[attr-defined]
+                self.deleteLater()
+
+    receiver = _Receiver()
+    receiver.moveToThread(app.thread())
+    receiver._keepalive = receiver  # type: ignore[attr-defined]
+    QCoreApplication.postEvent(receiver, _InvokeEvent(callback))
+    return True
+
+
+def main() -> int:
+    """Start the Invite IPC bridge around the Qt bootstrap lifecycle."""
+    from services.remote_asr.invite import (
+        InviteIpcServer,
+        consume_pending_startup_invite,
+        peek_pending_startup_invite,
+    )
+
+    ipc_server = None
+    try:
+        def _on_ipc_invite(invite) -> None:
+            if not _run_on_qt_thread(lambda inv=invite: dispatch_incoming_invite(inv)):
+                logging.getLogger(__name__).debug("Queued invite until Qt UI is ready")
+
+        ipc_server = InviteIpcServer(data_root(), _on_ipc_invite)
+        ipc_server.start()
+    except Exception:
+        logging.getLogger(__name__).debug("Could not start invite IPC listener", exc_info=True)
+        ipc_server = None
+
+    # If launched directly with an invite link, schedule delivery after startup finishes
+    # (in case Guided Setup does not auto-open for an already-configured install).
+    if peek_pending_startup_invite() is not None:
+        def _deliver_startup_when_ready() -> None:
+            import time as _time
+
+            from PyQt6.QtWidgets import QApplication
+
+            deadline = _time.monotonic() + 25.0
+            while _time.monotonic() < deadline:
+                app = QApplication.instance()
+                if app is not None and any(
+                    hasattr(w, "restore_from_tray") and w.isVisible()
+                    for w in app.topLevelWidgets()
+                ):
+                    pending = consume_pending_startup_invite()
+                    if pending is not None:
+                        _run_on_qt_thread(lambda inv=pending: dispatch_incoming_invite(inv))
+                    return
+                _time.sleep(0.15)
+
+        import threading as _threading
+
+        _threading.Thread(
+            target=_deliver_startup_when_ready,
+            name="openwhisper-startup-invite",
+            daemon=True,
+        ).start()
+
+    try:
+        return _bootstrap_main()
+    finally:
+        if ipc_server is not None:
+            ipc_server.stop()
+
 
 __all__ = ["main"]
 
