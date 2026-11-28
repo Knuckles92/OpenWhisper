@@ -1332,6 +1332,15 @@ class RemoteEngineService:
             self._history_client.refresh()
         self._notify("client")
 
+    def set_share_live(self, enabled):
+        """Let, or stop letting, the paired host's MCP see and control this computer's live activity."""
+        from services.settings import SettingsKey, settings_manager
+
+        settings_manager.save_setting(SettingsKey.REMOTE_CLIENT_LIVE, enabled is True)
+        if self._history_client is not None:
+            self._history_client.refresh()
+        self._notify("client")
+
     # ---- client ----
 
     def client_pairing(self) -> Optional[remote_settings.ClientPairing]:

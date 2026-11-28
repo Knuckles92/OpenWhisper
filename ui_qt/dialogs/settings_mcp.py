@@ -1634,6 +1634,14 @@ class McpSettingsView(QWidget):
         # This permission belongs to this computer, even when the host's MCP
         # tab is selected or the host has denied remote MCP administration.
         self._layout.addWidget(self.share_history_tile)
+        self.share_live_tile = SettingTile(
+            "Let the paired host's MCP see and control this computer",
+            "",
+            design_icon("server-blue.svg"),
+        )
+        self.share_live_tile.setProperty("tileId", "mcpShareLiveTile")
+        self.share_live_tile.checkbox.toggled.connect(self._toggle_live_sharing)
+        self._layout.addWidget(self.share_live_tile)
         self._layout.addWidget(self.local)
         self.live = LiveAutomationSection(settings, self.local)
         self.live.settings_changed.connect(self.settings_changed)
@@ -1740,10 +1748,34 @@ class McpSettingsView(QWidget):
             SettingsKey.REMOTE_CLIENT_HISTORY.read(self.settings.load_all_settings())
         )
         tile.checkbox.blockSignals(blocked)
+        self._refresh_live_sharing(pairing)
 
     def _toggle_history_sharing(self, checked):
         if self._service is not None and self._service.client_pairing() is not None:
             self._service.set_share_history(checked)
+
+    def _refresh_live_sharing(self, pairing=None):
+        description = (
+            "Assistants connected to the paired host's MCP can see what this computer "
+            "is doing now, such as a recording or a meeting in progress, and use its "
+            "live tools while OpenWhisper is running. Each tool still needs its own "
+            "permission below, on this computer and on the host."
+        )
+        if pairing is None:
+            description += " Pair a host in Remote engine to enable this setting."
+        tile = self.share_live_tile
+        tile.set_description(description)
+        tile.checkbox.setAccessibleDescription(description)
+        tile.setEnabled(self._service is not None and pairing is not None)
+        blocked = tile.checkbox.blockSignals(True)
+        tile.checkbox.setChecked(
+            SettingsKey.REMOTE_CLIENT_LIVE.read(self.settings.load_all_settings())
+        )
+        tile.checkbox.blockSignals(blocked)
+
+    def _toggle_live_sharing(self, checked):
+        if self._service is not None and self._service.client_pairing() is not None:
+            self._service.set_share_live(checked)
 
     def _host_name(self):
         return getattr(self._pairing, "host_name", "") or "Host"

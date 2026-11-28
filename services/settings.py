@@ -859,6 +859,12 @@ class SettingsKey:
     REMOTE_CLIENT_HISTORY: Final = BoolSetting(
         "remote_client_history", False, in_table=False,
     )
+    # Client opt-in: the paired host's MCP may read what this computer is doing
+    # and run live tools here while online. This computer's own API & MCP
+    # permissions still decide what each tool may do.
+    REMOTE_CLIENT_LIVE: Final = BoolSetting(
+        "remote_client_live", False, in_table=False,
+    )
     # TypeSafe fast judgments. The master switch gates every remote judgment;
     # each feature has its own switch so one can be trialled at a time.
     TYPESAFE_ENABLED: Final = BoolSetting("typesafe_enabled", False)

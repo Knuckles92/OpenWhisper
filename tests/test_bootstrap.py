@@ -100,7 +100,7 @@ class _FakeApplicationController:
         self.cleaned_up = False
         self.main_ui_ready_notified = False
         self.meeting_runtime = SimpleNamespace(retitle_saved_meeting=lambda *_args: None)
-        self.remote_engine = SimpleNamespace(history=object())
+        self.remote_engine = SimpleNamespace(history=object(), connected_clients=object())
         self.transcription_backends = {"local_whisper": _FakeBackend("cuda")}
         self.__class__.instances.append(self)
 
@@ -170,6 +170,7 @@ class TestBootstrap:
         assert _FakeApplicationController.instances[0].cleaned_up
         assert _FakeApplicationController.instances[0].main_ui_ready_notified
         assert configure_mcp.call_args.kwargs["client_history"] is _FakeApplicationController.instances[0].remote_engine.history
+        assert configure_mcp.call_args.kwargs["client_presence"] is _FakeApplicationController.instances[0].remote_engine.connected_clients
         assert order.index("loading_screen_shown") < order.index("late_imports")
         assert order.index("process_events") < order.index("late_imports")
 

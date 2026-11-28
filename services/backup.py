@@ -333,6 +333,7 @@ def _sanitize_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "remote_host_keep_records": False,
         "remote_host_manage_mcp": False,
         "remote_client_history": False,
+        "remote_client_live": False,
         "remote_records_location": "local",
         "mcp_enabled": False,
         "mcp_tailscale_enabled": False,

@@ -76,10 +76,16 @@ class HistoryService(FakeRemoteService):
         super().__init__(pairing)
         self.settings = settings
         self.history_changes = []
+        self.live_changes = []
 
     def set_share_history(self, enabled):
         self.history_changes.append(enabled)
         self.settings.save_setting(SettingsKey.REMOTE_CLIENT_HISTORY, enabled)
+        self.notify("client")
+
+    def set_share_live(self, enabled):
+        self.live_changes.append(enabled)
+        self.settings.save_setting(SettingsKey.REMOTE_CLIENT_LIVE, enabled)
         self.notify("client")
 
 
@@ -120,6 +126,47 @@ def test_mcp_history_sharing_is_local_and_available_above_both_tabs(
             assert settings.get(key) == value
         assert all(op != "mcp_configure" for op, _ in service.calls)
         assert not view.local.server.starts
+    finally:
+        close(view)
+
+
+def test_live_access_is_this_computers_own_switch_and_off_until_asked(tmp_path):
+    settings = SettingsManager(str(tmp_path / "settings.json"))
+    preferences = {
+        SettingsKey.REMOTE_CLIENT_HISTORY: False,
+        SettingsKey.REMOTE_HOST_MANAGE_MCP: False,
+        SettingsKey.MCP_ENABLED: False,
+        SettingsKey.API_CONTROL_MEETINGS: False,
+    }
+    settings.save_all_settings(preferences)
+    service = HistoryService(settings)
+    service.error = RemoteRequestError("Not allowed", code="forbidden")
+    view = make_view(tmp_path, service, settings=settings)
+    try:
+        view.resize(520, 740)
+        view.show()
+        pump(view)
+        tile = view.share_live_tile
+        assert tile.isVisible() and tile.isEnabled() and not tile.checkbox.isChecked()
+        assert tile.minimumSizeHint().width() <= 520
+        assert "meeting in progress" in tile.description_label.text()
+        tile.checkbox.click()
+        assert settings.get(SettingsKey.REMOTE_CLIENT_LIVE) is True
+        # It stays above both tabs, and grants nothing else.
+        view.tabs.buttons[1].click()
+        tick(view)
+        assert tile.isVisible() and tile.isEnabled() and tile.checkbox.isChecked()
+        assert not view.share_history_tile.checkbox.isChecked()
+        tile.checkbox.click()
+        assert settings.get(SettingsKey.REMOTE_CLIENT_LIVE) is False
+        assert service.live_changes == [True, False] and service.history_changes == []
+        for key, value in preferences.items():
+            assert settings.get(key) == value
+        assert all(op != "mcp_configure" for op, _ in service.calls)
+        service.pairing = None
+        service.notify("client")
+        assert not tile.isEnabled()
+        assert "Pair a host in Remote engine" in tile.description_label.text()
     finally:
         close(view)
 

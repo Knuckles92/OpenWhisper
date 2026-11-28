@@ -117,6 +117,14 @@ error code. This channel carries no audio, accepts only read operations, and
 the client rechecks its permission for every query. Older hosts omit the
 capability, so clients close the dedicated connection without sending history.
 
+A client that can run live tools for the host's MCP adds ``live_enabled`` (its
+own opt-in, off by default) to that ``hello``; older clients omit it and are
+never asked. The host may then send JSON ``live_call`` (id, tool, arguments)
+and the client answers ``live_result`` with that id and either ``result`` (the
+tool's JSON object) or ``error`` (``code: message``). The client rechecks its
+opt-in and its own API & MCP permissions for every call, so the host can ask
+for nothing the client's user has not allowed there.
+
 Pairing by approval, for a host found on the network (``probe`` answers
 ``approval: true``): the first message is ``pair_request`` (``device_name``).
 The host answers ``pair_commit`` with the SHA-256 commitment to a random

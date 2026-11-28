@@ -370,6 +370,7 @@ def main() -> int:
             on_change=ui_controller.agent_data_changed.emit,
             meeting_renamer=app_controller.meeting_runtime.retitle_saved_meeting,
             client_history=app_controller.remote_engine.history,
+            client_presence=app_controller.remote_engine.connected_clients,
         )
         mcp_runtime.restore(settings_manager)
         if health_token:

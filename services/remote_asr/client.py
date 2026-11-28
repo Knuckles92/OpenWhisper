@@ -424,7 +424,7 @@ class RemoteConnection:
 
     def __init__(self, host: str, port: int, token: str, fingerprint: str, *,
                  alternates=(), timeout: float = CONNECT_TIMEOUT_S, history_enabled=None,
-                 reports_recording: bool = False):
+                 live_enabled=None, reports_recording: bool = False):
         self.host = host
         self.port = port
         self._hosts = tuple(dict.fromkeys([host, *[a for a in alternates if a]]))
@@ -432,6 +432,7 @@ class RemoteConnection:
         self._fingerprint = (fingerprint or "").upper()
         self._timeout = timeout
         self._history_enabled = history_enabled
+        self._live_enabled = live_enabled
         self._reports_recording = reports_recording
         self._lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -614,6 +615,8 @@ class RemoteConnection:
             }
             if self._history_enabled is not None:
                 hello.update(purpose="history", history_enabled=self._history_enabled is True)
+                if self._live_enabled is not None:
+                    hello["live_enabled"] = self._live_enabled is True
             elif self._reports_recording:
                 hello["capabilities"] = {"recording_activity": True}
             try:

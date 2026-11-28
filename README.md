@@ -226,6 +226,7 @@ If macOS Keychain refuses to save the connection key, click **Retry Keychain acc
 - **Meetings:** Select **Remote computer** in **Settings → Meeting Mode → Voice & speakers → Speech engine**. Audio goes to the host for transcription; capture, recordings, and transcripts stay on the computer running the meeting.
 - **Host models:** Use **Manage host models** (or switch to the paired host in **Settings → Models & storage → Models & engines**) to choose or download a model and install speech runtimes. The host must first enable **Allow paired computers to manage models**.
 - **Shared history:** Enable **Allow the paired host to query this computer's history** on the client so agents on the host can search it while the client is online. See [MCP setup](docs/mcp.md#query-paired-clients-directly) for queries and offline copies.
+- **Live access:** Enable **Let the paired host's MCP see and control this computer** on the client so agents on the host can see a recording or meeting in progress there and use its live tools, within the permissions that client grants. See [See and reach paired clients](docs/mcp.md#see-and-reach-paired-clients).
 - **Away from home:** Install [Tailscale](https://tailscale.com/download) on both computers. Hosts on your tailnet appear in the app; computers on the same Tailscale account can connect without a pairing code when the host allows it.
 
 ## AI cleanup and meeting intelligence

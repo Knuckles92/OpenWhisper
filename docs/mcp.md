@@ -108,6 +108,7 @@ of an incorrect Running status.
 | `set_record_annotation`, `delete_record_annotation` | Attach, merge, or clear agent summaries, notes, tags, and `external_refs` on local records without changing transcript text; needs **Attach agent notes & tags** |
 | `organize_records` | Batch-retitle and/or annotate up to 25 local records in one call (supports `dry_run=true`) |
 | `get_live_state` | Whether OpenWhisper is recording, in a meeting, or in a walkthrough, plus live permissions |
+| `list_clients` | On a host: each paired computer, whether it is connected, and what it is doing now (see [See and reach paired clients](#see-and-reach-paired-clients)) |
 | `list_actions`, `list_profiles`, `list_transforms` | Your saved [actions](automation.md#actions), cleanup profiles, and text transforms |
 | `recent_events` | Recent [live events](automation.md#events), with a gap flag; needs **Follow live events** |
 | `run_action`, `run_transform` | Run a saved action or text transform on text; needs **Run actions** |
@@ -197,7 +198,9 @@ device's name, ID, and status: `online`, `sharing_disabled`, or `unavailable`.
 Offline clients and timeouts yield partial results with explicit availability,
 so an empty page does not imply that every client's history was searched.
 Turning off the client's permission or forgetting the host cuts off new live
-queries. Agents cannot enable that permission themselves.
+queries. Agents cannot enable that permission themselves. Sharing history does
+not share what the client is doing now; that is a
+[separate switch](#see-and-reach-paired-clients).
 
 Direct queries need the client app to be running and reachable. Choose **Both**
 under **Where records are kept**, and **Copy existing records** for earlier
@@ -205,6 +208,71 @@ history, to keep copies searchable when the client is offline. Live queries
 read transcripts and saved insights; they do not transfer audio or save records
 to the host's database. Federated cursors retain their original client set,
 filters, and page size for ten minutes; restart the query after they expire.
+
+## See and reach paired clients
+
+An assistant connected to a host's MCP can find out what each paired computer
+is doing and work with it using the same tools it uses on the host.
+
+On each client, enable **Settings → API & MCP → Let the paired host's MCP see
+and control this computer**. It is off by default, sits beside the history
+switch above both MCP tabs, and is independent of history sharing, record
+storage, and **Allow paired computers to manage MCP**. Agents cannot turn it
+on, from either computer. Both the host and the client need a version with
+this feature.
+
+`list_clients` returns every paired computer:
+
+| Field | Meaning |
+| --- | --- |
+| `device_id`, `name` | The client's ID (pass it to other tools) and its name on the host |
+| `connected`, `connected_since`, `recording`, `transcribing` | What the host itself sees of the client's speech connection: whether it is open, and whether the client is recording or the host is transcribing for it right now |
+| `history` | `online`, `sharing_disabled`, or `unavailable`, as in `get_status` |
+| `live` | `available`; `disabled` (the client's switch is off); `unsupported` (older OpenWhisper); or `offline` |
+| `state` | The client's own `get_live_state`, when `live` is `available`: `recording`, `busy`, `meeting`, `meeting_state` (title, status, `elapsed_s`, job progress), `walkthrough_state`, and the `permissions` granted on that client |
+
+Pass `device_id` to restrict the list to one client, or `include_state: false`
+to skip asking each client for its state.
+
+Every tool that acts on the running app accepts an optional `device_id`: the
+live reads (`get_live_state`, `get_meeting_live_state`,
+`get_meeting_dashboard_state`, `recent_events`, `list_actions`, …) and the
+recording, action, notice, Meeting Mode, walkthrough, personalization, cleanup
+rule, model, device and window tools. With a `device_id`, the call runs on
+that client instead of the host and returns the client's result. For example,
+when `list_clients` shows a meeting in progress on a laptop:
+
+```json
+{"name": "get_meeting_dashboard_state", "arguments": {"device_id": "3f9c…"}}
+```
+
+```json
+{"name": "notify_user", "arguments": {"device_id": "3f9c…", "text": "Notes are ready."}}
+```
+
+A routed call needs three things, each checked on every call:
+
+1. The tool's permission on the **host**, as for any assistant using its token.
+   A call the host does not permit is never sent.
+2. **Let the paired host's MCP see and control this computer** on the client.
+3. The tool's permission in the **client's** own Settings → API & MCP. Reading
+   live state needs none beyond the switch; starting a recording there needs
+   the client's **Start recordings**, controlling its meeting needs its
+   **Control Meeting Mode**, and so on. `state.permissions` shows what a client
+   has granted.
+
+The client makes the last two checks itself, so nothing on the host can widen
+what a client allows. A refusal from the client ends with
+`[paired client <device_id>]`; `live_disabled`, `unsupported`, and
+`unavailable` mean the switch is off, the client's version is older, or it is
+offline or did not answer within ten seconds. Turning the switch off, or
+forgetting the host, stops the very next call.
+
+Calls travel over the same authenticated connection the client opens to its
+host for history queries, so the client still opens no inbound port. They
+carry tool arguments and JSON results, never audio. History tools keep their
+own `device_id` behavior above and remain read-only on clients; settings,
+retitling, and agent notes apply only to the computer running the MCP server.
 
 ## Optional changes
 

@@ -374,6 +374,13 @@ def client_shares_history(settings: Optional[Dict[str, Any]] = None) -> bool:
     return SettingsKey.REMOTE_CLIENT_HISTORY.read(_settings(settings))
 
 
+def client_shares_live(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Whether the paired host's MCP may see and control this computer's live activity."""
+    from services.settings import SettingsKey
+
+    return SettingsKey.REMOTE_CLIENT_LIVE.read(_settings(settings))
+
+
 def records_location(settings: Optional[Dict[str, Any]] = None) -> str:
     """Where this computer keeps its records while paired; "local" by default."""
     from services.settings import SettingsKey

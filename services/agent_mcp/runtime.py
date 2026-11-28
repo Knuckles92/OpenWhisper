@@ -122,6 +122,7 @@ class McpRuntime:
         self._on_change = None
         self._meeting_renamer = None
         self._client_history = None
+        self._client_presence = None
         self._lock = threading.RLock()
         self._thread = None
         self._server = None
@@ -191,11 +192,17 @@ class McpRuntime:
             else:
                 self.start(port)
 
-    def configure_controls(self, *, on_change=None, meeting_renamer=None, client_history=None):
-        """Bind thread-safe desktop handlers before starting the listener."""
+    def configure_controls(self, *, on_change=None, meeting_renamer=None, client_history=None,
+                           client_presence=None):
+        """Bind thread-safe desktop handlers before starting the listener.
+
+        ``client_history`` reaches paired clients (history queries and live
+        tools); ``client_presence()`` lists the ones connected to this host now.
+        """
         self._on_change = on_change
         self._meeting_renamer = meeting_renamer
         self._client_history = client_history
+        self._client_presence = client_presence
 
     def bind_settings(self, settings):
         self._settings = settings
@@ -229,6 +236,7 @@ class McpRuntime:
                 meeting_renamer=self._meeting_renamer,
                 allowed_hosts=allowed_hosts,
                 client_history=self._client_history,
+                client_presence=self._client_presence,
             )
             server = uvicorn.Server(
                 uvicorn.Config(

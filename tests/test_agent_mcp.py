@@ -194,6 +194,7 @@ def test_official_client_discovery_retrieval_and_validation(running_server, mode
                     "organize_records",
                     "get_history_digest",
                     "get_live_state",
+                    "list_clients",
                     "list_actions",
                     "run_action",
                     "start_dictation",

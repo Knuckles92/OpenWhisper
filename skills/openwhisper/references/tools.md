@@ -30,6 +30,8 @@ text, or returns raw audio files.
 - `include_remote=true`: include copies stored on this host for paired computers.
 - `include_clients=true`: also query online paired clients that opted into history sharing.
 - `device_id`: scope a list/search to one client, or route a detail read (`get_transcription`, `get_meeting`, etc.) to that live client.
+- `list_clients` (host only): every paired computer with `device_id`, `name`, `connected`, `recording`, `transcribing`, `history`, and `live` (`available`, `disabled`, `unsupported`, `offline`). Clients with `live: available` include `state`, their own `get_live_state` (`meeting_state`, `walkthrough_state`, and the `permissions` granted there).
+- Every tool in section 6, and the personalization, cleanup rule and walkthrough tools, take an optional `device_id` to run on that client instead of this computer. It needs the client's **Let the paired host's MCP see and control this computer** switch, plus the tool's permission on both computers. Errors: `live_disabled`, `unsupported`, `unavailable`, or the client's own refusal ending in `[paired client <device_id>]`.
 
 ## 2. Organizing History & Agent Notes
 

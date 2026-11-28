@@ -7,6 +7,10 @@ Releases use `major.minor.patch` numbering. Normal routine releases use a zero-p
 
 ## [Unreleased]
 
+### Added
+
+- **See and reach paired clients through a host's MCP.** A new `list_clients` tool on a host reports each paired computer, whether it is connected, and what it is doing now (recording, or a meeting or walkthrough in progress). Every tool that acts on the running app now takes an optional `device_id` to run on that client instead of the host, so an assistant connected to the host can read a client's live meeting dashboard, send it a notice, or control its recording and meetings. Off by default: each client opts in with **Let the paired host's MCP see and control this computer** in **Settings → Automate → API & MCP**, and a routed call still needs the tool's permission on both the host and the client. Older clients report `unsupported` and are never asked.
+
 ### Fixed
 
 - **Packaged builds move off a yanked PyAV release.** The release pin moves from PyAV 18.1.0 to 18.1.1. PyPI yanked 18.1.0 for memory corruption (a double free) when decoding audio with custom channel layouts, and OpenWhisper decodes uploaded files and recordings through PyAV. Source installs keep the `av>=11,<19` range, which still resolves to PyAV 18.

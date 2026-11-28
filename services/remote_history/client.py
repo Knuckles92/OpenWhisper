@@ -128,11 +128,21 @@ class HistoryReader:
 
 
 class HistoryClient:
-    def __init__(self, database=None, *, pairing=None, token=None, enabled=None):
+    """This computer's side connection to its paired host.
+
+    Answers the host's history queries and, when ``live_enabled`` allows,
+    runs the live tools its MCP forwards here (``live_tools(tool, arguments)``
+    returns the ``result`` or ``error`` to send back).
+    """
+
+    def __init__(self, database=None, *, pairing=None, token=None, enabled=None,
+                 live_enabled=None, live_tools=None):
         self.database = database
         self.pairing = pairing or remote_settings.load_client_pairing
         self.token = token or remote_settings.load_client_token
         self.enabled = enabled or remote_settings.client_shares_history
+        self.live_enabled = live_enabled or remote_settings.client_shares_live
+        self._live_tools = live_tools
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -183,6 +193,7 @@ class HistoryClient:
                     pairing.fingerprint,
                     alternates=pairing.alternates,
                     history_enabled=self.enabled(),
+                    live_enabled=self.live_enabled(),
                 )
                 with self._lock:
                     self._connection = connection
@@ -214,35 +225,68 @@ class HistoryClient:
                 frame = connection.receive_history()
             except TimeoutError:
                 continue
-            request = _history_query(frame)
+            request = _host_request(frame)
             if request is None:
                 break
-            connection.send_history(_history_reply(reader, request))
+            if request["type"] == "live_call":
+                connection.send_history(self._live_reply(request))
+            else:
+                connection.send_history(_history_reply(reader, request))
+
+    def _live_reply(self, request):
+        """The ``live_result`` for one tool the host's MCP asked to run here."""
+        tool, arguments = request.get("tool"), request.get("arguments")
+        if not self.live_enabled():
+            response = {"error": "live_disabled"}
+        elif not isinstance(tool, str) or not isinstance(arguments, dict):
+            response = {"error": "invalid_query: Invalid live tool call."}
+        else:
+            try:
+                response = self._run_live_tool(tool, arguments)
+            except Exception as exc:
+                # Type only: a message could carry dictated text or a path.
+                logger.warning("Could not run the host's live tool: %s", type(exc).__name__)
+                response = {"error": "unavailable"}
+        # Turned off while the tool ran: its result stays here.
+        if "result" in response and not self.live_enabled():
+            response = {"error": "live_disabled"}
+        return _reply("live_result", request.get("id"), response)
+
+    def _run_live_tool(self, tool, arguments):
+        if self._live_tools is None:
+            from services.agent_mcp.client_tools import ClientTools
+
+            self._live_tools = ClientTools(enabled=self.live_enabled).call
+        return self._live_tools(tool, arguments)
 
 
-def _history_query(frame):
-    """The host's query in ``frame``, or None for anything else (which ends the session)."""
+def _host_request(frame):
+    """The host's request in ``frame``, or None for anything else (which ends the session)."""
     if (
         not isinstance(frame, str)
         or len(frame.encode("utf-8")) > protocol.MAX_HEADER_BYTES
     ):
         return None
     request = json.loads(frame)
-    if not isinstance(request, dict) or request.get("type") != "history_query":
+    if not isinstance(request, dict) or request.get("type") not in (
+        "history_query",
+        "live_call",
+    ):
         return None
     return request
 
 
 def _history_reply(reader, request):
     response = reader.query(request.get("operation"), request.get("params"))
-    response.update(type="history_result", id=request.get("id"))
-    payload = json.dumps(response)
-    if len(payload.encode("utf-8")) > protocol.MAX_REPLY_BYTES:
-        payload = json.dumps(
-            {
-                "type": "history_result",
-                "id": request.get("id"),
-                "error": "unavailable",
-            }
-        )
+    return _reply("history_result", request.get("id"), response)
+
+
+def _reply(kind, request_id, response):
+    """``response`` as the frame to send; one too large to send becomes ``unavailable``."""
+    try:
+        payload = json.dumps({**response, "type": kind, "id": request_id})
+    except (TypeError, ValueError):
+        payload = ""
+    if not payload or len(payload.encode("utf-8")) > protocol.MAX_REPLY_BYTES:
+        payload = json.dumps({"type": kind, "id": request_id, "error": "unavailable"})
     return payload

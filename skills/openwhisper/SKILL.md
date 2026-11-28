@@ -56,6 +56,10 @@ database and live desktop app.
      `include_remote=true`. Live paired clients can be queried with
      `include_clients=true` (pass the returned `device_id` on detail reads).
      Remote/live-client records are read-only.
+   - `list_clients` shows what each paired computer is doing now (recording,
+     a meeting or walkthrough in progress). Pass its `device_id` to a live
+     tool such as `get_meeting_dashboard_state` or `notify_user` to run it on
+     that client, when its user allows live access through the host.
 
 ## Golden Rules
 

@@ -16,6 +16,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field, StrictBool, StrictFloat, StrictInt, StrictStr
 
 from services.agent_api.app import create_app as create_history_app
+from services.agent_mcp import client_tools
 from services.agent_mcp.controls import WRITE_CAPABILITIES, AgentControls, ControlError
 from services.automation import events as automation_events
 from services.automation import permissions
@@ -34,6 +35,11 @@ INSTRUCTIONS = (
     "clients that allow history sharing, and report unavailable clients. Pass returned "
     "device_id values when retrieving live records. Both storage keeps copies available "
     "with include_remote when a client is offline. Live client records are read-only. "
+    "To see what paired clients are doing now (recording, or a meeting or walkthrough in "
+    "progress), call list_clients. Pass a client's device_id to any live tool that accepts "
+    "one, such as get_meeting_dashboard_state or notify_user, to run it on that client "
+    "instead of this computer; the client's user must allow live access through the host, "
+    "and the tool needs its permission on both computers. "
     "Walkthroughs carry easy reference numbers such as #001 (shown in the ready popup "
     "and list_walkthroughs); pass ref='#001', 'latest', or a folder id to get_walkthrough. "
     "Use get_history_digest to pull a bounded chronological batch of recent dictations, "
@@ -120,7 +126,7 @@ EventTypes = Annotated[list[EventType] | None, Field(min_length=1, max_length=le
 EventSeq = Annotated[int | None, Field(ge=0)]
 
 
-def _tool_annotations():
+def tool_annotations():
     """Each kind of tool's hints, built once per app."""
     return {
         "read": ToolAnnotations(
@@ -190,7 +196,7 @@ async def _control_call(method, *args):
         ) from None
 
 
-def _live_caller(enabled, settings):
+def live_caller(enabled, settings):
     async def live_call(permission, operation):
         """Run ``operation(saved_settings)`` off the event loop once ``permission`` holds.
 
@@ -204,6 +210,11 @@ def _live_caller(enabled, settings):
             saved = settings.load_all_settings() if settings is not None else {}
             if permission:
                 permissions.require(saved, permission)
+            client = client_tools.routed_call()
+            if client is not None:
+                # Asked of a paired client: this computer's permission held,
+                # and the client applies its own before doing anything.
+                return client.send()
             return operation(saved)
 
         try:
@@ -428,6 +439,44 @@ def _register_control_tools(mcp, hints, controls):
                 include_remote=include_remote,
                 only_unannotated=only_unannotated,
             )
+        )
+
+
+def register_app_tools(mcp, hints, live_call):
+    """The tools that act on the running app, here or on a paired client.
+
+    This computer's MCP registers them with a ``device_id`` for routing; a
+    client registers the same tools to run what its host forwards.
+    """
+    from services.agent_mcp.app_tools import register_extended_tools
+
+    _register_live_tools(mcp, hints, live_call)
+    _register_recording_tools(mcp, hints, live_call)
+    _register_event_and_notice_tools(mcp, hints, live_call)
+    register_extended_tools(mcp, hints, live_call)
+
+
+def _register_client_tools(mcp, hints, live_call, clients, presence):
+    @mcp.tool(annotations=hints["live_read"])
+    async def list_clients(
+        device_id: RecordId | None = None, include_state: bool = True
+    ) -> dict[str, object]:
+        """List the computers paired with this host and what each is doing now.
+
+        Each client has its device_id, name, whether it is connected (and
+        recording or being transcribed for), history sharing status, and live:
+        available, disabled (its user has not allowed live access through the
+        host), unsupported (older OpenWhisper) or offline. Clients with live
+        available include state: their own get_live_state, with recording,
+        meeting_state, walkthrough_state and the permissions granted there.
+        Pass a device_id to any tool that accepts one to run it on that client;
+        it needs the matching permission on this computer and on the client.
+        """
+        return await live_call(
+            None,
+            lambda _saved: client_tools.describe_clients(
+                clients, presence, device_id=device_id, include_state=include_state
+            ),
         )
 
 
@@ -853,6 +902,7 @@ def create_app(
     meeting_renamer=None,
     allowed_hosts=(),
     client_history=None,
+    client_presence=None,
 ):
     """Serve /mcp and /v1 with shared host validation and bearer protection.
 
@@ -861,7 +911,7 @@ def create_app(
     """
     app = create_history_app(database, token, allowed_hosts=allowed_hosts, client_history=client_history)
     mcp = MCPServer("OpenWhisper", version="1.0.0", instructions=INSTRUCTIONS)
-    hints = _tool_annotations()
+    hints = tool_annotations()
     controls = AgentControls(
         database,
         settings,
@@ -870,14 +920,11 @@ def create_app(
         meeting_renamer=meeting_renamer,
     )
     # Registration order is the order tools/list reports them in.
-    live_call = _live_caller(enabled, settings)
+    live_call = live_caller(enabled, settings)
     _register_control_tools(mcp, hints, controls)
-    _register_live_tools(mcp, hints, live_call)
-    _register_recording_tools(mcp, hints, live_call)
-    _register_event_and_notice_tools(mcp, hints, live_call)
-    from services.agent_mcp.app_tools import register_extended_tools
-
-    register_extended_tools(mcp, hints, live_call)
+    # Each of these also takes a paired client's device_id.
+    register_app_tools(client_tools.RoutedTools(mcp, client_history), hints, live_call)
+    _register_client_tools(mcp, hints, live_call, client_history, client_presence)
     get = _history_getter(app, token)
     _register_status_and_search_tools(mcp, hints, controls, get)
     _register_transcription_tools(mcp, hints, get)

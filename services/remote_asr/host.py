@@ -1201,7 +1201,8 @@ class SpeechHost:
         from websockets.exceptions import ConnectionClosed
 
         if message.get("purpose") == "history":
-            self.history.serve(ws, device, message.get("token"), message.get("history_enabled"))
+            self.history.serve(ws, device, message.get("token"), message.get("history_enabled"),
+                               live=message.get("live_enabled"))
             return
         engine = self._engine()
         identity = engine.identity
