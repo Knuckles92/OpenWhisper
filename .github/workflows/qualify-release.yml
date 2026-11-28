@@ -90,11 +90,12 @@ jobs:
           from scripts.check_release_qualification import validate_draft_assets
           validate_draft_assets(Path("release"), json.loads(Path("draft-assets.json").read_text()))
           PY
-          archive_name="OpenWhisper-$version-win64.tar.xz"
-          if [[ ! -f "release/$archive_name" ]] && gh release view "$RELEASE_TAG" \
-              --json assets --jq '.assets[].name' | grep -Fxq "$archive_name"; then
-            gh release delete-asset "$RELEASE_TAG" "$archive_name" --yes
-          fi
+          for archive_name in "OpenWhisper-$version-win64.tar.xz" "OpenWhisper-Client-$version-win64.tar.xz"; do
+            if [[ ! -f "release/$archive_name" ]] && gh release view "$RELEASE_TAG" \
+                --json assets --jq '.assets[].name' | grep -Fxq "$archive_name"; then
+              gh release delete-asset "$RELEASE_TAG" "$archive_name" --yes
+            fi
+          done
           gh release upload "$RELEASE_TAG" release/* --clobber
           gh api "$release_api" > uploaded-release.json
           python3 - <<'PY'

@@ -28,6 +28,8 @@ from services.update_contract import (
     APP_NAME,
     ARCHITECTURE,
     CLEANUP_ARG,
+    EDITION_FULL,
+    EDITION_MANIFEST_NAME,
     HEALTH_ARG,
     INTERNAL_DIRNAME,
     MANAGED_TOP_LEVEL_DIRS,
@@ -54,6 +56,7 @@ from services.update_contract import (
     is_newer_version,
     journal_path,
     local_app_dir,
+    normalize_edition,
     parse_strict_version,
     transaction_dir,
     updates_root,
@@ -575,11 +578,25 @@ def validate_managed_topology(paths: Set[str]) -> None:
             )
 
 
+def read_dist_edition(dist_dir: str) -> str:
+    """Return ``"full"`` or ``"client"`` from ``<dist_dir>/_internal/edition.json``."""
+    manifest_path = os.path.join(dist_dir, INTERNAL_DIRNAME, EDITION_MANIFEST_NAME)
+    try:
+        with open(manifest_path, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if isinstance(payload, dict) and payload.get("edition") is not None:
+            return normalize_edition(str(payload["edition"]))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        pass
+    return EDITION_FULL
+
+
 def build_update_manifest(
     dist_dir: str,
     version: str,
     *,
     unpacked_bytes: Optional[int] = None,
+    edition: Optional[str] = None,
 ) -> Dict:
     """Build the per-file manifest for a frozen onedir."""
     files: Dict[str, Dict[str, object]] = {}
@@ -599,10 +616,16 @@ def build_update_manifest(
     if not os.path.isdir(os.path.join(dist_dir, INTERNAL_DIRNAME)):
         raise UpdateApplyError("Bundle is missing the _internal directory.")
     parse_strict_version(version)
+    resolved_edition = (
+        normalize_edition(edition)
+        if edition is not None
+        else read_dist_edition(dist_dir)
+    )
     return {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "product": APP_NAME,
         "app_id": APP_ID,
+        "edition": resolved_edition,
         "version": version,
         "architecture": ARCHITECTURE,
         "topology_revision": TOPOLOGY_REVISION,
@@ -674,8 +697,24 @@ def validate_manifest(
     *,
     expected_version: Optional[str] = None,
     current_updater_version: Optional[str] = None,
+    expected_edition: Optional[str] = None,
 ) -> None:
     _check_manifest_target(manifest)
+    raw_edition = manifest.get("edition")
+    if raw_edition is not None:
+        try:
+            manifest_edition = normalize_edition(raw_edition)
+        except ValueError as exc:
+            raise UpdateApplyError(
+                "The update manifest specifies an unknown edition."
+            ) from exc
+    else:
+        manifest_edition = EDITION_FULL
+    if expected_edition is not None:
+        if manifest_edition != normalize_edition(expected_edition):
+            raise UpdateApplyError(
+                "The update package is for a different edition of OpenWhisper."
+            )
     _check_manifest_version(manifest, expected_version, current_updater_version)
     files = manifest.get("files")
     if not isinstance(files, dict) or not files:
@@ -1358,6 +1397,7 @@ def prepare_candidate(
     cancel=None,
     appdata: Optional[str] = None,
     parent_pid: Optional[int] = None,
+    expected_edition: Optional[str] = None,
 ) -> UpdateJournal:
     """Extract and verify a sibling candidate, then write the journal."""
     if progress is None:
@@ -1387,6 +1427,7 @@ def prepare_candidate(
             manifest,
             expected_version=release_version,
             current_updater_version=current_version,
+            expected_edition=expected_edition,
         )
         unpacked_size = int(manifest.get("unpacked_bytes") or 0)
         check_free_space(os.path.dirname(app_dir), app_size + unpacked_size)
@@ -3064,8 +3105,10 @@ def pack_tar_xz(source_dir: str, destination: str) -> None:
             archive.add(full, arcname=relative, recursive=False)
 
 
-def write_manifest_file(dist_dir: str, version: str) -> str:
-    manifest = build_update_manifest(dist_dir, version)
+def write_manifest_file(
+    dist_dir: str, version: str, *, edition: Optional[str] = None
+) -> str:
+    manifest = build_update_manifest(dist_dir, version, edition=edition)
     path = os.path.join(dist_dir, MANIFEST_NAME)
     write_json_atomic(path, manifest)
     return path

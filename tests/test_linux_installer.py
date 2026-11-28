@@ -42,9 +42,11 @@ def test_build_script_is_executable_and_valid_bash():
 
 def test_pkginfo_template_has_native_runtime_dependencies():
     pkginfo = (LINUX_INSTALLER / "PKGINFO.in").read_text(encoding="utf-8")
-    assert "pkgname = openwhisper" in pkginfo
-    assert "pkgbase = openwhisper" in pkginfo
+    assert "pkgname = @PKGNAME@" in pkginfo
+    assert "pkgbase = @PKGNAME@" in pkginfo
     assert "pkgver = @VERSION@-1" in pkginfo
+    assert "conflict = @CONFLICT@" in pkginfo
+    assert "replaces = @CONFLICT@" in pkginfo
     assert "builddate = @BUILDDATE@" in pkginfo
     assert "packager = Fiori Labs <support@fiorilabs.tech>" in pkginfo
     assert "size = @INSTALLED_SIZE_BYTES@" in pkginfo
@@ -72,9 +74,11 @@ def test_pkginfo_template_has_native_runtime_dependencies():
 
 def test_control_template_has_native_runtime_dependencies():
     control = (LINUX_INSTALLER / "control.in").read_text(encoding="utf-8")
-    assert "Package: openwhisper" in control
+    assert "Package: @PACKAGE@" in control
     assert "Version: @VERSION@" in control
     assert "Architecture: @ARCHITECTURE@" in control
+    assert "Conflicts: @CONFLICTS@" in control
+    assert "Replaces: @REPLACES@" in control
     assert "Installed-Size: @INSTALLED_SIZE@" in control
     assert "libc6 (>= @GLIBC_MIN@)" in control
     for package in (
@@ -103,7 +107,8 @@ def test_desktop_entry_and_launcher_match_installed_layout():
     parser.read(LINUX_INSTALLER / "openwhisper.desktop", encoding="utf-8")
     desktop = parser["Desktop Entry"]
     assert desktop["Type"] == "Application"
-    assert desktop["Exec"] == "openwhisper"
+    assert desktop["Exec"] == "openwhisper %u"
+    assert desktop["MimeType"] == "x-scheme-handler/openwhisper;"
     assert desktop["Icon"] == "openwhisper"
     assert desktop["Terminal"] == "false"
     assert desktop["StartupWMClass"] == "OpenWhisper"
@@ -202,11 +207,11 @@ def test_release_workflow_smokes_advertised_linux_baselines():
     assert "pacman -Sy --noconfirm archlinux-keyring" in smoke
     assert "/^NoExtract/{next}" in smoke
     assert "rm -f /etc/pacman.conf.d/noextract.conf" in smoke
-    # Normal releases ship eight application artifacts (slim + Windows/Linux
-    # all-in-one); the documented Windows recovery switch may omit only the
-    # native archive.
-    assert "expected_artifacts=8" in workflow
-    assert "expected_artifacts=7" in workflow
+    # Normal releases ship thirteen application artifacts (full + Windows/Linux
+    # all-in-one + Windows/Linux/macOS client-only); the documented Windows
+    # recovery switch may omit only the two Windows native archives.
+    assert "expected_artifacts=13" in workflow
+    assert "expected_artifacts=11" in workflow
     assert "OpenWhisper-*-linux-x86_64.pkg.tar.zst" in workflow
     assert "OpenWhisper-AllInOne-$BUILD_VERSION-linux-amd64.deb" in workflow
     assert "OpenWhisper-AllInOne-$BUILD_VERSION-linux-x86_64.pkg.tar.zst" in workflow

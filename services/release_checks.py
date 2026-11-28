@@ -178,12 +178,14 @@ def run_workflow_smoke(*, repeats: int = 5) -> dict:
             stream.cleanup()
             _join_worker(stream)
             cleanup_s = time.perf_counter() - cleanup_started
+    from services.edition import current_edition
+
     p95 = float(np.percentile(timings, 95))
     metrics = dict(fixture_ready_s=ready_s, stop_to_result_p50_s=statistics.median(timings),
                    stop_to_result_p95_s=p95, cancel_s=cancel_s, restart_s=restart_s,
                    cleanup_s=cleanup_s, peak_rss_mb=peak_rss_mb())
-    report = dict(schema=2, kind="synthetic_service_lifecycle", repeats=repeats,
-                  metrics=metrics, checks=checks, passed=True,
+    report = dict(schema=2, kind="synthetic_service_lifecycle", edition=current_edition(),
+                  repeats=repeats, metrics=metrics, checks=checks, passed=True,
                   limitations=["Fixture decoder; no real speech recognition or model startup",
                                "No physical capture device, native inference, VRAM or dropped-audio measurement",
                                "Service/database restart and cleanup; not full application process restart"])

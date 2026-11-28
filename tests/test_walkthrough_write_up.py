@@ -406,3 +406,44 @@ def test_without_held_notes_the_prompt_lists_none(walkthrough):
 
     assert "Notes for you" not in agent.calls[0].user_prompt
     assert "left you notes" not in agent.calls[0].system_prompt
+
+
+@pytest.mark.parametrize("agent_id", MeetingAgentCore.INSTALLED)
+def test_a_host_asks_its_agent_for_what_this_computer_would(walkthrough, tmp_path, agent_id):
+    """A paired computer's walkthrough, staged on a host, goes through
+    :func:`write_up.draft` like one written up here, so the two differ only in
+    what Claude Code is pointed at."""
+    from services.walkthrough.session import Note
+
+    asked = dict(instructions="Keep it short.", follow_notes=True,
+                 notes=[Note("make the headings purple", 1)])
+    here, there = (Agent(PassOutcome(ok=True, text=REPLY)) for _ in range(2))
+    stage = tmp_path / "staged"
+    stage.mkdir()
+    names = [shot.name for shot in walkthrough.shots]
+
+    write_up.write_up(walkthrough.result, walkthrough.shots, agent=agent_id, run=here, **asked)
+    text, _look = write_up.draft(
+        agent_id, write_up.staged(str(stage), names, "as spoken", 75.0), run=there, **asked)
+
+    (mine,), (theirs,) = here.calls, there.calls
+    assert text == (walkthrough.folder / "write-up.md").read_text(encoding="utf-8").strip()
+    assert (mine.timeout_s, mine.stall_s) == (theirs.timeout_s, theirs.stall_s)
+    if agent_id == MeetingAgentCore.CLAUDE_CODE:
+        assert theirs.folder == str(stage)
+        assert write_up._STAGED_SOURCE in theirs.system_prompt
+        assert theirs.system_prompt == mine.system_prompt.replace(
+            write_up._READ_SOURCE, write_up._STAGED_SOURCE)
+        assert theirs.user_prompt == mine.user_prompt.replace(
+            os.path.realpath(walkthrough.result.pdf), write_up.STAGED_MARKDOWN_NAME)
+    else:
+        assert theirs.system_prompt == mine.system_prompt
+        assert theirs.user_prompt == mine.user_prompt
+        assert theirs.images == [os.path.realpath(stage / name) for name in names]
+
+
+def test_a_stopped_agent_is_a_cancel_and_still_a_failure(walkthrough):
+    with pytest.raises(write_up.WriteUpCanceled, match="^canceled$") as stopped:
+        write_up.write_up(walkthrough.result, walkthrough.shots,
+                          run=Agent(PassOutcome(ok=False, canceled=True)))
+    assert isinstance(stopped.value, WriteUpFailed)

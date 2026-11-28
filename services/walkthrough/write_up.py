@@ -16,6 +16,11 @@ only the way it names screenshots is fixed, so the PDF can show them.
 Notes the user held Hold for note to say are not in the walkthrough at all:
 they come after it in the message, each with where it was said, and the
 agent follows them under the same rule as notes spoken to it.
+
+:func:`draft` asks the agent and :func:`write_up` publishes what it sent
+back. A host writing up a paired computer's walkthrough calls ``draft`` too,
+on the copy it staged (:func:`staged`), and sends the document back for that
+computer to publish.
 """
 
 from __future__ import annotations
@@ -25,7 +30,7 @@ import os
 import re
 import threading
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -41,7 +46,7 @@ MARKDOWN_NAME = "write-up.md"
 PDF_NAME = "write-up.pdf"
 DOCX_NAME = "write-up.docx"
 #: The agents that can write one up, in the order Settings lists them.
-AGENTS = MeetingAgentCore.INSTALLED
+AGENTS = (*MeetingAgentCore.INSTALLED, MeetingAgentCore.REMOTE_HOST)
 
 #: What the agent is asked for unless Settings has the user's own words.
 DEFAULT_INSTRUCTIONS = (
@@ -105,6 +110,16 @@ _VIEW_SOURCE = (
     "in the same order. Use no tools and read no files."
 )
 
+#: Claude Code on a host, writing up a paired computer's walkthrough: it
+#: reads walkthrough.md, since a host draws no PDF of what it was sent.
+_STAGED_SOURCE = (
+    "The walkthrough is walkthrough.md in this folder, and its screenshots are "
+    "PNG files beside it. Read walkthrough.md and any screenshots you need for "
+    "a closer look. Read no other files."
+)
+#: The name a host stages a paired computer's walkthrough under.
+STAGED_MARKDOWN_NAME = "walkthrough.md"
+
 _TIMEOUT_S = 300.0
 #: Reading a long PDF can go quiet for a while before the reply starts.
 _STALL_S = 150.0
@@ -130,6 +145,126 @@ WRITE_UP_AGENT_SETTING = "Settings → Dictation → Walkthroughs"
 
 class WriteUpFailed(Exception):
     """The write-up could not be made; the message says why, for the status line."""
+
+
+class WriteUpCanceled(WriteUpFailed):
+    """The agent was stopped before it replied."""
+
+    def __init__(self) -> None:
+        super().__init__("canceled")
+
+
+@dataclass(frozen=True)
+class Material:
+    """A walkthrough as an agent is given it: this computer's own, or one a
+    paired computer sent, staged on its host.
+
+    Attributes:
+        folder: Where Claude Code is fenced: the walkthrough and its
+            screenshots are in it.
+        document: What Claude Code is told to read there.
+        source: How the charter describes ``document`` to it.
+        spoken: Returns walkthrough.md's text, for the agents that read no
+            files; it may raise :class:`WriteUpFailed`.
+        shots: The screenshots, in order.
+        duration_s: How long the user spoke.
+    """
+
+    folder: str
+    document: str
+    source: str
+    spoken: Callable[[], str]
+    shots: Sequence[str]
+    duration_s: float
+
+    @property
+    def names(self) -> list[str]:
+        """The screenshots' file names, which is how a document names them."""
+        return [Path(shot).name for shot in self.shots]
+
+
+def staged(folder: str, names: Sequence[str], spoken: str, duration_s: float) -> Material:
+    """A paired computer's walkthrough, staged in ``folder`` on this host.
+
+    ``folder`` holds :data:`STAGED_MARKDOWN_NAME` and the screenshots called
+    ``names``; ``spoken`` is that Markdown's text.
+    """
+    return Material(
+        folder=folder, document=STAGED_MARKDOWN_NAME, source=_STAGED_SOURCE,
+        spoken=lambda: spoken, shots=[os.path.join(folder, name) for name in names],
+        duration_s=duration_s,
+    )
+
+
+def draft(
+    agent: str,
+    material: Material,
+    *,
+    instructions: str = "",
+    follow_notes: bool = False,
+    notes: Sequence[Note] = (),
+    cancel_event: threading.Event | None = None,
+    run: Callable[..., object] | None = None,
+) -> tuple[str, "Look"]:
+    """The document ``agent`` makes of ``material`` and the look it asked for.
+
+    The only place an installed agent is asked for a write-up, so one made
+    here and one a host makes for a paired computer get the same charter,
+    prompts and reply rules. Nothing is written.
+
+    Args:
+        agent: One of ``MeetingAgentCore.INSTALLED``.
+        material: The walkthrough, as this computer holds it.
+        instructions: What to make of it; blank for :data:`DEFAULT_INSTRUCTIONS`.
+        follow_notes: Whether the agent follows notes the user spoke to it.
+        notes: Notes the user held for the agent; it always follows them.
+        cancel_event: Set to stop the agent.
+        run: :func:`meeting.agent.installed.core.run_reading_task` for Claude
+            Code, ``run_viewing_task`` for the others, or a stand-in.
+
+    Raises:
+        WriteUpCanceled: The agent was stopped.
+        WriteUpFailed: The agent is missing, failed, or sent back nothing usable.
+    """
+    from meeting.agent.installed.core import MEETING_AGENT_SETTING
+    from meeting.agent.installed.drivers import AgentUnavailable
+
+    name = agent_name(agent)
+    names = material.names
+    instructions = instructions.strip() or DEFAULT_INSTRUCTIONS
+    speech = _SPEECH_WITH_NOTES if follow_notes else _SPEECH
+    if notes:
+        speech += " " + _HELD_NOTES + ("" if follow_notes else " " + _NOTE_LIMIT)
+    common = dict(model="", timeout_s=_TIMEOUT_S, stall_s=_STALL_S, cancel_event=cancel_event)
+    try:
+        if agent == MeetingAgentCore.CLAUDE_CODE:
+            if run is None:
+                from meeting.agent.installed.core import run_reading_task as run
+            outcome = run(
+                agent, system_prompt=_CHARTER.format(source=material.source, speech=speech),
+                user_prompt=_reading_prompt(instructions, material) + _notes(notes, names),
+                folder=material.folder, **common,
+            )
+        else:
+            if run is None:
+                from meeting.agent.installed.core import run_viewing_task as run
+            outcome = run(
+                agent, system_prompt=_CHARTER.format(source=_VIEW_SOURCE, speech=speech),
+                user_prompt=_viewing_prompt(instructions, material) + _notes(notes, names),
+                images=[os.path.realpath(shot) for shot in material.shots], **common,
+            )
+    except AgentUnavailable as exc:
+        # The meeting agent's own page doesn't choose this one.
+        raise WriteUpFailed(
+            str(exc).replace(MEETING_AGENT_SETTING, WRITE_UP_AGENT_SETTING)) from exc
+    if outcome.canceled:
+        raise WriteUpCanceled()
+    if not outcome.ok:
+        raise WriteUpFailed(outcome.error or f"{name} failed")
+    text, look = document_text(outcome.text, names)
+    if not text:
+        raise WriteUpFailed(f"{name} sent back no document")
+    return text, look
 
 
 def write_up(
@@ -161,50 +296,80 @@ def write_up(
         WriteUpFailed: The agent is missing, failed, was canceled, or sent
             back nothing usable.
     """
-    from meeting.agent.installed.core import MEETING_AGENT_SETTING
-    from meeting.agent.installed.drivers import AgentUnavailable
+    if agent == MeetingAgentCore.REMOTE_HOST:
+        return _write_up_remote(
+            result,
+            shots,
+            instructions=instructions,
+            follow_notes=follow_notes,
+            notes=notes,
+            cancel_event=cancel_event,
+            run=run,
+        )
 
-    name = agent_name(agent)
-    names = [Path(shot).name for shot in shots]
-    instructions = instructions or DEFAULT_INSTRUCTIONS
-    speech = _SPEECH_WITH_NOTES if follow_notes else _SPEECH
-    if notes:
-        speech += " " + _HELD_NOTES + ("" if follow_notes else " " + _NOTE_LIMIT)
-    common = dict(model="", timeout_s=_TIMEOUT_S, stall_s=_STALL_S, cancel_event=cancel_event)
-    try:
-        if agent == MeetingAgentCore.CLAUDE_CODE:
-            if run is None:
-                from meeting.agent.installed.core import run_reading_task as run
-            outcome = run(
-                agent, system_prompt=_CHARTER.format(source=_READ_SOURCE, speech=speech),
-                user_prompt=_reading_prompt(instructions, result, names) + _notes(notes, names),
-                folder=str(result.folder), **common,
-            )
-        else:
-            if run is None:
-                from meeting.agent.installed.core import run_viewing_task as run
-            outcome = run(
-                agent, system_prompt=_CHARTER.format(source=_VIEW_SOURCE, speech=speech),
-                user_prompt=_viewing_prompt(instructions, result, names) + _notes(notes, names),
-                images=[os.path.realpath(shot) for shot in shots], **common,
-            )
-    except AgentUnavailable as exc:
-        # The meeting agent's own page doesn't choose this one.
-        raise WriteUpFailed(
-            str(exc).replace(MEETING_AGENT_SETTING, WRITE_UP_AGENT_SETTING)) from exc
-    if outcome.canceled:
-        raise WriteUpFailed("canceled")
-    if not outcome.ok:
-        raise WriteUpFailed(outcome.error or f"{name} failed")
-    text, look = document_text(outcome.text, names)
-    if not text:
-        raise WriteUpFailed(f"{name} sent back no document")
+    material = Material(
+        folder=str(result.folder), document=os.path.realpath(result.pdf),
+        source=_READ_SOURCE, spoken=lambda: _spoken(result),
+        shots=[os.fspath(shot) for shot in shots], duration_s=result.duration_s,
+    )
+    text, look = draft(
+        agent, material, instructions=instructions, follow_notes=follow_notes,
+        notes=notes, cancel_event=cancel_event, run=run,
+    )
     # A write-up done again is a new version; the one it follows is kept.
+    return _write(result, text, look, keep_latest=True)
+
+
+def _write_up_remote(
+    result: WalkthroughResult,
+    shots: Sequence[Path],
+    *,
+    instructions: str = "",
+    follow_notes: bool = False,
+    notes: Sequence[Note] = (),
+    cancel_event: threading.Event | None = None,
+    run: Callable[..., object] | None = None,
+) -> WalkthroughResult:
+    """Delegate the walkthrough write-up to the paired OpenWhisper host."""
+    from services.remote_asr.ai_client import RemoteAICanceled, remote_walkthrough_writeup
+    from services.walkthrough.document import Look
+
+    names = [Path(shot).name for shot in shots]
+    spoken = _spoken(result)
+
+    runner = run or remote_walkthrough_writeup
+    try:
+        reply = runner(
+            spoken,
+            shots,
+            instructions=instructions,
+            follow_notes=follow_notes,
+            notes=notes,
+            duration_s=result.duration_s,
+            cancel_event=cancel_event,
+        )
+    except RemoteAICanceled:
+        raise WriteUpCanceled() from None
+    except Exception as exc:
+        raise WriteUpFailed(str(exc) or "Paired host write-up failed") from exc
+
+    remote_markdown, raw_look, label = reply
+    text, parsed_look = document_text(str(remote_markdown or ""), names)
+    if not text:
+        raise WriteUpFailed(f"{label or 'Paired host'} sent back no document")
+    look_fields = raw_look if isinstance(raw_look, dict) else {}
+    look = Look(
+        text_color=str(look_fields.get("text_color") or parsed_look.text_color or ""),
+        heading_color=str(look_fields.get("heading_color") or parsed_look.heading_color or ""),
+        font=str(look_fields.get("font") or parsed_look.font or ""),
+    )
     return _write(result, text, look, keep_latest=True)
 
 
 def agent_name(agent: str) -> str:
     """What the status line and Settings call ``agent``."""
+    if agent == MeetingAgentCore.REMOTE_HOST:
+        return "Paired host"
     from services.installed_agents import AGENT_SPECS
 
     return AGENT_SPECS[agent].name
@@ -225,32 +390,35 @@ def _notes(notes: Sequence[Note], names: Sequence[str]) -> str:
     return "\n".join(lines)
 
 
-def _reading_prompt(instructions: str, result: WalkthroughResult,
-                    names: Sequence[str]) -> str:
+def _spoken(result: WalkthroughResult) -> str:
+    """walkthrough.md as it was written, which names each screenshot."""
+    try:
+        return Path(result.markdown).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise WriteUpFailed(f"could not read {Path(result.markdown).name}: {exc}") from exc
+
+
+def _reading_prompt(instructions: str, material: Material) -> str:
     from services.walkthrough.document import clock
 
-    pdf = os.path.realpath(result.pdf)
-    lines = [instructions.strip(), "", f"The walkthrough: {pdf}"]
+    names = material.names
+    lines = [instructions, "", f"The walkthrough: {material.document}"]
     if names:
         lines.append(f"Its screenshots, beside it: {', '.join(names)}")
-    lines.append(f"It is {clock(result.duration_s)} of speech.")
+    lines.append(f"It is {clock(material.duration_s)} of speech.")
     return "\n".join(lines)
 
 
-def _viewing_prompt(instructions: str, result: WalkthroughResult,
-                    names: Sequence[str]) -> str:
+def _viewing_prompt(instructions: str, material: Material) -> str:
     """The instructions, then walkthrough.md itself, which names each screenshot."""
     from services.walkthrough.document import clock
 
-    try:
-        spoken = Path(result.markdown).read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        raise WriteUpFailed(f"could not read {Path(result.markdown).name}: {exc}") from exc
-    lines = [instructions.strip(), ""]
+    names = material.names
+    lines = [instructions, ""]
     if names:
         lines.append(f"The screenshots attached, in order: {', '.join(names)}")
-    lines += [f"It is {clock(result.duration_s)} of speech.", "",
-              "<walkthrough>", spoken, "</walkthrough>"]
+    lines += [f"It is {clock(material.duration_s)} of speech.", "",
+              "<walkthrough>", material.spoken().strip(), "</walkthrough>"]
     return "\n".join(lines)
 
 

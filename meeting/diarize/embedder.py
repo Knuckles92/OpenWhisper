@@ -9,7 +9,8 @@ have a single error surface to degrade on.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
 import numpy as np
 
@@ -75,7 +76,7 @@ class SpeakerEmbedder:
         """True when the ONNX session is loaded and usable."""
         return self._session is not None
 
-    def embed(self, audio_f32_16k: np.ndarray) -> Optional[np.ndarray]:
+    def embed(self, audio_f32_16k: np.ndarray) -> np.ndarray | None:
         """Compute one speaker embedding for a segment of audio.
 
         Pipeline: 80-dim log-mel fbank -> cepstral mean normalization ->
@@ -124,3 +125,100 @@ class SpeakerEmbedder:
         if not np.isfinite(norm) or norm < 1e-8:
             return None
         return (embedding / norm).astype(np.float32)
+
+
+class RemoteSpeakerEmbedder:
+    """Computes L2-normalized speaker embeddings on a paired OpenWhisper host.
+
+    Matches the ``SpeakerEmbedder`` interface (``available``, ``embed``) without
+    importing ``onnxruntime`` on the client. Any offline or protocol failure
+    flips ``available`` to False and raises ``EmbedderUnavailable`` so Meeting
+    Mode degrades cleanly to channel-level labels.
+    """
+
+    def __init__(
+        self,
+        *,
+        client: Any | None = None,
+        connect_fn: Callable[[], Any] | None = None,
+        timeout_s: float = 30.0,
+    ) -> None:
+        self._timeout_s = float(timeout_s)
+        self._owns_client = client is None
+        self._available = False
+        if client is None:
+            try:
+                from services.remote_asr.meeting_client import RemoteMeetingClient
+
+                client = RemoteMeetingClient(connect_fn=connect_fn)
+            except Exception as exc:
+                raise EmbedderUnavailable(
+                    f"Remote speaker embedder client unavailable: {exc}"
+                ) from exc
+        self._client = client
+        try:
+            caps = self._client.capabilities()
+        except Exception as exc:
+            self.close()
+            raise EmbedderUnavailable(
+                f"Could not reach paired host for speaker identification: {exc}"
+            ) from exc
+        if caps.get("speaker_diarization") is not True:
+            self.close()
+            raise EmbedderUnavailable(
+                "Speaker identification is not enabled or no speaker model is "
+                "installed on the paired host."
+            )
+        self._available = True
+        logger.info("Remote speaker embedder connected to paired host")
+
+    @property
+    def available(self) -> bool:
+        """True while the paired host can compute speaker embeddings."""
+        return self._available
+
+    def embed(self, audio_f32_16k: np.ndarray) -> np.ndarray | None:
+        """Request one L2-normalized float32 speaker embedding from the host.
+
+        Args:
+            audio_f32_16k: 1-D float32 mono audio at 16 kHz in [-1, 1].
+
+        Returns:
+            L2-normalized float32 embedding of shape ``[D]``, or None when the
+            audio is shorter than ``MIN_AUDIO_SECONDS`` or unusable.
+
+        Raises:
+            EmbedderUnavailable: Host is offline, disabled, or failed.
+        """
+        if not self._available:
+            raise EmbedderUnavailable("Remote speaker embedder is unavailable")
+
+        audio = np.asarray(audio_f32_16k, dtype=np.float32).reshape(-1)
+        if audio.size < int(MIN_AUDIO_SECONDS * SAMPLE_RATE):
+            return None
+
+        try:
+            embedding = self._client.speaker_embed(audio, timeout_s=self._timeout_s)
+        except Exception as exc:
+            self._available = False
+            raise EmbedderUnavailable(
+                f"Remote speaker embedding failed: {exc}"
+            ) from exc
+
+        if embedding is None:
+            return None
+        arr = np.asarray(embedding, dtype=np.float32).reshape(-1)
+        norm = float(np.linalg.norm(arr))
+        if not np.isfinite(norm) or norm < 1e-8:
+            return None
+        return (arr / norm).astype(np.float32)
+
+    def close(self) -> None:
+        """Close the dedicated host connection if owned by this embedder."""
+        self._available = False
+        if self._owns_client and self._client is not None:
+            try:
+                self._client.close()
+            except Exception:
+                logger.debug("Closing remote speaker embedder raised", exc_info=True)
+

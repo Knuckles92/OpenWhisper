@@ -11,6 +11,7 @@ its models and runtime. The technical profile inspector slides over the
 catalog's right edge on demand when a model is selected, leaving the full
 catalog width clear when nothing is selected.
 """
+import html
 import itertools
 import logging
 import sys
@@ -41,6 +42,7 @@ from PyQt6.QtWidgets import (
 
 from config import config, parakeet_mlx_supported
 from services.components import ComponentState, component_coordinator
+from services.remote_asr import invite as remote_invite
 from services.hf_access import (
     MODEL_DOWNLOAD_SIZE_MB,
     CachedModelInfo,
@@ -564,6 +566,10 @@ class DownloadsPage(QWidget):
 
     _UI_ATTRIBUTES = frozenset({
         'target_bar',
+        'client_edition_banner',
+        'client_edition_banner_label',
+        'client_unpaired_card',
+        'client_connect_host_button',
         'local_pane',
         'host_pane',
         'engine_rail',
@@ -690,6 +696,54 @@ class DownloadsPage(QWidget):
         self.target_bar.currentIndexChanged.connect(self._on_target_changed)
         self.target_bar.hide()
         outer.addWidget(self.target_bar)
+
+        # Client-Only edition header & unpaired fallback card (hidden in Full edition).
+        self.client_edition_banner = QFrame()
+        self.client_edition_banner.setObjectName("downloadsClientBanner")
+        cb_layout = QHBoxLayout(self.client_edition_banner)
+        cb_layout.setContentsMargins(12, 8, 12, 8)
+        cb_layout.setSpacing(10)
+        self.client_edition_banner_label = WrappedLabel("")
+        self.client_edition_banner_label.setObjectName("downloadsClientBannerLabel")
+        self.client_edition_banner_label.setTextFormat(Qt.TextFormat.RichText)
+        self.client_edition_banner_label.setOpenExternalLinks(True)
+        cb_layout.addWidget(self.client_edition_banner_label, stretch=1)
+        self.client_edition_banner.hide()
+        outer.addWidget(self.client_edition_banner)
+
+        self.client_unpaired_card = QFrame()
+        self.client_unpaired_card.setObjectName("settingsTile")
+        cu_layout = QVBoxLayout(self.client_unpaired_card)
+        cu_layout.setContentsMargins(20, 18, 20, 18)
+        cu_layout.setSpacing(10)
+        cu_title = QLabel("Powered by your OpenWhisper Host")
+        cu_title.setObjectName("downloadsTitle")
+        cu_layout.addWidget(cu_title)
+        cu_desc = WrappedLabel(
+            "OpenWhisper Client does not download local speech models or GPU runtimes on this PC. "
+            "Pair with an OpenWhisper Host to browse and manage its models here, or configure a "
+            "cloud API speech provider in Dictation → Voice model."
+        )
+        cu_layout.addWidget(cu_desc)
+        cu_actions = QHBoxLayout()
+        cu_actions.setContentsMargins(0, 4, 0, 0)
+        cu_actions.setSpacing(10)
+        self.client_connect_host_button = PrimaryButton("Connect to a Host")
+        self.client_connect_host_button.setObjectName("downloadsClientConnectButton")
+        self.client_connect_host_button.clicked.connect(self._emit_connect_host)
+        cu_actions.addWidget(self.client_connect_host_button)
+        cu_actions.addStretch(1)
+        cu_layout.addLayout(cu_actions)
+        cu_link = WrappedLabel(
+            f'Want local models on this PC? <a href="{remote_invite.GITHUB_RELEASES_URL}">'
+            "Get Full OpenWhisper</a>."
+        )
+        cu_link.setTextFormat(Qt.TextFormat.RichText)
+        cu_link.setOpenExternalLinks(True)
+        cu_layout.addWidget(cu_link)
+        cu_layout.addStretch(1)
+        self.client_unpaired_card.hide()
+        outer.addWidget(self.client_unpaired_card, stretch=1)
 
         self.local_pane = QWidget()
         self.local_pane.setObjectName("downloadsLocalPane")
@@ -852,6 +906,11 @@ class DownloadsPage(QWidget):
             self._outer_layout.addWidget(self.host_pane, stretch=1)
         return self.host_pane
 
+    def _emit_connect_host(self) -> None:
+        callback = getattr(self, "on_connect_host_requested", None)
+        if callable(callback):
+            callback()
+
     def _refresh_remote_pairing(self) -> None:
         pairing = (
             self._remote_service.client_pairing()
@@ -859,6 +918,30 @@ class DownloadsPage(QWidget):
             else None
         )
         self._remote_pairing = pairing
+        if remote_invite.is_client_only_edition():
+            self.target_bar.hide()
+            self.local_pane.hide()
+            if pairing is None:
+                self.client_edition_banner.hide()
+                if self.host_pane is not None:
+                    self.host_pane.bind(self._remote_service, None)
+                    self.host_pane.hide()
+                self.client_unpaired_card.show()
+                return
+            self.client_unpaired_card.hide()
+            safe_host = html.escape(pairing.host_name)
+            self.client_edition_banner_label.setText(
+                f"<b>Powered by {safe_host}</b> · Managing speech models on your paired host. "
+                f'Want local models on this PC? <a href="{remote_invite.GITHUB_RELEASES_URL}">'
+                "Get Full OpenWhisper</a>."
+            )
+            self.client_edition_banner.show()
+            pane = self._ensure_host_pane()
+            pane.bind(self._remote_service, pairing)
+            pane.show()
+            return
+        self.client_edition_banner.hide()
+        self.client_unpaired_card.hide()
         if pairing is None:
             self.target_bar.hide()
             if self.target_bar.currentIndex() != 0:
@@ -875,6 +958,9 @@ class DownloadsPage(QWidget):
             self.host_pane.bind(self._remote_service, pairing)
 
     def _on_target_changed(self, index: int) -> None:
+        if remote_invite.is_client_only_edition():
+            self._refresh_remote_pairing()
+            return
         show_host = index == 1 and self._remote_pairing is not None
         if show_host:
             self.close_inspector()
@@ -890,6 +976,8 @@ class DownloadsPage(QWidget):
             self._position_inspector()
 
     def showing_host(self) -> bool:
+        if remote_invite.is_client_only_edition():
+            return self._ui_built and self._remote_pairing is not None
         return (
             self._ui_built
             and self._remote_pairing is not None
@@ -899,6 +987,9 @@ class DownloadsPage(QWidget):
     def show_local(self) -> None:
         """Switch to this computer's local models and engines."""
         if not self._ui_built:
+            return
+        if remote_invite.is_client_only_edition():
+            self._refresh_remote_pairing()
             return
         if self.target_bar.currentIndex() != 0:
             self.target_bar.setCurrentIndex(0)
@@ -2371,6 +2462,8 @@ class DownloadsPage(QWidget):
             return
         self._discovery_started = True
         generation = self._discovery_generation = next(_tokens)
+        if remote_invite.is_client_only_edition():
+            return
         if not self._background_cache_scan:
             try:
                 found = discover_existing_models()
@@ -2642,6 +2735,10 @@ class DownloadsPage(QWidget):
             scan: Rescan the model cache. Without it, the last shared scan is
                 reused, so loading a hidden window never touches the disk.
         """
+        if remote_invite.is_client_only_edition():
+            if self._ui_built:
+                self._refresh_remote_pairing()
+            return
         if not self._background_cache_scan:
             self._cache_inventory_loading = False
             self._refresh_cached_model_state(
@@ -2880,6 +2977,10 @@ class DownloadsPage(QWidget):
 
     def rail_value(self) -> str:
         """Download progress while one runs, otherwise the cache totals."""
+        if remote_invite.is_client_only_edition():
+            if self._remote_pairing is not None:
+                return f"Powered by {self._remote_pairing.host_name}"
+            return "Connect to a host"
         if self._downloading_model:
             name = self._display_name(self._downloading_model)
             if self._download_fraction is not None:

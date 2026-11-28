@@ -81,7 +81,7 @@ jobs:
         shell: pwsh
         run: |
           . .\venv\Scripts\Activate.ps1
-          python -m pytest tests/test_app_update.py tests/test_app_update_rate_limit.py tests/test_app_update_apply.py tests/test_app_update_dialog.py tests/test_app_update_handoff.py tests/test_updater_helper.py tests/test_update_startup_gate.py tests/test_update_resilience.py tests/test_application_controller.py tests/test_bootstrap.py -q
+          python -m pytest tests/test_app_update.py tests/test_app_update_rate_limit.py tests/test_app_update_apply.py tests/test_app_update_dialog.py tests/test_app_update_handoff.py tests/test_updater_helper.py tests/test_update_startup_gate.py tests/test_update_resilience.py tests/test_client_edition.py tests/test_client_updater.py tests/test_application_controller.py tests/test_bootstrap.py -q
       - name: Configure Windows code signing
         # Optional, one method at a time. With either set the executables, the
         # uninstaller and the setup exe are Authenticode signed, timestamped
@@ -150,14 +150,15 @@ jobs:
       - name: Build and verify
         # Signs, timestamps and verifies when the step above configured a
         # method; otherwise builds unsigned and verifies nothing is signed.
-        # Either way it writes build/windows-signing.json.
+        # Either way it writes build/windows-signing.json (covering Full,
+        # All-in-One, and Client-Only setup exes).
         shell: pwsh
         env:
           # Read by the Trusted Signing dlib (Azure EnvironmentCredential).
           AZURE_TENANT_ID: ${{ secrets.AZURE_TRUSTED_SIGNING_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_TRUSTED_SIGNING_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_TRUSTED_SIGNING_CLIENT_SECRET }}
-        run: .\scripts\build_installer.ps1 -Clean
+        run: .\scripts\build_installer.ps1 -Clean -IncludeClient
       - name: Remove signing certificate
         if: always() && env.OPENWHISPER_SIGN_CERT_SHA1 != ''
         shell: pwsh
@@ -172,7 +173,9 @@ jobs:
         if: always()
         with:
           name: frozen-health-windows
-          path: build/release-health.json
+          path: |
+            build/release-health.json
+            build/release-health-client.json
           if-no-files-found: ignore
       - name: Verify frozen setup helper protocol
         shell: pwsh
@@ -217,6 +220,7 @@ jobs:
           path: |
             installer/Output/OpenWhisper-Setup-*.exe
             installer/Output/OpenWhisper-AllInOne-Setup-*.exe
+            installer/Output/OpenWhisper-Client-Setup-*.exe
             installer/Output/OpenWhisper-*-win64.tar.xz
           if-no-files-found: error
           retention-days: 14
@@ -260,12 +264,16 @@ jobs:
       # The full suite already ran on this commit, this OS and these pins in
       # the qualification job, so the builder goes straight to packaging.
       - name: Build and verify
-        run: ./scripts/build_installer.sh --clean
+        run: |
+          ./scripts/build_installer.sh --clean
+          ./scripts/build_installer.sh --edition client
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: frozen-health-linux
-          path: build/release-health.json
+          path: |
+            build/release-health.json
+            build/release-health-client.json
           if-no-files-found: ignore
       - name: Smoke-test package lifecycle in clean Ubuntu
         run: |
@@ -320,6 +328,29 @@ jobs:
               test -f /usr/lib/openwhisper/_internal/bundled_models/parakeet-110m-en/parakeet-tdt_ctc-110m-Q8_0.gguf
               xvfb-run -a openwhisper --self-test
               apt-get remove -y openwhisper
+              test ! -e /usr/lib/openwhisper
+            '
+      - name: Smoke-test client Debian package in clean Ubuntu
+        run: |
+          version="$(./venv/bin/python -c 'import _version; print(_version.__version__)')"
+          artifact="$(realpath "installer/Output/OpenWhisper-Client-$version-linux-amd64.deb")"
+          test -f "$artifact"
+          docker run --rm \
+            -e EXPECTED_VERSION="$version" \
+            -v "$artifact:/tmp/openwhisper-client.deb:ro" \
+            ubuntu:22.04 bash -euo pipefail -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends xauth xvfb /tmp/openwhisper-client.deb
+              test "$(openwhisper --version)" = "OpenWhisper $EXPECTED_VERSION"
+              test "$(dpkg-query -W -f=\${Version} openwhisper-client)" = "$EXPECTED_VERSION"
+              grep -q "\"edition\": \"client\"" /usr/lib/openwhisper/_internal/edition.json
+              test ! -e /usr/lib/openwhisper/_internal/ctranslate2
+              test ! -e /usr/lib/openwhisper/_internal/onnxruntime
+              test ! -e /usr/lib/openwhisper/_internal/av
+              test ! -e /usr/lib/openwhisper/_internal/bundled_components/asr-transcribe
+              xvfb-run -a openwhisper --self-test
+              apt-get remove -y openwhisper-client
               test ! -e /usr/lib/openwhisper
             '
       - name: Smoke-test advertised Debian 12 support
@@ -456,7 +487,9 @@ jobs:
       - name: Build and verify DMG
         # Developer ID signed and notarized when the step above imported
         # credentials; ad-hoc signed and unnotarized otherwise.
-        run: ./scripts/build_installer_macos.sh --clean
+        run: |
+          ./scripts/build_installer_macos.sh --clean
+          ./scripts/build_installer_macos.sh --edition client
       - name: Remove signing credentials
         if: always()
         run: |
@@ -469,6 +502,8 @@ jobs:
           path: |
             build/release-health.json
             build/installed-release-health.json
+            build/release-health-client.json
+            build/installed-release-health-client.json
           if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -512,18 +547,26 @@ jobs:
           if [[ "$bridge" == "true" ]]; then export SETUP_ONLY_WINDOWS=true; fi
           if [[ "$SETUP_ONLY_WINDOWS" == "true" ]]; then
             rm -f release/OpenWhisper-*-win64.tar.xz
-            expected_artifacts=7
+            expected_artifacts=11
           else
-            expected_artifacts=8
+            expected_artifacts=13
           fi
           test "$(find release -maxdepth 1 -type f | wc -l)" -eq "$expected_artifacts"
           test -f "release/OpenWhisper-Setup-$BUILD_VERSION.exe"
           test -f "release/OpenWhisper-AllInOne-Setup-$BUILD_VERSION.exe"
+          test -f "release/OpenWhisper-Client-Setup-$BUILD_VERSION.exe"
           test -f "release/OpenWhisper-$BUILD_VERSION-linux-amd64.deb"
           test -f "release/OpenWhisper-AllInOne-$BUILD_VERSION-linux-amd64.deb"
+          test -f "release/OpenWhisper-Client-$BUILD_VERSION-linux-amd64.deb"
           test -f "release/OpenWhisper-$BUILD_VERSION-linux-x86_64.pkg.tar.zst"
           test -f "release/OpenWhisper-AllInOne-$BUILD_VERSION-linux-x86_64.pkg.tar.zst"
+          test -f "release/OpenWhisper-Client-$BUILD_VERSION-linux-x86_64.pkg.tar.zst"
           test -f "release/OpenWhisper-$BUILD_VERSION-macos-arm64.dmg"
+          test -f "release/OpenWhisper-Client-$BUILD_VERSION-macos-arm64.dmg"
+          if [[ "$SETUP_ONLY_WINDOWS" != "true" ]]; then
+            test -f "release/OpenWhisper-$BUILD_VERSION-win64.tar.xz"
+            test -f "release/OpenWhisper-Client-$BUILD_VERSION-win64.tar.xz"
+          fi
           # Bound to the exact setup exes: a report from another build fails.
           export WINDOWS_SIGNING="$(python3 scripts/windows_signing.py metadata \
             --report signing/windows-signing.json --release release)"

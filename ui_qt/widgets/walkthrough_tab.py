@@ -42,8 +42,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from services.installed_agents import AGENT_SPECS
 from services.settings import (
+    MeetingAgentCore,
     SettingsKey,
     WalkthroughCopyFormat,
     resolve_walkthrough_auto_mode,
@@ -66,7 +66,7 @@ from services.walkthrough.styles import (
     save_style,
     style_for,
 )
-from services.walkthrough.write_up import AGENTS, DEFAULT_INSTRUCTIONS
+from services.walkthrough.write_up import AGENTS, DEFAULT_INSTRUCTIONS, agent_name
 from ui_qt.dialogs.settings_destinations import WALKTHROUGHS
 from ui_qt.utils.palette import token_color
 from ui_qt.widgets import past_walkthroughs
@@ -1024,10 +1024,20 @@ class WalkthroughTab(QWidget):
         return menu
 
     def agent_menu(self) -> QMenu:
+        from services.edition import is_client_only
+        from services.remote_asr import settings as remote_settings
+
+        show_remote = (
+            self._agent == MeetingAgentCore.REMOTE_HOST
+            or is_client_only()
+            or remote_settings.has_paired_host()
+        )
         menu, group = _menu(self), QActionGroup(self)
         for agent in AGENTS:
+            if agent == MeetingAgentCore.REMOTE_HOST and not show_remote:
+                continue
             status, _found, detail = self._agent_state(agent)
-            action = self._choice(menu, group, f"{AGENT_SPECS[agent].name}\t{status}",
+            action = self._choice(menu, group, f"{agent_name(agent)}\t{status}",
                                   agent == self._agent, lambda a=agent: self._choose_agent(a))
             if detail:
                 action.setToolTip(detail)
@@ -1050,6 +1060,22 @@ class WalkthroughTab(QWidget):
     @staticmethod
     def _agent_state(agent: str) -> tuple[str, bool, str]:
         """(what the last scan said, found and usable, detail) for ``agent``."""
+        if agent == MeetingAgentCore.REMOTE_HOST:
+            from services.remote_asr import settings as remote_settings
+
+            if remote_settings.has_paired_host():
+                pairing = remote_settings.load_client_pairing()
+                host = pairing.host_name if pairing is not None else "your paired host"
+                return (
+                    "Paired",
+                    True,
+                    f"Runs walkthrough AI write-ups on {host} when host write-ups are enabled.",
+                )
+            return (
+                "Not paired",
+                False,
+                "Pair with an OpenWhisper host in Settings → Remote engine to run write-ups remotely.",
+            )
         from ui_qt.widgets import agent_picker
 
         found = agent_picker.cached_agents()
@@ -1120,7 +1146,7 @@ class WalkthroughTab(QWidget):
 
     def _sync_write_up(self) -> None:
         on = self.write_up_switch.isChecked()
-        name = AGENT_SPECS[self._agent].name
+        name = agent_name(self._agent)
         self.write_up_row.name_label.setToolTip(
             f"{name} lays out a clean document from it. The as-spoken PDF is kept too."
             if on else "Off: you get it as spoken.")

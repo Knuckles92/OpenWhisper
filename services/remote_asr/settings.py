@@ -305,6 +305,66 @@ def host_manages_mcp(settings: Optional[Dict[str, Any]] = None) -> bool:
     return SettingsKey.REMOTE_HOST_MANAGE_MCP.read(_settings(settings))
 
 
+def host_text_cleanup(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Off by default; pairing alone never lets a computer run AI cleanup here."""
+    from services.settings import SettingsKey
+
+    return SettingsKey.REMOTE_HOST_TEXT_CLEANUP.read(_settings(settings))
+
+
+def host_fast_judgments(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Off by default; pairing alone never lets a computer run fast judgments here."""
+    from services.settings import SettingsKey
+
+    return SettingsKey.REMOTE_HOST_FAST_JUDGMENTS.read(_settings(settings))
+
+
+def host_walkthrough_writeup(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Off by default; pairing alone never lets a computer run walkthrough write-ups here."""
+    from services.settings import SettingsKey
+
+    return SettingsKey.REMOTE_HOST_WALKTHROUGH_WRITEUP.read(_settings(settings))
+
+
+def host_meeting_ai(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Off by default; pairing alone never lets a computer run meeting AI or speaker ID here."""
+    from services.settings import SettingsKey
+
+    return SettingsKey.REMOTE_HOST_MEETING_AI.read(_settings(settings))
+
+
+def host_agent_ask(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Off by default; pairing alone never lets a computer ask this host's coding agents."""
+    from services.settings import SettingsKey
+
+    return SettingsKey.REMOTE_HOST_AGENT_ASK.read(_settings(settings))
+
+
+def host_invite_enabled(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Off by default; controls whether the LAN invite/download server may run."""
+    from services.settings import SettingsKey
+
+    return SettingsKey.REMOTE_HOST_INVITE_ENABLED.read(_settings(settings))
+
+
+def host_invite_port(settings: Optional[Dict[str, Any]] = None) -> int:
+    from services.settings import SettingsKey
+
+    return SettingsKey.REMOTE_HOST_INVITE_PORT.read(_settings(settings))
+
+
+def host_invite_cache(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """Off by default; controls optional host-side LAN client installer caching."""
+    from services.settings import SettingsKey
+
+    return SettingsKey.REMOTE_HOST_INVITE_CACHE.read(_settings(settings))
+
+
+def has_paired_host(settings: Optional[Dict[str, Any]] = None) -> bool:
+    """True when a paired host and device token are available on this computer."""
+    return load_client_pairing(settings) is not None and bool(load_client_token())
+
+
 RECORD_LOCATIONS = ("local", "host", "both")
 
 
